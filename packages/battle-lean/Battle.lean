@@ -37,6 +37,7 @@ import Battle.Full.Action
 import Battle.Full.Engine
 import Battle.Full.Capture
 import Battle.Full.Safari
+import Battle.Full.Escape
 import Battle.Full.TrainerController
 import Battle.Full.Environment
 import Battle.Full.SelfPlay

@@ -4,6 +4,7 @@ Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.Full.Action
 import Battle.Full.Effects
+import Battle.Full.Escape
 import Battle.Ordinary
 
 /-!
@@ -24,6 +25,7 @@ structure State where
   playerLastMove : MoveId := 0
   enemyLastMove : MoveId := 0
   payDayMoney : UInt16 := 0
+  runAttempts : UInt8 := 0
   deriving Repr, DecidableEq
 
 inductive Event where
@@ -47,6 +49,8 @@ inductive StepResult where
   | rngStuck (state : State) (events : List Event)
   | divisionFreeze (state : State) (events : List Event)
   | nestedMove (state : State) (side : Side) (move : MoveId) (events : List Event)
+  | runPending (state : State) (side : Side) (opponentAction : Full.Action)
+      (events : List Event)
   | inactive (state : State)
   deriving Repr
 
@@ -364,6 +368,7 @@ private def prependEvents (prior : List Event) : StepResult → StepResult
   | .rngStuck state events => .rngStuck state (prior ++ events)
   | .divisionFreeze state events => .divisionFreeze state (prior ++ events)
   | .nestedMove state side move events => .nestedMove state side move (prior ++ events)
+  | .runPending state side action events => .runPending state side action (prior ++ events)
   | .invalidAction state side => .invalidAction state side
   | .inactive state => .inactive state
 
@@ -419,17 +424,20 @@ def step (state : State) (playerAction enemyAction : Full.Action) : StepResult :
                       else .transitioned state itemEvents
                   | result => result
               | .run, _ =>
-                  let cause := if state.battle.mode == .link then Outcome.TerminalCause.linkRun .player
-                    else .ordinaryRun
-                  let terminal := Outcome.BattleTerminal.mk' cause state.battle.mode .player 0 1
-                  .transitioned { state with battle := { state.battle with phase := .ending terminal } }
-                    [.terminal terminal]
+                  if state.battle.mode == .link then
+                    let terminal := Outcome.BattleTerminal.mk' (.linkRun .player)
+                      state.battle.mode .player 1
+                    .transitioned { state with battle := { state.battle with phase := .ending terminal } }
+                      [.terminal terminal]
+                  else if state.battle.mode == .trainer then .transitioned state []
+                  else .runPending state .player enemyAction []
               | _, .run =>
-                  let cause := if state.battle.mode == .link then Outcome.TerminalCause.linkRun .enemy
-                    else .moveEscape .enemy 0
-                  let terminal := Outcome.BattleTerminal.mk' cause state.battle.mode .player 1 1
-                  .transitioned { state with battle := { state.battle with phase := .ending terminal } }
-                    [.terminal terminal]
+                  if state.battle.mode == .link then
+                    let terminal := Outcome.BattleTerminal.mk' (.linkRun .enemy)
+                      state.battle.mode .player 0
+                    .transitioned { state with battle := { state.battle with phase := .ending terminal } }
+                      [.terminal terminal]
+                  else .runPending state .enemy playerAction []
               | _, _ =>
                   if !isFight playerAction && !isFight enemyAction then
                     .transitioned { state with battle := { state.battle with turn := state.battle.turn + 1 } } []
@@ -458,6 +466,12 @@ def step (state : State) (playerAction enemyAction : Full.Action) : StepResult :
                           | result => result
                     | result => result
   | _ => .inactive state
+
+/-- Continue after a failed wild run; the opponent executes the action already
+selected for that turn. -/
+def resumeFailedRun (state : State) (runner : Side) (opponentAction : Full.Action) : StepResult :=
+  if isFight opponentAction then attack state runner.other opponentAction
+  else .transitioned state []
 
 /-- Continue a Mirror Move, Metronome, or Mimic request in the same action.
 Status gating and PP decrement are not repeated; another nested signal remains an

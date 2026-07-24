@@ -106,6 +106,8 @@ inductive StepResult where
   | rngStuck (state : State) (events : List Engine.Event)
   | divisionFreeze (state : State) (events : List Engine.Event)
   | nestedMove (state : State) (side : Side) (move : MoveId) (events : List Engine.Event)
+  | runPending (state : State) (side : Side) (opponentAction : Full.Action)
+      (events : List Engine.Event)
   | inactive (state : State)
 
 private def lift (outer : State) : Engine.StepResult → StepResult
@@ -115,6 +117,7 @@ private def lift (outer : State) : Engine.StepResult → StepResult
   | .rngStuck engine events => .rngStuck { outer with engine } events
   | .divisionFreeze engine events => .divisionFreeze { outer with engine } events
   | .nestedMove engine side move events => .nestedMove { outer with engine } side move events
+  | .runPending engine side action events => .runPending { outer with engine } side action events
   | .inactive engine => .inactive { outer with engine }
 
 def step (state : State) (player enemy : Full.Action) : StepResult :=
@@ -122,6 +125,25 @@ def step (state : State) (player enemy : Full.Action) : StepResult :=
 
 def resumeNested (state : State) (who : Side) (move : MoveId) : StepResult :=
   lift state (Engine.resumeNested state.engine who move)
+
+/-- Supply the non-link BattleRandom byte for a pending run attempt. A failed
+attempt consumes the turn and resumes the opponent's already selected action. -/
+def resolveRun (state : State) (runner : Side) (opponentAction : Full.Action)
+    (random : UInt8) (ghost : Bool := false) : StepResult :=
+  let playerSpeed := state.engine.battle.player.active.active.speed
+  let enemySpeed := state.engine.battle.enemy.active.active.speed
+  let result := Escape.attempt state.engine.battle.mode ghost playerSpeed enemySpeed
+    state.engine.runAttempts random
+  match result with
+  | .prohibitedTrainer => .transitioned state []
+  | .escaped attempts =>
+      let engine := { state.engine with runAttempts := attempts }
+      let terminal := Outcome.BattleTerminal.mk' .ordinaryRun engine.battle.mode .player 2
+      let engine := { engine with battle := { engine.battle with phase := .ending terminal } }
+      .transitioned { state with engine } [.terminal terminal]
+  | .failed attempts =>
+      let engine := { state.engine with runAttempts := attempts }
+      lift { state with engine } (Engine.resumeFailedRun engine runner opponentAction)
 
 /-- Supply the hardware-Random bytes for a pending non-link ball throw. Rejected
 Rand1 remains a request for another byte; successful capture appends to party or

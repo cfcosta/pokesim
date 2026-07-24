@@ -53,6 +53,7 @@ inductive StopReason where
   | capturePending
   | rngStuck
   | divisionFreeze
+  | externalRandomRequired
   | inactive
   deriving Repr, DecidableEq, BEq
 
@@ -78,6 +79,7 @@ private def handleResult : Nat → Environment.StepResult →
   | remaining + 1, .nestedMove state side move events =>
       let (state, more, reason) := handleResult remaining (Environment.resumeNested state side move)
       (state, events ++ more, reason)
+  | _, .runPending state _ _ events => (state, events, .externalRandomRequired)
   | _, .inactive state => (state, [], .inactive)
 
 /-- Run at most `decisions` policy turns and `nestedBudget` same-action nested
