@@ -4,7 +4,7 @@
 
 **Baseline:** `pret/pokered` commit `405b6246372d7e5a2cb029cbb65219b13286b8c9`.
 
-This page defines what “end-to-end” means for the battle project and lists every layer that must close before a 1:1/formally verified claim is made. At this review point there is no Lean implementation, built ROM, symbol map, machine runner, refinement theorem, or benchmark; every implementation gate below is open.
+This page defines what “end-to-end” means for the battle project and lists every layer that must close before a 1:1/formally verified claim is made. A standalone processor package now exists under `packages/sm83-lean`, but there is still no built canonical ROM, symbol map, Game Boy adapter, Pokémon machine runner, battle refinement theorem, or benchmark. The processor artifact does not close any battle-level claim by itself.
 
 ## Three claim boundaries
 
@@ -315,7 +315,7 @@ Each fixture asserts terminal provenance, projected random call-site sequence, f
 
 1. Hermetic RGBDS/Lean toolchain; canonical ROM, symbols, maps, hashes.
 2. Generated range/call/predef/text-pointer closure manifest.
-3. Complete separately released `sm83-lean` dependency, then Game Boy memory/banking/device adapter and its processor-composition proof.
+3. Release and immutably pin the local `sm83-lean` candidate, then build the Game Boy memory/banking/device adapter and its processor-composition proof.
 4. Execute one supplied one-member wild fixture from `InitOpponent` to outer return, initially with instrumented presentation cut points.
 5. Independently define the minimal high-level model for that fixture and prove its complete episode, not only one turn.
 6. Replace every instrumentation assumption with machine execution or a proved summary.
@@ -327,13 +327,13 @@ Each fixture asserts terminal provenance, projected random call-site sequence, f
 
 - No canonical ROM, `.sym`, or `.map` exists in the worktree.
 - No address-based call/range manifest exists.
-- No Lean project or proof exists.
-- No standalone `sm83-lean` package, dependency pin, complete decoder/clock core, Game Boy adapter, or composition proof exists yet.
+- No Pokémon-level Lean project or battle proof exists.
+- `packages/sm83-lean` now provides the standalone processor candidate, complete decode catalogue, executable architectural/physical layers, profile relations, and processor conformance gates. It is not yet a separately released immutable dependency, and no Game Boy adapter or composition proof exists.
 - No low/high trace runner or SameBoy/`gb-research` trace adapter exists; the oracle revisions and distrust boundary are selected.
 - No presentation summary has a frame/timing theorem.
 - No mode-specific reset predicate has been encoded.
 - No end-to-end fixture executes.
-- Nix is available, but nixpkgs currently exposes RGBDS 1.0.1 while this source requires 1.0.2; a custom pinned derivation is required. Lean version/toolchain must also be locked.
-- Upstream license status remains unresolved for reuse.
+- Nix is available and the processor package is locked to Lean 4.30.0. Nixpkgs still exposes RGBDS 1.0.1 while this source requires 1.0.2, so a custom pinned derivation is required.
+- The processor package is Apache-2.0 clean-room code. License status for reusing `gameboy-pokered-verify` remains unresolved.
 
 Fixture-qualified DMG-B locked-pin and advanced OAM captures also remain absent; their behavior stays relational and must be proved unreachable or projection-irrelevant. These are implementation/evidence blockers, not silent profile defaults.

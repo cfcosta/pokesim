@@ -196,7 +196,7 @@ A frame-condition theorem must show that skipping one of these routines cannot a
 | RGBDS version | `1.0.2`; custom pinned `v1.0.2+hotfix` derivation required because current nixpkgs reports 1.0.1 |
 | gb-opcodes commit / JSON SHA-256 | `376f61c86fdac2048f7ce5fe838ae756b306017e` / `e7e3cd657d8e87b44570474eb3a6ed735501c9a00520f3d6937881203c823bc5` |
 | Pan Docs / GB CTR / Mooneye commits | `fe246067…` / `d164e646…` / `31510e12…`; exact hashes in microarchitecture contract |
-| `sm83-lean` revision | not yet implemented or pinned |
+| `sm83-lean` revision | local monorepo candidate through `49a9056`; external immutable release pin pending |
 | Red ROM SHA-1 | `ea9bcae617fdf159b045185467ae58b2e4a48b9a` |
 | Blue ROM SHA-1 | `d7037c83e1ae5b39bde3c30787637ba1d4c48ce2` |
 | Debug Blue SHA-1 | `5b1456177671b79b263c614ea0e7cc9ac542e9c4` |
