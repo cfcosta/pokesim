@@ -17,6 +17,7 @@ import Battle.Outcome
 import Battle.State
 import Battle.Step
 import Battle.StepTests
+import Battle.Resolve
 import Battle.Diff
 import Battle.Driver
 import Battle.DriverInvariant
