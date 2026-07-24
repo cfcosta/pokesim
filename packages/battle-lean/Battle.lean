@@ -5,4 +5,5 @@ import Battle.Wram
 import Battle.Checkpoint
 import Battle.Rng
 import Battle.Action
+import Battle.Codec
 import Battle.Driver
