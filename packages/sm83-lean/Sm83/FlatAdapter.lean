@@ -43,9 +43,11 @@ def step (state : FlatCoreState) (pendingInterrupts : Byte := 0) (wake : Bool :=
 
 /-- Reassociate the prefetched IR boundary with a de-overlapped architectural PC. -/
 def project (state : FlatCoreState) : FunctionalState :=
-  let pc := match state.core.mode, state.core.phase, state.core.ir with
-    | .running, .execute, some fetched => fetched.address
-    | _, _, _ => state.core.registers.pc
+  let pc := match state.core.boundaryPC with
+    | some address => address
+    | none => match state.core.mode, state.core.phase, state.core.ir with
+      | .running, .execute, some fetched => fetched.address
+      | _, _, _ => state.core.registers.pc
   { registers := { state.core.registers with pc }
     memory := state.memory
     ime := state.core.ime

@@ -331,6 +331,7 @@ private def interruptCycle (state : CoreState) (input : CoreInput) : CoreOutput 
 
 private def finishSuccessor (state : CoreState) (input : CoreInput) : CoreState :=
   let target := successorAddress state
+  let state := { state with boundaryPC := some target }
   let registers := commitRegisters state
   let imeUpdate := commitIme state
   match state.shape with

@@ -28,9 +28,12 @@ data into this package:
 python3 tools/check-sm83-singlestep.py /path/to/sm83-tests
 ```
 
-This checks all 498,000 context-free legal-instruction cases. HALT and STOP are
-excluded from ordinary completion vectors and covered by profile/sequence
-proofs because their corpus rows do not contain the required system context.
+This checks all 498,000 context-free legal-instruction cases against both the
+de-overlapped functional runner and the fetched-IR physical core. It compares
+registers, flags, memory, IME, and ordered active bus transactions after
+successor-fetch reassociation. HALT and STOP are excluded from ordinary
+completion vectors and covered by profile/sequence proofs because their corpus
+rows do not contain the required system context.
 
 ## License
 

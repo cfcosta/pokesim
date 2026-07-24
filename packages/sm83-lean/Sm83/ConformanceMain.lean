@@ -3,7 +3,7 @@ Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
 
-import Sm83.Functional
+import Sm83.FlatAdapter
 
 namespace Sm83.Conformance
 
@@ -57,10 +57,16 @@ def checkLine (line : String) : Bool :=
     l := byte (values.getD 9 0)
     sp := word (values.getD 1 0)
     pc := word (values.getD 0 0) }
-  let result := Functional.step {
+  let before : FunctionalState := {
     registers
     memory
     ime := values.getD 10 0 != 0 }
+  let result := Functional.step before
+  let core := { Pipeline.bootstrap registers with ime := before.ime }
+  let physical := FlatAdapter.run (result.trace.length + 1)
+    { core, memory }
+    (fun _ _ => 0)
+  let projected := FlatAdapter.project physical
   let final := result.state.registers
   final.a = byte (values.getD finalStart 0) &&
     final.b = byte (values.getD (finalStart + 1) 0) &&
@@ -74,7 +80,12 @@ def checkLine (line : String) : Bool :=
     final.sp = word (values.getD (finalStart + 9) 0) &&
     result.state.ime = (values.getD (finalStart + 10) 0 != 0) &&
     checkRam values finalRamStart finalRamCount result.state.memory &&
-    activeTrace result.trace = expectedTrace values traceStart traceCount
+    activeTrace result.trace = expectedTrace values traceStart traceCount &&
+    projected.registers = result.state.registers &&
+    projected.ime = result.state.ime &&
+    projected.scheduledImeEnable = result.state.scheduledImeEnable &&
+    checkRam values finalRamStart finalRamCount physical.memory &&
+    activeTrace physical.trace.dropLast = expectedTrace values traceStart traceCount
 
 private def loop (lines : List String) (lineNumber failures checked : Nat) : IO (Nat × Nat) := do
   match lines with

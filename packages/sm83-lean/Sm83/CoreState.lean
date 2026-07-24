@@ -41,6 +41,8 @@ structure CoreState where
   remaining : List MicroOp := []
   latches : CoreLatches := {}
   interrupt : Option InterruptEntry := none
+  /-- Architectural PC before the currently prefetched IR begins execution. -/
+  boundaryPC : Option Word := none
   deriving Repr, DecidableEq
 
 namespace CoreState
