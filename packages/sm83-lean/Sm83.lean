@@ -27,6 +27,7 @@ import Sm83.Proofs.Functional
 import Sm83.Proofs.Halt
 import Sm83.Proofs.Idu
 import Sm83.Proofs.Interrupt
+import Sm83.Proofs.Lock
 import Sm83.Proofs.Pipeline
 import Sm83.Proofs.Refinement
 import Sm83.Pipeline
