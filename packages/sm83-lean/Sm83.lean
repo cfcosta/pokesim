@@ -4,6 +4,7 @@ import Sm83.Alu
 import Sm83.Basic
 import Sm83.Byte
 import Sm83.Clock
+import Sm83.CoreState
 import Sm83.Cycle
 import Sm83.Decode
 import Sm83.Encode
@@ -15,4 +16,7 @@ import Sm83.Registers
 import Sm83.Proofs.Arithmetic
 import Sm83.Proofs.Decode
 import Sm83.Proofs.Functional
+import Sm83.Proofs.Pipeline
+import Sm83.Pipeline
 import Sm83.Profile
+import Sm83.Run
