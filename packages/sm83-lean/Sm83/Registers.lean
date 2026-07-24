@@ -108,6 +108,22 @@ namespace Registers
     (registers.setHL value).hl = value := by
   simp [setHL, hl]
 
+@[simp] theorem set8_preserves_pc (registers : Registers) (target : Reg8) (value : Byte) :
+    (registers.set8 target value).pc = registers.pc := by
+  cases target <;> rfl
+
+@[simp] theorem set8_preserves_sp (registers : Registers) (target : Reg8) (value : Byte) :
+    (registers.set8 target value).sp = registers.sp := by
+  cases target <;> rfl
+
+@[simp] theorem set8_preserves_flags (registers : Registers) (target : Reg8) (value : Byte) :
+    (registers.set8 target value).flags = registers.flags := by
+  cases target <;> rfl
+
+@[simp] theorem set8_update_pc_same (registers : Registers) (target : Reg8) (value : Byte) :
+    { registers.set8 target value with pc := registers.pc } = registers.set8 target value := by
+  cases target <;> rfl
+
 @[simp] theorem setBC_preservesAF (registers : Registers) (value : Word) :
     (registers.setBC value).af = registers.af := rfl
 
