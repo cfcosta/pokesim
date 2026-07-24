@@ -16,6 +16,7 @@
 | Safari | `Battle.Full.Safari` | Ball/bait/rock/run protocol, factors, catch mutation, escape threshold |
 | Run | `Battle.Full.Escape` | Wild run arithmetic, attempt counter, trainer prohibition, inclusive comparison |
 | Disobedience | `Battle.Full.Disobedience` | Reactive rejection loops, badge thresholds, alternate moves, status overwrite, PP-Up candidate bug |
+| Progression arithmetic | `Battle.Full.Progression` | Six growth curves, level inversion, divided awards, sequential boosts, stat EXP saturation, DV/stat formulas |
 | Turn composition | `Battle.Full.Engine` | Actions, ordering, status, damage/effects, items, residuals, faint/replacement, terminal witness |
 | RL protocol | `Battle.Full.Environment` | Dynamic proof-carrying parties, observations, legal actions, external-random requests |
 | Self-play | `Battle.Full.SelfPlay` | Independent policy RNGs, nested continuations, finite/open behavior distinction |
@@ -45,8 +46,8 @@ The following remain outside `ModelCoverage`:
 
 - decoded-ROM refinement for battle routines and effect handlers;
 - integration of the modeled traded-Pokémon disobedience state machine into turn composition;
-- complete EXP, participation, level-up, move-learning, evolution, payout, and
-  post-battle epilogue semantics;
+- integration of modeled EXP/stat progression plus participation, exact-level
+  move-learning, evolution, payout, and post-battle epilogue semantics;
 - exact presentation/menu traces and selection-scratch behavior;
 - continuous fetched-IR execution from battle entry through cleanup and return;
 - full hardware assumptions for non-link `Random`, waits, audio, serial, and
