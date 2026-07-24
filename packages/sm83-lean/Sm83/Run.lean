@@ -15,28 +15,28 @@ structure CoreOutput where
 
 namespace Run
 
-private def memAddress (registers : Registers) : Mem16 → Word
+def memAddress (registers : Registers) : Mem16 → Word
   | .atBC => registers.bc
   | .atDE => registers.de
   | .atHLInc | .atHLDec => registers.hl
 
-private def targetValue (registers : Registers) (latch : Byte) : Target8 → Byte
+def targetValue (registers : Registers) (latch : Byte) : Target8 → Byte
   | .reg register => registers.get8 register
   | .atHL => latch
 
-private def setTarget (registers : Registers) (target : Target8) (value : Byte) : Registers :=
+def setTarget (registers : Registers) (target : Target8) (value : Byte) : Registers :=
   match target with
   | .reg register => registers.set8 register value
   | .atHL => registers
 
-private def readAddress (state : CoreState) : Word :=
+def readAddress (state : CoreState) : Word :=
   match state.shape with
   | some (.ldMem16A memory) | some (.ldAFromMem16 memory) => memAddress state.registers memory
   | some .ldhImmA | some .ldhAImm => Word.ofNat (0xFF00 + state.latches.low.toNat)
   | some .ldhCA | some .ldhAC => Word.ofNat (0xFF00 + state.registers.c.toNat)
   | _ => state.wz
 
-private def successorAddress (state : CoreState) : Word :=
+def successorAddress (state : CoreState) : Word :=
   match state.shape with
   | some .jr => state.registers.pc.addSignedByte state.latches.low
   | some (.jrCond _) =>
@@ -51,7 +51,7 @@ private def successorAddress (state : CoreState) : Word :=
   | some (.rst vector) => Word.ofNat (8 * vector.val)
   | _ => state.registers.pc
 
-private def writeValue (state : CoreState) (operation : MicroOp) : Byte :=
+def writeValue (state : CoreState) (operation : MicroOp) : Byte :=
   let registers := state.registers
   match operation, state.shape with
   | .writeHL, some (.ld8 _ source) => targetValue registers state.latches.data source
@@ -72,7 +72,7 @@ private def writeValue (state : CoreState) (operation : MicroOp) : Byte :=
   | .stackWriteLow, _ => registers.pc.lowByte
   | _, _ => state.latches.data
 
-private def internalAddress (state : CoreState) : Word :=
+def internalAddress (state : CoreState) : Word :=
   match state.shape with
   | some (.inc16 register) | some (.dec16 register) => state.registers.get16 register
   | some (.addHL _) => state.registers.hl
@@ -86,7 +86,7 @@ private def internalAddress (state : CoreState) : Word :=
       else state.wz
   | _ => state.registers.pc
 
-private def opAddress (state : CoreState) (operation : MicroOp) : Word :=
+def opAddress (state : CoreState) (operation : MicroOp) : Word :=
   match operation with
   | .opcodeFetch | .cbFetch | .immediate8 | .immediateLow | .immediateHigh => state.registers.pc
   | .readHL | .writeHL => state.registers.hl
@@ -97,27 +97,27 @@ private def opAddress (state : CoreState) (operation : MicroOp) : Word :=
   | .successorFetch => successorAddress state
   | .internal => internalAddress state
 
-private def opControl : MicroOp → BusControl
+def opControl : MicroOp → BusControl
   | .opcodeFetch | .cbFetch | .immediate8 | .immediateLow | .immediateHigh
   | .readHL | .readAddress | .stackReadLow | .stackReadHigh | .successorFetch => .read
   | .writeHL | .writeAddress | .writeAddressNext | .stackWriteHigh | .stackWriteLow => .write
   | .internal | .stackInitialDecrement => .idle
 
-private def opReadKind : MicroOp → ReadKind
+def opReadKind : MicroOp → ReadKind
   | .opcodeFetch | .successorFetch => .opcode
   | .cbFetch => .cbOpcode
   | .immediate8 | .immediateLow | .immediateHigh => .immediate
   | .stackReadLow | .stackReadHigh => .stack
   | _ => .data
 
-private def reg16Idu (register : Reg16) : IduSource × IduDestination :=
+def reg16Idu (register : Reg16) : IduSource × IduDestination :=
   match register with
   | .bc => (.bc, .bc)
   | .de => (.de, .de)
   | .hl => (.hl, .hl)
   | .sp => (.sp, .sp)
 
-private def opIdu (state : CoreState) (operation : MicroOp) : IduIntent :=
+def opIdu (state : CoreState) (operation : MicroOp) : IduIntent :=
   let address := opAddress state operation
   match operation, state.shape with
   | .successorFetch, some .halt =>
@@ -163,26 +163,35 @@ private def opIdu (state : CoreState) (operation : MicroOp) : IduIntent :=
       { source := .hl, destination := .sp, oldAddress := address }
   | _, _ => { oldAddress := address }
 
-private def intent (state : CoreState) (operation : MicroOp) : CycleIntent :=
+def opFetch (state : CoreState) (operation : MicroOp) : FetchProvenance :=
+  match operation with
+  | .successorFetch => if state.shape == some .halt then .haltDummy else .generic
+  | .cbFetch => .cbSubopcode
+  | _ => .none
+
+def opCommit (operation : MicroOp) : CommitSet :=
+  if operation = .successorFetch then
+    { registers := true, flags := true, pc := true, sp := true, ir := true, ime := true }
+  else {}
+
+def opPoll (state : CoreState) (operation : MicroOp) : InterruptPoll :=
+  match operation, state.shape with
+  | .successorFetch, some .di => .suppressForDI
+  | .successorFetch, _ => .genericFetch
+  | _, _ => .none
+
+def intent (state : CoreState) (operation : MicroOp) : CycleIntent :=
   let control := opControl operation
   { address := opAddress state operation
     control
     data := if control = .write then .driven (writeValue state operation) else .released
     readKind := opReadKind operation
-    fetch := match operation with
-      | .successorFetch => if state.shape == some .halt then .haltDummy else .generic
-      | .cbFetch => .cbSubopcode
-      | _ => .none
+    fetch := opFetch state operation
     idu := opIdu state operation
-    commit := if operation = .successorFetch then
-      { registers := true, flags := true, pc := true, sp := true, ir := true, ime := true }
-      else {}
-    poll := match operation, state.shape with
-      | .successorFetch, some .di => .suppressForDI
-      | .successorFetch, _ => .genericFetch
-      | _, _ => .none }
+    commit := opCommit operation
+    poll := opPoll state operation }
 
-private def updatePointer (state : CoreState) : CoreState :=
+def updatePointer (state : CoreState) : CoreState :=
   match state.shape with
   | some (.ldMem16A .atHLInc) | some (.ldAFromMem16 .atHLInc) =>
       { state with registers := state.registers.setHL (Word.ofNat (state.registers.hl.toNat + 1)) }
@@ -190,7 +199,7 @@ private def updatePointer (state : CoreState) : CoreState :=
       { state with registers := state.registers.setHL (Word.ofNat (state.registers.hl.toNat + 65535)) }
   | _ => state
 
-private def commitRegisters (state : CoreState) : Registers :=
+def commitRegisters (state : CoreState) : Registers :=
   let registers := state.registers
   let low := state.latches.low
   let operand := state.latches.data
@@ -250,14 +259,14 @@ private def commitRegisters (state : CoreState) : Registers :=
   | some (.res index target) => setTarget registers target (Alu.resetBit index (targetValue registers operand target))
   | some (.set index target) => setTarget registers target (Alu.setBit index (targetValue registers operand target))
 
-private def commitIme (state : CoreState) : Bool × Bool :=
+def commitIme (state : CoreState) : Bool × Bool :=
   match state.shape with
   | some .di => (false, false)
   | some .ei => (state.ime || state.scheduledImeEnable, true)
   | some .reti => (true, false)
   | _ => if state.scheduledImeEnable then (true, false) else (state.ime, false)
 
-private def processNonFetch (state : CoreState) (operation : MicroOp) (input : CoreInput) : CoreState :=
+def processNonFetch (state : CoreState) (operation : MicroOp) (input : CoreInput) : CoreState :=
   let state := { state with remaining := state.remaining.drop 1 }
   match operation with
   | .cbFetch =>
@@ -295,7 +304,7 @@ private def processNonFetch (state : CoreState) (operation : MicroOp) (input : C
         latches := { state.latches with high := input.read.fold } }
   | _ => state
 
-private def startInterrupt (state : CoreState) (returnPC : Word) : CoreState :=
+def startInterrupt (state : CoreState) (returnPC : Word) : CoreState :=
   { state with
     registers := { state.registers with pc := returnPC }
     ime := false
@@ -305,7 +314,7 @@ private def startInterrupt (state : CoreState) (returnPC : Word) : CoreState :=
     remaining := []
     interrupt := some { returnPC } }
 
-private def interruptCycle (state : CoreState) (input : CoreInput) : CoreOutput :=
+def interruptCycle (state : CoreState) (input : CoreInput) : CoreOutput :=
   match state.interrupt with
   | none =>
       let emptyIntent : CycleIntent := { address := state.registers.pc }
@@ -386,7 +395,7 @@ private def interruptCycle (state : CoreState) (input : CoreInput) : CoreOutput 
           let next := Pipeline.install state entry.vector input.read.fold
           { state := next, intent := cycleIntent }
 
-private def finishSuccessor (state : CoreState) (input : CoreInput) : CoreState :=
+def finishSuccessor (state : CoreState) (input : CoreInput) : CoreState :=
   let target := successorAddress state
   let state := { state with boundaryPC := some target }
   let registers := commitRegisters state

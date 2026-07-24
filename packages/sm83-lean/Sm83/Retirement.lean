@@ -3,6 +3,7 @@ Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
 
+import Sm83.Functional
 import Sm83.Run
 
 namespace Sm83
@@ -22,6 +23,12 @@ structure Snapshot where
     scheduledImeEnable := state.scheduledImeEnable
     haltBug := state.haltBug }
 
+@[inline] def Snapshot.ofFunctional (state : FunctionalState) : Snapshot :=
+  { registers := state.registers
+    ime := state.ime
+    scheduledImeEnable := state.scheduledImeEnable
+    haltBug := state.haltBug }
+
 /-- Project a fetched-IR physical post-state back to its de-overlapped
 architectural PC. -/
 def Snapshot.atBoundary (state : CoreState) : Snapshot :=
@@ -30,6 +37,12 @@ def Snapshot.atBoundary (state : CoreState) : Snapshot :=
     ime := state.ime
     scheduledImeEnable := state.scheduledImeEnable
     haltBug := state.haltBug }
+
+/-- Installing a prefetched successor cannot change the architectural boundary
+snapshot, even when that successor is an invalid opcode. -/
+@[simp] theorem Snapshot.atBoundary_install (state : CoreState) (address : Word) (opcode : Byte) :
+    Snapshot.atBoundary (Pipeline.install state address opcode) = Snapshot.atBoundary state := by
+  cases decoded : Decode.base opcode <;> simp [Snapshot.atBoundary, Pipeline.install, decoded]
 
 /-- One physical M-cycle paired with the environment response sampled by it. -/
 structure ObservedCycle where

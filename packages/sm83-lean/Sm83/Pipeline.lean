@@ -9,7 +9,7 @@ import Sm83.Alu
 namespace Sm83
 namespace Pipeline
 
-private def taken (shape : InstructionShape) (flags : Flags) : Bool :=
+def taken (shape : InstructionShape) (flags : Flags) : Bool :=
   match shape with
   | .jrCond condition | .retCond condition | .jpCond condition | .callCond condition =>
       Alu.conditionHolds condition flags

@@ -30,7 +30,7 @@ inductive MicroOp where
 
 namespace Cycle
 
-private def targetIsMemory : Target8 → Bool
+def targetIsMemory : Target8 → Bool
   | .atHL => true
   | .reg _ => false
 
@@ -99,7 +99,7 @@ def physicalSchedule (shape : InstructionShape) (taken : Bool := true) : List Mi
 @[inline] def tcycles (shape : InstructionShape) (taken : Bool := true) : TCycles :=
   (mcycles shape taken).toT
 
-private def baseLengthValid (opcode : Byte) (taken : Bool) : Bool :=
+def baseLengthValid (opcode : Byte) (taken : Bool) : Bool :=
   match Decode.base opcode with
   | .legal .halt | .legal .stop => true
   | .legal shape =>

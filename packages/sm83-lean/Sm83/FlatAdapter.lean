@@ -15,7 +15,7 @@ structure FlatCoreState where
 
 namespace FlatAdapter
 
-private def event (intent : CycleIntent) (readValue : Byte) : BusEvent :=
+def event (intent : CycleIntent) (readValue : Byte) : BusEvent :=
   match intent.control with
   | .read => .read intent.readKind intent.address readValue
   | .write => match intent.data with
