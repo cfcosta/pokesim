@@ -8,3 +8,4 @@ import Battle.Action
 import Battle.Codec
 import Battle.Diff
 import Battle.Driver
+import Battle.Fixtures

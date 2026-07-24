@@ -1,6 +1,7 @@
 name = "battle-lean"
 version = "0.1.0"
-defaultTargets = ["Battle"]
+defaultTargets = ["Battle", "battleFixtures"]
+testDriver = "battleFixtures"
 
 # The verified SM83 core is the L0 oracle the differential harness drives.
 [[require]]
@@ -9,3 +10,8 @@ path = "../sm83-lean"
 
 [[lean_lib]]
 name = "Battle"
+
+# The Stage-0 end-to-end fixture matrix, runnable as `lake test`.
+[[lean_exe]]
+name = "battleFixtures"
+root = "Battle.FixturesMain"
