@@ -6,6 +6,7 @@ import Battle.Checkpoint
 import Battle.Rng
 import Battle.Action
 import Battle.Codec
+import Battle.TypeChart
 import Battle.Diff
 import Battle.Driver
 import Battle.DriverInvariant
