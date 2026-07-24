@@ -38,7 +38,7 @@ def encode_case(case: dict) -> str:
     for address, value, kind in case["cycles"]:
         if kind in ("r-m", "-wm"):
             active += [0 if kind == "r-m" else 1, address, value]
-    values += [len(active) // 3, *active]
+    values += [len(case["cycles"]), len(active) // 3, *active]
     return " ".join(map(str, values)) + "\n"
 
 

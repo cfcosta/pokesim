@@ -41,7 +41,9 @@ def checkLine (line : String) : Bool :=
   let finalStart := initialRamStart + 2 * initialRamCount
   let finalRamCount := values.getD (finalStart + 11) 0
   let finalRamStart := finalStart + 12
-  let traceCountAt := finalRamStart + 2 * finalRamCount
+  let totalCyclesAt := finalRamStart + 2 * finalRamCount
+  let totalCycles := values.getD totalCyclesAt 0
+  let traceCountAt := totalCyclesAt + 1
   let traceCount := values.getD traceCountAt 0
   let traceStart := traceCountAt + 1
   if values.size != traceStart + 3 * traceCount then false else
@@ -80,11 +82,13 @@ def checkLine (line : String) : Bool :=
     final.sp = word (values.getD (finalStart + 9) 0) &&
     result.state.ime = (values.getD (finalStart + 10) 0 != 0) &&
     checkRam values finalRamStart finalRamCount result.state.memory &&
+    result.trace.length = totalCycles &&
     activeTrace result.trace = expectedTrace values traceStart traceCount &&
     projected.registers = result.state.registers &&
     projected.ime = result.state.ime &&
     projected.scheduledImeEnable = result.state.scheduledImeEnable &&
     checkRam values finalRamStart finalRamCount physical.memory &&
+    physical.trace.length = totalCycles + 1 &&
     activeTrace physical.trace.dropLast = expectedTrace values traceStart traceCount
 
 private def loop (lines : List String) (lineNumber failures checked : Nat) : IO (Nat × Nat) := do
