@@ -8,15 +8,15 @@ This page maps assembly state into the proposed typed Lean state. It describes t
 
 | Constant | Value | Source |
 |---|---:|---|
-| Maximum level | 100 | `constants/battle_constants.asm` |
-| Moves per Pokémon | 4 | `constants/battle_constants.asm` |
-| Party capacity | 6 | `constants/pokemon_data_constants.asm` |
-| Base stat-stage value | 7 | `constants/battle_constants.asm` |
-| Maximum stat-stage value | 13 | `constants/battle_constants.asm` |
-| Maximum calculated stat | 999 | `constants/battle_constants.asm` |
+| Maximum level | 100 | `pokered/constants/battle_constants.asm` |
+| Moves per Pokémon | 4 | `pokered/constants/battle_constants.asm` |
+| Party capacity | 6 | `pokered/constants/pokemon_data_constants.asm` |
+| Base stat-stage value | 7 | `pokered/constants/battle_constants.asm` |
+| Maximum stat-stage value | 13 | `pokered/constants/battle_constants.asm` |
+| Maximum calculated stat | 999 | `pokered/constants/battle_constants.asm` |
 | Party Pokémon bytes | 44 (`$2C`) | `PARTYMON_STRUCT_LENGTH` |
 | Box Pokémon bytes | 33 (`$21`) | `BOXMON_STRUCT_LENGTH` |
-| Active battle Pokémon bytes | 29 | `battle_struct` in `macros/ram.asm` |
+| Active battle Pokémon bytes | 29 | `battle_struct` in `pokered/macros/ram.asm` |
 | Move-record bytes | 6 | `MOVE_LENGTH` |
 
 Multi-byte Pokémon stats, HP, experience fields, and battle damage are manipulated in the ordering used by their assembly routines. The active and party two-byte numeric paths store high byte followed by low byte; DVs are two independently nibble-packed bytes rather than one big-endian integer. The CPU stack and instruction immediates follow SM83 little-endian rules; these are distinct concerns.

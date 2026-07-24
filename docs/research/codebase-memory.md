@@ -9,7 +9,7 @@ This file preserves durable findings from ten review passes. The focused audit r
 ### `pret/pokered`
 
 - Remote: `https://github.com/pret/pokered/`
-- Local root: this repository
+- Local root: `pokered/`
 - Branch: `master`
 - Reviewed commit: `405b6246372d7e5a2cb029cbb65219b13286b8c9`
 - Purpose: disassembly that builds byte-identical Pokémon Red/Blue ROMs
@@ -79,21 +79,21 @@ The available document-search index did not include this new checkout. Findings 
 
 Top-level build aggregators:
 
-- `includes.asm` loads constants and macros globally.
-- `home.asm` assembles fixed-bank routines, including `home/random.asm`, `home/math.asm`, `home/move_mon.asm`, and `home/pokemon.asm`.
-- `main.asm` distributes engine/data code across switchable banks.
-- `ram.asm`/`ram/wram.asm`/`ram/hram.asm` define concrete state.
-- `layout.link` controls placement.
-- `Makefile` emits `.gbc`, `.sym`, and `.map` files and checks canonical hashes.
+- `pokered/includes.asm` loads constants and macros globally.
+- `pokered/home.asm` assembles fixed-bank routines, including `pokered/home/random.asm`, `pokered/home/math.asm`, `pokered/home/move_mon.asm`, and `pokered/home/pokemon.asm`.
+- `pokered/main.asm` distributes engine/data code across switchable banks.
+- `pokered/ram.asm`/`pokered/ram/wram.asm`/`pokered/ram/hram.asm` define concrete state.
+- `pokered/layout.link` controls placement.
+- `pokered/Makefile` emits `.gbc`, `.sym`, and `.map` files and checks canonical hashes.
 
-`main.asm` contains sections named `Battle Engine 1` through `Battle Engine 11` plus `Battle Core`. Battle code is intentionally spread among banks; file adjacency does not imply one address range.
+`pokered/main.asm` contains sections named `Battle Engine 1` through `Battle Engine 11` plus `Battle Core`. Battle code is intentionally spread among banks; file adjacency does not imply one address range.
 
 Initial inventory:
 
-- 49 `.asm` files under `engine/battle` and `data/battle`;
-- `engine/battle/core.asm`: 6,913 lines;
-- `engine/battle/effects.asm`: 1,501 lines;
-- `engine/battle/trainer_ai.asm`: 742 lines;
+- 49 `.asm` files under `pokered/engine/battle` and `pokered/data/battle`;
+- `pokered/engine/battle/core.asm`: 6,913 lines;
+- `pokered/engine/battle/effects.asm`: 1,501 lines;
+- `pokered/engine/battle/trainer_ai.asm`: 742 lines;
 - 165 move records;
 - 151 base-stat files;
 - 744 lines of trainer party data;
@@ -105,39 +105,39 @@ These hashes are investigation aids. M0 should generate a complete manifest.
 
 | File | SHA-256 |
 |---|---|
-| `engine/battle/core.asm` | `928a66d1ac444fc913c7c658d9f7739eb6351e797b3276da64a5de9682a57a5f` |
-| `engine/battle/effects.asm` | `6e7650408de33069aae9521473f62a1078697f7b539a3978daa49a0e6df825d3` |
-| `engine/battle/common_text.asm` | `3b77739b798d4203b98ea26a565657a44d28363069892a268fb635aad148bde3` |
-| `engine/battle/experience.asm` | `a78649d30822cf9735a1669f29c82115099d450810796a6716b30a9a699259af` |
-| `data/battle/stat_modifiers.asm` | `04a58805090f240c9b107b49706dceeb9dc33dcf1e9c56e27d6dc88d6991c286` |
-| `engine/battle/trainer_ai.asm` | `12f090abd33e3f227cdc4f24d165ad35b6abaf694ea3f5f1a526f9d7505e140d` |
-| `data/trainers/move_choices.asm` | `373e15f037f161dd4d8cd04f6cce2df539caacf5bb01092339ec2cf032ae863f` |
-| `data/trainers/ai_pointers.asm` | `92544c1465c87ae8e59adc40171c583815c795d0d513dda8d66b6ace9a3b8fa3` |
-| `engine/battle/init_battle_variables.asm` | `c6c762c6bb712ce5bc0365830060e9d33694d1e394060a6ea80a51388bd8539f` |
-| `engine/battle/end_of_battle.asm` | `ee5a197237db928ddc983366beebbd54f7e1d986f10f9fc553fbed371cba11cb` |
-| `engine/battle/move_effects/drain_hp.asm` | `b4a3fa194f0260b2f4ffb271fd0ad455b5b122eae23e69841691b52e2d5b5498` |
-| `engine/battle/move_effects/heal.asm` | `dc3f6c255c657d43904e427c6ef9e8c10176641d451a26896e9cf4d66f97e87b` |
-| `engine/pokemon/add_mon.asm` | `4a0c02fbbfdd6dc1e9357069be2b4b94342777de94efb2a67bd4e25ca62bddfe` |
-| `engine/pokemon/learn_move.asm` | `f4e7973a87e6c0e74a2ce819eb6096121aca5ce7de7d4c040e8a5049cd31d8b6` |
-| `data/pokemon/evos_moves.asm` | `1a4c475c47134440a4a4e54265314638d8c6953da558d7d6a7b7f7bc206c2f30` |
-| `engine/menus/naming_screen.asm` | `e235a1c56a5d7c73f110c79ebd8cc794b04f41dd6389bb2e24aa297443a29bca` |
-| `macros/data.asm` | `2b5b9e8c9f1e7b5ca7ceaf9c8e63fd5a53edc02c76695fb8ae1bf4fa55ca0582` |
-| `engine/items/item_effects.asm` | `76b570b5216bbbcf6d9528c4704d931744a3740cce88afdc4f4f8f700449dda1` |
-| `data/moves/moves.asm` | `a2cf3e1ec6bf4b5caaeeec974967691c9eb47923d1e7432fb0267ba7d3a5931f` |
-| `data/types/type_matchups.asm` | `f7f2286029d4fe64c80ed6cc5f5c75ec1f1b8903a9eabd171deab49e23228d39` |
-| `home/overworld.asm` | `2d84db7376753b9d98b1d1546c29bc050b3fe4f2b580b8aa7f6699ffef415b69` |
-| `home/trainers.asm` | `5bf4068dd99a370f0aff48e7030e2b1ab48ef6538746572c8e868e8c64d11b27` |
-| `home/trainers2.asm` | `034131a486fd7750052dbfae7061325ce196ec0fe992cd55089a71481516746a` |
-| `engine/battle/save_trainer_name.asm` | `fe583504e507f5ac3d2310085ae622cc688370412ad8197a5454e704f1873b2b` |
-| `engine/overworld/auto_movement.asm` | `51132df663914861ac176733a764788e1db1d96f27d830952279338cc7633379` |
-| `engine/link/cable_club.asm` | `2d2148185a0548d9e3b2f994afc55d47a47739cdb5e7e49427ae625beac4e5af` |
-| `engine/events/heal_party.asm` | `f7641cc9708f9da5b8ae4e678a63f61ebb9b51bcf7abaea4a594c4cf2276cd35` |
-| `data/predef_pointers.asm` | `73595c2ee1de5dfbe8be838a8680b3a42762cd3f38906b67c8449606cc059dee` |
-| `home/predef.asm` | `f18bca5a3c64e16d5ffb60582d8b52f24cfacd2f4426418265a0a3ad8280ad2d` |
-| `audio/play_battle_music.asm` | `eb17f5d24409f8b9c719b66caf6d763fb2d30e986446036910d0c107c3765eb9` |
-| `main.asm` | `4f9a67697d0fb175610aefccffee3866ccd9728aff70647070c6f219c2b2bef9` |
-| `scripts/ViridianCity.asm` | `7cf10cb0a38cdb340f09f5637710cb405753a250a7bbe044ef6b66f9f8865142` |
-| `ram/wram.asm` | `00683cd430a9ef30794d2aeaee51f3a5440e4bb14dca13e9f9cb5fa88f130e34` |
+| `pokered/engine/battle/core.asm` | `928a66d1ac444fc913c7c658d9f7739eb6351e797b3276da64a5de9682a57a5f` |
+| `pokered/engine/battle/effects.asm` | `6e7650408de33069aae9521473f62a1078697f7b539a3978daa49a0e6df825d3` |
+| `pokered/engine/battle/common_text.asm` | `3b77739b798d4203b98ea26a565657a44d28363069892a268fb635aad148bde3` |
+| `pokered/engine/battle/experience.asm` | `a78649d30822cf9735a1669f29c82115099d450810796a6716b30a9a699259af` |
+| `pokered/data/battle/stat_modifiers.asm` | `04a58805090f240c9b107b49706dceeb9dc33dcf1e9c56e27d6dc88d6991c286` |
+| `pokered/engine/battle/trainer_ai.asm` | `12f090abd33e3f227cdc4f24d165ad35b6abaf694ea3f5f1a526f9d7505e140d` |
+| `pokered/data/trainers/move_choices.asm` | `373e15f037f161dd4d8cd04f6cce2df539caacf5bb01092339ec2cf032ae863f` |
+| `pokered/data/trainers/ai_pointers.asm` | `92544c1465c87ae8e59adc40171c583815c795d0d513dda8d66b6ace9a3b8fa3` |
+| `pokered/engine/battle/init_battle_variables.asm` | `c6c762c6bb712ce5bc0365830060e9d33694d1e394060a6ea80a51388bd8539f` |
+| `pokered/engine/battle/end_of_battle.asm` | `ee5a197237db928ddc983366beebbd54f7e1d986f10f9fc553fbed371cba11cb` |
+| `pokered/engine/battle/move_effects/drain_hp.asm` | `b4a3fa194f0260b2f4ffb271fd0ad455b5b122eae23e69841691b52e2d5b5498` |
+| `pokered/engine/battle/move_effects/heal.asm` | `dc3f6c255c657d43904e427c6ef9e8c10176641d451a26896e9cf4d66f97e87b` |
+| `pokered/engine/pokemon/add_mon.asm` | `4a0c02fbbfdd6dc1e9357069be2b4b94342777de94efb2a67bd4e25ca62bddfe` |
+| `pokered/engine/pokemon/learn_move.asm` | `f4e7973a87e6c0e74a2ce819eb6096121aca5ce7de7d4c040e8a5049cd31d8b6` |
+| `pokered/data/pokemon/evos_moves.asm` | `1a4c475c47134440a4a4e54265314638d8c6953da558d7d6a7b7f7bc206c2f30` |
+| `pokered/engine/menus/naming_screen.asm` | `e235a1c56a5d7c73f110c79ebd8cc794b04f41dd6389bb2e24aa297443a29bca` |
+| `pokered/macros/data.asm` | `2b5b9e8c9f1e7b5ca7ceaf9c8e63fd5a53edc02c76695fb8ae1bf4fa55ca0582` |
+| `pokered/engine/items/item_effects.asm` | `76b570b5216bbbcf6d9528c4704d931744a3740cce88afdc4f4f8f700449dda1` |
+| `pokered/data/moves/moves.asm` | `a2cf3e1ec6bf4b5caaeeec974967691c9eb47923d1e7432fb0267ba7d3a5931f` |
+| `pokered/data/types/type_matchups.asm` | `f7f2286029d4fe64c80ed6cc5f5c75ec1f1b8903a9eabd171deab49e23228d39` |
+| `pokered/home/overworld.asm` | `2d84db7376753b9d98b1d1546c29bc050b3fe4f2b580b8aa7f6699ffef415b69` |
+| `pokered/home/trainers.asm` | `5bf4068dd99a370f0aff48e7030e2b1ab48ef6538746572c8e868e8c64d11b27` |
+| `pokered/home/trainers2.asm` | `034131a486fd7750052dbfae7061325ce196ec0fe992cd55089a71481516746a` |
+| `pokered/engine/battle/save_trainer_name.asm` | `fe583504e507f5ac3d2310085ae622cc688370412ad8197a5454e704f1873b2b` |
+| `pokered/engine/overworld/auto_movement.asm` | `51132df663914861ac176733a764788e1db1d96f27d830952279338cc7633379` |
+| `pokered/engine/link/cable_club.asm` | `2d2148185a0548d9e3b2f994afc55d47a47739cdb5e7e49427ae625beac4e5af` |
+| `pokered/engine/events/heal_party.asm` | `f7641cc9708f9da5b8ae4e678a63f61ebb9b51bcf7abaea4a594c4cf2276cd35` |
+| `pokered/data/predef_pointers.asm` | `73595c2ee1de5dfbe8be838a8680b3a42762cd3f38906b67c8449606cc059dee` |
+| `pokered/home/predef.asm` | `f18bca5a3c64e16d5ffb60582d8b52f24cfacd2f4426418265a0a3ad8280ad2d` |
+| `pokered/audio/play_battle_music.asm` | `eb17f5d24409f8b9c719b66caf6d763fb2d30e986446036910d0c107c3765eb9` |
+| `pokered/main.asm` | `4f9a67697d0fb175610aefccffee3866ccd9728aff70647070c6f219c2b2bef9` |
+| `pokered/scripts/ViridianCity.asm` | `7cf10cb0a38cdb340f09f5637710cb405753a250a7bbe044ef6b66f9f8865142` |
+| `pokered/ram/wram.asm` | `00683cd430a9ef30794d2aeaee51f3a5440e4bb14dca13e9f9cb5fa88f130e34` |
 
 ## Constants and data facts
 

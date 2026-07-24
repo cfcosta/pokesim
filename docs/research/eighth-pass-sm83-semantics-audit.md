@@ -127,11 +127,11 @@ Pan Docs at pinned commit confirms:
 
 Mooneye's hardware-verified `interrupts/ie_push` adds a subtle requirement beyond an atomic textbook transition: if the upper PC push writes `$FFFF` and changes IE, dispatch can cancel to `$0000` or retarget to another enabled interrupt; a lower-byte push write is too late. The processor and Game Boy adapter must exchange the current pending mask during dispatch rather than freeze it before both writes.
 
-`home/vblank.asm` makes interrupt behavior directly relevant. `DelayFrame` loops on HALT until VBlank clears `hVBlankOccurred`; VBlank pushes registers, performs ROM/MMIO work and RNG, then returns through RETI. A summarized sleep operation would erase precisely the timing/RNG behavior the project intends to prove.
+`pokered/home/vblank.asm` makes interrupt behavior directly relevant. `DelayFrame` loops on HALT until VBlank clears `hVBlankOccurred`; VBlank pushes registers, performs ROM/MMIO work and RNG, then returns through RETI. A summarized sleep operation would erase precisely the timing/RNG behavior the project intends to prove.
 
 ## DAA closure
 
-`engine/math/bcd.asm` uses `adc`/`sbc` followed by `daa`. Battle payout and Pay Day call `AddBCDPredef`. Therefore DAA needs exact addition/subtraction semantics and exhaustive validation before the minimal complete episode can claim trainer or Pay Day coverage.
+`pokered/engine/math/bcd.asm` uses `adc`/`sbc` followed by `daa`. Battle payout and Pay Day call `AddBCDPredef`. Therefore DAA needs exact addition/subtraction semantics and exhaustive validation before the minimal complete episode can claim trainer or Pay Day coverage.
 
 The first one-hit wild M3 fixture can avoid money mutation, but the processor dependency itself should not publish as complete with DAA omitted.
 

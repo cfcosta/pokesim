@@ -24,7 +24,7 @@ This pass rechecked the specification and documentation against the assembly rat
 | Run behavior had boundary omissions | `TryRunningFromBattle` succeeds at equal Speed, uses `(enemySpeed / 4) mod 256`, adds 30 only after the first attempt, and trainer prohibition does not consume the turn | Corrected run coverage and Fight-driven attempt reset. |
 | The low-level runner needs more than CPU+DIV | battle/presentation code polls `rLY`, HALTs for VBlank, waits on audio state, writes VRAM/OAM, and waits on serial state | Expanded machine/MMIO obligations or required proved summaries for those paths. |
 
-The pass also corrected the recorded SHA-256 for `data/types/type_matchups.asm` to `f7f2286029d4fe64c80ed6cc5f5c75ec1f1b8903a9eabd171deab49e23228d39`; the first-pass value had omitted characters.
+The pass also corrected the recorded SHA-256 for `pokered/data/types/type_matchups.asm` to `f7f2286029d4fe64c80ed6cc5f5c75ec1f1b8903a9eabd171deab49e23228d39`; the first-pass value had omitted characters.
 
 ## Confirmed first-pass conclusions
 
@@ -53,12 +53,12 @@ The second pass confirmed, including scripted cardinality checks:
 
 The following ASM tables were reread as one control-flow unit:
 
-- `data/battle/residual_effects_1.asm`;
-- `data/battle/special_effects.asm` and its interior `SpecialEffectsCont` label;
-- `data/battle/set_damage_effects.asm`;
-- `data/battle/residual_effects_2.asm`;
-- `data/battle/always_happen_effects.asm`;
-- `data/moves/effects_pointers.asm`.
+- `pokered/data/battle/residual_effects_1.asm`;
+- `pokered/data/battle/special_effects.asm` and its interior `SpecialEffectsCont` label;
+- `pokered/data/battle/set_damage_effects.asm`;
+- `pokered/data/battle/residual_effects_2.asm`;
+- `pokered/data/battle/always_happen_effects.asm`;
+- `pokered/data/moves/effects_pointers.asm`.
 
 The resulting exact index is in [Effect dispatch](../reference/effect-dispatch.md). Notable consequences include:
 

@@ -6,24 +6,24 @@ This page explains how the pinned `pret/pokered` battle implementation is assemb
 
 ## The engine is distributed
 
-The battle coordinator is `engine/battle/core.asm`, but battle semantics cross many files and ROM banks. `main.asm` places code into `Battle Engine 1` through `Battle Engine 11`, `Battle Core`, and several adjacent sections. Important dependencies include:
+The battle coordinator is `pokered/engine/battle/core.asm`, but battle semantics cross many files and ROM banks. `pokered/main.asm` places code into `Battle Engine 1` through `Battle Engine 11`, `Battle Core`, and several adjacent sections. Important dependencies include:
 
-- `engine/battle/effects.asm` and `engine/battle/move_effects/*.asm` for move effects;
-- `engine/battle/trainer_ai.asm` for move scoring and trainer actions;
-- `engine/items/item_effects.asm` for battle items and capture;
-- `home/move_mon.asm` for stat calculation;
-- `engine/math/multiply_divide.asm` and `home/math.asm` for byte-accurate arithmetic;
-- `home/random.asm`, `engine/math/random.asm`, and `home/vblank.asm` for ordinary RNG;
-- `engine/pokemon/add_mon.asm`, `engine/pokemon/evos_moves.asm`, and `engine/pokemon/experience.asm` for party construction, moves, and progression;
-- ROM tables under `data/moves`, `data/battle`, `data/types`, `data/trainers`, and `data/pokemon`.
+- `pokered/engine/battle/effects.asm` and `pokered/engine/battle/move_effects/*.asm` for move effects;
+- `pokered/engine/battle/trainer_ai.asm` for move scoring and trainer actions;
+- `pokered/engine/items/item_effects.asm` for battle items and capture;
+- `pokered/home/move_mon.asm` for stat calculation;
+- `pokered/engine/math/multiply_divide.asm` and `pokered/home/math.asm` for byte-accurate arithmetic;
+- `pokered/home/random.asm`, `pokered/engine/math/random.asm`, and `pokered/home/vblank.asm` for ordinary RNG;
+- `pokered/engine/pokemon/add_mon.asm`, `pokered/engine/pokemon/evos_moves.asm`, and `pokered/engine/pokemon/experience.asm` for party construction, moves, and progression;
+- ROM tables under `pokered/data/moves`, `pokered/data/battle`, `pokered/data/types`, `pokered/data/trainers`, and `pokered/data/pokemon`.
 
-This distribution matters to verification. A proof that only covers the `engine/battle` directory would omit capture, items, stats, RNG, experience, and party construction.
+This distribution matters to verification. A proof that only covers the `pokered/engine/battle` directory would omit capture, items, stats, RNG, experience, and party construction.
 
 ## Lifecycle
 
 ### Initialization
 
-`InitBattle` begins at `engine/battle/core.asm:6642`. It either uses an already selected opponent or asks the overworld encounter code to select one, and may return without a battle. The supplied-battle machine theorem enters at `InitOpponent` (or composes `InitBattle`'s immediate nonzero-opponent prefix) with a valid bank/stack frame. Random encounter triggering remains a separate caller theorem; mode-specific loading still belongs to the battle-driver theorem.
+`InitBattle` begins at `pokered/engine/battle/core.asm:6642`. It either uses an already selected opponent or asks the overworld encounter code to select one, and may return without a battle. The supplied-battle machine theorem enters at `InitOpponent` (or composes `InitBattle`'s immediate nonzero-opponent prefix) with a valid bank/stack frame. Random encounter triggering remains a separate caller theorem; mode-specific loading still belongs to the battle-driver theorem.
 
 `InitBattleCommon` distinguishes wild from trainer opponents using the internal opponent ID boundary. Trainer setup calls `ReadTrainer`; wild setup calls `LoadEnemyMonData`. `InitBattleVariables` clears `wMiscBattleData` and selected standalone fields, but it is not a full arbitrary-WRAM reset. Volatile bytes in `wBattleStatusData` rely partly on the prior `EndOfBattle` cleanup, and normal/Old Man `wBattleType` is caller/prior-state data because initialization only writes Safari mode when the current map is in the Safari range. A supplied reset needs a named sanitized byte image rather than an assumption that this routine clears everything. Transition/setup execution also touches VRAM, OAM, MMIO, audio state, and externally banked SRAM used as sprite scratch; a WRAM-only runner cannot reach `StartBattle` faithfully.
 
@@ -168,14 +168,14 @@ status/lock checks
 
 The exact tables are:
 
-- `data/battle/residual_effects_1.asm`;
-- `data/battle/special_effects.asm` (`SpecialEffectsCont` is an interior label);
-- `data/battle/set_damage_effects.asm`;
-- `data/battle/residual_effects_2.asm`;
-- `data/battle/always_happen_effects.asm`;
-- `data/battle/special_effects.asm`.
+- `pokered/data/battle/residual_effects_1.asm`;
+- `pokered/data/battle/special_effects.asm` (`SpecialEffectsCont` is an interior label);
+- `pokered/data/battle/set_damage_effects.asm`;
+- `pokered/data/battle/residual_effects_2.asm`;
+- `pokered/data/battle/always_happen_effects.asm`;
+- `pokered/data/battle/special_effects.asm`.
 
-Effect handlers are reached through `MoveEffectPointerTable` in `data/moves/effects_pointers.asm`. The complete memberships and all 86 pointer entries are listed in [Effect dispatch](../reference/effect-dispatch.md).
+Effect handlers are reached through `MoveEffectPointerTable` in `pokered/data/moves/effects_pointers.asm`. The complete memberships and all 86 pointer entries are listed in [Effect dispatch](../reference/effect-dispatch.md).
 
 This ordering explains otherwise surprising mechanics. Zero-power moves in `ResidualEffects1` skip ordinary accuracy and damage and call accuracy from the effect when needed. Multi-hit moves choose their count before the hit test, calculate damage/accuracy only for the first hit, and reuse that damage. Trapping similarly chooses its continuation count and clears target recharge before knowing whether the first hit lands. Explosion still executes its self-KO effect after a miss. Side effects may be skipped when the target faints unless listed in `AlwaysHappenSideEffects`.
 
@@ -262,7 +262,7 @@ Non-link enemy Pokémon do not decrement PP in the original game. `DecrementPP` 
 
 ## Items and capture are battle semantics
 
-The battle menu delegates to `UseItem`, whose dispatch table is in `engine/items/item_effects.asm`. In-scope item behavior includes medicines, X items, Guard Spec, Dire Hit, Poke Flute, Poke Doll, PP items if permitted by the base routine, and balls.
+The battle menu delegates to `UseItem`, whose dispatch table is in `pokered/engine/items/item_effects.asm`. In-scope item behavior includes medicines, X items, Guard Spec, Dire Hit, Poke Flute, Poke Doll, PP items if permitted by the base routine, and balls.
 
 Capture is a substantial byte-level algorithm. It performs ball-specific rejection sampling, status adjustments, HP divisions, two ordinary random tests, and a separate shake-count calculation. A trainer's ball is consumed and consumes the action even though capture is rejected; party count exactly 6 plus box count exactly 20 rejects the attempt without consuming the ball or turn. Unidentified Ghost and restless Marowak rejection occurs after the throw and consumes the ball. Successful capture preserves the target HP/status/DVs, rebuilds species data and moves, sets Pokédex flags, and mutates either the party or current box. If the target's Transform flag is set, capture first forces `wEnemyMonSpecies2` to Ditto; this also affects a non-Ditto wild Pokémon that acquired Transform through Mirror Move.
 

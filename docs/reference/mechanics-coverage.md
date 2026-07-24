@@ -54,28 +54,28 @@ The current documentation phase establishes `Discovered` status.
 
 | Data | Count/shape | Source | Status |
 |---|---:|---|---|
-| Move records | 165 × 6 bytes | `data/moves/moves.asm` | Discovered |
-| Move IDs | 0 plus 165 moves | `constants/move_constants.asm` | Discovered |
-| Move effects | IDs `$00`–`$56` with gaps | `constants/move_effect_constants.asm` | Discovered |
-| Effect pointers | one per nonzero effect slot | `data/moves/effects_pointers.asm` | Discovered |
-| Base species | 151 ordinary records | `data/pokemon/base_stats*`, `data/pokemon/mew.asm` | Discovered |
-| Internal species map | IDs with gaps/special forms | `constants/pokemon_constants.asm` | Discovered |
-| Pokédex IDs | 151 ordinary constants | `constants/pokedex_constants.asm` | Discovered |
-| Type IDs | physical and special ranges with gaps | `constants/type_constants.asm` | Discovered |
-| Type triples | ordered non-neutral interactions | `data/types/type_matchups.asm` | Discovered |
-| Stage ratios | [13 exact decimal-style numerator/denominator pairs and update flow](stat-modifier-flow.md) | `data/battle/stat_modifiers.asm` | Discovered |
+| Move records | 165 × 6 bytes | `pokered/data/moves/moves.asm` | Discovered |
+| Move IDs | 0 plus 165 moves | `pokered/constants/move_constants.asm` | Discovered |
+| Move effects | IDs `$00`–`$56` with gaps | `pokered/constants/move_effect_constants.asm` | Discovered |
+| Effect pointers | one per nonzero effect slot | `pokered/data/moves/effects_pointers.asm` | Discovered |
+| Base species | 151 ordinary records | `pokered/data/pokemon/base_stats*`, `pokered/data/pokemon/mew.asm` | Discovered |
+| Internal species map | IDs with gaps/special forms | `pokered/constants/pokemon_constants.asm` | Discovered |
+| Pokédex IDs | 151 ordinary constants | `pokered/constants/pokedex_constants.asm` | Discovered |
+| Type IDs | physical and special ranges with gaps | `pokered/constants/type_constants.asm` | Discovered |
+| Type triples | ordered non-neutral interactions | `pokered/data/types/type_matchups.asm` | Discovered |
+| Stage ratios | [13 exact decimal-style numerator/denominator pairs and update flow](stat-modifier-flow.md) | `pokered/data/battle/stat_modifiers.asm` | Discovered |
 | Percent thresholds | [literal event expressions, 165 move-accuracy expansions, and boundaries](probability-thresholds.md) | moves/battle/effect/AI source | Discovered |
-| Trainer classes | 47 | `constants/trainer_constants.asm` | Discovered |
-| Trainer parties | class-indexed variable records | `data/trainers/parties.asm` | Discovered |
-| Trainer move scoring | [47 class-indexed layer lists](trainer-ai-dispatch.md) | `data/trainers/move_choices.asm` | Discovered |
-| Trainer action AI | [47 count + pointer rows](trainer-ai-dispatch.md) | `data/trainers/ai_pointers.asm` | Discovered |
-| Special trainer moves | lone/team patches | `data/trainers/special_moves.asm` | Discovered |
-| Learnsets/evolutions | species pointer table | `data/pokemon/evos_moves.asm` | Discovered |
-| Growth rates | 6 coefficient records | `data/growth_rates.asm` | Discovered |
-| Battle item dispatch | [83 ordinary entries](item-dispatch.md) before TM/HM IDs | `engine/items/item_effects.asm` | Discovered |
-| Evolution entries | level/item/trade records followed by moves | `data/pokemon/evos_moves.asm` | Discovered |
+| Trainer classes | 47 | `pokered/constants/trainer_constants.asm` | Discovered |
+| Trainer parties | class-indexed variable records | `pokered/data/trainers/parties.asm` | Discovered |
+| Trainer move scoring | [47 class-indexed layer lists](trainer-ai-dispatch.md) | `pokered/data/trainers/move_choices.asm` | Discovered |
+| Trainer action AI | [47 count + pointer rows](trainer-ai-dispatch.md) | `pokered/data/trainers/ai_pointers.asm` | Discovered |
+| Special trainer moves | lone/team patches | `pokered/data/trainers/special_moves.asm` | Discovered |
+| Learnsets/evolutions | species pointer table | `pokered/data/pokemon/evos_moves.asm` | Discovered |
+| Growth rates | 6 coefficient records | `pokered/data/growth_rates.asm` | Discovered |
+| Battle item dispatch | [83 ordinary entries](item-dispatch.md) before TM/HM IDs | `pokered/engine/items/item_effects.asm` | Discovered |
+| Evolution entries | level/item/trade records followed by moves | `pokered/data/pokemon/evos_moves.asm` | Discovered |
 | Bag/current box layouts | ordered items and capture destination | WRAM structures and inventory/box helpers | Discovered |
-| Internal-to-Pokédex map | 190 entries including zero/MissingNo. slots | `data/pokemon/dex_order.asm` | Discovered |
+| Internal-to-Pokédex map | 190 entries including zero/MissingNo. slots | `pokered/data/pokemon/dex_order.asm` | Discovered |
 
 For each table:
 

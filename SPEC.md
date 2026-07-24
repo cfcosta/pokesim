@@ -128,7 +128,7 @@ The following are not simulated as game systems:
 - post-return caller behavior: blackout warp/heal/money halving, trainer fought/object map scripts, link cable's immediate `HealParty`, and Old Man script cleanup;
 - save files and persistence beyond returning the mutated party/inventory/result.
 
-Assembly outside `engine/battle/` is still in proof scope when battle code calls it or it changes projected state. Examples include `engine/items/item_effects.asm`, `home/move_mon.asm`, `engine/pokemon/experience.asm`, and the math/RNG helpers.
+Assembly outside `pokered/engine/battle/` is still in proof scope when battle code calls it or it changes projected state. Examples include `pokered/engine/items/item_effects.asm`, `pokered/home/move_mon.asm`, `pokered/engine/pokemon/experience.asm`, and the math/RNG helpers.
 
 ### 3.3 Version policy
 
@@ -157,19 +157,19 @@ The exact closure and caller boundaries are in [End-to-end verification closure]
 
 The pinned repository contains:
 
-- 165 move records of 6 bytes each in `data/moves/moves.asm`;
+- 165 move records of 6 bytes each in `pokered/data/moves/moves.asm`;
 - 151 base-stat files, with 150 in the main table and Mew assembled at a special placement;
 - four move slots and parties of at most six;
 - 47 trainer-class entries in the move-choice and action-AI tables, many sharing generic behavior;
 - an internal species-index space with gaps and special fossil/ghost IDs, distinct from Pokédex order;
 - a 44-byte party Pokémon structure and a 29-byte active battle structure;
 - three bytes of persistent battle-status flags per active side, plus counters and shared scratch state;
-- 49 assembly files under `engine/battle/` and `data/battle/`;
-- battle logic split across many ROM banks under the `Battle Engine 1` through `Battle Engine 11` and `Battle Core` sections in `main.asm`.
+- 49 assembly files under `pokered/engine/battle/` and `pokered/data/battle/`;
+- battle logic split across many ROM banks under the `Battle Engine 1` through `Battle Engine 11` and `Battle Core` sections in `pokered/main.asm`.
 
-`engine/battle/core.asm` is the main coordinator. Its important labels include `StartBattle`, `MainInBattleLoop`, `SelectEnemyMove`, `ExecutePlayerMove`, `ExecuteEnemyMove`, `CalculateDamage`, `CriticalHitTest`, `AdjustDamageForMoveType`, `MoveHitTest`, `RandomizeDamage`, `BattleRandom`, and `InitBattle`.
+`pokered/engine/battle/core.asm` is the main coordinator. Its important labels include `StartBattle`, `MainInBattleLoop`, `SelectEnemyMove`, `ExecutePlayerMove`, `ExecuteEnemyMove`, `CalculateDamage`, `CriticalHitTest`, `AdjustDamageForMoveType`, `MoveHitTest`, `RandomizeDamage`, `BattleRandom`, and `InitBattle`.
 
-The effect interpreter is not a single switch. `ExecutePlayerMove` and its enemy counterpart classify effects through `ResidualEffects1`, `SpecialEffectsCont`, `SetDamageEffects`, `ResidualEffects2`, `AlwaysHappenSideEffects`, and `SpecialEffects`, invoking the pointer table in `data/moves/effects_pointers.asm` at different points in execution. The high-level model must preserve that ordering rather than merely attach one callback to each move.
+The effect interpreter is not a single switch. `ExecutePlayerMove` and its enemy counterpart classify effects through `ResidualEffects1`, `SpecialEffectsCont`, `SetDamageEffects`, `ResidualEffects2`, `AlwaysHappenSideEffects`, and `SpecialEffects`, invoking the pointer table in `pokered/data/moves/effects_pointers.asm` at different points in execution. The high-level model must preserve that ordering rather than merely attach one callback to each move.
 
 See [Current battle engine](docs/explanation/current-battle-engine.md), [Battle source map](docs/reference/battle-source-map.md), [Effect dispatch](docs/reference/effect-dispatch.md), [Item dispatch](docs/reference/item-dispatch.md), [Stat modifier flow](docs/reference/stat-modifier-flow.md), [Probability thresholds](docs/reference/probability-thresholds.md), [Switch/faint/participation flow](docs/reference/switch-faint-and-participation.md), the [sixth-pass ASM audit](docs/research/sixth-pass-asm-audit.md), [seventh-pass end-to-end audit](docs/research/seventh-pass-end-to-end-audit.md), [eighth-pass SM83 audit](docs/research/eighth-pass-sm83-semantics-audit.md), [ninth-pass gb-opcodes audit](docs/research/ninth-pass-gb-opcodes-audit.md), [tenth-pass microarchitecture audit](docs/research/tenth-pass-sm83-microarchitecture-audit.md), and [eleventh-pass DMG-B profile audit](docs/research/eleventh-pass-sm83-profile-evidence-audit.md).
 
@@ -346,7 +346,7 @@ Tests and reference documents challenge the model but do not establish the Poké
 ## 7. ROM and source ingestion
 
 1. Build Red with the exact RGBDS version in a hermetic environment.
-2. Require the output SHA-1 to equal the hash in `roms.sha1`.
+2. Require the output SHA-1 to equal the hash in `pokered/roms.sha1`.
 3. Produce `.sym` and `.map` files and normalize them into a checked-in manifest.
 4. Compute SHA-256 for the ROM and every battle-relevant source file.
 5. Discover the transitive driver graph from `InitOpponent` through outer return, including bank wrappers, pointer/predef/text/animation/audio tables, interrupts, indirect jumps, and every read code/data/asset range. A direct-`call` scan is not complete.
@@ -755,7 +755,7 @@ A test failure blocks correctness claims. A test success never substitutes for a
 | `#eval` output is called a test | False Boolean output still compiles | Use theorems or nonzero-exit executable fixture checkers |
 | Full instruction interpretation is too slow for RL | Correct reference is unusable for training | Use verified high-level core for hot path; machine model only for proof/reference |
 | Existing repositories lack clear license files | Reuse may be legally blocked | Resolve licensing before copying; otherwise clean-room implementation |
-| The battle call graph crosses subsystem boundaries and indirect tables | Direct-call or `engine/battle` coverage omits predefs, text callbacks, interrupts, assets, SRAM, and caller writes | Maintain address-based code/data range closure with reviewed dispositions |
+| The battle call graph crosses subsystem boundaries and indirect tables | Direct-call or `pokered/engine/battle` coverage omits predefs, text callbacks, interrupts, assets, SRAM, and caller writes | Maintain address-based code/data range closure with reviewed dispositions |
 | Caller behavior is confused with driver output | Link auto-heal/blackout/trainer flags are wrongly included or omitted | Publish separate kernel, driver, and caller-integration theorem boundaries |
 | Proof scope grows too broad before a theorem exists | Long project with no validated architecture | Require a minimal complete driver episode at M3, then expand coverage |
 

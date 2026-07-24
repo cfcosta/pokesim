@@ -6,7 +6,7 @@ Pokémon Red does not have one seedable battle PRNG. It has a hardware-coupled o
 
 ## Ordinary `Random`
 
-`Random` is defined in `home/random.asm`:
+`Random` is defined in `pokered/home/random.asm`:
 
 ```asm
 Random::
@@ -21,7 +21,7 @@ Random::
     ret
 ```
 
-`Random_` in `engine/math/random.asm` updates two HRAM bytes:
+`Random_` in `pokered/engine/math/random.asm` updates two HRAM bytes:
 
 ```asm
 Random_::
@@ -53,7 +53,7 @@ A faithful instruction-level model therefore needs CPU flags, fetched-IR pipelin
 
 ## VBlank continuously mutates RNG state
 
-`VBlank` in `home/vblank.asm` calls `Random` once per frame after graphics transfers. Battle code frequently calls `DelayFrame`, `DelayFrames`, animation routines, text routines, and menu loops. Those presentation operations change how many VBlanks occur and therefore change `hRandomAdd`/`hRandomSub` before the next mechanics-visible random call.
+`VBlank` in `pokered/home/vblank.asm` calls `Random` once per frame after graphics transfers. Battle code frequently calls `DelayFrame`, `DelayFrames`, animation routines, text routines, and menu loops. Those presentation operations change how many VBlanks occur and therefore change `hRandomAdd`/`hRandomSub` before the next mechanics-visible random call.
 
 This creates an important boundary problem:
 
@@ -65,7 +65,7 @@ The proof must either execute exact timing or abstract the hardware observations
 
 ## `BattleRandom`
 
-`BattleRandom` is defined at `engine/battle/core.asm:6543`.
+`BattleRandom` is defined at `pokered/engine/battle/core.asm:6543`.
 
 ### Ordinary battles
 
