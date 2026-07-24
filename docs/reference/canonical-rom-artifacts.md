@@ -63,7 +63,9 @@ IR: `$EA` (`LD (a16),A`) at `$6F1B`, with next PC `$6F1C` and reset latches.
 Execution then remains in the same fetched-IR stream: it consumes `$91 $CF`,
 commits the supplied opponent to WRAM `$CF91` at T3R, fetches the next `$EA`
 at `$6F1E`, and establishes its exact hidden checkpoint without bootstrap
-reinitialization.
+reinitialization. The same stream then consumes `$D8 $CF`, drives the supplied
+opponent to `$CFD8`, and installs canonical `JR $1A` (`$18`) at `$6F21` after the
+third retirement.
 
 ## Address closure
 
