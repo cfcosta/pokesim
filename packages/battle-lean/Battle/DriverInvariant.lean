@@ -2063,60 +2063,12 @@ theorem establish {context : Context} {low : Machine}
   · intro witness returned
     exact False.elim (assumptions.noPrematureReturn witness returned)
 
-/-- The exact local preservation/use obligation. It must be discharged from ROM
-instructions, interrupts, and environment transitions; it is not a test oracle. -/
-def LocalObligation (context : Context) : Prop :=
-  LocalSimulation (MachineStep context) Episode.Step (Holds context)
-    projectEvent pipelineRank
-
-/-- A concrete outer-return checkpoint is a genuine low-level final outcome. -/
-inductive MachineFinal (context : Context) : Machine → Episode.TerminalWitness → Prop where
-  | returned {machine witness}
-      (checkpoint : context.returned machine witness) : MachineFinal context machine witness
-
-/-- The invariant turns concrete outer-return evidence into the matching
-high-level finite outcome. -/
-theorem finalRefinement (context : Context) :
-    FinalRefinement (Holds context) (MachineFinal context) Episode.Final Eq := by
-  intro low high witness invariant final
-  cases final with
-  | returned checkpoint =>
-      exact ⟨witness, .returned (invariant.returnAgreement witness checkpoint), rfl⟩
-
-/-- Establish/preserve/use theorem for every finite implementation execution. -/
-theorem useFinite {context : Context} (localProof : LocalObligation context)
-    {lowInitial lowFinal : Machine} {highInitial : Episode.State}
-    (initial : Holds context lowInitial highInitial)
-    {trace : List LowEvent} {witness : Episode.TerminalWitness}
-    (execution : TraceSteps (MachineStep context) lowInitial trace lowFinal)
-    (returned : MachineFinal context lowFinal witness) :
-    ∃ highFinal highWitness,
-      TraceSteps Episode.Step highInitial (projectTrace projectEvent trace) highFinal ∧
-      Episode.Final highFinal highWitness ∧ witness = highWitness := by
-  exact LocalSimulation.liftFiniteBehavior
-    (LowState := Machine)
-    (HighState := Episode.State)
-    (LowEvent := LowEvent)
-    (HighEvent := Episode.Event)
-    (LowStep := MachineStep context)
-    (HighStep := Episode.Step)
-    (Related := Holds context)
-    (project := projectEvent)
-    (rank := pipelineRank)
-    (LowOutcome := Episode.TerminalWitness)
-    (HighOutcome := Episode.TerminalWitness)
-    (LowFinal := MachineFinal context)
-    (HighFinal := Episode.Final)
-    (outcomeRel := Eq)
-    localProof (finalRefinement context) initial execution returned
-
 /-! ## Continuous proof-carrying driver
 
-The untracked `MachineStep` relation above exposes the original local obligation.
-The following monitor makes the protocol phase and timing witnesses explicit,
-without changing the physical machine. Each monitor transition still requires a
-concrete adapter equation or ROM checkpoint. This removes ephemeral-PC marker
-problems and gives a total establish/preserve/use theorem. -/
+The following monitor replaces the earlier ephemeral self-marker design by
+making protocol phase and timing witnesses explicit, without changing the
+physical machine. Each monitor transition still requires a concrete adapter
+equation or ROM checkpoint. This gives a total establish/preserve/use theorem. -/
 
 /-- Physical safety facts carried by every admitted continuous driver cycle.
 They exclude out-of-image banking, malformed pipeline states, invalid lock, STOP,
