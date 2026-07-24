@@ -22,6 +22,8 @@ import Battle.StepTests
 import Battle.Resolve
 import Battle.Ordinary
 import Battle.OrdinaryTests
+import Battle.Effects.Substitute
+import Battle.Effects.Healing
 import Battle.Refinement.Bridge
 import Battle.Refinement.Trace
 import Battle.Refinement.Simulation
