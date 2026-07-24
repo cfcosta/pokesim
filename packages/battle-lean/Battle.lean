@@ -25,6 +25,7 @@ import Battle.OrdinaryTests
 import Battle.Effects.Substitute
 import Battle.Effects.Healing
 import Battle.TrainerAI
+import Battle.LinkBugs
 import Battle.Refinement.Bridge
 import Battle.Refinement.Trace
 import Battle.Refinement.Simulation
