@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "strategy": "conservative-whole-machine-overapproximation",
+  "rom_sha1": "ea9bcae617fdf159b045185467ae58b2e4a48b9a",
+  "rom_sha256": "5ca7ba01642a3b27b0cc0b5349b52792795b62d3ed977e98a09390659af96b7b",
+  "rom_banks": 64,
+  "rom_bank_size": 16384,
+  "external_ram_banks": 4,
+  "external_ram_bank_size": 8192,
+  "cpu_ranges": [
+    { "start": "0000", "end_exclusive": "4000", "kind": "fixed-rom-or-boot" },
+    { "start": "4000", "end_exclusive": "8000", "kind": "switchable-rom" },
+    { "start": "8000", "end_exclusive": "A000", "kind": "vram" },
+    { "start": "A000", "end_exclusive": "C000", "kind": "external-ram" },
+    { "start": "C000", "end_exclusive": "E000", "kind": "wram" },
+    { "start": "E000", "end_exclusive": "FE00", "kind": "wram-echo" },
+    { "start": "FE00", "end_exclusive": "FEA0", "kind": "oam" },
+    { "start": "FEA0", "end_exclusive": "FF00", "kind": "unusable" },
+    { "start": "FF00", "end_exclusive": "FF80", "kind": "mmio" },
+    { "start": "FF80", "end_exclusive": "FFFF", "kind": "hram" },
+    { "start": "FFFF", "end_exclusive": "10000", "kind": "interrupt-enable" }
+  ],
+  "entry_symbols": {
+    "InitBattle": "0f:6f12",
+    "InitOpponent": "0f:6f18",
+    "_InitBattleCommon": "0f:6feb",
+    "StartBattle": "0f:411e",
+    "EndOfBattle": "04:77aa",
+    "InitBattleVariables": "14:65af",
+    "BattleRandom": "0f:6e9b",
+    "Random_": "04:7a8f",
+    "DelayFrame": "00:20af",
+    "VBlank": "00:2024",
+    "wBattleResult": "00:cf0b",
+    "wIsInBattle": "00:d057"
+  },
+  "proof_policy": {
+    "indirect_targets": "all CPU addresses are represented; executable-target invariants narrow them in Lean",
+    "data_and_assets": "all 64 ROM banks and all four external RAM banks are retained in closure",
+    "interrupts": "all five vectors and complete fixed bank are retained",
+    "out_of_image_rom_bank": "reads are defined as open bus and canonical execution must prove bank < 64",
+    "invalid_opcode": "defined lock behavior; canonical episode must separately prove unreachable"
+  }
+}

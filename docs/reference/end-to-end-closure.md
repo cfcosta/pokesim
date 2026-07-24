@@ -323,17 +323,18 @@ Each fixture asserts terminal provenance, projected random call-site sequence, f
 8. Add paired link and optional caller-integration theorems.
 9. Optimize only the proved high-level model for RL and batching.
 
-## Blocking gaps at this review point
+## Remaining gaps
 
-- No canonical ROM, `.sym`, or `.map` exists in the worktree.
-- No address-based call/range manifest exists.
-- No Pokémon-level Lean project or battle proof exists.
-- `packages/sm83-lean` now provides the standalone processor candidate, complete decode catalogue, executable architectural/physical layers, profile relations, and processor conformance gates. It is not yet a separately released immutable dependency, and no Game Boy adapter or composition proof exists.
+- Canonical Red now rebuilds under the pinned RGBDS derivation; deterministic `.sym`/`.map` files and exact ROM hashes are retained. The ROM itself is not checked in.
+- A conservative whole-machine range manifest covers every CPU address, ROM bank, and external RAM bank. A narrowed transitive call/predef/text/data graph for the first episode is still absent.
+- `packages/battle-lean` now supplies the WRAM contract, active-mon codec, differential comparator, ROM closure, and initial DMG-CPU B adapter. No complete battle transition or episode refinement theorem exists.
+- `packages/sm83-lean` provides the standalone processor candidate, independent architectural dispatch, executable architectural/physical layers, retirement monitor, simulation framework, profile relations, and conformance gates. It is not yet a separately released immutable dependency; universal physical refinement currently has only the first NOP base case.
+- The Pokémon adapter proves eight-edge processor composition and models MBC3, mapped memory, divider/timer, basic PPU/VBlank, joypad, serial, and DMA. Detailed OAM, presentation, audio, and full device-timing refinements remain.
 - No low/high trace runner or SameBoy/`gb-research` trace adapter exists; the oracle revisions and distrust boundary are selected.
 - No presentation summary has a frame/timing theorem.
 - No mode-specific reset predicate has been encoded.
 - No end-to-end fixture executes.
-- Nix is available and the processor package is locked to Lean 4.30.0. Nixpkgs still exposes RGBDS 1.0.1 while this source requires 1.0.2, so a custom pinned derivation is required.
+- Nix, Lean 4.30.0, and the source-hashed RGBDS `v1.0.2+hotfix` derivation are now locked and checked in CI.
 - The processor package is Apache-2.0 clean-room code. License status for reusing `gameboy-pokered-verify` remains unresolved.
 
 Fixture-qualified DMG-B locked-pin and advanced OAM captures also remain absent; their behavior stays relational and must be proved unreachable or projection-irrelevant. These are implementation/evidence blockers, not silent profile defaults.

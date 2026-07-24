@@ -13,6 +13,7 @@ These documents record twelve codebase, processor, and proof-architecture review
 ## Reference
 
 - [Battle source map](reference/battle-source-map.md) — files, labels, tables, and scope ownership.
+- [Canonical ROM artifacts](reference/canonical-rom-artifacts.md) — pinned RGBDS derivation, ROM hashes, retained symbol/map files, exact addresses, and conservative whole-machine closure.
 - [Battle state model](reference/battle-state-model.md) — persistent, active, volatile, and shared state.
 - [Mechanics coverage](reference/mechanics-coverage.md) — checklist the implementation and proofs must close.
 - [Effect dispatch](reference/effect-dispatch.md) — exact phase-table memberships and all effect-pointer targets.

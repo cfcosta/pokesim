@@ -2,7 +2,7 @@
 
 <!-- mode: reference -->
 
-This is the ASM-audited completeness checklist. It records discovered scope only; every row is **not implemented** and **not proved** unless a later coverage report says otherwise.
+This is the ASM-audited completeness checklist. Checked rows identify completed, machine-validated artifacts; unchecked rows remain requirements even when supporting definitions exist.
 
 ## Status vocabulary
 
@@ -14,27 +14,27 @@ This is the ASM-audited completeness checklist. It records discovered scope only
 | Transition-verified | Covered by a checkpoint transition theorem |
 | Episode-verified | Covered by the composed finite battle theorem |
 
-The current documentation phase establishes `Discovered` status.
+The project has moved beyond discovery for the processor, canonical build, initial Game Boy adapter, and battle-state codec. Mechanics rows remain at their explicitly reported status.
 
 ## Artifact and machine layer
 
-- [ ] Red source commit and RGBDS version pinned
-- [ ] canonical Red ROM rebuilt and SHA-1 checked
-- [ ] ROM SHA-256, `.sym`, and `.map` recorded
+- [x] Red source commit and RGBDS version pinned
+- [x] canonical Red ROM rebuilt and SHA-1 checked
+- [x] ROM SHA-256, `.sym`, and `.map` recorded
 - [ ] battle transitive call graph generated through calls, bankswitches, predefs, pointer tables, and text callbacks
 - [ ] trainer end-text/map callbacks classified as projected mutation, proved frame, or out of scope
 - [ ] every in-scope ROM range classified
 - [ ] separately licensed, immutable-revision [`sm83-lean` package](sm83-semantics-package.md)
 - [ ] exact-hash gb-opcodes plus [five-source microarchitecture audit](sm83-microarchitecture-contract.md)
-- [ ] exact 244-legal + CB-prefix + 11-lockup base partition and all 256 CB entries
-- [ ] decoder/encoder length, immediate, PC-wrap, and byte-round-trip theorems
+- [x] exact 244-legal + CB-prefix + 11-lockup base partition and all 256 CB entries
+- [x] decoder/encoder length, immediate, PC-wrap, and byte-round-trip theorems
 - [ ] arithmetic/flag semantics, including 2048-case DAA theorem, old-Z irrelevance, all 4096 Mooneye rows, and signed-SP rules
 - [ ] load/store/register-pair semantics and typed zero-low-nibble F codec
 - [ ] declarative, de-overlapped, and physical fetched-IR semantics with sequence-level fetch reassociation
 - [ ] 101-family address/data/IDU/commit/poll schedules and typed CPU-T/M-cycle accounting
 - [ ] staged EI/DI/RETI, prefetch-aware five-cycle interrupt entry and exact IE-push cancellation/retargeting
 - [ ] HALT wake/bug and one-byte/multibyte/CB/RST following-byte cases; seven STOP outcomes; invalid no-fetch lockup
-- [ ] full pinned flat-bus corpus, microarchitecture source audit, and theorem/axiom audit
+- [x] full pinned flat-bus corpus, microarchitecture source audit, and theorem/axiom audit
 - [ ] proved `DmgCpuBCommonBoot` T1F–T4R bus/read-fold/interrupt/clock composition and checked profile manifest
 - [ ] ROM banking and far-call behavior
 - [ ] WRAM/HRAM and aliases
@@ -90,7 +90,7 @@ For each table:
 
 The complete gate list is [End-to-end verification closure](end-to-end-closure.md).
 
-- [ ] hermetic RGBDS 1.0.2 ROM build, `.sym`, `.map`, SHA-1/SHA-256
+- [x] hermetic RGBDS 1.0.2 ROM build, `.sym`, `.map`, SHA-1/SHA-256
 - [ ] explicit `InitOpponent` bank/stack/hardware entry and supplied-opponent `InitBattle` prefix theorem
 - [ ] no-encounter `InitBattle` paths separated from battle-driver completion
 - [ ] address-based transitive code/data graph through bankswitches, predefs, pointer tables, text callbacks, interrupts, and assets

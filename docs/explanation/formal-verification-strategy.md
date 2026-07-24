@@ -58,7 +58,7 @@ The proof package records:
 
 The source is invaluable for labels and explanation, but the formal execution target is the binary. This avoids trusting a separate assembly parser to reproduce macro expansion, bank placement, and conditional assembly.
 
-RGBDS remains in the reproducibility chain, but matching the canonical output hash prevents an unnoticed assembler difference from changing the proof target. Nix is available in the current environment, but nixpkgs exposes RGBDS 1.0.1 rather than the required 1.0.2; M0 needs a custom pinned `v1.0.2+hotfix` derivation and a locked Lean toolchain.
+RGBDS remains in the reproducibility chain, but matching the canonical output hash prevents an unnoticed assembler difference from changing the proof target. The repository now provides a source-hashed `v1.0.2+hotfix` derivation, rebuilds canonical Red to SHA-1 `ea9bcae617fdf159b045185467ae58b2e4a48b9a`, and retains byte-checked `.sym`/`.map` artifacts while excluding the ROM itself. See [Canonical ROM artifacts](../reference/canonical-rom-artifacts.md).
 
 The symbol-driven transitive closure follows direct branches, bank wrappers, predefs, text callbacks, pointer tables, interrupt vectors, and every ROM data range read before return. A grep-derived call list is not evidence of closure. The required range schema and theorem stack are in [End-to-end verification closure](../reference/end-to-end-closure.md).
 

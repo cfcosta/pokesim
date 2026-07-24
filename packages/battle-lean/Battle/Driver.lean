@@ -17,28 +17,23 @@ the concrete realization of the oracle side of the Stage-0 differential: the
 `read : RegionSpec → Bytes` that `Checkpoint.capture` abstracts over is here
 "resolve the pokered symbol to an address and read the live emulated memory".
 
-## What this module provides now, and what it awaits
+## Current boundary
 
-The battle ROM and its symbol table are produced by `rgbds` (`.gb` + `.sym`),
-which is not assembled in this checkout. So the driver is written against two
-inputs it does not yet have concretely:
+The pinned RGBDS derivation now rebuilds canonical Red, checks the ROM hashes,
+and retains deterministic `.sym`/`.map` artifacts under `artifacts/pokered/`.
+The ROM remains caller-supplied. This driver is still the flat-memory leaf-routine
+harness over two explicit inputs:
 
 * a **memory image** — `List Sm83.Byte` loaded with `FlatMemory.ofList`, holding
-  the routine's code bank and the initial WRAM;
-* a **symbol map** — `SymbolMap`, binding each pokered WRAM/HRAM label to its
-  linker-assigned absolute address, parsed from the `.sym` file.
+  one routine's code bank and initial WRAM;
+* a **symbol map** — `SymbolMap`, binding pokered WRAM/HRAM labels to addresses
+  parsed from the retained `.sym` file.
 
 Everything downstream of those inputs — setting up a `call`-style stack frame,
 running to the routine's `ret` via `Program.runUntil`, and reading named regions
-back out — is implemented and exercised here against a hand-assembled synthetic
-program, so the machine coupling is validated end-to-end today. When `rgbds` is
-available the same code drives the real ROM unchanged.
-
-The flat-memory model is a single 64 KiB `Word → Byte` space; it is faithful for
-routines that stay within one ROM bank (`CalculateDamage`, `BattleRandom`, the
-per-turn residual handlers, …). Routines that bankswitch mid-run need the driver
-to stage the relevant banks into the flat image — a later concern, flagged where
-it bites.
+back out — is exercised against a hand-assembled synthetic program. Full
+bankswitched ROM execution uses `Battle.GameBoy.Adapter`; this flat harness is
+not the end-to-end oracle and must not be used for routines that change banks.
 -/
 
 namespace Battle.Driver
