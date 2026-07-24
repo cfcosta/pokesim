@@ -449,7 +449,7 @@ The package should therefore be implemented cleanly after licensing is settled, 
 
 ## Dependency and release policy
 
-The Pokémon repository pins an immutable `sm83-lean` commit in Lake configuration and checks the resolved revision in CI. It must not follow `main`.
+The current monorepo consumes `packages/sm83-lean` through a local Lake path and checks the complete package tree against `artifacts/sm83-lean/candidate-manifest.json`. This is an immutable local candidate identity, not an external release. A future split repository must pin an exact commit in Lake configuration and must not follow `main`.
 
 Each processor release records:
 

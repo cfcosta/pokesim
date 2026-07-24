@@ -4,7 +4,7 @@
 
 **Baseline:** `pret/pokered` commit `405b6246372d7e5a2cb029cbb65219b13286b8c9`.
 
-This page defines what “end-to-end” means for the battle project and lists every layer that must close before a 1:1/formally verified claim is made. A standalone processor package now exists under `packages/sm83-lean`, but there is still no built canonical ROM, symbol map, Game Boy adapter, Pokémon machine runner, battle refinement theorem, or benchmark. The processor artifact does not close any battle-level claim by itself.
+This page defines what “end-to-end” means for the battle project and lists every layer that must close before a 1:1/formally verified claim is made. The standalone processor package, canonical ROM build identity, retained symbol/map artifacts, conservative closure, and initial DMG-CPU B adapter now exist. There is still no continuous canonical-ROM battle runner, discharged driver invariant, battle refinement theorem, or benchmark. The processor artifact does not close any battle-level claim by itself.
 
 ## Three claim boundaries
 
@@ -315,7 +315,7 @@ Each fixture asserts terminal provenance, projected random call-site sequence, f
 
 1. Hermetic RGBDS/Lean toolchain; canonical ROM, symbols, maps, hashes.
 2. Generated range/call/predef/text-pointer closure manifest.
-3. Release and immutably pin the local `sm83-lean` candidate, then build the Game Boy memory/banking/device adapter and its processor-composition proof.
+3. Keep the local `sm83-lean` candidate pinned by its checked source-tree manifest; publish an external immutable release only after continuous fetched-IR composition closes. Continue strengthening the existing Game Boy adapter proof.
 4. Execute one supplied one-member wild fixture from `InitOpponent` to outer return, initially with instrumented presentation cut points.
 5. Independently define the minimal high-level model for that fixture and prove its complete episode, not only one turn.
 6. Replace every instrumentation assumption with machine execution or a proved summary.

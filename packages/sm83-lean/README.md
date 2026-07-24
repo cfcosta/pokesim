@@ -61,7 +61,11 @@ python3 tools/check-sm83-singlestep.py /path/to/sm83-tests
 ```
 
 The release check rejects proof escapes, undeclared public dependencies, and a
-missing license/module boundary. The DAA gate checks all 4,096 A/ZNHC rows
+missing license/module boundary. `artifacts/sm83-lean/candidate-manifest.json`
+immutably identifies the complete 50-file package tree; verify it with
+`python3 tools/check-sm83-artifact.py`. The manifest deliberately labels version
+`0.1.0` a clean-room candidate specification rather than a verified silicon
+implementation. The DAA gate checks all 4,096 A/ZNHC rows
 from pinned Mooneye source. The instruction corpus checks all 498,000 context-free
 legal-instruction cases against both the
 de-overlapped functional runner and the fetched-IR physical core. It compares
