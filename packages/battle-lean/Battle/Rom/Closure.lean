@@ -162,6 +162,27 @@ structure RequiredEntryBytes (rom : Array Byte) : Prop where
   have fourth := congrArg (fun bytes => bytes[3]?) witness.initOpponent
   simpa [bytesAt, initOpponentPrefix] using fourth
 
+@[simp] theorem RequiredEntryBytes.initOpponent_storeLow {rom : Array Byte}
+    (witness : RequiredEntryBytes rom) :
+    GameBoy.Mbc3.readArray rom
+      (romOffset Symbols.initOpponent.bank.toNat Symbols.initOpponent.address + 4) = 0x91 := by
+  have byte := congrArg (fun bytes => bytes[4]?) witness.initOpponent
+  simpa [bytesAt, initOpponentPrefix] using byte
+
+@[simp] theorem RequiredEntryBytes.initOpponent_storeHigh {rom : Array Byte}
+    (witness : RequiredEntryBytes rom) :
+    GameBoy.Mbc3.readArray rom
+      (romOffset Symbols.initOpponent.bank.toNat Symbols.initOpponent.address + 5) = 0xCF := by
+  have byte := congrArg (fun bytes => bytes[5]?) witness.initOpponent
+  simpa [bytesAt, initOpponentPrefix] using byte
+
+@[simp] theorem RequiredEntryBytes.initOpponent_storeSuccessor {rom : Array Byte}
+    (witness : RequiredEntryBytes rom) :
+    GameBoy.Mbc3.readArray rom
+      (romOffset Symbols.initOpponent.bank.toNat Symbols.initOpponent.address + 6) = 0xEA := by
+  have byte := congrArg (fun bytes => bytes[6]?) witness.initOpponent
+  simpa [bytesAt, initOpponentPrefix] using byte
+
 /-- The retained first entry byte decodes as canonical `LD A,(a16)`. -/
 @[simp] theorem initOpponent_opcode_decode :
     Decode.base 0xFA = .legal .ldAAbs := by

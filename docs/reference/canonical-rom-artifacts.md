@@ -60,6 +60,10 @@ commits `A := read($D059)` and preserves the retirement boundary even when a
 pending interrupt takes the overlapped successor fetch. Under the explicit
 no-interrupt-accepted branch, the proof also establishes the exact next fetched
 IR: `$EA` (`LD (a16),A`) at `$6F1B`, with next PC `$6F1C` and reset latches.
+Execution then remains in the same fetched-IR stream: it consumes `$91 $CF`,
+commits the supplied opponent to WRAM `$CF91` at T3R, fetches the next `$EA`
+at `$6F1E`, and establishes its exact hidden checkpoint without bootstrap
+reinitialization.
 
 ## Address closure
 

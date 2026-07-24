@@ -90,6 +90,11 @@ def write (state : State) (address : Word) (value : Byte) : State :=
   simp only [write]
   grind
 
+@[simp] theorem readArray_writeArray_same (bytes : Array Byte) (index : Nat)
+    (value : Byte) (valid : index < bytes.size) :
+    readArray (writeArray bytes index value) index = value := by
+  simp [readArray, writeArray, valid]
+
 /-- Disabled external-RAM writes leave the full cartridge state unchanged. -/
 theorem disabled_ram_write_stutters (state : State) (address : Word) (value : Byte)
     (range : 0xA000 ≤ address.toNat ∧ address.toNat < 0xC000)

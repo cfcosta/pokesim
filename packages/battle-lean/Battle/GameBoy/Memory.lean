@@ -127,6 +127,31 @@ def stepDma (state : State) : State :=
   · rfl
   · split <;> rfl
 
+@[simp] theorem write_wram_preserves_cartridge (state : State) (address : Word)
+    (value : Byte) (low : 0xC000 ≤ address.toNat) (high : address.toNat < 0xE000) :
+    (write state address value).cartridge = state.cartridge := by
+  have notRom0 : ¬address.toNat < 0x8000 := by omega
+  have notVram : ¬address.toNat < 0xA000 := by omega
+  have notCart : ¬address.toNat < 0xC000 := by omega
+  simp [write, notRom0, notVram, notCart, high]
+
+@[simp] theorem write_wram_preserves_bootMapped (state : State) (address : Word)
+    (value : Byte) (low : 0xC000 ≤ address.toNat) (high : address.toNat < 0xE000) :
+    (write state address value).bootMapped = state.bootMapped := by
+  have notRom0 : ¬address.toNat < 0x8000 := by omega
+  have notVram : ¬address.toNat < 0xA000 := by omega
+  have notCart : ¬address.toNat < 0xC000 := by omega
+  simp [write, notRom0, notVram, notCart, high]
+
+@[simp] theorem write_wram (state : State) (address : Word) (value : Byte)
+    (low : 0xC000 ≤ address.toNat) (high : address.toNat < 0xE000) :
+    (write state address value).wram =
+      Mbc3.writeArray state.wram (address.toNat - 0xC000) value := by
+  have notRom0 : ¬address.toNat < 0x8000 := by omega
+  have notVram : ¬address.toNat < 0xA000 := by omega
+  have notCart : ¬address.toNat < 0xC000 := by omega
+  simp [write, notRom0, notVram, notCart, high]
+
 @[simp] theorem read_wram (state : State) (address : Word)
     (low : 0xC000 ≤ address.toNat) (high : address.toNat < 0xE000) :
     read state address = Mbc3.readArray state.wram (address.toNat - 0xC000) := by

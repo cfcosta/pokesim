@@ -423,6 +423,119 @@ theorem read_cycle_preserves_wram (machine : Machine) (wake : Bool)
     (HalfEdge.expand (stepMachineCycle machine wake).probe.intent)
     machine.memory [] [] read
 
+/-- Projecting one edge to WRAM erases device clocks and DMA; only the T3R
+CPU write can change that backing array. -/
+@[simp] theorem stepEdge_wram (memory : Memory.State) (intent : CycleIntent)
+    (pin : PinIntent) :
+    (stepEdge memory intent pin).1.wram =
+      (if isT3R pin.halfEdge && intent.control = .write then
+        match pin.address, pin.data with
+        | some address, .driven value => Memory.write memory address value
+        | _, _ => memory
+      else memory).wram := by
+  simp only [stepEdge]
+  split
+  · rw [Memory.stepDma_preserves_wram]
+    split <;> rfl
+  · split <;> rfl
+
+private def expandedWritePins (intent : CycleIntent) (value : Byte) : List PinIntent :=
+  [ { halfEdge := ⟨.t1, .falling⟩, address := some intent.address }
+  , { halfEdge := ⟨.t1, .rising⟩, address := some intent.address, selected := true }
+  , { halfEdge := ⟨.t2, .falling⟩, address := some intent.address, selected := true }
+  , { halfEdge := ⟨.t2, .rising⟩, address := some intent.address, selected := true,
+      writeAsserted := true, data := .driven value }
+  , { halfEdge := ⟨.t3, .falling⟩, address := some intent.address, selected := true,
+      writeAsserted := true, data := .driven value }
+  , { halfEdge := ⟨.t3, .rising⟩, address := some intent.address, selected := true,
+      writeAsserted := true, data := .driven value }
+  , { halfEdge := ⟨.t4, .falling⟩, address := some intent.address, selected := true }
+  , { halfEdge := ⟨.t4, .rising⟩ } ]
+
+private theorem expand_write (intent : CycleIntent) (value : Byte)
+    (write : intent.control = .write) (driven : intent.data = .driven value) :
+    HalfEdge.expand intent = expandedWritePins intent value := by
+  unfold HalfEdge.expand machineHalfEdges expandedWritePins
+  rw [write, driven]
+  rfl
+
+@[simp] theorem stepEdge_cartridge (memory : Memory.State) (intent : CycleIntent)
+    (pin : PinIntent) :
+    (stepEdge memory intent pin).1.cartridge =
+      (if isT3R pin.halfEdge && intent.control = .write then
+        match pin.address, pin.data with
+        | some address, .driven value => Memory.write memory address value
+        | _, _ => memory
+      else memory).cartridge := by
+  simp only [stepEdge]
+  split
+  · rw [Memory.stepDma_preserves_cartridge]
+    split <;> rfl
+  · split <;> rfl
+
+@[simp] theorem stepEdge_bootMapped (memory : Memory.State) (intent : CycleIntent)
+    (pin : PinIntent) :
+    (stepEdge memory intent pin).1.bootMapped =
+      (if isT3R pin.halfEdge && intent.control = .write then
+        match pin.address, pin.data with
+        | some address, .driven value => Memory.write memory address value
+        | _, _ => memory
+      else memory).bootMapped := by
+  simp only [stepEdge]
+  split
+  · rw [Memory.stepDma_preserves_bootMapped]
+    split <;> rfl
+  · split <;> rfl
+
+/-- A composed write cycle commits its driven byte to WRAM exactly once at
+T3R. Device clocks and DMA cannot mutate the WRAM backing array. -/
+theorem write_cycle_wram (machine : Machine) (wake : Bool) (value : Byte)
+    (write : (stepMachineCycle machine wake).probe.intent.control = .write)
+    (driven : (stepMachineCycle machine wake).probe.intent.data = .driven value)
+    (low : 0xC000 ≤ (stepMachineCycle machine wake).probe.intent.address.toNat)
+    (high : (stepMachineCycle machine wake).probe.intent.address.toNat < 0xE000) :
+    (stepMachineCycle machine wake).machine.memory.wram =
+      (Memory.write machine.memory
+        (stepMachineCycle machine wake).probe.intent.address value).wram := by
+  let intent := (stepMachineCycle machine wake).probe.intent
+  change intent.control = .write at write
+  change intent.data = .driven value at driven
+  change 0xC000 ≤ intent.address.toNat at low
+  change intent.address.toNat < 0xE000 at high
+  change (runEdges intent (HalfEdge.expand intent) machine.memory [] []).memory.wram =
+    (Memory.write machine.memory intent.address value).wram
+  rw [expand_write intent value write driven]
+  simp only [expandedWritePins, runEdges]
+  repeat rw [stepEdge_wram]
+  simp [isT3R, write, Memory.write_wram, low, high, stepEdge_wram]
+
+/-- A WRAM write cannot alter cartridge banking or boot-overlay selection. -/
+theorem write_cycle_preserves_mapping (machine : Machine) (wake : Bool) (value : Byte)
+    (write : (stepMachineCycle machine wake).probe.intent.control = .write)
+    (driven : (stepMachineCycle machine wake).probe.intent.data = .driven value)
+    (low : 0xC000 ≤ (stepMachineCycle machine wake).probe.intent.address.toNat)
+    (high : (stepMachineCycle machine wake).probe.intent.address.toNat < 0xE000) :
+    (stepMachineCycle machine wake).machine.memory.cartridge = machine.memory.cartridge ∧
+      (stepMachineCycle machine wake).machine.memory.bootMapped = machine.memory.bootMapped := by
+  let intent := (stepMachineCycle machine wake).probe.intent
+  change intent.control = .write at write
+  change intent.data = .driven value at driven
+  change 0xC000 ≤ intent.address.toNat at low
+  change intent.address.toNat < 0xE000 at high
+  constructor
+  · change (runEdges intent (HalfEdge.expand intent) machine.memory [] []).memory.cartridge =
+      machine.memory.cartridge
+    rw [expand_write intent value write driven]
+    simp only [expandedWritePins, runEdges]
+    repeat rw [stepEdge_cartridge]
+    simp [isT3R, write, low, high, stepEdge_cartridge]
+  · change (runEdges intent (HalfEdge.expand intent) machine.memory [] []).memory.bootMapped =
+      machine.memory.bootMapped
+    rw [expand_write intent value write driven]
+    simp only [expandedWritePins, runEdges]
+    repeat rw [stepEdge_bootMapped]
+    simp [isT3R, write, low, high, stepEdge_bootMapped]
+
 /-- The probe and actual CPU step have identical complete cycle intent because
 read data cannot influence the current cycle's pins. -/
 theorem probe_compatible (machine : Machine) (wake : Bool) :
