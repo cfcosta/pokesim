@@ -20,6 +20,7 @@ import Battle.StepTests
 import Battle.Resolve
 import Battle.Refinement.Bridge
 import Battle.Refinement.Trace
+import Battle.Refinement.Simulation
 import Battle.Diff
 import Battle.Driver
 import Battle.DriverInvariant
