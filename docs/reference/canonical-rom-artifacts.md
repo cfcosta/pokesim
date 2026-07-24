@@ -34,7 +34,23 @@ nix develop -c python3 tools/check-pokered-build.py --rebuild --jobs 4
 
 `--rebuild` copies the pristine source to a temporary directory, builds
 `pokered.gbc`, verifies both ROM digests, and byte-compares the generated symbol
-and map files with the retained artifacts. It leaves `pokered/` unchanged.
+and map files with the retained artifacts. It also verifies three retained
+16-byte entry witnesses. It leaves `pokered/` unchanged.
+
+## Retained entry-byte witnesses
+
+| Symbol | Physical ROM offset | First 16 bytes |
+|---|---:|---|
+| `InitOpponent` | `0x3ef18` | `fa59d0ea91cfead8cf181afa32d7cb4f` |
+| `_InitBattleCommon` | `0x3efeb` | `0600cdef3dcd4c40afe0ba214a70cd49` |
+| `StartBattle` | `0x3c11e` | `afea58d0eaf5ccea6acd3cea1dd121a5` |
+
+The witnesses are metadata inside the hash-identified build manifest and are
+checked against every rebuilt or caller-supplied ROM. Lean callers provide
+`Rom.Closure.RequiredEntryBytes`; this is deliberate because an uninterpreted
+caller-supplied hash function cannot by itself prove individual array values.
+`DriverInvariant.atInitOpponent_shape` then proves that the fetched canonical
+entry byte is `$FA`, decoded as `LD A,(a16)`.
 
 ## Address closure
 

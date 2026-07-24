@@ -112,6 +112,45 @@ def verify_rom(path: Path, record: dict[str, object]) -> None:
         raise AssertionError(f"{path.name}: sha1 {actual_sha1}, expected {record['sha1']}")
 
 
+def verify_entry_metadata(manifest: dict[str, object], symbols: dict[str, tuple[int, int]]) -> None:
+    records = manifest.get("entry_bytes")
+    if not isinstance(records, list) or not records:
+        raise AssertionError("missing canonical entry-byte witnesses")
+    seen: set[str] = set()
+    for record in records:
+        if not isinstance(record, dict):
+            raise AssertionError("malformed entry-byte record")
+        symbol = str(record["symbol"])
+        if symbol in seen:
+            raise AssertionError(f"duplicate entry-byte witness: {symbol}")
+        seen.add(symbol)
+        bank = int(record["bank"])
+        address = int(record["address"])
+        if symbols.get(symbol) != (bank, address):
+            raise AssertionError(f"{symbol}: entry-byte address differs from retained symbols")
+        offset = address if address < 0x4000 else bank * 0x4000 + address - 0x4000
+        if int(record["rom_offset"]) != offset:
+            raise AssertionError(f"{symbol}: incorrect physical ROM offset")
+        try:
+            payload = bytes.fromhex(str(record["hex"]))
+        except ValueError as error:
+            raise AssertionError(f"{symbol}: malformed entry-byte hex") from error
+        if len(payload) != 16:
+            raise AssertionError(f"{symbol}: expected a 16-byte witness")
+
+
+def verify_entry_bytes(path: Path, manifest: dict[str, object]) -> None:
+    rom = path.read_bytes()
+    records = manifest["entry_bytes"]
+    assert isinstance(records, list)
+    for record in records:
+        assert isinstance(record, dict)
+        payload = bytes.fromhex(str(record["hex"]))
+        offset = int(record["rom_offset"])
+        if rom[offset : offset + len(payload)] != payload:
+            raise AssertionError(f"{record['symbol']}: canonical entry bytes differ")
+
+
 def command_version(command: str) -> str:
     executable = shutil.which(command)
     if executable is None:
@@ -141,7 +180,9 @@ def rebuild(manifest: dict[str, object], jobs: int) -> None:
         assert isinstance(rom_record, dict)
         assert isinstance(symbol_record, dict)
         assert isinstance(map_record, dict)
-        verify_rom(checkout / str(rom_record["file"]), rom_record)
+        generated_rom = checkout / str(rom_record["file"])
+        verify_rom(generated_rom, rom_record)
+        verify_entry_bytes(generated_rom, manifest)
 
         generated_symbol = checkout / str(symbol_record["file"])
         generated_map = checkout / str(map_record["file"])
@@ -172,9 +213,11 @@ def main() -> int:
     verify_file(symbol_path, symbol_record)
     verify_file(ARTIFACTS / str(map_record["file"]), map_record)
     symbols = verify_symbols(symbol_path)
+    verify_entry_metadata(manifest, symbols)
 
     if args.rom:
         verify_rom(args.rom, rom_record)
+        verify_entry_bytes(args.rom, manifest)
     if args.rebuild:
         rebuild(manifest, args.jobs)
 

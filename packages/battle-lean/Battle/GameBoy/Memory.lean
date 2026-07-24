@@ -101,6 +101,11 @@ def stepDma (state : State) : State :=
         { state with oam, devices := { state.devices with dmaIndex := nextIndex } }
       else { state with devices := { state.devices with dmaIndex := none } }
 
+@[simp] theorem read_rom_unmapped (state : State) (address : Word)
+    (unmapped : state.bootMapped = false) (range : address.toNat < 0x8000) :
+    read state address = Mbc3.read state.cartridge address := by
+  simp [read, range, unmapped]
+
 @[simp] theorem read_boot_mapped (state : State) (address : Word)
     (mapped : state.bootMapped = true) (range : address.toNat < 0x100) :
     read state address = Mbc3.readArray state.bootRom.bytes address.toNat := by

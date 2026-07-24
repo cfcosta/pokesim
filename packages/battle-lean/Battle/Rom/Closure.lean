@@ -4,6 +4,7 @@ Licensed under the Apache License, Version 2.0 (the "License").
 -/
 
 import Battle.GameBoy.Memory
+import Sm83.Decode
 
 namespace Battle.Rom.Closure
 
@@ -103,6 +104,72 @@ end Symbols
 @[inline] def romOffset (bank : Nat) (address : Word) : Nat :=
   if address.toNat < 0x4000 then address.toNat
   else bank * 0x4000 + address.toNat - 0x4000
+
+@[inline] def bytesAt (rom : Array Byte) (offset count : Nat) : List Byte :=
+  (List.range count).map fun index => GameBoy.Mbc3.readArray rom (offset + index)
+
+def initOpponentPrefix : List Byte :=
+  [0xFA, 0x59, 0xD0, 0xEA, 0x91, 0xCF, 0xEA, 0xD8,
+    0xCF, 0x18, 0x1A, 0xFA, 0x32, 0xD7, 0xCB, 0x4F]
+
+def initBattleCommonPrefix : List Byte :=
+  [0x06, 0x00, 0xCD, 0xEF, 0x3D, 0xCD, 0x4C, 0x40,
+    0xAF, 0xE0, 0xBA, 0x21, 0x4A, 0x70, 0xCD, 0x49]
+
+def startBattlePrefix : List Byte :=
+  [0xAF, 0xEA, 0x58, 0xD0, 0xEA, 0xF5, 0xCC, 0xEA,
+    0x6A, 0xCD, 0x3C, 0xEA, 0x1D, 0xD1, 0x21, 0xA5]
+
+/-- Hash-checked callers additionally provide these retained local byte
+witnesses. This avoids treating an uninterpreted hash function as a Lean proof
+of individual ROM bytes. -/
+structure RequiredEntryBytes (rom : Array Byte) : Prop where
+  initOpponent : bytesAt rom
+    (romOffset Symbols.initOpponent.bank.toNat Symbols.initOpponent.address) 16 =
+      initOpponentPrefix
+  initBattleCommon : bytesAt rom
+    (romOffset Symbols.initBattleCommon.bank.toNat Symbols.initBattleCommon.address) 16 =
+      initBattleCommonPrefix
+  startBattle : bytesAt rom
+    (romOffset Symbols.startBattle.bank.toNat Symbols.startBattle.address) 16 =
+      startBattlePrefix
+
+@[simp] theorem RequiredEntryBytes.initOpponent_opcode {rom : Array Byte}
+    (witness : RequiredEntryBytes rom) :
+    GameBoy.Mbc3.readArray rom
+      (romOffset Symbols.initOpponent.bank.toNat Symbols.initOpponent.address) = 0xFA := by
+  have first := congrArg (fun bytes => bytes[0]?) witness.initOpponent
+  simpa [bytesAt, initOpponentPrefix] using first
+
+/-- The retained first entry byte decodes as canonical `LD A,(a16)`. -/
+@[simp] theorem initOpponent_opcode_decode :
+    Decode.base 0xFA = .legal .ldAAbs := by
+  decide
+
+/-- The cartridge mapping selects a symbol's physical bank. Fixed-bank
+symbols require bank zero; switchable symbols require the live MBC3 bank. -/
+def Symbol.Selected (cartridge : GameBoy.Mbc3.State) (symbol : Symbol) : Prop :=
+  if symbol.address.toNat < 0x4000 then symbol.bank.toNat = 0
+  else GameBoy.Mbc3.selectedRomBank cartridge = symbol.bank.toNat
+
+/-- A selected, boot-unmapped ROM symbol reads the exact canonical physical
+array offset rather than a label-derived translation. -/
+theorem read_selected_symbol (memory : GameBoy.Memory.State) (symbol : Symbol)
+    (unmapped : memory.bootMapped = false)
+    (window : symbol.address.toNat < 0x8000)
+    (selected : symbol.Selected memory.cartridge) :
+    GameBoy.Memory.read memory symbol.address =
+      GameBoy.Mbc3.readArray memory.cartridge.rom
+        (romOffset symbol.bank.toNat symbol.address) := by
+  rw [GameBoy.Memory.read_rom_unmapped memory symbol.address unmapped window]
+  unfold Symbol.Selected at selected
+  by_cases fixed : symbol.address.toNat < 0x4000
+  · rw [GameBoy.Mbc3.read_fixed_rom memory.cartridge symbol.address fixed]
+    simp [romOffset, fixed]
+  · have low : 0x4000 ≤ symbol.address.toNat := by omega
+    rw [GameBoy.Mbc3.read_switchable_rom memory.cartridge symbol.address low window]
+    simp [fixed] at selected
+    simp [romOffset, fixed, selected]
 
 /-- Every selected in-image MBC3 ROM address has an offset in the retained
 one-megabyte image. -/

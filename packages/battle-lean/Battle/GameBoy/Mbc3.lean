@@ -64,6 +64,18 @@ def write (state : State) (address : Word) (value : Byte) : State :=
     selectedRomBank state = 1 := by
   simp [selectedRomBank, zero]
 
+@[simp] theorem read_fixed_rom (state : State) (address : Word)
+    (range : address.toNat < 0x4000) :
+    read state address = readArray state.rom address.toNat := by
+  simp [read, range]
+
+@[simp] theorem read_switchable_rom (state : State) (address : Word)
+    (low : 0x4000 ≤ address.toNat) (high : address.toNat < 0x8000) :
+    read state address = readArray state.rom
+      (selectedRomBank state * 0x4000 + address.toNat - 0x4000) := by
+  have notFixed : ¬address.toNat < 0x4000 := by omega
+  simp [read, notFixed, high]
+
 @[simp] theorem read_disabled_ram (state : State) (address : Word)
     (range : 0xA000 ≤ address.toNat ∧ address.toNat < 0xC000)
     (disabled : state.ramEnabled = false) :

@@ -109,6 +109,48 @@ def AtInitOpponent (machine : Machine) : Prop :=
       | _ => none
     | none => none
 
+/-- The fetched `InitOpponent` byte is tied to the canonical physical ROM
+offset under the live MBC3 mapping, not merely to a linker label. -/
+theorem atInitOpponent_canonical_byte {machine : Machine}
+    (entry : AtInitOpponent machine) :
+    machine.core.ir.map (fun fetched => (fetched.address, fetched.byte)) =
+      some (Rom.Closure.Symbols.initOpponent.address,
+        GameBoy.Mbc3.readArray machine.memory.cartridge.rom
+          (Rom.Closure.romOffset Rom.Closure.Symbols.initOpponent.bank.toNat
+            Rom.Closure.Symbols.initOpponent.address)) := by
+  have selected : Rom.Closure.Symbols.initOpponent.Selected machine.memory.cartridge := by
+    simp [Rom.Closure.Symbol.Selected, Rom.Closure.Symbols.initOpponent,
+      entry.2.1]
+  have canonical := Rom.Closure.read_selected_symbol machine.memory
+    Rom.Closure.Symbols.initOpponent entry.1 (by decide) selected
+  simpa [canonical] using entry.2.2.2.2.2.1
+
+/-- Retained byte witnesses specialize the entry checkpoint to the exact
+canonical opcode byte. -/
+theorem atInitOpponent_opcode {machine : Machine}
+    (entry : AtInitOpponent machine)
+    (bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom) :
+    machine.core.ir.map (fun fetched => (fetched.address, fetched.byte)) =
+      some (Rom.Closure.Symbols.initOpponent.address, 0xFA) := by
+  rw [← bytes.initOpponent_opcode]
+  exact atInitOpponent_canonical_byte entry
+
+/-- The canonical entry IR is decoded from byte `$FA` as `LD A,(a16)`. -/
+theorem atInitOpponent_shape {machine : Machine}
+    (entry : AtInitOpponent machine)
+    (bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom) :
+    machine.core.shape = some .ldAAbs := by
+  have opcode := atInitOpponent_opcode entry bytes
+  cases irEq : machine.core.ir with
+  | none => simp [irEq] at opcode
+  | some fetched =>
+      have byteEq : fetched.byte = 0xFA := by simpa [irEq] using congrArg (fun value => value.map Prod.snd) opcode
+      rw [entry.2.2.2.2.2.2.2, irEq]
+      change (match Decode.base fetched.byte with
+        | .legal shape => some shape
+        | _ => none) = some .ldAAbs
+      rw [byteEq, Rom.Closure.initOpponent_opcode_decode]
+
 /-- State coupling maintained from entry through the outer return. -/
 structure Holds (context : Context) (low : Machine) (high : Episode.State) : Prop where
   bankInImage : Rom.Closure.RomBankInImage low.memory.cartridge

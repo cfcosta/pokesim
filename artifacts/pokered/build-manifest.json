@@ -20,5 +20,28 @@
     "lines": 20559,
     "size": 897323,
     "sha256": "2bc9e32847add776618f3a5cb98c383c85842fa52f9f5d48474f32f32738c9fb"
-  }
+  },
+  "entry_bytes": [
+    {
+      "symbol": "InitOpponent",
+      "bank": 15,
+      "address": 28440,
+      "rom_offset": 257816,
+      "hex": "fa59d0ea91cfead8cf181afa32d7cb4f"
+    },
+    {
+      "symbol": "_InitBattleCommon",
+      "bank": 15,
+      "address": 28651,
+      "rom_offset": 258027,
+      "hex": "0600cdef3dcd4c40afe0ba214a70cd49"
+    },
+    {
+      "symbol": "StartBattle",
+      "bank": 15,
+      "address": 16670,
+      "rom_offset": 246046,
+      "hex": "afea58d0eaf5ccea6acd3cea1dd121a5"
+    }
+  ]
 }
