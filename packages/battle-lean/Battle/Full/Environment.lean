@@ -4,6 +4,7 @@ Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.Full.Engine
 import Battle.Full.Capture
+import Battle.Full.Evolution
 import Battle.RL.DynamicGenerator
 
 /-!
@@ -23,6 +24,8 @@ structure State where
   enemyReset : RL.DynamicGenerator.CanonicalTeam
   repairedReset : Bool
   box : Array MonState := #[]
+  playerProgression : Array Progression.PersistentMon := #[]
+  enemyProgression : Array Progression.PersistentMon := #[]
   canEvolveFlags : UInt8 := 0
   lastEpilogue : Option Money.EpilogueResult := none
 
@@ -45,6 +48,14 @@ structure Observation where
 
 private def fallbackMon : MonState := (RL.DynamicGenerator.sampleMon Rng.seed0).1
 
+private def persistent (owner : UInt16) (mon : MonState) : Progression.PersistentMon :=
+  let rate := Progression.GrowthRate.ofId
+    (Data.Progression.growthRates.getD mon.species.toNat 0)
+  { battle := mon
+    otId := owner
+    experience := Progression.experienceAtLevel rate mon.level
+    statExp := { hp := 0, attack := 0, defense := 0, speed := 0, special := 0 } }
+
 /-- Reset from independent generator and battle streams. -/
 def reset (generatorRng battleRng : Rng.LinkRng)
     (mode : BattleMode := .link) (playerBag enemyBag : Items.Bag := []) : State :=
@@ -61,7 +72,9 @@ def reset (generatorRng battleRng : Rng.LinkRng)
     playerReset := player.team
     enemyReset := enemy.team
     repairedReset := player.repaired || enemy.repaired
-    box := #[] }
+    box := #[]
+    playerProgression := player.team.1.map (persistent 0)
+    enemyProgression := enemy.team.1.map (persistent 0xffff) }
 
 /-- Done only after explicit cleanup settlement. -/
 def done (state : State) : Bool :=
@@ -75,13 +88,13 @@ those evolution requests before invoking this boundary. -/
 def settle (state : State) : State :=
   match state.engine.battle.phase with
   | .ending terminal =>
-      if state.canEvolveFlags != 0 then state
+      let result := Money.epilogue
+        { linkBattle := state.engine.battle.mode == .link
+          rawBattleResult := terminal.rawResult
+          playerMoney := state.engine.playerMoney
+          payDayMoney := state.engine.payDayMoney }
+      if result.runEvolution && state.canEvolveFlags != 0 then state
       else
-        let result := Money.epilogue
-          { linkBattle := state.engine.battle.mode == .link
-            rawBattleResult := terminal.rawResult
-            playerMoney := state.engine.playerMoney
-            payDayMoney := state.engine.payDayMoney }
         let engine := { state.engine with playerMoney := result.playerMoney, battle :=
           { state.engine.battle with phase := .returned ⟨terminal⟩ } }
         { state with engine, lastEpilogue := some result }
@@ -89,6 +102,58 @@ def settle (state : State) : State :=
 
 private def currentParty (state : State) (who : Side) : Array MonState :=
   (state.engine.battle.side who).syncOutgoing.party.mons
+
+private def syncProgressionRows (rows : Array Progression.PersistentMon)
+    (mons : Array MonState) : Array Progression.PersistentMon :=
+  rows.mapIdx fun index row => { row with battle := mons.getD index row.battle }
+
+/-- Construct the post-battle evolution machine after synchronizing active rows
+into persistent progression storage. Nonzero raw non-link exits have no
+EvolutionAfterBattle request. -/
+def evolution? (state : State) (aliasedItem : Option UInt8 := none) :
+    Option Evolution.Machine :=
+  match state.engine.battle.phase with
+  | .ending terminal =>
+      let guard := Money.epilogue
+        { linkBattle := state.engine.battle.mode == .link
+          rawBattleResult := terminal.rawResult
+          playerMoney := state.engine.playerMoney
+          payDayMoney := state.engine.payDayMoney }
+      if !guard.runEvolution then none
+      else
+        let rows := syncProgressionRows state.playerProgression (currentParty state .player)
+        some (Evolution.start rows state.canEvolveFlags state.engine.battle.mode aliasedItem)
+  | _ => none
+
+inductive EvolutionResult where
+  | pending (state : State) (machine : Evolution.Machine)
+  | completed (state : State)
+  | invalid (state : State) (machine : Evolution.Machine)
+
+private def installEvolution (state : State) (machine : Evolution.Machine) : State :=
+  let mons := machine.party.map Progression.PersistentMon.battle
+  let player := state.engine.battle.player
+  let activeMon := mons.getD player.activeIndex player.active.active
+  let player := { player with party := { mons }, active := { player.active with active := activeMon } }
+  let battle := state.engine.battle.setSide .player player
+  { state with
+    engine := { state.engine with battle }
+    playerProgression := machine.party
+    canEvolveFlags := 0 }
+
+/-- Complete an already exhausted evolution scan. -/
+def completeEvolution (state : State) (machine : Evolution.Machine) : EvolutionResult :=
+  match machine.phase with
+  | .completed => .completed (settle (installEvolution state machine))
+  | _ => .pending state machine
+
+/-- Compose one nested evolution/learning response back into the battle
+settlement state. -/
+def resumeEvolution (state : State) (machine : Evolution.Machine)
+    (response : Evolution.Response) : EvolutionResult :=
+  match Evolution.respond machine response with
+  | none => .invalid state machine
+  | some machine => completeEvolution state machine
 
 def observe (state : State) : Observation :=
   let player := currentParty state .player

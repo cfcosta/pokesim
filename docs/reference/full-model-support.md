@@ -22,7 +22,7 @@
 | Money/epilogue | `Battle.Full.Money` | Three-byte BCD saturation, Pay Day, trainer prize, raw-result and link evolution guards |
 | Evolution protocol | `Battle.Full.Evolution` | Flagged slot order, level/item/trade matching, wild item-alias input, cancellation, stat/HP update, nested learning |
 | Turn composition | `Battle.Full.Engine` | Actions, ordering, status, damage/effects, items, residuals, faint/replacement, terminal witness |
-| RL protocol | `Battle.Full.Environment` | Dynamic proof-carrying parties, observations, legal actions, external-random requests |
+| RL protocol | `Battle.Full.Environment` | Dynamic proof-carrying parties, persistent progression rows, observations, legal actions, external-random and evolution requests |
 | Self-play | `Battle.Full.SelfPlay` | Independent policy RNGs, nested continuations, finite/open behavior distinction |
 | Domain certificate | `Battle.Full.Support.model_coverage` | Move/effect, item, trainer, ball, generator, and external-bug domain closure |
 
@@ -50,8 +50,8 @@ The following remain outside `ModelCoverage`:
 
 - decoded-ROM refinement for battle routines and effect handlers;
 - integration of the modeled traded-Pokémon disobedience state machine into turn composition;
-- integration of modeled EXP/stat progression, move learning, and evolution
-  protocols with battle participation flags and complete post-battle sequencing;
+- battle-time participation/EXP award triggers and their exact sequencing before
+  the integrated move-learning/evolution epilogue;
 - exact presentation/menu traces and selection-scratch behavior;
 - continuous fetched-IR execution from battle entry through cleanup and return;
 - full hardware assumptions for non-link `Random`, waits, audio, serial, and

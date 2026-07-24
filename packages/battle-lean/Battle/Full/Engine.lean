@@ -28,6 +28,9 @@ structure State where
   playerMoney : Money.Bcd3 := Money.Bcd3.ofNat 0
   trainerPrize : Money.Bcd3 := Money.Bcd3.ofNat 0
   sharedDamage : UInt16 := 0
+  playerId : UInt16 := 0
+  playerOtIds : Array UInt16 := #[]
+  badges : UInt8 := 0xff
   runAttempts : UInt8 := 0
   deriving Repr, DecidableEq
 
