@@ -30,7 +30,9 @@ Consumers provide a bus and hardware-profile adapter.
   provenance; decoding itself remains encoding-derived.
 
 The package contains no Pokémon data, cartridge controller, ROM, PPU, timer,
-serial, joypad, or boot-ROM model.
+serial, joypad, or boot-ROM model. It models the Game Boy SM83 embedding, not
+an arbitrary Sharp-core SoC: the optional die-core NMI pad is intentionally
+omitted and must be proved unbonded/inactive by the Game Boy adapter.
 
 The implementation contract is maintained in
 [`../../docs/reference/sm83-implementation-spec.md`](../../docs/reference/sm83-implementation-spec.md).
