@@ -11,7 +11,8 @@ Consumers provide a bus and hardware-profile adapter.
 
 ## Semantic layers
 
-- `Relation` exposes a Prop-valued architectural instruction judgment.
+- `Architectural` and `Relation` expose an independent Prop-valued instruction
+  judgment; `Functional.step` soundness and completeness are proved separately.
 - `Functional` executes de-overlapped instructions against `FlatMemory` and
   records ordered bus events.
 - `Cycle`, `Pipeline`, and `Run` implement fetched-IR physical M-cycles,
@@ -20,6 +21,10 @@ Consumers provide a bus and hardware-profile adapter.
 - `HalfEdge` expands each M-cycle into typed `T1F` through `T4R` pin intent.
 - `FlatAdapter` drives the physical core from flat memory and projects its
   prefetched checkpoint back to the architectural view.
+- `Retirement` exposes an RVFI-like boundary event and proves order, uniqueness,
+  PC continuity, memory causality, and interrupt provenance invariants.
+- `Behavior` and `Simulation` define finite/infinite observations, explicit
+  terminal modes, progress-sensitive stuttering, and finite behavior lifting.
 - `Program` and `Hoare` provide fuel-sensitive runs, return sentinels,
   composition, and frame predicates.
 - `Profile` keeps STOP effects and invalid-lock retained pins relational where
@@ -64,6 +69,15 @@ registers, flags, memory, IME, and ordered active bus transactions after
 successor-fetch reassociation. HALT and STOP are excluded from ordinary
 completion vectors and covered by profile/sequence proofs because their corpus
 rows do not contain the required system context.
+
+`Proofs.UniversalRefinement` proves state, memory, and projected-trace agreement
+for all 242 ordinary legal base entries and all 256 CB entries. Decoder-closure
+theorems establish the exact 498-entry count. These are universal local
+instruction theorems, not finite fixture claims. HALT, STOP, interrupts, reset,
+and invalid lock remain separate system/profile relations. The package is still
+a candidate processor specification until the local simulation is lifted to the
+complete infinite physical/system behavior stack and its hardware assumptions
+are discharged by a consumer adapter.
 
 ## License
 
