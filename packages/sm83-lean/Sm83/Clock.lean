@@ -29,6 +29,28 @@ inductive ClockDomain where
   | cartridgeRtc
   deriving Repr, DecidableEq, Inhabited
 
+inductive TPhase where
+  | t1 | t2 | t3 | t4
+  deriving Repr, DecidableEq, Inhabited
+
+inductive ClockEdge where
+  | falling | rising
+  deriving Repr, DecidableEq, Inhabited
+
+structure HalfEdge where
+  phase : TPhase
+  edge : ClockEdge
+  deriving Repr, DecidableEq, Inhabited
+
+/-- Canonical adapter order for the eight half edges of one processor M-cycle. -/
+def machineHalfEdges : List HalfEdge :=
+  [⟨.t1, .falling⟩, ⟨.t1, .rising⟩,
+   ⟨.t2, .falling⟩, ⟨.t2, .rising⟩,
+   ⟨.t3, .falling⟩, ⟨.t3, .rising⟩,
+   ⟨.t4, .falling⟩, ⟨.t4, .rising⟩]
+
+@[simp] theorem machineHalfEdges_length : machineHalfEdges.length = 8 := rfl
+
 structure ClockIntent where
   cpuExecution : Bool := true
   machine : Bool := true

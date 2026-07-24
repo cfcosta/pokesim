@@ -432,5 +432,35 @@ def runMachineCycles : Nat → CoreState → (CoreState → CoreInput) → CoreS
       let output := stepMachineCycle state (respond state)
       runMachineCycles fuel output.state respond
 
+inductive MachineRunResult where
+  | reached (state : CoreState) (intents : List CycleIntent) (cycles : Nat)
+  | halted (state : CoreState) (intents : List CycleIntent) (cycles : Nat)
+  | stopped (state : CoreState) (intents : List CycleIntent) (cycles : Nat)
+  | locked (state : CoreState) (intents : List CycleIntent) (cycles : Nat)
+  | fuelExhausted (state : CoreState) (intents : List CycleIntent) (cycles : Nat)
+  deriving Repr
+
+/-- Fuel-bounded physical runner. The caller supplies a response for every M-cycle. -/
+def runUntil (stop : CoreState → Bool) (inputAt : Nat → CoreState → CoreInput) :
+    Nat → CoreState → List CycleIntent → Nat → MachineRunResult
+  | 0, state, intents, cycles =>
+      if stop state then .reached state intents cycles else .fuelExhausted state intents cycles
+  | fuel + 1, state, intents, cycles =>
+      if stop state then .reached state intents cycles
+      else match state.mode with
+        | .locked _ => .locked state intents cycles
+        | .halted =>
+            let output := stepMachineCycle state (inputAt cycles state)
+            if output.state.mode == .halted then .halted output.state (intents ++ [output.intent]) (cycles + 1)
+            else runUntil stop inputAt fuel output.state (intents ++ [output.intent]) (cycles + 1)
+        | .stopped _ =>
+            let output := stepMachineCycle state (inputAt cycles state)
+            match output.state.mode with
+            | .stopped _ => .stopped output.state (intents ++ [output.intent]) (cycles + 1)
+            | _ => runUntil stop inputAt fuel output.state (intents ++ [output.intent]) (cycles + 1)
+        | .running =>
+            let output := stepMachineCycle state (inputAt cycles state)
+            runUntil stop inputAt fuel output.state (intents ++ [output.intent]) (cycles + 1)
+
 end Run
 end Sm83

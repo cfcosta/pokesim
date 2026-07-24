@@ -11,6 +11,7 @@ import Sm83.Encode
 import Sm83.Flags
 import Sm83.FlatMemory
 import Sm83.Functional
+import Sm83.HalfEdge
 import Sm83.Hoare
 import Sm83.Instruction
 import Sm83.Interrupt
