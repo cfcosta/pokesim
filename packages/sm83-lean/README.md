@@ -24,6 +24,8 @@ Consumers provide a bus and hardware-profile adapter.
   composition, and frame predicates.
 - `Profile` keeps STOP effects and invalid-lock retained pins relational where
   processor-only evidence cannot choose a deterministic system behavior.
+- `Reset` distinguishes asynchronous assertion, held reset, and synchronous
+  release without inventing one power-on register/IR image.
 - `Catalogue` contains all 256 base and 256 CB projections with pinned metadata
   provenance; decoding itself remains encoding-derived.
 

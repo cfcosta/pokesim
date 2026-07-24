@@ -16,7 +16,7 @@ EXPECTED_MODULES = {
     "Alu", "Basic", "Byte", "Catalogue", "Clock", "CoreState", "Cycle",
     "Decode", "Encode", "Flags", "FlatAdapter", "FlatMemory", "Functional",
     "HalfEdge", "Hoare", "Instruction", "Interrupt", "Pipeline", "Profile",
-    "Program", "Registers", "Relation", "Run",
+    "Program", "Registers", "Relation", "Reset", "Run",
 }
 
 
