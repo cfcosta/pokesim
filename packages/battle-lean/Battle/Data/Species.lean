@@ -24,10 +24,11 @@ laid out exactly as the ROM lays it out:
   lookup goes internal → `pokedexOrder` → dex → `baseStats`.
 
 Transcribed from pret/pokered @ `405b6246372d7e5a2cb029cbb65219b13286b8c9` by a
-deterministic parser over the disassembly (not hand-typed); this is the authored
-table the ROM round-trip certificate (task #24) decodes-and-compares against.
-Only the 151 real species are data-backed — the fossil/ghost internal ids and
-MissingNo slots carry no base_stats file, so they resolve to `default`.
+deterministic parser over the disassembly (not hand-typed). `Battle.Rom.Tables`
+decodes the canonical 150-row block plus detached `MewBaseStats` row and
+`RequiredTableBytes.baseStats` proves agreement with this array. Only the 151
+real species are data-backed—the fossil/ghost internal ids and MissingNo slots
+carry no base-stats row, so they resolve to `default`.
 -/
 
 namespace Battle.Data

@@ -30,8 +30,8 @@ produce, for each of the **151 real** `pokedex` entries — the guards below are
 therefore exhaustive over the entire reachable moveset space, not a sample. (A
 fully symbolic version would need custom induction over `noRepeats`/`dropWhile`
 for an *arbitrary* well-formed entry; with the real table finite, enumeration is
-the honest, complete tool. When the ROM certificate (task #24) re-certifies
-`Battle/Data/*`, these same guards re-run unchanged over the certified table.)
+the honest, complete tool. `Battle.Rom.Tables` certifies `Battle/Data/*` against
+the canonical ROM, so these same guards cover the certified table.)
 
 `maxLevel`/`numMoves`/`maxStatValue` are the `Battle.RL` / `Battle.Wram` mirrors
 of `MAX_LEVEL`, `NUM_MOVES`, `MAX_STAT_VALUE`.

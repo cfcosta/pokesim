@@ -117,3 +117,9 @@ not fetch invalid opcodes or STOP.
 `Rom.Closure.TableLayout` proves the fixed ranges: 165 six-byte move rows,
 150 28-byte ordinary base-stat rows plus Mew's detached row, 190 two-byte
 evolution/learnset pointers, and 190 internal-index order bytes.
+`Battle.Rom.Tables` supplies lossless universal row codecs and canonical decoders.
+It follows the variable evolution payloads and reconstructs the 191 internal-slot
+learn pools from level-one moves, level-up moves, TM/HM flags, and transitive
+pre-evolutions. `RequiredTableBytes` exposes the caller-supplied proof boundary;
+the temporary ROM fixture checks agreement with all independently authored
+`Battle.Data` arrays.

@@ -54,11 +54,11 @@ The project has moved beyond discovery for the processor, canonical build, initi
 
 | Data | Count/shape | Source | Status |
 |---|---:|---|---|
-| Move records | 165 × 6 bytes | `pokered/data/moves/moves.asm` | Discovered |
+| Move records | 165 × 6 bytes | `pokered/data/moves/moves.asm` | ROM-certified |
 | Move IDs | 0 plus 165 moves | `pokered/constants/move_constants.asm` | Discovered |
 | Move effects | IDs `$00`–`$56` with gaps | `pokered/constants/move_effect_constants.asm` | Discovered |
 | Effect pointers | one per nonzero effect slot | `pokered/data/moves/effects_pointers.asm` | Discovered |
-| Base species | 151 ordinary records | `pokered/data/pokemon/base_stats*`, `pokered/data/pokemon/mew.asm` | Discovered |
+| Base species | 150 contiguous records + detached Mew | `pokered/data/pokemon/base_stats*`, `pokered/data/pokemon/mew.asm` | ROM-certified |
 | Internal species map | IDs with gaps/special forms | `pokered/constants/pokemon_constants.asm` | Discovered |
 | Pokédex IDs | 151 ordinary constants | `pokered/constants/pokedex_constants.asm` | Discovered |
 | Type IDs | physical and special ranges with gaps | `pokered/constants/type_constants.asm` | Discovered |
@@ -70,12 +70,12 @@ The project has moved beyond discovery for the processor, canonical build, initi
 | Trainer move scoring | [47 class-indexed layer lists](trainer-ai-dispatch.md) | `pokered/data/trainers/move_choices.asm` | Discovered |
 | Trainer action AI | [47 count + pointer rows](trainer-ai-dispatch.md) | `pokered/data/trainers/ai_pointers.asm` | Discovered |
 | Special trainer moves | lone/team patches | `pokered/data/trainers/special_moves.asm` | Discovered |
-| Learnsets/evolutions | species pointer table | `pokered/data/pokemon/evos_moves.asm` | Discovered |
+| Learnsets/evolutions | 190 pointers + variable payloads | `pokered/data/pokemon/evos_moves.asm` | ROM-certified |
 | Growth rates | 6 coefficient records | `pokered/data/growth_rates.asm` | Discovered |
 | Battle item dispatch | [83 ordinary entries](item-dispatch.md) before TM/HM IDs | `pokered/engine/items/item_effects.asm` | Discovered |
 | Evolution entries | level/item/trade records followed by moves | `pokered/data/pokemon/evos_moves.asm` | Discovered |
 | Bag/current box layouts | ordered items and capture destination | WRAM structures and inventory/box helpers | Discovered |
-| Internal-to-Pokédex map | 190 entries including zero/MissingNo. slots | `pokered/data/pokemon/dex_order.asm` | Discovered |
+| Internal-to-Pokédex map | 190 entries including zero/MissingNo. slots | `pokered/data/pokemon/dex_order.asm` | ROM-certified |
 
 For each table:
 

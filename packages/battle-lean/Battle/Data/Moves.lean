@@ -23,10 +23,11 @@ Effect IDs are `constants/move_effect_constants.asm`
 (`constants/type_constants.asm`); the physical/special split is by type
 (`TypeChart.isSpecial`), not per-move.
 
-This is the authored table the ROM round-trip certificate (`Battle/Rom/Tables`,
-task #24) will decode-and-compare against. It carries move *data* only —
-per-move effect *behaviours* (status, stat stages, the unique moves) are a later
-slice; `effect` here is the ID those behaviours will dispatch on.
+This independently authored table is certified by `Battle.Rom.Tables`: the
+canonical decoder reads all 165 six-byte rows, checks their one-based IDs, and
+`RequiredTableBytes.moves` proves agreement with this array. It carries move
+*data* only—per-move effect *behaviours* (status, stat stages, unique moves) are
+a later slice; `effect` is the ID those behaviours dispatch on.
 -/
 
 namespace Battle.Data

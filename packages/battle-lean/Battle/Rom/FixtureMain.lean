@@ -22,7 +22,7 @@ def main (args : List String) : IO UInt32 := do
   | [path] =>
       try
         let rom ← Fixture.loadChecked path
-        IO.println s!"PASS canonical ROM fixture: {rom.bytes.size} bytes, retained windows agree"
+        IO.println s!"PASS canonical ROM fixture: {rom.bytes.size} bytes, retained windows and battle tables agree"
         pure 0
       catch error =>
         IO.eprintln s!"FAIL canonical ROM fixture: {error}"

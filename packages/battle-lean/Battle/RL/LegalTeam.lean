@@ -37,9 +37,10 @@ Pokémon iff its internal index resolves to a dex number, learnable iff the move
 is in that species' pool (level-up ∪ TM/HM ∪ pre-evolutions). `Dex.permissive`
 is retained only as loose scaffolding — the whole representable range, glitch
 slots and all — for range-only exploration and to document the seam shape. Both
-are *authored from* the disassembly; the ROM round-trip certificate (task #24)
-re-decodes the same tables and proves them equal, so `Dex.gen1` sharpens from
-"authored" to "ROM-certified" with no code change here. `MAX_LEVEL = 100`
+are independently authored from the disassembly and certified by
+`Battle.Rom.Tables`, whose canonical decoder re-derives the same tables from ROM
+bytes. Thus `Dex.gen1` is ROM-certified without coupling this hot-path predicate
+to the decoder. `MAX_LEVEL = 100`
 (`constants/battle_constants.asm`); `NUM_MOVES`, `MAX_STAT_VALUE`, `PARTY_LENGTH`
 from `Battle.Wram`.
 -/
@@ -69,8 +70,8 @@ inductive Legality where
 
 /-! ## The data seam (ROM-decoded; parameterised) -/
 
-/-- The obtainability tables the legality check consults — a real instance is
-    ROM-decoded (`COORDINATION.md` seam 3, GPT's `Rom/Tables`). -/
+/-- The obtainability tables the legality check consults. The canonical instance
+    is backed by independently authored, ROM-certified arrays. -/
 structure Dex where
   /-- Is this internal species index a real (non-glitch) Pokémon? -/
   validSpecies : SpeciesId → Bool
@@ -81,8 +82,8 @@ structure Dex where
     data modules: a species is valid iff it is a real (non-glitch) Pokémon
     (`Battle.Data.isRealSpecies`), and can learn exactly the moves in its pool
     (`Battle.Data.canLearn` — level-up ∪ TM/HM ∪ pre-evolutions). This is the
-    default the RL generator is checked against; the ROM certificate (task #24)
-    re-derives it. -/
+    default the RL generator is checked against; `Battle.Rom.Tables` re-derives
+    and certifies it from canonical cartridge bytes. -/
 def Dex.gen1 : Dex :=
   { validSpecies := Battle.Data.isRealSpecies,
     canLearn := Battle.Data.canLearn }

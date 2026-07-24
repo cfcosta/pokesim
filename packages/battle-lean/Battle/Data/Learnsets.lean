@@ -23,8 +23,10 @@ real-species evolution edges, so MissingNo/glitch pools never leak in. Keyed by
 the internal index the party structs store (the model's `SpeciesId`).
 
 Emitted by a deterministic parser over pret/pokered @
-`405b6246372d7e5a2cb029cbb65219b13286b8c9`; the ROM round-trip certificate
-(task #24) re-decodes `EvosMovesPointerTable`/base_stats and re-derives this.
+`405b6246372d7e5a2cb029cbb65219b13286b8c9`. `Battle.Rom.Tables` independently
+decodes `EvosMovesPointerTable`, level-one moves, level-up payloads, TM/HM
+bitfields, and evolution edges; `RequiredTableBytes.learnPools` certifies the
+re-derived 191-entry array against this one.
 -/
 
 namespace Battle.Data

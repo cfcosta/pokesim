@@ -48,9 +48,9 @@ species' base stats / types / catch rate from `Battle.Data.speciesData` and its
 move pool from `Battle.Data.learnset`, and `movePP` reads `Battle.Data.moveData`.
 `SpeciesEntry.speciesId` is the ROM **internal** index the party structs store
 (the model's `SpeciesId`), so a generated mon's `species` needs no remapping. The
-tables are authored from the disassembly; when the ROM certificate (task #24)
-lands, `Battle/Data/*` sharpens from "authored" to "ROM-certified" and this
-generator inherits it with no code change.
+tables are independently authored from the disassembly and certified against
+the canonical ROM by `Battle.Rom.Tables`; this hot-path generator inherits that
+certificate without executing the ROM decoder.
 
 Move *identity* selection is still the sorted-pool prefix (a `moveCount`-length
 slice of `learnset`); which specific moves — beyond count — is a future entropy
@@ -104,7 +104,7 @@ def packDVs (atkDV defDV spdDV spcDV : UInt16) : UInt16 :=
 def padTo {α : Type} (n : Nat) (fill : α) (xs : Array α) : Array α :=
   xs.extract 0 n ++ (List.replicate (n - xs.size) fill).toArray
 
-/-! ## The data seam (`Battle/Data/*`, authored from the disassembly) -/
+/-! ## The ROM-certified data seam (`Battle/Data/*`) -/
 
 /-- Per-species generator data, read from `Battle/Data/*`: real ROM base
     stats/types/catch rate and the species' full learnable move pool. -/
