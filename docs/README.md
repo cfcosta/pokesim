@@ -1,6 +1,6 @@
 # Battle verification documentation
 
-These documents record ten ASM-grounded codebase-review passes and define the boundary for a formally verified Lean battle simulator.
+These documents record twelve codebase, processor, and proof-architecture review passes and define the boundary for a formally verified Lean battle simulator.
 
 ## Start here
 
@@ -41,6 +41,7 @@ These documents record ten ASM-grounded codebase-review passes and define the bo
 - [Ninth-pass gb-opcodes audit](research/ninth-pass-gb-opcodes-audit.md) — complete cloned-catalogue review, JSON hazards, STOP/prefix disputes, timing-unit decision, and implementation-ready semantic contract.
 - [Tenth-pass SM83 microarchitecture audit](research/tenth-pass-sm83-microarchitecture-audit.md) — fetch overlap, internal latches, 101 physical families, clock gates, IDU/OAM behavior, interrupt/HALT/STOP closure, and exact source/corpus audit.
 - [Eleventh-pass SM83 profile evidence audit](research/eleventh-pass-sm83-profile-evidence-audit.md) — DMG-CPU B selection, T1F–T4R evidence, temporal bus reads, reset/NMI/gates, SameBoy oracle, and hardware validation.
+- [Twelfth-pass RISC-V and CompCert proof audit](research/twelfth-pass-riscv-compcert-proof-audit.md) — the simulation and whole-behavior theorems required to turn the current executable SM83 candidate into an end-to-end formal verification.
 
 ## Documentation modes
 
