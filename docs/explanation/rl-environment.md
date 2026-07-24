@@ -413,6 +413,13 @@ StepResult {
 
 Keep generator and battle RNG seeds separate. Team sampling must not perturb battle randomness.
 
+`Battle.RL.Environment` now provides the single-environment form of this API for
+the ordinary one-mon profile: `reset`, `observe`, `legalActions`, `step`, `settle`,
+and `done`. Reset retains proof-carrying canonical teams; legal masks contain
+only supported nonempty fight slots; invalid, inactive, and RNG-stuck outcomes
+are distinct. A faint enters `ending`, and only the separate no-op profile
+cleanup `settle` enters `returned` and makes `done = true`.
+
 ## RL release checks
 
 Before exposing a stable API:
