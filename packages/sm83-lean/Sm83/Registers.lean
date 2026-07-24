@@ -4,6 +4,7 @@ Licensed under the Apache License, Version 2.0 (the "License").
 -/
 
 import Sm83.Flags
+import Sm83.Instruction
 
 namespace Sm83
 
@@ -45,6 +46,51 @@ namespace Registers
 
 @[inline] def setHL (registers : Registers) (value : Word) : Registers :=
   { registers with h := value.highByte, l := value.lowByte }
+
+@[inline] def get8 (registers : Registers) : Reg8 → Byte
+  | .a => registers.a
+  | .b => registers.b
+  | .c => registers.c
+  | .d => registers.d
+  | .e => registers.e
+  | .h => registers.h
+  | .l => registers.l
+
+@[inline] def set8 (registers : Registers) (target : Reg8) (value : Byte) : Registers :=
+  match target with
+  | .a => { registers with a := value }
+  | .b => { registers with b := value }
+  | .c => { registers with c := value }
+  | .d => { registers with d := value }
+  | .e => { registers with e := value }
+  | .h => { registers with h := value }
+  | .l => { registers with l := value }
+
+@[inline] def get16 (registers : Registers) : Reg16 → Word
+  | .bc => registers.bc
+  | .de => registers.de
+  | .hl => registers.hl
+  | .sp => registers.sp
+
+@[inline] def set16 (registers : Registers) (target : Reg16) (value : Word) : Registers :=
+  match target with
+  | .bc => registers.setBC value
+  | .de => registers.setDE value
+  | .hl => registers.setHL value
+  | .sp => { registers with sp := value }
+
+@[inline] def getStack16 (registers : Registers) : Stack16 → Word
+  | .bc => registers.bc
+  | .de => registers.de
+  | .hl => registers.hl
+  | .af => registers.af
+
+@[inline] def setStack16 (registers : Registers) (target : Stack16) (value : Word) : Registers :=
+  match target with
+  | .bc => registers.setBC value
+  | .de => registers.setDE value
+  | .hl => registers.setHL value
+  | .af => registers.setAF value
 
 @[simp] theorem af_setAF (registers : Registers) (value : Word) :
     (registers.setAF value).af = Word.ofBytes value.highByte (value.lowByte &&& Byte.ofNat 0xF0) := by
