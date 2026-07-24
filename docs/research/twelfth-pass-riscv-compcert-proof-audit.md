@@ -13,6 +13,18 @@ CompCert or Bedrock2/Kami sense. The missing center is a universal simulation
 stack. Finite corpus agreement, generated catalogue consistency, and concrete
 refinement examples do not replace those simulations.
 
+> **Post-audit implementation note.** This document records the baseline that
+> motivated the current proof work; its inventory tables below are historical.
+> Since this audit, the package has added whole-behavior types and projections,
+> an independent instruction relation with functional soundness/completeness,
+> an RVFI-like retirement monitor, and universal local flat-block refinement for
+> all 242 ordinary legal base entries plus all 256 CB entries. Proof-relevant
+> decoder closure unifies those theorems and a direct block simulation lifts to
+> whole behaviors under an explicit reaction-preservation premise. The package
+> remains a candidate: continuous fetched-IR M-cycle composition,
+> HALT/STOP/interrupt behavior lifting, the DMG-system proof, and canonical-ROM
+> driver/battle refinement are still open.
+
 ## Sources consulted
 
 The web review used primary project documentation and source at these revisions:
