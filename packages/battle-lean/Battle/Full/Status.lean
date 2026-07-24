@@ -56,6 +56,16 @@ def clearInterruptedLocks (volatile : Volatile) : Volatile :=
     bitMask Wram.BattleStatus1.usingTrappingMove
   { volatile with status1 := volatile.status1 &&& ~~~mask }
 
+/-- A successful second charge turn clears both charging and invulnerability.
+Interrupted charge turns use `clearInterruptedLocks` and deliberately leave the
+invulnerability bit behind. -/
+private def clearSuccessfulCharge (side : Battle.SideState) : Battle.SideState :=
+  if side.volatile.chargingUp then
+    let mask := bitMask Wram.BattleStatus1.chargingUp |||
+      bitMask Wram.BattleStatus1.invulnerable
+    replaceVolatile side { side.volatile with status1 := side.volatile.status1 &&& ~~~mask }
+  else side
+
 /-- Exact pre-move status machine. `targetTrapping` is the opponent's trapping
 bit, which prevents this side from moving. -/
 def checkCanAct (side : Battle.SideState) (targetTrapping : Bool)
@@ -111,14 +121,15 @@ where
       (rng : Rng.LinkRng) : CheckResult :=
     if side.volatile.disabledMoveNumber != 0 &&
         side.volatile.disabledMoveNumber == selectedMove then
-      .cannotAct .selectedMoveDisabled side rng
+      .cannotAct .selectedMoveDisabled
+        (replaceVolatile side (clearInterruptedLocks side.volatile)) rng
     else if side.active.paralyzed then
       let (raw, rng) := rng.next
       if raw < (63 : UInt8) then
         .cannotAct .fullyParalyzed
           (replaceVolatile side (clearInterruptedLocks side.volatile)) rng
-      else .canAct side rng
-    else .canAct side rng
+      else .canAct (clearSuccessfulCharge side) rng
+    else .canAct (clearSuccessfulCharge side) rng
 
 /-! ## Residual HP -/
 

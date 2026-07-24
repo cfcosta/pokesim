@@ -27,6 +27,7 @@ structure State where
   payDayMoney : Money.Bcd3 := Money.Bcd3.ofNat 0
   playerMoney : Money.Bcd3 := Money.Bcd3.ofNat 0
   trainerPrize : Money.Bcd3 := Money.Bcd3.ofNat 0
+  sharedDamage : UInt16 := 0
   runAttempts : UInt8 := 0
   deriving Repr, DecidableEq
 
@@ -88,6 +89,14 @@ private def decrementPp (packed : UInt8) : UInt8 :=
 private def moveOfAction (state : State) (who : Side) : Full.Action → Option (MoveId × Fin 4)
   | .fight slot => some ((side state who).active.active.moves.getD slot.val 0, slot)
   | .struggle => some (165, 0)
+  | .noAction =>
+      let volatile := (side state who).active.volatile
+      if volatile.chargingUp || volatile.trapping ||
+          bitSet volatile.status1 Wram.BattleStatus1.storingEnergy ||
+          bitSet volatile.status1 Wram.BattleStatus1.thrashingAbout ||
+          bitSet volatile.status2 Wram.BattleStatus2.usingRage then
+        some (lastMove state who, 0)
+      else none
   | _ => none
 
 private def decrementMovePp (state : State) (who : Side) (slot : Fin 4)
@@ -212,14 +221,24 @@ private def applyDamage (state : State) (who : Side) (damage : UInt16) : DamageA
     let volatile := { volatile with status2 := if breaks then target.active.volatile.status2 &&&
       ~~~((1 <<< Wram.BattleStatus2.hasSubstituteUp).toUInt8)
       else target.active.volatile.status2 }
-    { state := setSide state targetWho { target with active := { target.active with volatile } },
-      actualDamage := UInt16.ofNat actual.toNat, targetFainted := false,
+    let actualDamage := UInt16.ofNat actual.toNat
+    let volatile := if bitSet volatile.status1 Wram.BattleStatus1.storingEnergy then
+      { volatile with bideAccumulated := volatile.bideAccumulated + actualDamage }
+      else volatile
+    { state := { (setSide state targetWho { target with active := { target.active with volatile } }) with
+        sharedDamage := actualDamage },
+      actualDamage, targetFainted := false,
       events := [.substituteDamage targetWho actual remaining] }
   else
     let hp := Step.saturatingSub target.active.active.hp damage
     let actual := target.active.active.hp - hp
     let mon := { target.active.active with hp }
-    { state := setSide state targetWho { target with active := { target.active with active := mon } },
+    let volatile := if bitSet target.active.volatile.status1 Wram.BattleStatus1.storingEnergy then
+      { target.active.volatile with
+        bideAccumulated := target.active.volatile.bideAccumulated + actual }
+      else target.active.volatile
+    let target := { target with active := { target.active with active := mon, volatile := volatile } }
+    { state := { (setSide state targetWho target) with sharedDamage := actual },
       actualDamage := actual, targetFainted := hp == 0,
       events := [.damage who actual hp] }
 
@@ -246,6 +265,36 @@ private def applyResidual (state : State) (who : Side) : State × List Event :=
   let state := setSide state who.other { side state who.other with active := result.opponent }
   if result.actor.active.fainted then recordFaint state who else (state, [])
 
+/-- Consume the current execution from Bide/Thrash/trapping counters. Thrash
+completion samples its confusion duration at the lock-release boundary. -/
+private def advanceMoveLock (state : State) (who : Side) : State × List Event :=
+  let current := side state who
+  let volatile := current.active.volatile
+  let lockMask := (1 <<< Wram.BattleStatus1.storingEnergy).toUInt8 |||
+    (1 <<< Wram.BattleStatus1.thrashingAbout).toUInt8 |||
+    (1 <<< Wram.BattleStatus1.usingTrappingMove).toUInt8
+  if volatile.status1 &&& lockMask == 0 || volatile.numAttacksLeft == 0 then (state, [])
+  else
+    let remaining := volatile.numAttacksLeft - 1
+    if remaining != 0 then
+      let volatile := { volatile with numAttacksLeft := remaining }
+      (setSide state who { current with active := { current.active with volatile } }, [])
+    else
+      let wasThrashing := bitSet volatile.status1 Wram.BattleStatus1.thrashingAbout
+      let volatile := { volatile with numAttacksLeft := 0 }
+      let volatile := { volatile with status1 := volatile.status1 &&& ~~~lockMask }
+      if wasThrashing then
+        let (raw, rng) := state.battle.rng.next
+        let turns := (raw &&& 3) + 2
+        let volatile := { volatile with
+          status1 := volatile.status1 ||| (1 <<< Wram.BattleStatus1.confused).toUInt8 }
+        let volatile := { volatile with confusedCounter := turns }
+        let state := setSide { state with battle := { state.battle with rng } } who
+          { current with active := { current.active with volatile } }
+        (state, [.rng "thrash-confusion" raw])
+      else
+        (setSide state who { current with active := { current.active with volatile } }, [])
+
 private def attack (state : State) (who : Side) (action : Full.Action)
     (overrideMove : Option MoveId := none) (skipStatus : Bool := false) : StepResult :=
   let selected := match overrideMove with
@@ -254,7 +303,6 @@ private def attack (state : State) (who : Side) (action : Full.Action)
   match selected with
   | none => .transitioned state []
   | some (moveId, slot) =>
-      let state := decrementMovePp state who slot (action == .struggle || overrideMove.isSome)
       let attackerFull := side state who
       let defenderFull := side state who.other
       let statusResult := if skipStatus then
@@ -287,6 +335,8 @@ private def attack (state : State) (who : Side) (action : Full.Action)
       | .canAct attacker rng =>
           let state := setSide { state with battle := { state.battle with rng } } who
             { attackerFull with active := attacker }
+          let state := decrementMovePp state who slot
+            (action == .struggle || overrideMove.isSome || action == .noAction)
           let move := resolveMove moveId
           let effect := (Data.moveData moveId).effect
           let mechanic := (EffectPlan.plan effect).mechanic
@@ -297,7 +347,17 @@ private def attack (state : State) (who : Side) (action : Full.Action)
               let focus := bitSet attacker.volatile.status2 Wram.BattleStatus2.gettingPumped
               let critical := Critical.occurs (Critical.threshold attacker.active.species moveId focus) raw
               (rng, critical, [.rng "critical" raw])
-          match initialDamage mechanic moveId move attacker defenderFull.active critical rng with
+          let continuedBide := action == .noAction && mechanic == .bide
+          let damageResult := if continuedBide then
+              .ok (UInt16.ofNat (min 0xffff (attacker.volatile.bideAccumulated.toNat * 2)), rng, [])
+            else if moveId == 68 then
+              let previous := Data.moveData (lastMove state who.other)
+              let validType := previous.type == TypeChart.normal || previous.type == TypeChart.fighting
+              let counter := if previous.power != 0 && validType then
+                UInt16.ofNat (min 0xffff (state.sharedDamage.toNat * 2)) else 0
+              .ok (counter, rng, [])
+            else initialDamage mechanic moveId move attacker defenderFull.active critical rng
+          match damageResult with
           | .error _ => .divisionFreeze state critEvents
           | .ok (damage, rng, damageEvents) =>
               let (hit, rng, accuracyEvents) :=
@@ -305,7 +365,11 @@ private def attack (state : State) (who : Side) (action : Full.Action)
                   resolveAccuracy mechanic move attacker defenderFull.active rng
                 else (true, rng, [])
               let context := effectsContext state who moveId slot attacker defenderFull.active rng
-              let before := Effects.applyBefore effect hit context
+              let before := if action == .noAction then
+                match mechanic with
+                | .bide | .thrash | .charge _ | .trapping => { context := context }
+                | _ => Effects.applyBefore effect hit context
+                else Effects.applyBefore effect hit context
               let state := installEffectsContext state who before.context
               match before.signal with
               | .rngStuck => .rngStuck state (critEvents ++ damageEvents ++ accuracyEvents ++
@@ -330,8 +394,9 @@ private def attack (state : State) (who : Side) (action : Full.Action)
                   let after := Effects.applyAfter effect move.type hit applied.targetFainted
                     applied.actualDamage context
                   let state := setLastMove (installEffectsContext applied.state who after.context) who moveId
+                  let (state, lockEvents) := advanceMoveLock state who
                   let events := critEvents ++ damageEvents ++ accuracyEvents ++ before.events.map .effect ++
-                    applied.events ++ after.events.map .effect
+                    applied.events ++ after.events.map .effect ++ lockEvents
                   if applied.targetFainted then
                     let (state, faintEvents) := recordFaint state who.other
                     .transitioned state (events ++ faintEvents)

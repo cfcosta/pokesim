@@ -73,9 +73,10 @@ def legal (context : ActionContext) (action : Action) : Bool :=
         | .item request => itemSelectable context request
         | .run => true
         | .noAction => context.side.active.volatile.recharging ||
-            context.side.active.volatile.chargingUp ||
+            context.side.active.volatile.chargingUp || context.side.active.volatile.trapping ||
             bitSet context.side.active.volatile.status1 Wram.BattleStatus1.storingEnergy ||
-            bitSet context.side.active.volatile.status1 Wram.BattleStatus1.thrashingAbout
+            bitSet context.side.active.volatile.status1 Wram.BattleStatus1.thrashingAbout ||
+            bitSet context.side.active.volatile.status2 Wram.BattleStatus2.usingRage
 
 /-- Finite legal-action vector for policies. -/
 def legalActions (context : ActionContext) : Array Action :=
