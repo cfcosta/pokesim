@@ -15,6 +15,7 @@
 | Capture | `Battle.Full.Capture` | Ball rejection, integer capture pipeline, shake counts, storage species, capacity checks |
 | Safari | `Battle.Full.Safari` | Ball/bait/rock/run protocol, factors, catch mutation, escape threshold |
 | Run | `Battle.Full.Escape` | Wild run arithmetic, attempt counter, trainer prohibition, inclusive comparison |
+| Disobedience | `Battle.Full.Disobedience` | Reactive rejection loops, badge thresholds, alternate moves, status overwrite, PP-Up candidate bug |
 | Turn composition | `Battle.Full.Engine` | Actions, ordering, status, damage/effects, items, residuals, faint/replacement, terminal witness |
 | RL protocol | `Battle.Full.Environment` | Dynamic proof-carrying parties, observations, legal actions, external-random requests |
 | Self-play | `Battle.Full.SelfPlay` | Independent policy RNGs, nested continuations, finite/open behavior distinction |
@@ -43,7 +44,7 @@ canonical dispatch domains. They do **not** establish full cartridge-equivalence
 The following remain outside `ModelCoverage`:
 
 - decoded-ROM refinement for battle routines and effect handlers;
-- traded-Pokémon disobedience;
+- integration of the modeled traded-Pokémon disobedience state machine into turn composition;
 - complete EXP, participation, level-up, move-learning, evolution, payout, and
   post-battle epilogue semantics;
 - exact presentation/menu traces and selection-scratch behavior;
