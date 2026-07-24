@@ -77,7 +77,12 @@ def internalAddress (state : CoreState) : Word :=
   | some (.inc16 register) | some (.dec16 register) => state.registers.get16 register
   | some (.addHL _) => state.registers.hl
   | some .ldSPHL => state.registers.hl
-  | some .addSP | some .ldHLFromSPPlus => state.registers.sp
+  | some .addSP =>
+      if state.remaining.tail.head? = some .successorFetch then
+        (Alu.addSignedSP state.registers.sp state.latches.low).value
+      else state.registers.sp
+  | some .ldHLFromSPPlus =>
+      (Alu.addSignedSP state.registers.sp state.latches.low).value
   | some .jp | some (.jpCond _) | some .call | some (.callCond _)
   | some .ret | some .reti => state.wz
   | some (.retCond _) =>

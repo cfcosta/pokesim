@@ -1082,5 +1082,734 @@ theorem mem16_read_refines (before : FunctionalState) (opcode : Byte)
   all_goals cases before.scheduledImeEnable <;>
     simp [Retirement.Snapshot.atBoundary, Retirement.Snapshot.ofFunctional]
 
+private def ldhCAddress (state : FunctionalState) : Word :=
+  Word.ofNat (0xFF00 + state.registers.c.toNat)
+
+private def ldhCWriteCore (state : FunctionalState) (opcode : Byte) : CoreState :=
+  { baseFetchedCore state opcode .ldhCA with remaining := [.successorFetch] }
+
+private def ldhCWritten (state : FunctionalState) (opcode : Byte) : FlatCoreState :=
+  { core := ldhCWriteCore state opcode
+    memory := state.memory.write (ldhCAddress state) state.registers.a
+    trace := [.read .opcode state.registers.pc opcode,
+      .write (ldhCAddress state) state.registers.a] }
+
+private theorem step_ldh_c_write (before : FunctionalState) (opcode : Byte) :
+    FlatAdapter.step (baseFetched before opcode .ldhCA) = ldhCWritten before opcode := by
+  simp [FlatAdapter.step, baseFetched, baseFetchedCore, ldhCWritten,
+    ldhCWriteCore, ldhCAddress, Pipeline.taken, Cycle.physicalSchedule,
+    Cycle.logicalSchedule, CoreState.currentOp?, Run.stepMachineCycle,
+    Run.intent, Run.opFetch, Run.opCommit, Run.opPoll, Run.opControl,
+    Run.opAddress, Run.readAddress, Run.opReadKind, Run.opIdu,
+    Run.processNonFetch, Run.updatePointer, Run.writeValue, FlatAdapter.event]
+
+set_option maxHeartbeats 3000000 in
+/-- Universal refinement for `LDH (C),A`. -/
+theorem ldh_c_write_refines (before : FunctionalState) (opcode : Byte)
+    (running : before.mode = .running) (noHaltBug : before.haltBug = false)
+    (atPC : before.memory.read before.registers.pc = opcode)
+    (decoded : Decode.base opcode = .legal .ldhCA) :
+    let logical := Functional.step before 0
+    let physical := FlatAdapter.run 3 (physicalInitial before) noInterrupts
+    Retirement.Snapshot.atBoundary physical.core =
+        Retirement.Snapshot.ofFunctional logical.state ∧
+      physical.memory = logical.state.memory ∧
+      physical.trace.dropLast = logical.trace := by
+  rw [show FlatAdapter.run 3 (physicalInitial before) noInterrupts =
+      FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (physicalInitial before))) by rfl]
+  rw [fetch_legal before opcode .ldhCA atPC noHaltBug decoded]
+  rw [step_ldh_c_write before opcode]
+  simp [Functional.step, running, atPC, decoded, noHaltBug, ldhCWritten,
+    ldhCWriteCore, ldhCAddress, baseFetchedCore, Pipeline.taken,
+    Cycle.physicalSchedule, Cycle.logicalSchedule, FlatAdapter.step,
+    CoreState.currentOp?, Run.stepMachineCycle, Run.intent, Run.opFetch,
+    Run.opCommit, Run.opPoll, Run.opControl, Run.opAddress,
+    Run.successorAddress, Run.opReadKind, Run.opIdu,
+    Run.finishSuccessor, Run.commitRegisters, Run.commitIme,
+    Functional.fetchImmediate, InstructionShape.immediateBytes,
+    Functional.executeShape, Functional.write, Functional.matureIme,
+    FlatAdapter.event]
+  all_goals cases before.scheduledImeEnable <;>
+    simp [Retirement.Snapshot.atBoundary, Retirement.Snapshot.ofFunctional]
+
+private def ldhCReadCore (state : FunctionalState) (opcode value : Byte) : CoreState :=
+  { baseFetchedCore state opcode .ldhAC with
+    remaining := [.successorFetch]
+    latches := { data := value } }
+
+private def ldhCRead (state : FunctionalState) (opcode value : Byte) : FlatCoreState :=
+  { core := ldhCReadCore state opcode value
+    memory := state.memory
+    trace := [.read .opcode state.registers.pc opcode,
+      .read .data (ldhCAddress state) value] }
+
+private theorem step_ldh_c_read (before : FunctionalState) (opcode : Byte) :
+    FlatAdapter.step (baseFetched before opcode .ldhAC) =
+      ldhCRead before opcode (before.memory.read (ldhCAddress before)) := by
+  simp [FlatAdapter.step, baseFetched, baseFetchedCore, ldhCRead,
+    ldhCReadCore, ldhCAddress, Pipeline.taken, Cycle.physicalSchedule,
+    Cycle.logicalSchedule, CoreState.currentOp?, Run.stepMachineCycle,
+    Run.intent, Run.opFetch, Run.opCommit, Run.opPoll, Run.opControl,
+    Run.opAddress, Run.readAddress, Run.opReadKind, Run.opIdu,
+    Run.processNonFetch, Run.updatePointer, FlatAdapter.event]
+
+set_option maxHeartbeats 3000000 in
+/-- Universal refinement for `LDH A,(C)`. -/
+theorem ldh_c_read_refines (before : FunctionalState) (opcode : Byte)
+    (running : before.mode = .running) (noHaltBug : before.haltBug = false)
+    (atPC : before.memory.read before.registers.pc = opcode)
+    (decoded : Decode.base opcode = .legal .ldhAC) :
+    let logical := Functional.step before 0
+    let physical := FlatAdapter.run 3 (physicalInitial before) noInterrupts
+    Retirement.Snapshot.atBoundary physical.core =
+        Retirement.Snapshot.ofFunctional logical.state ∧
+      physical.memory = logical.state.memory ∧
+      physical.trace.dropLast = logical.trace := by
+  rw [show FlatAdapter.run 3 (physicalInitial before) noInterrupts =
+      FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (physicalInitial before))) by rfl]
+  rw [fetch_legal before opcode .ldhAC atPC noHaltBug decoded]
+  rw [step_ldh_c_read before opcode]
+  simp [Functional.step, running, atPC, decoded, noHaltBug, ldhCRead,
+    ldhCReadCore, ldhCAddress, baseFetchedCore, Pipeline.taken,
+    Cycle.physicalSchedule, Cycle.logicalSchedule, FlatAdapter.step,
+    CoreState.currentOp?, Run.stepMachineCycle, Run.intent, Run.opFetch,
+    Run.opCommit, Run.opPoll, Run.opControl, Run.opAddress,
+    Run.successorAddress, Run.opReadKind, Run.opIdu,
+    Run.finishSuccessor, Run.commitRegisters, Run.commitIme,
+    Functional.fetchImmediate, InstructionShape.immediateBytes,
+    Functional.executeShape, Functional.read, Functional.withRegisters,
+    Functional.matureIme,
+    FlatAdapter.event]
+  all_goals cases before.scheduledImeEnable <;>
+    simp [Retirement.Snapshot.atBoundary, Retirement.Snapshot.ofFunctional]
+
+/-- Immediate-high-page load directions. -/
+inductive LdhImmediateShape : InstructionShape → Prop where
+  | writeA : LdhImmediateShape .ldhImmA
+  | readA : LdhImmediateShape .ldhAImm
+
+private def ldhImmediateAddress (value : Byte) : Word :=
+  Word.ofNat (0xFF00 + value.toNat)
+
+private def ldhImmediateCore (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (value : Byte) : CoreState :=
+  { baseFetchedCore state opcode shape with
+    registers := { state.registers with pc := Word.ofNat (state.registers.pc.toNat + 2) }
+    remaining := match shape with
+      | .ldhImmA => [.writeAddress, .successorFetch]
+      | .ldhAImm => [.readAddress, .successorFetch]
+      | _ => [.successorFetch]
+    latches := { low := value, conditionTaken := true } }
+
+private def ldhImmediate (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (value : Byte) : FlatCoreState :=
+  { core := ldhImmediateCore state opcode shape value
+    memory := state.memory
+    trace := [.read .opcode state.registers.pc opcode,
+      .read .immediate (Word.ofNat (state.registers.pc.toNat + 1)) value] }
+
+private def ldhAccessedCore (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (value : Byte) : CoreState :=
+  let data : Byte := if shape == .ldhAImm then
+    state.memory.read (ldhImmediateAddress value) else 0
+  { ldhImmediateCore state opcode shape value with
+    remaining := [.successorFetch]
+    latches := { low := value, data := data } }
+
+private def ldhAccessed (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (value : Byte) : FlatCoreState :=
+  let address := ldhImmediateAddress value
+  if shape == .ldhImmA then
+    { core := ldhAccessedCore state opcode shape value
+      memory := state.memory.write address state.registers.a
+      trace := [.read .opcode state.registers.pc opcode,
+        .read .immediate (Word.ofNat (state.registers.pc.toNat + 1)) value,
+        .write address state.registers.a] }
+  else
+    let loaded := state.memory.read address
+    { core := ldhAccessedCore state opcode shape value
+      memory := state.memory
+      trace := [.read .opcode state.registers.pc opcode,
+        .read .immediate (Word.ofNat (state.registers.pc.toNat + 1)) value,
+        .read .data address loaded] }
+
+private theorem step_ldh_immediate (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (family : LdhImmediateShape shape) :
+    FlatAdapter.step (baseFetched before opcode shape) =
+      ldhImmediate before opcode shape
+        (before.memory.read (Word.ofNat (before.registers.pc.toNat + 1))) := by
+  cases family <;>
+    simp [FlatAdapter.step, baseFetched, baseFetchedCore, ldhImmediate,
+      ldhImmediateCore, Pipeline.taken, Cycle.physicalSchedule,
+      Cycle.logicalSchedule, CoreState.currentOp?, Run.stepMachineCycle,
+      Run.intent, Run.opFetch, Run.opCommit, Run.opPoll, Run.opControl,
+      Run.opAddress, Run.opReadKind, Run.opIdu, Run.processNonFetch,
+      increment_twice, FlatAdapter.event]
+
+private theorem step_ldh_access (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (family : LdhImmediateShape shape) :
+    let value := before.memory.read (Word.ofNat (before.registers.pc.toNat + 1))
+    FlatAdapter.step (ldhImmediate before opcode shape value) =
+      ldhAccessed before opcode shape value := by
+  cases family <;>
+    simp [FlatAdapter.step, ldhImmediate, ldhImmediateCore, ldhAccessed,
+      ldhAccessedCore, ldhImmediateAddress, baseFetchedCore,
+      Pipeline.taken, Cycle.physicalSchedule, Cycle.logicalSchedule,
+      CoreState.currentOp?, Run.stepMachineCycle, Run.intent, Run.opFetch,
+      Run.opCommit, Run.opPoll, Run.opControl, Run.opAddress,
+      Run.readAddress, Run.opReadKind, Run.opIdu, Run.processNonFetch,
+      Run.updatePointer, Run.writeValue, FlatAdapter.event]
+
+set_option maxHeartbeats 3000000 in
+/-- Universal refinement for both immediate LDH directions. -/
+theorem ldh_immediate_refines (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (family : LdhImmediateShape shape)
+    (running : before.mode = .running) (noHaltBug : before.haltBug = false)
+    (atPC : before.memory.read before.registers.pc = opcode)
+    (decoded : Decode.base opcode = .legal shape) :
+    let logical := Functional.step before 0
+    let physical := FlatAdapter.run 4 (physicalInitial before) noInterrupts
+    Retirement.Snapshot.atBoundary physical.core =
+        Retirement.Snapshot.ofFunctional logical.state ∧
+      physical.memory = logical.state.memory ∧
+      physical.trace.dropLast = logical.trace := by
+  rw [show FlatAdapter.run 4 (physicalInitial before) noInterrupts =
+      FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
+        (FlatAdapter.step (physicalInitial before)))) by rfl]
+  rw [fetch_legal before opcode shape atPC noHaltBug decoded]
+  rw [step_ldh_immediate before opcode shape family]
+  rw [step_ldh_access before opcode shape family]
+  cases family <;>
+    simp [Functional.step, running, atPC, decoded, noHaltBug, ldhAccessed,
+      ldhAccessedCore, ldhImmediateCore, ldhImmediateAddress,
+      baseFetchedCore, Pipeline.taken, Cycle.physicalSchedule,
+      Cycle.logicalSchedule, FlatAdapter.step, CoreState.currentOp?,
+      Run.stepMachineCycle, Run.intent, Run.opFetch, Run.opCommit,
+      Run.opPoll, Run.opControl, Run.opAddress, Run.successorAddress,
+      Run.opReadKind, Run.opIdu, Run.finishSuccessor,
+      Run.commitRegisters, Run.commitIme, Functional.fetchImmediate,
+      Functional.read, Functional.immediate8, InstructionShape.immediateBytes,
+      Functional.executeShape, Functional.write, Functional.withRegisters,
+      Functional.matureIme, increment_twice, FlatAdapter.event]
+  all_goals cases before.scheduledImeEnable <;>
+    simp [Retirement.Snapshot.atBoundary, Retirement.Snapshot.ofFunctional]
+
+/-- Absolute-address accumulator load directions. -/
+inductive AbsoluteAShape : InstructionShape → Prop where
+  | writeA : AbsoluteAShape .ldAbsA
+  | readA : AbsoluteAShape .ldAAbs
+
+private def absoluteLowCore (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (low : Byte) : CoreState :=
+  { baseFetchedCore state opcode shape with
+    registers := { state.registers with pc := Word.ofNat (state.registers.pc.toNat + 2) }
+    remaining := [.immediateHigh,
+      if shape == .ldAbsA then .writeAddress else .readAddress,
+      .successorFetch]
+    latches := { low, conditionTaken := true } }
+
+private def absoluteLow (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (low : Byte) : FlatCoreState :=
+  { core := absoluteLowCore state opcode shape low
+    memory := state.memory
+    trace := [.read .opcode state.registers.pc opcode,
+      .read .immediate (Word.ofNat (state.registers.pc.toNat + 1)) low] }
+
+private def absoluteHighCore (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (low high : Byte) : CoreState :=
+  { absoluteLowCore state opcode shape low with
+    registers := { state.registers with pc := Word.ofNat (state.registers.pc.toNat + 3) }
+    remaining := [if shape == .ldAbsA then .writeAddress else .readAddress,
+      .successorFetch]
+    latches := { low, high, conditionTaken := true } }
+
+private def absoluteHigh (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (low high : Byte) : FlatCoreState :=
+  { core := absoluteHighCore state opcode shape low high
+    memory := state.memory
+    trace := [.read .opcode state.registers.pc opcode,
+      .read .immediate (Word.ofNat (state.registers.pc.toNat + 1)) low,
+      .read .immediate (Word.ofNat (state.registers.pc.toNat + 2)) high] }
+
+private def absoluteAccessedCore (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (low high : Byte) : CoreState :=
+  let address := Word.ofBytes high low
+  let data : Byte := if shape == .ldAAbs then state.memory.read address else 0
+  { absoluteHighCore state opcode shape low high with
+    remaining := [.successorFetch]
+    latches := { low, high, data := data } }
+
+private def absoluteAccessed (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (low high : Byte) : FlatCoreState :=
+  let address := Word.ofBytes high low
+  if shape == .ldAbsA then
+    { core := absoluteAccessedCore state opcode shape low high
+      memory := state.memory.write address state.registers.a
+      trace := [.read .opcode state.registers.pc opcode,
+        .read .immediate (Word.ofNat (state.registers.pc.toNat + 1)) low,
+        .read .immediate (Word.ofNat (state.registers.pc.toNat + 2)) high,
+        .write address state.registers.a] }
+  else
+    let value := state.memory.read address
+    { core := absoluteAccessedCore state opcode shape low high
+      memory := state.memory
+      trace := [.read .opcode state.registers.pc opcode,
+        .read .immediate (Word.ofNat (state.registers.pc.toNat + 1)) low,
+        .read .immediate (Word.ofNat (state.registers.pc.toNat + 2)) high,
+        .read .data address value] }
+
+private theorem step_absolute_low (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (family : AbsoluteAShape shape) :
+    FlatAdapter.step (baseFetched before opcode shape) =
+      absoluteLow before opcode shape
+        (before.memory.read (Word.ofNat (before.registers.pc.toNat + 1))) := by
+  cases family <;>
+    simp [FlatAdapter.step, baseFetched, baseFetchedCore, absoluteLow,
+      absoluteLowCore, Pipeline.taken, Cycle.physicalSchedule,
+      Cycle.logicalSchedule, CoreState.currentOp?, Run.stepMachineCycle,
+      Run.intent, Run.opFetch, Run.opCommit, Run.opPoll, Run.opControl,
+      Run.opAddress, Run.opReadKind, Run.opIdu, Run.processNonFetch,
+      increment_twice, FlatAdapter.event]
+
+private theorem step_absolute_high (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (family : AbsoluteAShape shape) :
+    let low := before.memory.read (Word.ofNat (before.registers.pc.toNat + 1))
+    FlatAdapter.step (absoluteLow before opcode shape low) =
+      absoluteHigh before opcode shape low
+        (before.memory.read (Word.ofNat (before.registers.pc.toNat + 2))) := by
+  cases family <;>
+    simp [FlatAdapter.step, absoluteLow, absoluteLowCore, absoluteHigh,
+      absoluteHighCore, baseFetchedCore, Pipeline.taken,
+      Cycle.physicalSchedule, Cycle.logicalSchedule, CoreState.currentOp?,
+      Run.stepMachineCycle, Run.intent, Run.opFetch, Run.opCommit,
+      Run.opPoll, Run.opControl, Run.opAddress, Run.opReadKind, Run.opIdu,
+      Run.processNonFetch, increment_thrice, FlatAdapter.event]
+
+private theorem step_absolute_access (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (family : AbsoluteAShape shape) :
+    let low := before.memory.read (Word.ofNat (before.registers.pc.toNat + 1))
+    let high := before.memory.read (Word.ofNat (before.registers.pc.toNat + 2))
+    FlatAdapter.step (absoluteHigh before opcode shape low high) =
+      absoluteAccessed before opcode shape low high := by
+  cases family <;>
+    simp [FlatAdapter.step, absoluteHigh, absoluteHighCore, absoluteLowCore,
+      absoluteAccessed, absoluteAccessedCore, baseFetchedCore,
+      Pipeline.taken, Cycle.physicalSchedule, Cycle.logicalSchedule,
+      CoreState.currentOp?, Run.stepMachineCycle, Run.intent, Run.opFetch,
+      Run.opCommit, Run.opPoll, Run.opControl, Run.opAddress,
+      Run.readAddress, Run.opReadKind, Run.opIdu, Run.processNonFetch,
+      Run.updatePointer, Run.writeValue, CoreState.wz, FlatAdapter.event]
+
+set_option maxHeartbeats 3000000 in
+/-- Universal refinement for `LD (nn),A` and `LD A,(nn)`. -/
+theorem absolute_a_refines (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (family : AbsoluteAShape shape)
+    (running : before.mode = .running) (noHaltBug : before.haltBug = false)
+    (atPC : before.memory.read before.registers.pc = opcode)
+    (decoded : Decode.base opcode = .legal shape) :
+    let logical := Functional.step before 0
+    let physical := FlatAdapter.run 5 (physicalInitial before) noInterrupts
+    Retirement.Snapshot.atBoundary physical.core =
+        Retirement.Snapshot.ofFunctional logical.state ∧
+      physical.memory = logical.state.memory ∧
+      physical.trace.dropLast = logical.trace := by
+  rw [show FlatAdapter.run 5 (physicalInitial before) noInterrupts =
+      FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
+        (FlatAdapter.step (physicalInitial before))))) by rfl]
+  rw [fetch_legal before opcode shape atPC noHaltBug decoded]
+  rw [step_absolute_low before opcode shape family]
+  rw [step_absolute_high before opcode shape family]
+  rw [step_absolute_access before opcode shape family]
+  cases family <;>
+    simp [Functional.step, running, atPC, decoded, noHaltBug,
+      absoluteAccessed, absoluteAccessedCore, absoluteHighCore,
+      absoluteLowCore, baseFetchedCore, Pipeline.taken,
+      Cycle.physicalSchedule, Cycle.logicalSchedule, FlatAdapter.step,
+      CoreState.currentOp?, Run.stepMachineCycle, Run.intent, Run.opFetch,
+      Run.opCommit, Run.opPoll, Run.opControl, Run.opAddress,
+      Run.successorAddress, Run.opReadKind, Run.opIdu, Run.finishSuccessor,
+      Run.commitRegisters, Run.commitIme, Functional.fetchImmediate,
+      Functional.read, Functional.immediate16, InstructionShape.immediateBytes,
+      Functional.executeShape, Functional.write, Functional.withRegisters,
+      Functional.matureIme, increment_twice, increment_thrice,
+      FlatAdapter.event]
+  all_goals cases before.scheduledImeEnable <;>
+    simp [Retirement.Snapshot.atBoundary, Retirement.Snapshot.ofFunctional]
+
+private def popLowCore (state : FunctionalState) (opcode : Byte)
+    (target : Stack16) (low : Byte) : CoreState :=
+  { baseFetchedCore state opcode (.pop target) with
+    registers := { (baseFetchedCore state opcode (.pop target)).registers with
+      sp := Word.ofNat (state.registers.sp.toNat + 1) }
+    remaining := [.stackReadHigh, .successorFetch]
+    latches := { low, conditionTaken := true } }
+
+private def popLow (state : FunctionalState) (opcode : Byte)
+    (target : Stack16) (low : Byte) : FlatCoreState :=
+  { core := popLowCore state opcode target low
+    memory := state.memory
+    trace := [.read .opcode state.registers.pc opcode,
+      .read .stack state.registers.sp low] }
+
+private def popHighCore (state : FunctionalState) (opcode : Byte)
+    (target : Stack16) (low high : Byte) : CoreState :=
+  { popLowCore state opcode target low with
+    registers := { (popLowCore state opcode target low).registers with
+      sp := Word.ofNat (state.registers.sp.toNat + 2) }
+    remaining := [.successorFetch]
+    latches := { low, high, conditionTaken := true } }
+
+private def popHigh (state : FunctionalState) (opcode : Byte)
+    (target : Stack16) (low high : Byte) : FlatCoreState :=
+  { core := popHighCore state opcode target low high
+    memory := state.memory
+    trace := [.read .opcode state.registers.pc opcode,
+      .read .stack state.registers.sp low,
+      .read .stack (Word.ofNat (state.registers.sp.toNat + 1)) high] }
+
+private theorem step_pop_low (before : FunctionalState) (opcode : Byte)
+    (target : Stack16) :
+    FlatAdapter.step (baseFetched before opcode (.pop target)) =
+      popLow before opcode target (before.memory.read before.registers.sp) := by
+  cases target <;>
+    simp [FlatAdapter.step, baseFetched, baseFetchedCore, popLow, popLowCore,
+      Pipeline.taken, Cycle.physicalSchedule, Cycle.logicalSchedule,
+      CoreState.currentOp?, Run.stepMachineCycle, Run.intent, Run.opFetch,
+      Run.opCommit, Run.opPoll, Run.opControl, Run.opAddress, Run.opReadKind,
+      Run.opIdu, Run.processNonFetch, FlatAdapter.event]
+
+private theorem step_pop_high (before : FunctionalState) (opcode : Byte)
+    (target : Stack16) :
+    let low := before.memory.read before.registers.sp
+    FlatAdapter.step (popLow before opcode target low) =
+      popHigh before opcode target low
+        (before.memory.read (Word.ofNat (before.registers.sp.toNat + 1))) := by
+  cases target <;>
+    simp [FlatAdapter.step, popLow, popLowCore, popHigh, popHighCore,
+      baseFetchedCore, Pipeline.taken, Cycle.physicalSchedule,
+      Cycle.logicalSchedule, CoreState.currentOp?, Run.stepMachineCycle,
+      Run.intent, Run.opFetch, Run.opCommit, Run.opPoll, Run.opControl,
+      Run.opAddress, Run.opReadKind, Run.opIdu, Run.processNonFetch,
+      increment_twice, FlatAdapter.event]
+
+set_option maxHeartbeats 3000000 in
+/-- Universal refinement for all four `POP rr` entries. -/
+theorem pop_refines (before : FunctionalState) (opcode : Byte)
+    (target : Stack16) (running : before.mode = .running)
+    (noHaltBug : before.haltBug = false)
+    (atPC : before.memory.read before.registers.pc = opcode)
+    (decoded : Decode.base opcode = .legal (.pop target)) :
+    let logical := Functional.step before 0
+    let physical := FlatAdapter.run 4 (physicalInitial before) noInterrupts
+    Retirement.Snapshot.atBoundary physical.core =
+        Retirement.Snapshot.ofFunctional logical.state ∧
+      physical.memory = logical.state.memory ∧
+      physical.trace.dropLast = logical.trace := by
+  rw [show FlatAdapter.run 4 (physicalInitial before) noInterrupts =
+      FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
+        (FlatAdapter.step (physicalInitial before)))) by rfl]
+  rw [fetch_legal before opcode (.pop target) atPC noHaltBug decoded]
+  rw [step_pop_low before opcode target]
+  rw [step_pop_high before opcode target]
+  cases target <;>
+    simp [Functional.step, running, atPC, decoded, noHaltBug, popHigh,
+      popHighCore, popLowCore, baseFetchedCore, Pipeline.taken,
+      Cycle.physicalSchedule, Cycle.logicalSchedule, FlatAdapter.step,
+      CoreState.currentOp?, Run.stepMachineCycle, Run.intent, Run.opFetch,
+      Run.opCommit, Run.opPoll, Run.opControl, Run.opAddress,
+      Run.successorAddress, Run.opReadKind, Run.opIdu, Run.finishSuccessor,
+      Run.commitRegisters, Run.commitIme, Functional.fetchImmediate,
+      InstructionShape.immediateBytes, Functional.executeShape,
+      Functional.popWord, Functional.incrementSP, Functional.read,
+      Functional.withRegisters, Functional.matureIme, Registers.setStack16,
+      Registers.setBC, Registers.setDE, Registers.setHL, Registers.setAF,
+      CoreState.wz, increment_twice,
+      FlatAdapter.event]
+  all_goals cases before.scheduledImeEnable <;>
+    simp [Retirement.Snapshot.atBoundary, Retirement.Snapshot.ofFunctional]
+
+/-- Base families with the three-cycle stack-write suffix. -/
+inductive StackStoreShape : InstructionShape → Prop where
+  | push (source : Stack16) : StackStoreShape (.push source)
+  | rst (vector : RstVector) : StackStoreShape (.rst vector)
+
+private def stackStoreValue (state : FunctionalState) (shape : InstructionShape) : Word :=
+  match shape with
+  | .push source => state.registers.getStack16 source
+  | .rst _ => Word.ofNat (state.registers.pc.toNat + 1)
+  | _ => 0
+
+private def stackInitialCore (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) : CoreState :=
+  let core := baseFetchedCore state opcode shape
+  { core with
+    registers := { core.registers with sp := Word.ofNat (state.registers.sp.toNat + 65535) }
+    remaining := [.stackWriteHigh, .stackWriteLow, .successorFetch] }
+
+private def stackInitial (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) : FlatCoreState :=
+  { core := stackInitialCore state opcode shape
+    memory := state.memory
+    trace := [.read .opcode state.registers.pc opcode, .idle state.registers.sp] }
+
+private def stackHighCore (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) : CoreState :=
+  let core := stackInitialCore state opcode shape
+  { core with
+    registers := { core.registers with sp := Word.ofNat (state.registers.sp.toNat + 65534) }
+    remaining := [.stackWriteLow, .successorFetch] }
+
+private def stackHigh (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) : FlatCoreState :=
+  let value := stackStoreValue state shape
+  let address := Word.ofNat (state.registers.sp.toNat + 65535)
+  { core := stackHighCore state opcode shape
+    memory := state.memory.write address value.highByte
+    trace := [.read .opcode state.registers.pc opcode, .idle state.registers.sp,
+      .write address value.highByte] }
+
+private def stackLowCore (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) : CoreState :=
+  { stackHighCore state opcode shape with remaining := [.successorFetch] }
+
+private def stackLow (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) : FlatCoreState :=
+  let value := stackStoreValue state shape
+  let highAddress := Word.ofNat (state.registers.sp.toNat + 65535)
+  let lowAddress := Word.ofNat (state.registers.sp.toNat + 65534)
+  { core := stackLowCore state opcode shape
+    memory := (state.memory.write highAddress value.highByte).write lowAddress value.lowByte
+    trace := [.read .opcode state.registers.pc opcode, .idle state.registers.sp,
+      .write highAddress value.highByte, .write lowAddress value.lowByte] }
+
+private theorem decrement_twice : ∀ sp : Word,
+    Word.ofNat ((Word.ofNat (sp.toNat + 65535)).toNat + 65535) =
+      Word.ofNat (sp.toNat + 65534) := by
+  native_decide
+
+private theorem step_stack_initial (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (family : StackStoreShape shape) :
+    FlatAdapter.step (baseFetched before opcode shape) =
+      stackInitial before opcode shape := by
+  cases family <;>
+    simp [FlatAdapter.step, baseFetched, baseFetchedCore, stackInitial,
+      stackInitialCore, Pipeline.taken, Cycle.physicalSchedule,
+      Cycle.logicalSchedule, CoreState.currentOp?, Run.stepMachineCycle,
+      Run.intent, Run.opFetch, Run.opCommit, Run.opPoll, Run.opControl,
+      Run.opAddress, Run.opReadKind, Run.opIdu,
+      Run.processNonFetch, FlatAdapter.event]
+
+private theorem step_stack_high (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (family : StackStoreShape shape) :
+    FlatAdapter.step (stackInitial before opcode shape) =
+      stackHigh before opcode shape := by
+  cases family <;>
+    simp [FlatAdapter.step, stackInitial, stackInitialCore, stackHigh,
+      stackHighCore, stackStoreValue, baseFetchedCore, Pipeline.taken,
+      Cycle.physicalSchedule, Cycle.logicalSchedule, CoreState.currentOp?,
+      Run.stepMachineCycle, Run.intent, Run.opFetch, Run.opCommit,
+      Run.opPoll, Run.opControl, Run.opAddress, Run.opReadKind, Run.opIdu,
+      Run.processNonFetch, Run.writeValue, Registers.getStack16,
+      Registers.bc, Registers.de, Registers.hl, Registers.af,
+      decrement_twice, FlatAdapter.event]
+
+private theorem step_stack_low (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (family : StackStoreShape shape) :
+    FlatAdapter.step (stackHigh before opcode shape) =
+      stackLow before opcode shape := by
+  cases family <;>
+    simp [FlatAdapter.step, stackHigh, stackHighCore, stackLow, stackLowCore,
+      stackInitialCore, stackStoreValue, baseFetchedCore, Pipeline.taken,
+      Cycle.physicalSchedule, Cycle.logicalSchedule, CoreState.currentOp?,
+      Run.stepMachineCycle, Run.intent, Run.opFetch, Run.opCommit,
+      Run.opPoll, Run.opControl, Run.opAddress, Run.opReadKind, Run.opIdu,
+      Run.processNonFetch, Run.writeValue, Registers.getStack16,
+      Registers.bc, Registers.de, Registers.hl, Registers.af,
+      FlatAdapter.event]
+
+set_option maxHeartbeats 3000000 in
+/-- Universal refinement for all four PUSH and eight RST entries. -/
+theorem stack_store_refines (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (family : StackStoreShape shape)
+    (running : before.mode = .running) (noHaltBug : before.haltBug = false)
+    (atPC : before.memory.read before.registers.pc = opcode)
+    (decoded : Decode.base opcode = .legal shape) :
+    let logical := Functional.step before 0
+    let physical := FlatAdapter.run 5 (physicalInitial before) noInterrupts
+    Retirement.Snapshot.atBoundary physical.core =
+        Retirement.Snapshot.ofFunctional logical.state ∧
+      physical.memory = logical.state.memory ∧
+      physical.trace.dropLast = logical.trace := by
+  rw [show FlatAdapter.run 5 (physicalInitial before) noInterrupts =
+      FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
+        (FlatAdapter.step (physicalInitial before))))) by rfl]
+  rw [fetch_legal before opcode shape atPC noHaltBug decoded]
+  rw [step_stack_initial before opcode shape family]
+  rw [step_stack_high before opcode shape family]
+  rw [step_stack_low before opcode shape family]
+  cases family <;>
+    simp [Functional.step, running, atPC, decoded, noHaltBug, stackLow,
+      stackLowCore, stackHighCore, stackInitialCore, stackStoreValue,
+      baseFetchedCore, Pipeline.taken, Cycle.physicalSchedule,
+      Cycle.logicalSchedule, FlatAdapter.step, CoreState.currentOp?,
+      Run.stepMachineCycle, Run.intent, Run.opFetch, Run.opCommit,
+      Run.opPoll, Run.opControl, Run.opAddress, Run.successorAddress,
+      Run.opReadKind, Run.opIdu, Run.finishSuccessor, Run.commitRegisters,
+      Run.commitIme, Functional.fetchImmediate, InstructionShape.immediateBytes,
+      Functional.executeShape, Functional.pushWord, Functional.idle,
+      Functional.write, Functional.withRegisters, Functional.decrementSP,
+      Functional.matureIme, Registers.getStack16, Registers.bc,
+      Registers.de, Registers.hl, Registers.af, decrement_twice,
+      FlatAdapter.event]
+  all_goals cases before.scheduledImeEnable <;>
+    simp [Retirement.Snapshot.atBoundary, Retirement.Snapshot.ofFunctional]
+  all_goals try { cases ‹Stack16› <;> simp [Registers.getStack16,
+    Registers.bc, Registers.de, Registers.hl, Registers.af] }
+
+private def signedImmediateCore (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (value : Byte) : CoreState :=
+  { baseFetchedCore state opcode shape with
+    registers := { state.registers with pc := Word.ofNat (state.registers.pc.toNat + 2) }
+    remaining := if shape == .addSP then
+      [.internal, .internal, .successorFetch] else [.internal, .successorFetch]
+    latches := { low := value, conditionTaken := true } }
+
+private def signedImmediate (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (value : Byte) : FlatCoreState :=
+  { core := signedImmediateCore state opcode shape value
+    memory := state.memory
+    trace := [.read .opcode state.registers.pc opcode,
+      .read .immediate (Word.ofNat (state.registers.pc.toNat + 1)) value] }
+
+private def signedFirstCore (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (value : Byte) : CoreState :=
+  { signedImmediateCore state opcode shape value with
+    remaining := if shape == .addSP then [.internal, .successorFetch]
+      else [.successorFetch] }
+
+private def signedFirst (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (value : Byte) : FlatCoreState :=
+  let result := (Alu.addSignedSP state.registers.sp value).value
+  let address := if shape == .addSP then state.registers.sp else result
+  { core := signedFirstCore state opcode shape value
+    memory := state.memory
+    trace := [.read .opcode state.registers.pc opcode,
+      .read .immediate (Word.ofNat (state.registers.pc.toNat + 1)) value,
+      .idle address] }
+
+private theorem step_signed_immediate (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape)
+    (family : shape = .addSP ∨ shape = .ldHLFromSPPlus) :
+    FlatAdapter.step (baseFetched before opcode shape) =
+      signedImmediate before opcode shape
+        (before.memory.read (Word.ofNat (before.registers.pc.toNat + 1))) := by
+  rcases family with rfl | rfl <;>
+    simp [FlatAdapter.step, baseFetched, baseFetchedCore, signedImmediate,
+      signedImmediateCore, Pipeline.taken, Cycle.physicalSchedule,
+      Cycle.logicalSchedule, CoreState.currentOp?, Run.stepMachineCycle,
+      Run.intent, Run.opFetch, Run.opCommit, Run.opPoll, Run.opControl,
+      Run.opAddress, Run.opReadKind, Run.opIdu, Run.processNonFetch,
+      increment_twice, FlatAdapter.event]
+
+private theorem step_signed_first (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape)
+    (family : shape = .addSP ∨ shape = .ldHLFromSPPlus) :
+    let value := before.memory.read (Word.ofNat (before.registers.pc.toNat + 1))
+    FlatAdapter.step (signedImmediate before opcode shape value) =
+      signedFirst before opcode shape value := by
+  rcases family with rfl | rfl <;>
+    simp [FlatAdapter.step, signedImmediate, signedImmediateCore, signedFirst,
+      signedFirstCore, baseFetchedCore, Pipeline.taken,
+      Cycle.physicalSchedule, Cycle.logicalSchedule, CoreState.currentOp?,
+      Run.stepMachineCycle, Run.intent, Run.opFetch, Run.opCommit,
+      Run.opPoll, Run.opControl, Run.opAddress, Run.internalAddress,
+      Run.opReadKind, Run.opIdu, Run.processNonFetch, FlatAdapter.event]
+
+set_option maxHeartbeats 3000000 in
+/-- Universal refinement for `LD HL,SP+e`. -/
+theorem ld_hl_sp_plus_refines (before : FunctionalState) (opcode : Byte)
+    (running : before.mode = .running) (noHaltBug : before.haltBug = false)
+    (atPC : before.memory.read before.registers.pc = opcode)
+    (decoded : Decode.base opcode = .legal .ldHLFromSPPlus) :
+    let logical := Functional.step before 0
+    let physical := FlatAdapter.run 4 (physicalInitial before) noInterrupts
+    Retirement.Snapshot.atBoundary physical.core =
+        Retirement.Snapshot.ofFunctional logical.state ∧
+      physical.memory = logical.state.memory ∧
+      physical.trace.dropLast = logical.trace := by
+  rw [show FlatAdapter.run 4 (physicalInitial before) noInterrupts =
+      FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
+        (FlatAdapter.step (physicalInitial before)))) by rfl]
+  rw [fetch_legal before opcode .ldHLFromSPPlus atPC noHaltBug decoded]
+  rw [step_signed_immediate before opcode .ldHLFromSPPlus (Or.inr rfl)]
+  rw [step_signed_first before opcode .ldHLFromSPPlus (Or.inr rfl)]
+  simp [Functional.step, running, atPC, decoded, noHaltBug, signedFirst,
+    signedFirstCore, signedImmediateCore, baseFetchedCore, Pipeline.taken,
+    Cycle.physicalSchedule, Cycle.logicalSchedule, FlatAdapter.step,
+    CoreState.currentOp?, Run.stepMachineCycle, Run.intent, Run.opFetch,
+    Run.opCommit, Run.opPoll, Run.opControl, Run.opAddress,
+    Run.successorAddress, Run.opReadKind, Run.opIdu, Run.finishSuccessor,
+    Run.commitRegisters, Run.commitIme, Functional.fetchImmediate,
+    Functional.read, Functional.immediate8, InstructionShape.immediateBytes,
+    Functional.executeShape, Functional.idle, Functional.withRegisters,
+    Functional.matureIme, Registers.setHL, increment_twice,
+    FlatAdapter.event]
+  all_goals cases before.scheduledImeEnable <;>
+    simp [Retirement.Snapshot.atBoundary, Retirement.Snapshot.ofFunctional]
+
+private def addSPSecondCore (state : FunctionalState) (opcode value : Byte) : CoreState :=
+  { signedFirstCore state opcode .addSP value with remaining := [.successorFetch] }
+
+private def addSPSecond (state : FunctionalState) (opcode value : Byte) : FlatCoreState :=
+  let result := (Alu.addSignedSP state.registers.sp value).value
+  { core := addSPSecondCore state opcode value
+    memory := state.memory
+    trace := [.read .opcode state.registers.pc opcode,
+      .read .immediate (Word.ofNat (state.registers.pc.toNat + 1)) value,
+      .idle state.registers.sp, .idle result] }
+
+private theorem step_add_sp_second (before : FunctionalState) (opcode : Byte) :
+    let value := before.memory.read (Word.ofNat (before.registers.pc.toNat + 1))
+    FlatAdapter.step (signedFirst before opcode .addSP value) =
+      addSPSecond before opcode value := by
+  simp [FlatAdapter.step, signedFirst, signedFirstCore, signedImmediateCore,
+    addSPSecond, addSPSecondCore, baseFetchedCore, Pipeline.taken,
+    Cycle.physicalSchedule, Cycle.logicalSchedule, CoreState.currentOp?,
+    Run.stepMachineCycle, Run.intent, Run.opFetch, Run.opCommit,
+    Run.opPoll, Run.opControl, Run.opAddress, Run.internalAddress,
+    Run.opReadKind, Run.opIdu, Run.processNonFetch, FlatAdapter.event]
+
+set_option maxHeartbeats 3000000 in
+/-- Universal refinement for `ADD SP,e`. -/
+theorem add_sp_refines (before : FunctionalState) (opcode : Byte)
+    (running : before.mode = .running) (noHaltBug : before.haltBug = false)
+    (atPC : before.memory.read before.registers.pc = opcode)
+    (decoded : Decode.base opcode = .legal .addSP) :
+    let logical := Functional.step before 0
+    let physical := FlatAdapter.run 5 (physicalInitial before) noInterrupts
+    Retirement.Snapshot.atBoundary physical.core =
+        Retirement.Snapshot.ofFunctional logical.state ∧
+      physical.memory = logical.state.memory ∧
+      physical.trace.dropLast = logical.trace := by
+  rw [show FlatAdapter.run 5 (physicalInitial before) noInterrupts =
+      FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
+        (FlatAdapter.step (physicalInitial before))))) by rfl]
+  rw [fetch_legal before opcode .addSP atPC noHaltBug decoded]
+  rw [step_signed_immediate before opcode .addSP (Or.inl rfl)]
+  rw [step_signed_first before opcode .addSP (Or.inl rfl)]
+  rw [step_add_sp_second before opcode]
+  simp [Functional.step, running, atPC, decoded, noHaltBug, addSPSecond,
+    addSPSecondCore, signedFirstCore, signedImmediateCore, baseFetchedCore,
+    Pipeline.taken, Cycle.physicalSchedule, Cycle.logicalSchedule,
+    FlatAdapter.step, CoreState.currentOp?, Run.stepMachineCycle, Run.intent,
+    Run.opFetch, Run.opCommit, Run.opPoll, Run.opControl, Run.opAddress,
+    Run.successorAddress, Run.opReadKind, Run.opIdu, Run.finishSuccessor,
+    Run.commitRegisters, Run.commitIme, Functional.fetchImmediate,
+    Functional.read, Functional.immediate8, InstructionShape.immediateBytes,
+    Functional.executeShape, Functional.idle, Functional.withRegisters,
+    Functional.matureIme, increment_twice, FlatAdapter.event]
+  all_goals cases before.scheduledImeEnable <;>
+    simp [Retirement.Snapshot.atBoundary, Retirement.Snapshot.ofFunctional]
+
 end Proofs.UniversalRefinement
 end Sm83
