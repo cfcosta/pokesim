@@ -73,11 +73,16 @@ rows do not contain the required system context.
 `Proofs.UniversalRefinement` proves state, memory, and projected-trace agreement
 for all 242 ordinary legal base entries and all 256 CB entries. Decoder-closure
 theorems establish the exact 498-entry count. These are universal local
-instruction theorems, not finite fixture claims. HALT, STOP, interrupts, reset,
-and invalid lock remain separate system/profile relations. The package is still
-a candidate processor specification until the local simulation is lifted to the
-complete infinite physical/system behavior stack and its hardware assumptions
-are discharged by a consumer adapter.
+instruction theorems, not finite fixture claims. A proof-relevant dispatcher
+unifies the family theorems, preserves successor-lock overlap and boundary-PC
+witnesses, and proves a direct simulation from proof-carrying physical blocks to
+the independent instruction relation. Generic direct simulations now lift to
+finite, silent-divergent, and reactive whole behaviors under an explicit
+reaction-preservation assumption. HALT, STOP, interrupts, and reset remain
+separate system/profile relations. The package is still a candidate processor
+specification until continuous fetched-IR blocks are composed without boundary
+reinitialization and the complete hardware assumptions are discharged by a
+consumer adapter.
 
 ## License
 

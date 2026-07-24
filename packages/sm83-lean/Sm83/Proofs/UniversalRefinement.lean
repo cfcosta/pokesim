@@ -6,11 +6,34 @@ Licensed under the Apache License, Version 2.0 (the "License").
 import Sm83.FlatAdapter
 import Sm83.Relation
 import Sm83.Retirement
+import Sm83.Simulation
 
 namespace Sm83
 namespace Proofs.UniversalRefinement
 
 private def noInterrupts : Nat → FlatCoreState → Byte := fun _ _ => 0
+
+/-- Fetched successor installation either remains executable or enters the
+architecturally identified invalid-opcode lock immediately. -/
+@[simp] def expectedSuccessorMode (state : FunctionalState) : CoreMode :=
+  let opcode := state.memory.read state.registers.pc
+  match Decode.base opcode with
+  | .locked _ => .locked opcode
+  | _ => .running
+
+@[simp] theorem install_mode_running (state : CoreState) (address : Word) (opcode : Byte)
+    (running : state.mode = .running) :
+    (Pipeline.install state address opcode).mode =
+      match Decode.base opcode with
+      | .locked _ => .locked opcode
+      | _ => .running := by
+  cases decoded : Decode.base opcode <;>
+    simp [Pipeline.install, decoded, running]
+
+@[simp] theorem install_boundaryPC (state : CoreState) (address : Word) (opcode : Byte) :
+    (Pipeline.install state address opcode).boundaryPC = state.boundaryPC := by
+  cases decoded : Decode.base opcode <;>
+    simp [Pipeline.install, decoded]
 
 private def physicalInitial (state : FunctionalState) : FlatCoreState :=
   { core := {
@@ -61,7 +84,9 @@ theorem nop_refines (before : FunctionalState)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 2 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (physicalInitial before)) by rfl]
   rw [fetch_nop before opcode noHaltBug]
@@ -137,7 +162,9 @@ theorem register_single_cycle_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 2 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (physicalInitial before)) by rfl]
   rw [fetch_legal before opcode shape atPC noHaltBug decoded]
@@ -238,7 +265,9 @@ theorem cb_register_refines (before : FunctionalState) (subopcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 3 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (physicalInitial before))) by rfl]
   rw [fetch_prefix before atPrefix noHaltBug]
@@ -300,7 +329,9 @@ theorem cb_bit_hl_refines (before : FunctionalState) (subopcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 4 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before)))) by rfl]
@@ -409,7 +440,9 @@ theorem cb_modify_hl_refines (before : FunctionalState) (subopcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 5 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before))))) by rfl]
@@ -479,7 +512,9 @@ theorem immediate_register_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 3 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (physicalInitial before))) by rfl]
   rw [fetch_legal before opcode shape atPC noHaltBug decoded]
@@ -567,7 +602,9 @@ theorem ld16_immediate_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 4 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before)))) by rfl]
@@ -633,7 +670,9 @@ theorem internal16_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 3 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (physicalInitial before))) by rfl]
   rw [fetch_legal before opcode shape atPC noHaltBug decoded]
@@ -698,7 +737,9 @@ theorem base_hl_read_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 3 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (physicalInitial before))) by rfl]
   rw [fetch_legal before opcode shape atPC noHaltBug decoded]
@@ -757,7 +798,9 @@ theorem base_hl_write_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 3 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (physicalInitial before))) by rfl]
   rw [fetch_legal before opcode (.ld8 .atHL (.reg source)) atPC noHaltBug decoded]
@@ -854,7 +897,9 @@ theorem base_hl_modify_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 4 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before)))) by rfl]
@@ -934,7 +979,9 @@ theorem hl_immediate_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 4 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before)))) by rfl]
@@ -996,7 +1043,9 @@ theorem mem16_write_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 3 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (physicalInitial before))) by rfl]
   rw [fetch_legal before opcode (.ldMem16A destination) atPC noHaltBug decoded]
@@ -1059,7 +1108,9 @@ theorem mem16_read_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 3 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (physicalInitial before))) by rfl]
   rw [fetch_legal before opcode (.ldAFromMem16 source) atPC noHaltBug decoded]
@@ -1114,7 +1165,9 @@ theorem ldh_c_write_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 3 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (physicalInitial before))) by rfl]
   rw [fetch_legal before opcode .ldhCA atPC noHaltBug decoded]
@@ -1164,7 +1217,9 @@ theorem ldh_c_read_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 3 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (physicalInitial before))) by rfl]
   rw [fetch_legal before opcode .ldhAC atPC noHaltBug decoded]
@@ -1272,7 +1327,9 @@ theorem ldh_immediate_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 4 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before)))) by rfl]
@@ -1412,7 +1469,9 @@ theorem absolute_a_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 5 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before))))) by rfl]
@@ -1504,7 +1563,9 @@ theorem pop_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 4 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before)))) by rfl]
@@ -1639,7 +1700,9 @@ theorem stack_store_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 5 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before))))) by rfl]
@@ -1736,7 +1799,9 @@ theorem ld_hl_sp_plus_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 4 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before)))) by rfl]
@@ -1790,7 +1855,9 @@ theorem add_sp_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 5 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before))))) by rfl]
@@ -1887,7 +1954,9 @@ theorem jr_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 4 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before)))) by rfl]
@@ -1920,7 +1989,9 @@ theorem jr_cond_taken_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 4 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before)))) by rfl]
@@ -1955,7 +2026,9 @@ theorem jr_cond_untaken_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 3 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (physicalInitial before))) by rfl]
   rw [fetch_legal before opcode (.jrCond condition) atPC noHaltBug decoded]
@@ -2089,7 +2162,9 @@ theorem jp_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 5 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before))))) by rfl]
@@ -2125,7 +2200,9 @@ theorem jp_cond_taken_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 5 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before))))) by rfl]
@@ -2163,7 +2240,9 @@ theorem jp_cond_untaken_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 4 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before)))) by rfl]
@@ -2298,7 +2377,9 @@ theorem call_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 7 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (FlatAdapter.step
@@ -2338,7 +2419,9 @@ theorem call_cond_taken_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 7 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (FlatAdapter.step
@@ -2381,7 +2464,9 @@ theorem call_cond_untaken_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 4 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before)))) by rfl]
@@ -2505,7 +2590,9 @@ theorem return_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 5 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (physicalInitial before))))) by rfl]
@@ -2656,7 +2743,9 @@ theorem ret_cond_taken_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 6 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (FlatAdapter.step (physicalInitial before)))))) by rfl]
@@ -2694,7 +2783,9 @@ theorem ret_cond_untaken_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 3 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (physicalInitial before))) by rfl]
   rw [fetch_legal before opcode (.retCond condition) atPC noHaltBug decoded]
@@ -2826,7 +2917,9 @@ theorem ld_abs_sp_refines (before : FunctionalState) (opcode : Byte)
     Retirement.Snapshot.atBoundary physical.core =
         Retirement.Snapshot.ofFunctional logical.state ∧
       physical.memory = logical.state.memory ∧
-      physical.trace.dropLast = logical.trace := by
+      physical.trace.dropLast = logical.trace ∧
+      physical.core.mode = expectedSuccessorMode logical.state ∧
+      physical.core.boundaryPC.isSome := by
   rw [show FlatAdapter.run 6 (physicalInitial before) noInterrupts =
       FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
         (FlatAdapter.step (FlatAdapter.step (physicalInitial before)))))) by rfl]
@@ -2937,7 +3030,9 @@ def NormalRefinesIn (before : FunctionalState) (cycles : Nat) : Prop :=
   Retirement.Snapshot.atBoundary physical.core =
       Retirement.Snapshot.ofFunctional logical.state ∧
     physical.memory = logical.state.memory ∧
-    physical.trace.dropLast = logical.trace
+    physical.trace.dropLast = logical.trace ∧
+    physical.core.mode = expectedSuccessorMode logical.state ∧
+    physical.core.boundaryPC.isSome
 
 /-- Proof-relevant coverage is complete for the exact syntactic normal domain. -/
 theorem ordinaryBaseRefined_has_family {shape : InstructionShape}
@@ -3117,6 +3212,142 @@ theorem normal_cb_refines (before : FunctionalState) (subopcode : Byte)
 theorem decoded_cb_has_family (opcode : Byte) :
     Nonempty (NormalCbFamily (Decode.cb opcode)) :=
   cbRefined_has_family (every_cb_byte_covered opcode)
+
+/-- Architectural state after accounting for the already-fetched successor.
+Invalid successors enter lock at the physical overlap point; all other
+successors retain the architectural post-state with running mode. -/
+@[simp] def expectedSuccessorState (state : FunctionalState) : FunctionalState :=
+  let opcode := state.memory.read state.registers.pc
+  { state with mode := match Decode.base opcode with
+    | .locked _ => .locked opcode
+    | _ => .running }
+
+private theorem functionalState_ext {left right : FunctionalState}
+    (registers : left.registers = right.registers)
+    (memory : left.memory = right.memory)
+    (ime : left.ime = right.ime)
+    (scheduled : left.scheduledImeEnable = right.scheduledImeEnable)
+    (haltBug : left.haltBug = right.haltBug)
+    (mode : left.mode = right.mode) : left = right := by
+  cases left
+  cases right
+  simp_all
+
+private theorem project_of_normal_refinement (physical : FlatCoreState)
+    (logical : FunctionalState)
+    (snapshot : Retirement.Snapshot.atBoundary physical.core =
+      Retirement.Snapshot.ofFunctional logical)
+    (memory : physical.memory = logical.memory)
+    (mode : physical.core.mode = expectedSuccessorMode logical)
+    (boundary : physical.core.boundaryPC.isSome) :
+    FlatAdapter.project physical = expectedSuccessorState logical := by
+  have registers := congrArg Retirement.Snapshot.registers snapshot
+  have ime := congrArg Retirement.Snapshot.ime snapshot
+  have scheduled := congrArg Retirement.Snapshot.scheduledImeEnable snapshot
+  have haltBug := congrArg Retirement.Snapshot.haltBug snapshot
+  cases boundaryEq : physical.core.boundaryPC with
+  | none => simp [boundaryEq] at boundary
+  | some address =>
+      cases decoded : Decode.base (logical.memory.read logical.registers.pc) <;>
+        apply functionalState_ext <;>
+        simp_all [FlatAdapter.project, Retirement.Snapshot.atBoundary,
+          Retirement.Snapshot.ofFunctional, expectedSuccessorMode,
+          expectedSuccessorState]
+
+/-- Unified base theorem stated at the reusable architectural projection
+boundary, including invalid-successor overlap. -/
+theorem normal_base_project_refines (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (family : NormalBaseFamily shape)
+    (running : before.mode = .running) (noHaltBug : before.haltBug = false)
+    (atPC : before.memory.read before.registers.pc = opcode)
+    (decoded : Decode.base opcode = .legal shape) :
+    ∃ cycles,
+      let logical := Functional.step before 0
+      let physical := FlatAdapter.run cycles (physicalInitial before) noInterrupts
+      FlatAdapter.project physical = expectedSuccessorState logical.state ∧
+        physical.trace.dropLast = logical.trace := by
+  obtain ⟨cycles, refined⟩ := normal_base_refines before opcode shape family
+    running noHaltBug atPC decoded
+  refine ⟨cycles, ?_⟩
+  simp only [NormalRefinesIn] at refined
+  exact ⟨project_of_normal_refinement _ _ refined.1 refined.2.1
+      refined.2.2.2.1 refined.2.2.2.2,
+    refined.2.2.1⟩
+
+/-- Unified CB theorem at the same reusable architectural projection boundary. -/
+theorem normal_cb_project_refines (before : FunctionalState) (subopcode : Byte)
+    (shape : InstructionShape) (family : NormalCbFamily shape)
+    (running : before.mode = .running) (noHaltBug : before.haltBug = false)
+    (atPrefix : before.memory.read before.registers.pc = 0xCB)
+    (atSubopcode : before.memory.read (Word.ofNat (before.registers.pc.toNat + 1)) = subopcode)
+    (decoded : Decode.cb subopcode = shape) :
+    ∃ cycles,
+      let logical := Functional.step before 0
+      let physical := FlatAdapter.run cycles (physicalInitial before) noInterrupts
+      FlatAdapter.project physical = expectedSuccessorState logical.state ∧
+        physical.trace.dropLast = logical.trace := by
+  obtain ⟨cycles, refined⟩ := normal_cb_refines before subopcode shape family
+    running noHaltBug atPrefix atSubopcode decoded
+  refine ⟨cycles, ?_⟩
+  simp only [NormalRefinesIn] at refined
+  exact ⟨project_of_normal_refinement _ _ refined.1 refined.2.1
+      refined.2.2.2.1 refined.2.2.2.2,
+    refined.2.2.1⟩
+
+/-- The successor fetched by the overlap is not one of the eleven invalid base
+bytes. Canonical-ROM closure is expected to establish this assumption. -/
+def SuccessorUnlocked (state : FunctionalState) : Prop :=
+  ¬ ∃ opcode, Decode.base (state.memory.read state.registers.pc) = .locked opcode
+
+@[simp] theorem expectedSuccessorState_eq (state : FunctionalState)
+    (running : state.mode = .running) (unlocked : SuccessorUnlocked state) :
+    expectedSuccessorState state = state := by
+  unfold SuccessorUnlocked at unlocked
+  cases decoded : Decode.base (state.memory.read state.registers.pc) with
+  | locked opcode => exact False.elim (unlocked ⟨opcode, decoded⟩)
+  | «prefix» =>
+      apply functionalState_ext <;> simp [expectedSuccessorState, decoded, running]
+  | legal shape =>
+      apply functionalState_ext <;> simp [expectedSuccessorState, decoded, running]
+
+/-- A proof-carrying normal physical instruction block. This quotient starts at
+an architectural boundary, executes the exact flat physical M-cycles, hides the
+overlapped successor observation, and projects the resulting boundary. -/
+inductive VerifiedNormalBlockStep :
+    FunctionalState → List BusEvent → FunctionalState → Prop where
+  | intro {before after trace cycles}
+      (refined : NormalRefinesIn before cycles)
+      (logicalRunning : (Functional.step before 0).state.mode = .running)
+      (unlocked : SuccessorUnlocked (Functional.step before 0).state)
+      (afterEq : after = FlatAdapter.project
+        (FlatAdapter.run cycles (physicalInitial before) noInterrupts))
+      (traceEq : trace = (FlatAdapter.run cycles
+        (physicalInitial before) noInterrupts).trace.dropLast) :
+      VerifiedNormalBlockStep before trace after
+
+/-- Every proof-carrying physical normal block is matched by exactly one
+independent architectural instruction step. -/
+theorem verifiedNormalBlock_directSimulation :
+    DirectSimulation VerifiedNormalBlockStep
+      (fun before trace after => InstructionStep before 0 trace after)
+      (fun low high => low = high) (fun event => some event) := by
+  intro lowBefore lowAfter highBefore lowTrace related block
+  subst highBefore
+  cases block with
+  | intro refined logicalRunning unlocked afterEq traceEq =>
+      rename_i cycles
+      simp only [NormalRefinesIn] at refined
+      let logical := Functional.step lowBefore 0
+      let physical := FlatAdapter.run cycles (physicalInitial lowBefore) noInterrupts
+      have projected : FlatAdapter.project physical = logical.state := by
+        rw [project_of_normal_refinement physical logical.state refined.1 refined.2.1
+          refined.2.2.2.1 refined.2.2.2.2]
+        exact expectedSuccessorState_eq logical.state logicalRunning unlocked
+      refine ⟨logical.state, ?_, ?_⟩
+      · have architectural : InstructionStep lowBefore 0 logical.trace logical.state :=
+          InstructionStep.iff_functional.mpr rfl
+        simpa [projectTrace, traceEq, refined.2.2.1] using architectural
+      · simpa [afterEq, projected]
 
 end Proofs.UniversalRefinement
 end Sm83
