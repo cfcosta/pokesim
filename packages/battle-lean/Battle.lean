@@ -41,6 +41,7 @@ import Battle.Full.Escape
 import Battle.Full.TrainerController
 import Battle.Full.Environment
 import Battle.Full.SelfPlay
+import Battle.Full.Support
 import Battle.Refinement.Bridge
 import Battle.Refinement.Trace
 import Battle.Refinement.Simulation
