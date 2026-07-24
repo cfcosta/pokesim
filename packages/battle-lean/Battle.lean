@@ -35,6 +35,8 @@ import Battle.Full.EffectPlan
 import Battle.Full.Effects
 import Battle.Full.Action
 import Battle.Full.Engine
+import Battle.Full.Environment
+import Battle.Full.SelfPlay
 import Battle.Refinement.Bridge
 import Battle.Refinement.Trace
 import Battle.Refinement.Simulation

@@ -424,8 +424,17 @@ cleanup `settle` enters `returned` and makes `done = true`.
 exploration RNGs and records replay transitions. Its decision budget produces a
 separate `truncated` stop reason and can never manufacture a battle terminal.
 The `battleSelfPlay` executable runs 100 independently seeded random-policy
-mirrors and fails on repaired reset, blocking, invalid action, RNG-stuck state,
-or truncation.
+mirrors and fails on repaired reset, blocking, invalid action, or RNG-stuck
+state.
+
+`Battle.Full.Environment` and `Battle.Full.SelfPlay` provide the party-aware
+protocol. Resets dynamically sample two proof-carrying parties of size 1–6;
+legal actions include forced replacement, and same-action Mirror Move,
+Metronome, and Mimic continuations do not consume another policy decision. The
+`battleFullSelfPlay` smoke matrix accounts for every episode as either a returned
+finite behavior or an explicitly horizon-open behavior. On the pinned matrix,
+98 return and two remain open after 4,096 decisions; neither is relabeled as a
+battle terminal.
 
 ## RL release checks
 

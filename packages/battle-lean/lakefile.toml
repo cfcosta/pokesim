@@ -25,3 +25,8 @@ root = "Battle.Rom.FixtureMain"
 [[lean_exe]]
 name = "battleSelfPlay"
 root = "Battle.RL.SelfPlayMain"
+
+# Full-party, all-effect model-against-itself smoke runner.
+[[lean_exe]]
+name = "battleFullSelfPlay"
+root = "Battle.Full.SelfPlayMain"

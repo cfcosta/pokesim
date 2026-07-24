@@ -237,14 +237,22 @@ private def applyResidual (state : State) (who : Side) : State × List Event :=
   let state := setSide state who.other { side state who.other with active := result.opponent }
   if result.actor.active.fainted then recordFaint state who else (state, [])
 
-private def attack (state : State) (who : Side) (action : Full.Action) : StepResult :=
-  match moveOfAction state who action with
+private def attack (state : State) (who : Side) (action : Full.Action)
+    (overrideMove : Option MoveId := none) (skipStatus : Bool := false) : StepResult :=
+  let selected := match overrideMove with
+    | some move => some (move, (0 : Fin 4))
+    | none => moveOfAction state who action
+  match selected with
   | none => .transitioned state []
   | some (moveId, slot) =>
-      let state := decrementMovePp state who slot (action == .struggle)
+      let state := decrementMovePp state who slot (action == .struggle || overrideMove.isSome)
       let attackerFull := side state who
       let defenderFull := side state who.other
-      match Status.checkCanAct attackerFull.active defenderFull.active.volatile.trapping moveId state.battle.rng with
+      let statusResult := if skipStatus then
+        Status.CheckResult.canAct attackerFull.active state.battle.rng
+        else Status.checkCanAct attackerFull.active defenderFull.active.volatile.trapping
+          moveId state.battle.rng
+      match statusResult with
       | .cannotAct reason attacker rng =>
           let state := setSide { state with battle := { state.battle with rng } } who
             { attackerFull with active := attacker }
@@ -350,6 +358,15 @@ private def isFight : Full.Action → Bool
   | .fight _ | .struggle => true
   | _ => false
 
+private def prependEvents (prior : List Event) : StepResult → StepResult
+  | .transitioned state events => .transitioned state (prior ++ events)
+  | .capturePending state ball events => .capturePending state ball (prior ++ events)
+  | .rngStuck state events => .rngStuck state (prior ++ events)
+  | .divisionFreeze state events => .divisionFreeze state (prior ++ events)
+  | .nestedMove state side move events => .nestedMove state side move (prior ++ events)
+  | .invalidAction state side => .invalidAction state side
+  | .inactive state => .inactive state
+
 /-- Resolve one policy turn. Forced replacement is a separate boundary; ordinary
 switch/item actions commit before attacks, so attacks target the loaded mon. -/
 def step (state : State) (playerAction enemyAction : Full.Action) : StepResult :=
@@ -382,8 +399,25 @@ def step (state : State) (playerAction enemyAction : Full.Action) : StepResult :
           | none => .invalidAction state .enemy
           | some state =>
               match playerAction, enemyAction with
-              | .item request, _ => applyItem state .player request
-              | _, .item request => applyItem state .enemy request
+              | .item playerRequest, .item enemyRequest =>
+                  match applyItem state .player playerRequest with
+                  | .transitioned state playerEvents =>
+                      prependEvents playerEvents (applyItem state .enemy enemyRequest)
+                  | result => result
+              | .item request, enemyAction =>
+                  match applyItem state .player request with
+                  | .transitioned state itemEvents =>
+                      if isFight enemyAction then
+                        prependEvents itemEvents (attack state .enemy enemyAction)
+                      else .transitioned state itemEvents
+                  | result => result
+              | playerAction, .item request =>
+                  match applyItem state .enemy request with
+                  | .transitioned state itemEvents =>
+                      if isFight playerAction then
+                        prependEvents itemEvents (attack state .player playerAction)
+                      else .transitioned state itemEvents
+                  | result => result
               | .run, _ =>
                   let cause := if state.battle.mode == .link then Outcome.TerminalCause.linkRun .player
                     else .ordinaryRun
@@ -424,6 +458,12 @@ def step (state : State) (playerAction enemyAction : Full.Action) : StepResult :
                           | result => result
                     | result => result
   | _ => .inactive state
+
+/-- Continue a Mirror Move, Metronome, or Mimic request in the same action.
+Status gating and PP decrement are not repeated; another nested signal remains an
+explicit continuation, so recursive Metronome behavior is not fuel-bounded. -/
+def resumeNested (state : State) (who : Side) (move : MoveId) : StepResult :=
+  attack state who (.fight 0) (some move) true
 
 /-- Legal actions are exposed directly from the engine state. -/
 def legalActions (state : State) (who : Side) : Array Full.Action :=
