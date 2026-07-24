@@ -1471,6 +1471,220 @@ without changing the physical machine. Each monitor transition still requires a
 concrete adapter equation or ROM checkpoint. This removes ephemeral-PC marker
 problems and gives a total establish/preserve/use theorem. -/
 
+/-- Physical safety facts carried by every admitted continuous driver cycle.
+They exclude out-of-image banking, malformed pipeline states, invalid lock, STOP,
+and detached fetched bytes. -/
+structure MachineSafe (machine : Machine) : Prop where
+  bankInImage : Rom.Closure.RomBankInImage machine.memory.cartridge
+  pipeline : Pipeline.WellFormed machine.core
+  noInvalidLock : ∀ opcode, machine.core.mode ≠ .locked opcode
+  noStop : ∀ byte, machine.core.mode ≠ .stopped byte
+  fetchedByte : ∀ fetched, machine.core.ir = some fetched → fetched.address.toNat < 0x8000 →
+    fetched.byte = GameBoy.Memory.read machine.memory fetched.address
+
+theorem machineSafe_of_running_fetched {machine : Machine} {address : Word}
+    {opcode : Byte}
+    (bank : Rom.Closure.RomBankInImage machine.memory.cartridge)
+    (mode : machine.core.mode = .running)
+    (phase : machine.core.phase = .execute)
+    (ir : machine.core.ir = some { address, byte := opcode })
+    (fetched : GameBoy.Memory.read machine.memory address = opcode) :
+    MachineSafe machine := by
+  refine {
+    bankInImage := bank
+    pipeline := ?_
+    noInvalidLock := ?_
+    noStop := ?_
+    fetchedByte := ?_ }
+  · simp [Pipeline.WellFormed, phase, ir]
+  · intro locked equality
+    rw [mode] at equality
+    contradiction
+  · intro stopped equality
+    rw [mode] at equality
+    contradiction
+  · intro candidate candidateEq range
+    rw [ir] at candidateEq
+    cases candidateEq
+    exact fetched.symm
+
+/-- Every intermediate state of the proved eight-cycle canonical prefix
+satisfies the physical invariant required by the tracked driver. -/
+theorem atInitOpponent_continuous_prefix_safe {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes) (w1 w2 w3 w4 w5 w6 w7 w8 : Bool)
+    (firstNoInterrupt : FirstBoundaryNoInterrupt machine w1 w2 w3 w4)
+    (secondNoInterrupt : SecondBoundaryNoInterrupt machine w1 w2 w3 w4 w5 w6 w7 w8) :
+    let m1 := (GameBoy.Adapter.stepMachineCycle machine w1).machine
+    let m2 := (GameBoy.Adapter.stepMachineCycle m1 w2).machine
+    let m3 := (GameBoy.Adapter.stepMachineCycle m2 w3).machine
+    let m4 := (GameBoy.Adapter.stepMachineCycle m3 w4).machine
+    let m5 := (GameBoy.Adapter.stepMachineCycle m4 w5).machine
+    let m6 := (GameBoy.Adapter.stepMachineCycle m5 w6).machine
+    let m7 := (GameBoy.Adapter.stepMachineCycle m6 w7).machine
+    let m8 := (GameBoy.Adapter.stepMachineCycle m7 w8).machine
+    MachineSafe m1 ∧ MachineSafe m2 ∧ MachineSafe m3 ∧ MachineSafe m4 ∧
+      MachineSafe m5 ∧ MachineSafe m6 ∧ MachineSafe m7 ∧ MachineSafe m8 := by
+  let m1 := (GameBoy.Adapter.stepMachineCycle machine w1).machine
+  let m2 := (GameBoy.Adapter.stepMachineCycle m1 w2).machine
+  let m3 := (GameBoy.Adapter.stepMachineCycle m2 w3).machine
+  let m4 := (GameBoy.Adapter.stepMachineCycle m3 w4).machine
+  let m5 := (GameBoy.Adapter.stepMachineCycle m4 w5).machine
+  let m6 := (GameBoy.Adapter.stepMachineCycle m5 w6).machine
+  let m7 := (GameBoy.Adapter.stepMachineCycle m6 w7).machine
+  let m8 := (GameBoy.Adapter.stepMachineCycle m7 w8).machine
+  have core1 : m1.core = initOpponentAfterLowCore machine :=
+    atInitOpponent_after_first_core_eq ready w1
+  have core2 : m2.core = initOpponentAfterHighCore machine :=
+    atInitOpponent_after_second_core_eq ready w1 w2
+  have core3 : m3.core = initOpponentAfterDataCore machine :=
+    atInitOpponent_after_third_core_eq ready w1 w2 w3
+  have core4 : m4.core = initOpponentStoreReadyCore machine :=
+    atInitOpponent_next_ready_no_interrupt ready w1 w2 w3 w4 firstNoInterrupt
+  have core5 : m5.core = initOpponentStoreAfterLowCore machine :=
+    atInitOpponent_store_after_first_core ready w1 w2 w3 w4 w5 firstNoInterrupt
+  have core6 : m6.core = initOpponentStoreAfterHighCore machine :=
+    atInitOpponent_store_after_second_core ready w1 w2 w3 w4 w5 w6 firstNoInterrupt
+  have core7 : m7.core = initOpponentStoreAfterWriteCore machine :=
+    atInitOpponent_store_after_write_core ready w1 w2 w3 w4 w5 w6 w7 firstNoInterrupt
+  have core8 : m8.core = initOpponentThirdReadyCore machine :=
+    atInitOpponent_third_ready_no_interrupt ready w1 w2 w3 w4 w5 w6 w7 w8
+      firstNoInterrupt secondNoInterrupt
+  have map1 := atInitOpponent_first_cycle_mapping ready w1
+  have read2 := (atInitOpponent_second_intent ready w1 w2).2.1
+  have map2 : m2.memory.cartridge = machine.memory.cartridge ∧
+      m2.memory.bootMapped = machine.memory.bootMapped :=
+    ⟨(GameBoy.Adapter.read_cycle_preserves_cartridge m1 w2 read2).trans map1.1,
+      (GameBoy.Adapter.read_cycle_preserves_bootMapped m1 w2 read2).trans map1.2⟩
+  have map3 := atInitOpponent_after_third_mapping ready w1 w2 w3
+  have memory4 := atInitOpponent_after_fourth_memory ready w1 w2 w3 w4
+  have memory5 := atInitOpponent_after_fifth_memory ready w1 w2 w3 w4 w5 firstNoInterrupt
+  have memory6 := atInitOpponent_after_sixth_memory ready w1 w2 w3 w4 w5 w6 firstNoInterrupt
+  have map7 := atInitOpponent_after_write_mapping ready w1 w2 w3 w4 w5 w6 w7 firstNoInterrupt
+  have read8 := (atInitOpponent_store_successor_intent ready
+    w1 w2 w3 w4 w5 w6 w7 w8 firstNoInterrupt).2.1
+  have map8 : m8.memory.cartridge = machine.memory.cartridge ∧
+      m8.memory.bootMapped = machine.memory.bootMapped :=
+    ⟨(GameBoy.Adapter.read_cycle_preserves_cartridge m7 w8 read8).trans map7.1,
+      (GameBoy.Adapter.read_cycle_preserves_bootMapped m7 w8 read8).trans map7.2⟩
+  change m3.memory.cartridge = machine.memory.cartridge ∧
+    m3.memory.bootMapped = machine.memory.bootMapped at map3
+  change m4.memory.cartridge = machine.memory.cartridge ∧
+    m4.memory.bootMapped = machine.memory.bootMapped ∧ _ at memory4
+  change m5.memory.cartridge = machine.memory.cartridge ∧
+    m5.memory.bootMapped = machine.memory.bootMapped ∧ _ at memory5
+  change m6.memory.cartridge = machine.memory.cartridge ∧
+    m6.memory.bootMapped = machine.memory.bootMapped ∧ _ at memory6
+  have mappedRead : ∀ (current : Machine) (address : Word),
+      current.memory.cartridge = machine.memory.cartridge →
+      current.memory.bootMapped = machine.memory.bootMapped →
+      address.toNat < 0x8000 →
+      GameBoy.Memory.read current.memory address = GameBoy.Memory.read machine.memory address := by
+    intro current address cartridge boot range
+    rw [GameBoy.Memory.read_rom_unmapped current.memory address
+      (boot.trans ready.checkpoint.1) range]
+    rw [GameBoy.Memory.read_rom_unmapped machine.memory address ready.checkpoint.1 range]
+    rw [cartridge]
+  have entryValue : GameBoy.Memory.read machine.memory (Word.ofNat 0x6F18) = 0xFA := by
+    have bound := ready.checkpoint.2.2.2.2.2.1
+    rw [ready.ir] at bound
+    simpa [Rom.Closure.Symbols.initOpponent] using bound.symm
+  have firstValue (current : Machine)
+      (cartridge : current.memory.cartridge = machine.memory.cartridge)
+      (boot : current.memory.bootMapped = machine.memory.bootMapped) :
+      GameBoy.Memory.read current.memory (Word.ofNat 0x6F18) = 0xFA := by
+    rw [mappedRead current (Word.ofNat 0x6F18) cartridge boot (by native_decide)]
+    exact entryValue
+  have secondValue (current : Machine)
+      (cartridge : current.memory.cartridge = machine.memory.cartridge)
+      (boot : current.memory.bootMapped = machine.memory.bootMapped) :
+      GameBoy.Memory.read current.memory (Word.ofNat 0x6F1B) = 0xEA := by
+    rw [mappedRead current (Word.ofNat 0x6F1B) cartridge boot (by native_decide)]
+    exact atInitOpponent_successor_byte ready.checkpoint bytes
+  have thirdValue (current : Machine)
+      (cartridge : current.memory.cartridge = machine.memory.cartridge)
+      (boot : current.memory.bootMapped = machine.memory.bootMapped) :
+      GameBoy.Memory.read current.memory (Word.ofNat 0x6F1E) = 0xEA := by
+    rw [mappedRead current (Word.ofNat 0x6F1E) cartridge boot (by native_decide)]
+    exact initOpponent_storeSuccessor_byte ready.checkpoint bytes
+  have mode1 : m1.core.mode = .running := by
+    rw [core1]
+    exact ready.checkpoint.2.2.2.1
+  have phase1 : m1.core.phase = .execute := by
+    rw [core1]
+    exact ready.checkpoint.2.2.2.2.1
+  have ir1 : m1.core.ir = some { address := Word.ofNat 0x6F18, byte := 0xFA } := by
+    rw [core1]
+    simpa [initOpponentAfterLowCore, Rom.Closure.Symbols.initOpponent] using ready.ir
+  have mode2 : m2.core.mode = .running := by rw [core2]; exact ready.checkpoint.2.2.2.1
+  have phase2 : m2.core.phase = .execute := by rw [core2]; exact ready.checkpoint.2.2.2.2.1
+  have ir2 : m2.core.ir = some { address := Word.ofNat 0x6F18, byte := 0xFA } := by
+    rw [core2]
+    simpa [initOpponentAfterHighCore, Rom.Closure.Symbols.initOpponent] using ready.ir
+  have mode3 : m3.core.mode = .running := by rw [core3]; exact ready.checkpoint.2.2.2.1
+  have phase3 : m3.core.phase = .execute := by rw [core3]; exact ready.checkpoint.2.2.2.2.1
+  have ir3 : m3.core.ir = some { address := Word.ofNat 0x6F18, byte := 0xFA } := by
+    rw [core3]
+    simpa [initOpponentAfterDataCore, Rom.Closure.Symbols.initOpponent] using ready.ir
+  have mode4 : m4.core.mode = .running := by rw [core4]; rfl
+  have phase4 : m4.core.phase = .execute := by rw [core4]; rfl
+  have ir4 : m4.core.ir = some { address := Word.ofNat 0x6F1B, byte := 0xEA } := by
+    rw [core4]
+    rfl
+  have mode5 : m5.core.mode = .running := by rw [core5]; rfl
+  have phase5 : m5.core.phase = .execute := by rw [core5]; rfl
+  have ir5 : m5.core.ir = some { address := Word.ofNat 0x6F1B, byte := 0xEA } := by
+    rw [core5]
+    rfl
+  have mode6 : m6.core.mode = .running := by rw [core6]; rfl
+  have phase6 : m6.core.phase = .execute := by rw [core6]; rfl
+  have ir6 : m6.core.ir = some { address := Word.ofNat 0x6F1B, byte := 0xEA } := by
+    rw [core6]
+    rfl
+  have mode7 : m7.core.mode = .running := by rw [core7]; rfl
+  have phase7 : m7.core.phase = .execute := by rw [core7]; rfl
+  have ir7 : m7.core.ir = some { address := Word.ofNat 0x6F1B, byte := 0xEA } := by
+    rw [core7]
+    rfl
+  have mode8 : m8.core.mode = .running := by rw [core8]; rfl
+  have phase8 : m8.core.phase = .execute := by rw [core8]; rfl
+  have ir8 : m8.core.ir = some { address := Word.ofNat 0x6F1E, byte := 0xEA } := by
+    rw [core8]
+    rfl
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · apply machineSafe_of_running_fetched
+      (by rw [map1.1]; exact ready.checkpoint.2.2.1)
+      mode1 phase1 ir1
+    exact firstValue m1 map1.1 map1.2
+  · apply machineSafe_of_running_fetched
+      (by rw [map2.1]; exact ready.checkpoint.2.2.1)
+      mode2 phase2 ir2
+    exact firstValue m2 map2.1 map2.2
+  · apply machineSafe_of_running_fetched
+      (by rw [map3.1]; exact ready.checkpoint.2.2.1)
+      mode3 phase3 ir3
+    exact firstValue m3 map3.1 map3.2
+  · apply machineSafe_of_running_fetched
+      (by rw [memory4.1]; exact ready.checkpoint.2.2.1)
+      mode4 phase4 ir4
+    exact secondValue m4 memory4.1 memory4.2.1
+  · apply machineSafe_of_running_fetched
+      (by rw [memory5.1]; exact ready.checkpoint.2.2.1)
+      mode5 phase5 ir5
+    exact secondValue m5 memory5.1 memory5.2.1
+  · apply machineSafe_of_running_fetched
+      (by rw [memory6.1]; exact ready.checkpoint.2.2.1)
+      mode6 phase6 ir6
+    exact secondValue m6 memory6.1 memory6.2.1
+  · apply machineSafe_of_running_fetched
+      (by rw [map7.1]; exact ready.checkpoint.2.2.1)
+      mode7 phase7 ir7
+    exact secondValue m7 map7.1 map7.2
+  · apply machineSafe_of_running_fetched
+      (by rw [map8.1]; exact ready.checkpoint.2.2.1)
+      mode8 phase8 ir8
+    exact thirdValue m8 map8.1 map8.2
+
 structure TrackedMachine where
   machine : Machine
   phase : Episode.Phase := .initializing
@@ -1492,7 +1706,8 @@ inductive TrackedStep (context : Context) :
     TrackedMachine → List LowEvent → TrackedMachine → Prop where
   | cycle {before output wake}
       (active : before.active)
-      (equation : GameBoy.Adapter.stepMachineCycle before.machine wake = output) :
+      (equation : GameBoy.Adapter.stepMachineCycle before.machine wake = output)
+      (safeAfter : MachineSafe output.machine) :
       TrackedStep context before
         [.cycle output.cpuOutput.intent output.cpuInput.read.fold
           (Retirement.atRetirement before.machine.core)]
@@ -1528,50 +1743,71 @@ inductive TrackedStep (context : Context) :
       TrackedStep context before [.cleanup witness, .outerReturn witness]
         { before with phase := .returned witness }
 
+@[inline] def TrackedMachine.cycleNext (state : TrackedMachine) (wake : Bool) :
+    TrackedMachine :=
+  let output := GameBoy.Adapter.stepMachineCycle state.machine wake
+  { state with
+    machine := output.machine
+    machineCycles := state.machineCycles + 1
+    machineInstructions := state.machineInstructions +
+      if Retirement.atRetirement state.machine.core then 1 else 0 }
+
+@[inline] def TrackedMachine.cycleEvent (state : TrackedMachine) (wake : Bool) : LowEvent :=
+  let output := GameBoy.Adapter.stepMachineCycle state.machine wake
+  .cycle output.cpuOutput.intent output.cpuInput.read.fold
+    (Retirement.atRetirement state.machine.core)
+
+/-- Reusable single-cycle constructor for an unbounded continuous stream. -/
+theorem trackedCycleStep (context : Context) (state : TrackedMachine) (wake : Bool)
+    (active : state.active)
+    (safeAfter : MachineSafe (GameBoy.Adapter.stepMachineCycle state.machine wake).machine) :
+    TrackedStep context state [state.cycleEvent wake] (state.cycleNext wake) := by
+  exact .cycle active rfl safeAfter
+
 /-- The full driver invariant is exact equality with the independent episode
 state. The physical machine remains present on the low side and can only move by
 `Adapter.stepMachineCycle`. -/
 def TrackedHolds (low : TrackedMachine) (high : Episode.State) : Prop :=
-  low.abstract = high
+  MachineSafe low.machine ∧ low.abstract = high
 
-@[simp] theorem tracked_establish (machine : Machine) :
+@[simp] theorem tracked_establish (machine : Machine) (safe : MachineSafe machine) :
     TrackedHolds ({ machine } : TrackedMachine)
-      ({ phase := .initializing } : Episode.State) := rfl
+      ({ phase := .initializing } : Episode.State) := ⟨safe, rfl⟩
 
 /-- Every continuously monitored physical cycle or justified ROM checkpoint is
 matched by exactly one independent protocol transition. -/
 theorem tracked_directSimulation (context : Context) :
     DirectSimulation (TrackedStep context) Episode.Step TrackedHolds projectEvent := by
   intro lowBefore lowAfter highBefore lowTrace related step
-  rw [← related]
+  rw [← related.2]
   cases step with
-  | cycle active equation =>
-      refine ⟨_, ?_, rfl⟩
+  | cycle active equation safeAfter =>
+      refine ⟨_, ?_, ⟨safeAfter, rfl⟩⟩
       apply Episode.Step.machineCycle
       simpa [TrackedMachine.active, Episode.active, TrackedMachine.abstract] using active
   | enterBattle phase checkpoint =>
-      refine ⟨_, ?_, rfl⟩
+      refine ⟨_, ?_, ⟨related.1, rfl⟩⟩
       simpa [TrackedMachine.abstract, projectTrace, projectEvent, phase] using
         (Episode.Step.initialize (state := lowBefore.abstract) (by simpa [TrackedMachine.abstract] using phase))
   | advanceTurn phase checkpoint =>
-      refine ⟨_, ?_, rfl⟩
+      refine ⟨_, ?_, ⟨related.1, rfl⟩⟩
       simpa [TrackedMachine.abstract, projectTrace, projectEvent, phase] using
         (Episode.Step.nextTurn (state := lowBefore.abstract) (by simpa [TrackedMachine.abstract] using phase))
   | terminalMarker phase turn checkpoint =>
-      refine ⟨_, ?_, rfl⟩
+      refine ⟨_, ?_, ⟨related.1, rfl⟩⟩
       simpa [TrackedMachine.abstract, projectTrace, projectEvent, phase] using
         (Episode.Step.finish (state := lowBefore.abstract)
           (witness := ‹Episode.TerminalWitness›)
           (by simpa [TrackedMachine.abstract] using phase)
           (by simpa [TrackedMachine.abstract] using turn))
   | epilogueMarker phase checkpoint =>
-      refine ⟨_, ?_, rfl⟩
+      refine ⟨_, ?_, ⟨related.1, rfl⟩⟩
       simpa [TrackedMachine.abstract, projectTrace, projectEvent, phase] using
         (Episode.Step.epilogue (state := lowBefore.abstract)
           (witness := ‹Episode.TerminalWitness›)
           (by simpa [TrackedMachine.abstract] using phase))
   | returnMarker phase checkpoint =>
-      refine ⟨_, ?_, rfl⟩
+      refine ⟨_, ?_, ⟨related.1, rfl⟩⟩
       simpa [TrackedMachine.abstract, projectTrace, projectEvent, phase] using
         (Episode.Step.returnOuter (state := lowBefore.abstract)
           (witness := ‹Episode.TerminalWitness›)
@@ -1588,7 +1824,7 @@ theorem trackedFinalRefinement :
   cases final with
   | returned phase =>
       refine ⟨witness, .returned ?_, rfl⟩
-      rw [← related]
+      rw [← related.2]
       simpa [TrackedMachine.abstract] using phase
 
 /-- Establish/preserve/use for every finite continuous physical execution. No
@@ -1615,8 +1851,15 @@ theorem establishTracked {context : Context} {low : Machine}
     (assumptions : EntryAssumptions context low bytes) :
     Holds context low ({ phase := .initializing } : Episode.State) ∧
       TrackedHolds ({ machine := low } : TrackedMachine)
-        ({ phase := .initializing } : Episode.State) :=
-  ⟨establish assumptions, tracked_establish low⟩
+        ({ phase := .initializing } : Episode.State) := by
+  have base := establish assumptions
+  have safe : MachineSafe low := {
+    bankInImage := base.bankInImage
+    pipeline := base.pipeline
+    noInvalidLock := base.noInvalidLock
+    noStop := base.noStop
+    fetchedByte := base.fetchedByte }
+  exact ⟨base, tracked_establish low safe⟩
 
 /-- Full canonical establish/preserve/use theorem from `AtInitOpponentReady` to
 the witnessed outer return. Every physical transition in `execution` is an
