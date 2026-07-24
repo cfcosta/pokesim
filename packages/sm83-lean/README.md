@@ -9,6 +9,27 @@ semantics, the fetched-instruction-register M-cycle core, interrupts, HALT,
 STOP profile hooks, invalid-opcode lockup, and generic byte-program reasoning.
 Consumers provide a bus and hardware-profile adapter.
 
+## Semantic layers
+
+- `Relation` exposes a Prop-valued architectural instruction judgment.
+- `Functional` executes de-overlapped instructions against `FlatMemory` and
+  records ordered bus events.
+- `Cycle`, `Pipeline`, and `Run` implement fetched-IR physical M-cycles,
+  successor-fetch overlap, hidden boundary/latch state, HALT, and five-stage
+  interrupt entry.
+- `HalfEdge` expands each M-cycle into typed `T1F` through `T4R` pin intent.
+- `FlatAdapter` drives the physical core from flat memory and projects its
+  prefetched checkpoint back to the architectural view.
+- `Program` and `Hoare` provide fuel-sensitive runs, return sentinels,
+  composition, and frame predicates.
+- `Profile` keeps STOP effects and invalid-lock retained pins relational where
+  processor-only evidence cannot choose a deterministic system behavior.
+- `Catalogue` contains all 256 base and 256 CB projections with pinned metadata
+  provenance; decoding itself remains encoding-derived.
+
+The package contains no Pokémon data, cartridge controller, ROM, PPU, timer,
+serial, joypad, or boot-ROM model.
+
 The implementation contract is maintained in
 [`../../docs/reference/sm83-implementation-spec.md`](../../docs/reference/sm83-implementation-spec.md).
 
@@ -25,10 +46,13 @@ runner. To validate the pinned SingleStep corpus without copying its fixture
 data into this package:
 
 ```sh
+python3 tools/check-sm83-release.py
 python3 tools/check-sm83-singlestep.py /path/to/sm83-tests
 ```
 
-This checks all 498,000 context-free legal-instruction cases against both the
+The release check rejects proof escapes, undeclared public dependencies, and a
+missing license/module boundary. The corpus checks all 498,000 context-free
+legal-instruction cases against both the
 de-overlapped functional runner and the fetched-IR physical core. It compares
 registers, flags, memory, IME, and ordered active bus transactions after
 successor-fetch reassociation. HALT and STOP are excluded from ordinary
