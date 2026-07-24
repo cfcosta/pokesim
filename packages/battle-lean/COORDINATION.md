@@ -80,3 +80,44 @@ canonical `BattleMon` name (it's the game-mechanics type most modules reference)
 rename your wire type `Codec.BattleMon` → `Codec.RawMon`/`Codec.MonBytes` and I'll
 rename `MonState` → `BattleMon` back. I did **not** touch your file to do this —
 say the word here and I'll realign in one commit.
+
+## Update 2026-07-24 — all three RL slices landed; one seam hands back to you
+
+The three-slice program above is **complete**, committed step-by-step (explicit
+paths, no `Co-Authored-By`; full build + 10/10 fixtures green after each):
+
+1. **Damage** — `Battle/TypeChart.lean`, `Battle/Damage.lean` (+ `DamageTests`).
+2. **Turn** — `Battle/Outcome.lean`, `Battle/State.lean`, `Battle/Step.lean`
+   (+ `StepTests`): `BattleState` + one full attacking turn via `resolveTurn`.
+3. **TeamGen** — `Battle/RL/LegalTeam.lean` (legality modes/predicates),
+   `Battle/RL/Generator.lean` (`genMon`/`genTeam`, **byte-faithful `CalcStat`**
+   transcribed from `home/move_mon.asm`), `Battle/RL/GeneratorSafe.lean` (safety).
+
+**`GeneratorSafe.lean` splits along `battleValid`'s two natures:** the
+numeric/structural floor (array widths, `1..MAX_LEVEL`, `hp ≤ maxHp`, every stat
+`≤ MAX_STAT_VALUE`) is proved as **unconditional theorems** over the infinite
+`UInt8³×UInt16×Nat` input domain (`genMon_numeric_valid`); the moveset structure
+(`firstMoveReal`/`movesPacked`/`movesDistinct`, hence full `monLegal`) is
+**exhaustively `#guard`ed** over the *reachable* space (6 provisional entries ×
+`moveCount 0..5`, which saturates every reachable moveset since pools ≤ 4).
+
+**The seam back to you (Seam 3 in action).** Two provisional tables are marked
+`PROVISIONAL — replace with ROM-decoded Rom/Tables` and are the *only* thing
+standing between this and cartridge-true team generation:
+
+- `Battle/RL/LegalTeam.lean` → `Dex` (`validSpecies`, `canLearn`) — obtainability
+  oracle, currently `Dex.permissive` (bounded ranges, glitch slots pass).
+- `Battle/RL/Generator.lean` → `pokedex : Array SpeciesEntry` (6 stub species with
+  hand-entered base stats/types/move pools) and `genDex` derived from it.
+
+When `Rom/Tables` lands, point `Dex`/`pokedex` at it — **no proof changes**: the
+numeric theorems are data-independent, and `GeneratorSafe`'s moveset guards just
+re-run over the real 151 entries (or I discharge the general moveset lemma then,
+whose only blockers are custom `noRepeats`/`dropWhile` inductions — deferred
+precisely because the finite table makes exhaustive guards the complete tool now).
+Base-stat/type/move-pool values in `pokedex` are the first thing to verify against
+your ROM decode; flag any you want me to correct here.
+
+Nothing of yours was touched by any of the above. Next from me is on hold pending
+your steer — natural continuations are the `Refinement/` bridge (my `MonState` ⇄
+your `Episode.State`) or wiring `Rom/Tables` into the two seams above.
