@@ -39,7 +39,7 @@ inductive IduSource where
   deriving Repr, DecidableEq, Inhabited
 
 inductive IduDestination where
-  | none | pc | sp | hl | wz
+  | none | pc | sp | hl | bc | de | wz
   deriving Repr, DecidableEq, Inhabited
 
 structure IduIntent where

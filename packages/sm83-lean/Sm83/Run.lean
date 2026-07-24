@@ -72,6 +72,20 @@ private def writeValue (state : CoreState) (operation : MicroOp) : Byte :=
   | .stackWriteLow, _ => registers.pc.lowByte
   | _, _ => state.latches.data
 
+private def internalAddress (state : CoreState) : Word :=
+  match state.shape with
+  | some (.inc16 register) | some (.dec16 register) => state.registers.get16 register
+  | some (.addHL _) => state.registers.hl
+  | some .ldSPHL => state.registers.hl
+  | some .addSP | some .ldHLFromSPPlus => state.registers.sp
+  | some .jp | some (.jpCond _) | some .call | some (.callCond _)
+  | some .ret | some .reti => state.wz
+  | some (.retCond _) =>
+      if !state.latches.conditionTaken || state.remaining.tail.head? = some .stackReadLow then
+        state.registers.sp
+      else state.wz
+  | _ => state.registers.pc
+
 private def opAddress (state : CoreState) (operation : MicroOp) : Word :=
   match operation with
   | .opcodeFetch | .cbFetch | .immediate8 | .immediateLow | .immediateHigh => state.registers.pc
@@ -81,7 +95,7 @@ private def opAddress (state : CoreState) (operation : MicroOp) : Word :=
   | .stackInitialDecrement | .stackWriteHigh | .stackWriteLow
   | .stackReadLow | .stackReadHigh => state.registers.sp
   | .successorFetch => successorAddress state
-  | .internal => state.registers.pc
+  | .internal => internalAddress state
 
 private def opControl : MicroOp → BusControl
   | .opcodeFetch | .cbFetch | .immediate8 | .immediateLow | .immediateHigh
@@ -96,16 +110,58 @@ private def opReadKind : MicroOp → ReadKind
   | .stackReadLow | .stackReadHigh => .stack
   | _ => .data
 
+private def reg16Idu (register : Reg16) : IduSource × IduDestination :=
+  match register with
+  | .bc => (.bc, .bc)
+  | .de => (.de, .de)
+  | .hl => (.hl, .hl)
+  | .sp => (.sp, .sp)
+
 private def opIdu (state : CoreState) (operation : MicroOp) : IduIntent :=
   let address := opAddress state operation
-  match operation with
-  | .opcodeFetch | .cbFetch | .immediate8 | .immediateLow | .immediateHigh | .successorFetch =>
+  match operation, state.shape with
+  | .successorFetch, some .halt =>
+      { source := .pc, destination := .pc, oldAddress := address }
+  | .opcodeFetch, _ | .cbFetch, _ | .immediate8, _ | .immediateLow, _
+  | .immediateHigh, _ | .successorFetch, _ =>
       { source := .pc, direction := .increment, destination := .pc, oldAddress := address }
-  | .stackInitialDecrement | .stackWriteHigh =>
+  | .stackInitialDecrement, _ | .stackWriteHigh, _ =>
       { source := .sp, direction := .decrement, destination := .sp, oldAddress := address }
-  | .stackReadLow | .stackReadHigh =>
+  | .stackReadLow, _ | .stackReadHigh, _ =>
       { source := .sp, direction := .increment, destination := .sp, oldAddress := address }
-  | _ => { oldAddress := address }
+  | .readAddress, some (.ldAFromMem16 .atHLInc)
+  | .writeAddress, some (.ldMem16A .atHLInc) =>
+      { source := .hl, direction := .increment, destination := .hl, oldAddress := address }
+  | .readAddress, some (.ldAFromMem16 .atHLDec)
+  | .writeAddress, some (.ldMem16A .atHLDec) =>
+      { source := .hl, direction := .decrement, destination := .hl, oldAddress := address }
+  | .writeAddress, some .ldAbsSP =>
+      { source := .wz, direction := .increment, destination := .wz, oldAddress := address }
+  | .internal, some (.inc16 register) =>
+      let pair := reg16Idu register
+      { source := pair.1, direction := .increment, destination := pair.2, oldAddress := address }
+  | .internal, some (.dec16 register) =>
+      let pair := reg16Idu register
+      { source := pair.1, direction := .decrement, destination := pair.2, oldAddress := address }
+  | .internal, some .jr | .internal, some (.jrCond _) =>
+      { source := .pc, direction := .relative, destination := .pc, oldAddress := address }
+  | .internal, some (.retCond _) =>
+      if !state.latches.conditionTaken || state.remaining.tail.head? = some .stackReadLow then
+        { source := .sp, oldAddress := address }
+      else { source := .wz, destination := .pc, oldAddress := address }
+  | .internal, some .jp | .internal, some (.jpCond _)
+  | .internal, some .ret | .internal, some .reti
+  | .internal, some .call | .internal, some (.callCond _) =>
+      { source := .wz, destination := .pc, oldAddress := address }
+  | .internal, some .addSP =>
+      { source := .sp, direction := .relative, destination := .sp, oldAddress := address }
+  | .internal, some .ldHLFromSPPlus =>
+      { source := .sp, direction := .relative, destination := .hl, oldAddress := address }
+  | .internal, some (.addHL _) =>
+      { source := .hl, destination := .hl, oldAddress := address }
+  | .internal, some .ldSPHL =>
+      { source := .hl, destination := .sp, oldAddress := address }
+  | _, _ => { oldAddress := address }
 
 private def intent (state : CoreState) (operation : MicroOp) : CycleIntent :=
   let control := opControl operation
