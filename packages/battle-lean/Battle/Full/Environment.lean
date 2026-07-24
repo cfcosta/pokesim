@@ -27,6 +27,9 @@ structure State where
   playerProgression : Array Progression.PersistentMon := #[]
   enemyProgression : Array Progression.PersistentMon := #[]
   canEvolveFlags : UInt8 := 0
+  gainExpFlags : UInt8 := 1
+  foughtFlags : UInt8 := 1
+  pendingLearning : List (Nat × MoveId) := []
   lastEpilogue : Option Money.EpilogueResult := none
 
 structure Observation where
@@ -93,7 +96,7 @@ def settle (state : State) : State :=
           rawBattleResult := terminal.rawResult
           playerMoney := state.engine.playerMoney
           payDayMoney := state.engine.payDayMoney }
-      if result.runEvolution && state.canEvolveFlags != 0 then state
+      if !state.pendingLearning.isEmpty || (result.runEvolution && state.canEvolveFlags != 0) then state
       else
         let engine := { state.engine with playerMoney := result.playerMoney, battle :=
           { state.engine.battle with phase := .returned ⟨terminal⟩ } }
@@ -114,6 +117,8 @@ def evolution? (state : State) (aliasedItem : Option UInt8 := none) :
     Option Evolution.Machine :=
   match state.engine.battle.phase with
   | .ending terminal =>
+      if !state.pendingLearning.isEmpty then none
+      else
       let guard := Money.epilogue
         { linkBattle := state.engine.battle.mode == .link
           rawBattleResult := terminal.rawResult
@@ -124,6 +129,43 @@ def evolution? (state : State) (aliasedItem : Option UInt8 := none) :
         let rows := syncProgressionRows state.playerProgression (currentParty state .player)
         some (Evolution.start rows state.canEvolveFlags state.engine.battle.mode aliasedItem)
   | _ => none
+
+inductive LearningResult where
+  | pending (state : State) (index : Nat) (machine : Learning.Machine)
+  | completed (state : State)
+  | invalid (state : State) (index : Nat) (machine : Learning.Machine)
+
+/-- Start the first queued exact-level learning request. -/
+def learning? (state : State) : Option (Nat × Learning.Machine) :=
+  match state.pendingLearning with
+  | [] => none
+  | (index, move) :: _ =>
+      (state.playerProgression[index]?).map fun mon => (index, Learning.start mon move)
+
+private def installLearning (state : State) (index : Nat) (machine : Learning.Machine) : State :=
+  let rows := state.playerProgression.modify index (fun _ => machine.mon)
+  let mons := rows.map Progression.PersistentMon.battle
+  let player := state.engine.battle.player
+  let activeMon := mons.getD player.activeIndex player.active.active
+  let player := { player with party := { mons }, active := { player.active with active := activeMon } }
+  let battle := state.engine.battle.setSide .player player
+  { state with
+    engine := { state.engine with battle }
+    playerProgression := rows
+    pendingLearning := state.pendingLearning.drop 1 }
+
+/-- Complete an automatic/finished learning request. -/
+def completeLearning (state : State) (index : Nat) (machine : Learning.Machine) : LearningResult :=
+  match machine.phase with
+  | .completed _ => .completed (installLearning state index machine)
+  | _ => .pending state index machine
+
+/-- Resume one nested level-up learning response. -/
+def resumeLearning (state : State) (index : Nat) (machine : Learning.Machine)
+    (response : Learning.Response) : LearningResult :=
+  match Learning.respond machine response with
+  | none => .invalid state index machine
+  | some machine => completeLearning state index machine
 
 inductive EvolutionResult where
   | pending (state : State) (machine : Evolution.Machine)
@@ -187,8 +229,73 @@ inductive StepResult where
       (events : List Engine.Event)
   | inactive (state : State)
 
+private def countFlags (flags : UInt8) : UInt8 :=
+  (List.range 8).foldl (fun count bit => if flags.toNat.testBit bit then count + 1 else count) 0
+
+private def awardEnemy (state : State) : State :=
+  if state.engine.battle.mode == .link then state
+  else
+    let enemy := state.engine.battle.enemy.active.active
+    let data := Data.speciesData enemy.species
+    let source : Progression.AwardSource :=
+      { baseHp := data.baseHp
+        baseAttack := data.baseAtk
+        baseDefense := data.baseDef
+        baseSpeed := data.baseSpd
+        baseSpecial := data.baseSpc
+        baseExp := data.baseExp
+        level := enemy.level }
+    let recipients := countFlags state.gainExpFlags
+    if recipients == 0 then state
+    else
+      let context : Progression.AwardContext :=
+        { playerId := state.engine.playerId
+          trainerBattle := state.engine.battle.mode == .trainer
+          recipients }
+      let synced := syncProgressionRows state.playerProgression (currentParty state .player)
+      let initial := (synced, state.canEvolveFlags, state.pendingLearning)
+      let awarded := (List.range synced.size).foldl (fun accumulator index =>
+        let row := accumulator.1
+        let flags := accumulator.2.1
+        let requests := accumulator.2.2
+        let mon := row.getD index (synced.getD index (persistent 0 fallbackMon))
+        if state.gainExpFlags.toNat.testBit index && !mon.battle.fainted then
+          let rate := Progression.GrowthRate.ofId
+            (Data.Progression.growthRates.getD mon.battle.species.toNat 0)
+          let result := Progression.award rate (Data.speciesData mon.battle.species)
+            source context mon index
+          let flags := if result.levelsGained != 0 then flags ||| (1 <<< index).toUInt8 else flags
+          let requests := requests ++ result.requests.filterMap (fun request => match request with
+            | .learnMove index move => some (index, move)
+            | _ => none)
+          (row.modify index (fun _ => result.mon), flags, requests)
+        else (row, flags, requests)) initial
+      let rows := awarded.1
+      let mons := rows.map Progression.PersistentMon.battle
+      let player := state.engine.battle.player
+      let activeMon := mons.getD player.activeIndex player.active.active
+      let player := { player with party := { mons }, active := { player.active with active := activeMon } }
+      let battle := state.engine.battle.setSide .player player
+      { state with
+        engine := { state.engine with battle }
+        playerProgression := rows
+        canEvolveFlags := awarded.2.1
+        pendingLearning := awarded.2.2 }
+
+private def applyProgressionEvents (state : State) (events : List Engine.Event) : State :=
+  let state := events.foldl (fun state event => match event with
+    | .switched .player target =>
+        { state with
+          gainExpFlags := state.gainExpFlags ||| (1 <<< target).toUInt8,
+          foughtFlags := state.foughtFlags ||| (1 <<< target).toUInt8 }
+    | _ => state) state
+  if events.any (fun event => match event with | .fainted .enemy => true | _ => false) then
+    awardEnemy state
+  else state
+
 private def lift (outer : State) : Engine.StepResult → StepResult
-  | .transitioned engine events => .transitioned { outer with engine } events
+  | .transitioned engine events =>
+      .transitioned (applyProgressionEvents { outer with engine } events) events
   | .invalidAction engine side => .invalidAction { outer with engine } side
   | .capturePending engine ball events => .capturePending { outer with engine } ball events
   | .rngStuck engine events => .rngStuck { outer with engine } events
