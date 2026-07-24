@@ -18,3 +18,4 @@ import Battle.Diff
 import Battle.Driver
 import Battle.DriverInvariant
 import Battle.Fixtures
+import Battle.RL.LegalTeam
