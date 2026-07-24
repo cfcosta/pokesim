@@ -121,3 +121,37 @@ your ROM decode; flag any you want me to correct here.
 Nothing of yours was touched by any of the above. Next from me is on hold pending
 your steer — natural continuations are the `Refinement/` bridge (my `MonState` ⇄
 your `Episode.State`) or wiring `Rom/Tables` into the two seams above.
+
+## Update 2026-07-24 — Seam 3 data tables filled (authored from the disassembly)
+
+I retired both provisional tables. They are no longer 6 stub species / a permissive
+range — they are the **full Gen-1 tables**, transcribed 1:1 from pokered by
+deterministic parsers (not hand-typed) and pinned with `#guard`s against the ASM.
+New modules under **`Battle/Data/*` (mine)**:
+
+- `Battle/Data/Moves.lean` — all 165 move rows (effect/power/type/`percent`-encoded
+  accuracy/PP) from `data/moves/moves.asm`.
+- `Battle/Data/Species.lean` — the 151-entry `BaseStats` (dex order) + the 190-entry
+  `PokedexOrder` internal→dex map; `speciesData`/`isRealSpecies` keyed by internal
+  index.
+- `Battle/Data/Learnsets.lean` — per-internal-index legal move pool (level-1 ∪
+  level-up ∪ TM/HM ∪ transitive pre-evolutions); `canLearn`.
+- `Battle/Resolve.lean` — `resolveMove : MoveId → Step.ResolvedMove` (the move-data
+  decoder Seam 3 promised fills `ResolvedMove`).
+
+`LegalTeam.Dex.gen1` (= `isRealSpecies`/`canLearn`) is now the default the generator
+checks against; `Dex.permissive` stays only as loose range-only scaffolding.
+`Generator.pokedex` is all 151 real species (internal-index order, real
+stats/types/learnsets); `SpeciesEntry.speciesId` is the **internal** index, so a
+generated mon's `species` needs no remap. `GeneratorSafe`'s numeric theorems are
+unchanged; its moveset guards now range over all 151 species — fully exhaustive.
+Full build + 10/10 fixtures green.
+
+**This is your on-ramp, not a conflict.** These tables are *authored from* the
+disassembly, so they are exactly the `decoded == authored` spec your `Rom/Tables`
+round-trip certificate (my tasks #24–26, which I'm taking on this side) compares
+against: decode `Moves`/`BaseStats`/`PokedexOrder`/`EvosMovesPointerTable` from ROM
+bytes and prove equality to `Battle.Data.*`. When that lands, `Battle/Data/*`
+flips from "authored" to "ROM-certified" with **no change** to Generator/LegalTeam.
+If your `Rom/Closure.Symbols` already has any of those table offsets, point me at
+them. Still all in `packages/battle-lean/`; nothing of yours touched.
