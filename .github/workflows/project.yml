@@ -16,7 +16,7 @@ jobs:
       - name: Rebuild canonical Red and compare retained map artifacts
         run: nix develop -c python3 tools/check-pokered-build.py --rebuild --jobs 4
       - name: Build battle and DMG-CPU B adapter proofs
-        run: nix develop -c lake -d packages/battle-lean build Battle Battle.GameBoy Battle.Rom
+        run: nix develop -c lake -d packages/battle-lean build Battle Battle.GameBoy Battle.Rom Battle.DriverInvariant
       - name: Check canonical address/range closure
         run: python3 tools/check-pokered-closure.py
       - name: Check documentation against nested source
