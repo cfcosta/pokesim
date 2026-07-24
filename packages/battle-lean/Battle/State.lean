@@ -19,7 +19,7 @@ the `BattleMode`, and the `EpisodePhase`.
 
 Everything here is a faithful re-view of named WRAM:
 
-* `BattleMon` mirrors the 29-byte `battle_struct` (`macros/ram.asm:39-59`, and
+* `MonState` mirrors the 29-byte `battle_struct` (`macros/ram.asm:39-59`, and
   `Battle.Wram.battleStructFields`). HP/stat words are the big-endian integers
   the ROM stores; `moves`/`pp` are 4-byte arrays; `status` is the **raw**
   non-volatile status byte (sleep is a counter in bits 0-2 disjoint from the
@@ -33,6 +33,15 @@ Everything here is a faithful re-view of named WRAM:
 Party lists / switching are not modelled here yet: `BattleState` carries each
 side's *active* mon, which is what a single attacking turn resolves against. The
 `Refinement/` layer maps this state onto GPT's `Battle.Episode.State`.
+
+`MonState` is the *semantic* mon — clean `UInt16` HP/stat fields the resolver
+manipulates. It is deliberately distinct from `Battle.BattleMon` in `Battle.Codec`
+(GPT's machine layer), which is the *wire* mon: the 29 raw `battle_struct` bytes
+as byte-pairs, with an encode/decode bijection for the oracle differential. The
+two are the same Pokémon in two representations; the `Refinement/` layer bridges
+them (`Battle.Codec.BattleMon.decode` bytes → this `MonState`). See
+`COORDINATION.md` — the names were split here (this layer yielded the bare
+`Battle.BattleMon`) to keep the aggregate `Battle` import collision-free.
 -/
 
 namespace Battle
@@ -50,7 +59,7 @@ def bitSet (b : UInt8) (i : Nat) : Bool := b.toNat.testBit i
     `battle_struct` (`Battle.Wram.battleStructFields`). HP/stat fields are the
     integers the ROM stores big-endian; `moves`/`pp` are 4-entry byte arrays;
     `status` is the raw non-volatile status byte. -/
-structure BattleMon where
+structure MonState where
   /-- `Species` — internal Pokédex index. -/
   species : SpeciesId
   /-- `HP` — current hit points (big-endian word). -/
@@ -86,24 +95,24 @@ structure BattleMon where
   deriving Repr, DecidableEq, BEq
 
 /-- Well-formed: the move and PP arrays each hold exactly `NUM_MOVES` entries. -/
-def BattleMon.wf (m : BattleMon) : Bool :=
+def MonState.wf (m : MonState) : Bool :=
   m.moves.size == numMoves && m.pp.size == numMoves
 
 /-- A mon is fainted exactly when its HP is zero. -/
-def BattleMon.fainted (m : BattleMon) : Bool := m.hp == 0
+def MonState.fainted (m : MonState) : Bool := m.hp == 0
 
 /-! ### Non-volatile status accessors (`Battle.Wram.Status`) -/
 
 /-- Asleep — the sleep counter (bits 0-2) is nonzero. -/
-def BattleMon.asleep (m : BattleMon) : Bool := (m.status &&& Wram.Status.slpMask) != 0
+def MonState.asleep (m : MonState) : Bool := (m.status &&& Wram.Status.slpMask) != 0
 /-- Poisoned (`PSN`, bit 3). -/
-def BattleMon.poisoned (m : BattleMon) : Bool := bitSet m.status Wram.Status.psn
+def MonState.poisoned (m : MonState) : Bool := bitSet m.status Wram.Status.psn
 /-- Burned (`BRN`, bit 4). -/
-def BattleMon.burned (m : BattleMon) : Bool := bitSet m.status Wram.Status.brn
+def MonState.burned (m : MonState) : Bool := bitSet m.status Wram.Status.brn
 /-- Frozen (`FRZ`, bit 5). -/
-def BattleMon.frozen (m : BattleMon) : Bool := bitSet m.status Wram.Status.frz
+def MonState.frozen (m : MonState) : Bool := bitSet m.status Wram.Status.frz
 /-- Paralysed (`PAR`, bit 6). -/
-def BattleMon.paralyzed (m : BattleMon) : Bool := bitSet m.status Wram.Status.par
+def MonState.paralyzed (m : MonState) : Bool := bitSet m.status Wram.Status.par
 
 /-! ## Stat-mod stages -/
 
@@ -185,13 +194,13 @@ def Volatile.badlyPoisoned (v : Volatile) : Bool := bitSet v.status3 Wram.Battle
 /-- One side's live state: its active mon, that mon's stat-mod stages, and its
     volatile status. -/
 structure SideState where
-  active : BattleMon
+  active : MonState
   stages : StatStages
   volatile : Volatile
   deriving Repr, DecidableEq, BEq
 
 /-- Fresh switch-in: the given mon with neutral stages and cleared volatiles. -/
-def SideState.fresh (m : BattleMon) : SideState :=
+def SideState.fresh (m : MonState) : SideState :=
   { active := m, stages := StatStages.neutral, volatile := Volatile.clear }
 
 /-- The whole battle: both sides, the RNG cursor, the turn counter, the mode, and
@@ -218,10 +227,10 @@ def BattleState.setSide : BattleState → Side → SideState → BattleState
   | s, .enemy, ss => { s with enemy := ss }
 
 /-- The named side's active mon. -/
-def BattleState.active (s : BattleState) (side : Side) : BattleMon := (s.side side).active
+def BattleState.active (s : BattleState) (side : Side) : MonState := (s.side side).active
 
 /-- Open a battle: both sides fresh, RNG seeded, turn 0, `battling`. -/
-def BattleState.start (player enemy : BattleMon) (rng : Rng.LinkRng)
+def BattleState.start (player enemy : MonState) (rng : Rng.LinkRng)
     (mode : BattleMode := .link) : BattleState :=
   { player := SideState.fresh player, enemy := SideState.fresh enemy,
     rng, turn := 0, mode, phase := .battling }
@@ -229,7 +238,7 @@ def BattleState.start (player enemy : BattleMon) (rng : Rng.LinkRng)
 /-! ## Fidelity guards -/
 
 /-- A representative active mon (Charizard-ish: Fire/Flying, one move with PP). -/
-private def sampleMon : BattleMon :=
+private def sampleMon : MonState :=
   { species := 6, hp := 100, boxLevel := 50, status := 0,
     type1 := 0x14, type2 := 0x02, catchRate := 45,
     moves := #[52, 0, 0, 0], dvs := 0xFFFF, level := 50,
