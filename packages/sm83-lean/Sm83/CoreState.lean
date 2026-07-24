@@ -4,6 +4,7 @@ Licensed under the Apache License, Version 2.0 (the "License").
 -/
 
 import Sm83.Cycle
+import Sm83.Interrupt
 import Sm83.Registers
 
 namespace Sm83
@@ -13,7 +14,7 @@ inductive CoreMode where
   deriving Repr, DecidableEq, Inhabited
 
 inductive PipelinePhase where
-  | bootstrap | execute
+  | bootstrap | execute | interrupt
   deriving Repr, DecidableEq, Inhabited
 
 structure FetchedIR where
@@ -39,6 +40,7 @@ structure CoreState where
   shape : Option InstructionShape := none
   remaining : List MicroOp := []
   latches : CoreLatches := {}
+  interrupt : Option InterruptEntry := none
   deriving Repr, DecidableEq
 
 namespace CoreState

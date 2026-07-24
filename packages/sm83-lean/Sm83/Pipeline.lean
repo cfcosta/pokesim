@@ -23,7 +23,8 @@ def install (state : CoreState) (address : Word) (opcode : Byte) : CoreState :=
     ir := some { byte := opcode, address }
     shape := none
     remaining := []
-    latches := {} }
+    latches := {}
+    interrupt := none }
   match Decode.base opcode with
   | .locked _ => { state with mode := .locked opcode }
   | .prefix => { state with remaining := [.cbFetch] }
@@ -51,6 +52,7 @@ def WellFormed (state : CoreState) : Prop :=
   match state.phase with
   | .bootstrap => state.ir = none ∧ state.shape = none ∧ state.remaining = []
   | .execute => state.ir.isSome
+  | .interrupt => state.interrupt.isSome
 
 @[simp] theorem bootstrap_wellFormed (registers : Registers) : WellFormed (bootstrap registers) := by
   simp [WellFormed, bootstrap]

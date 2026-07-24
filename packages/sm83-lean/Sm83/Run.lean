@@ -238,6 +238,97 @@ private def processNonFetch (state : CoreState) (operation : MicroOp) (input : C
         latches := { state.latches with high := input.read.fold } }
   | _ => state
 
+private def startInterrupt (state : CoreState) (returnPC : Word) : CoreState :=
+  { state with
+    registers := { state.registers with pc := returnPC }
+    ime := false
+    scheduledImeEnable := false
+    mode := .running
+    phase := .interrupt
+    remaining := []
+    interrupt := some { returnPC } }
+
+private def interruptCycle (state : CoreState) (input : CoreInput) : CoreOutput :=
+  match state.interrupt with
+  | none =>
+      let emptyIntent : CycleIntent := { address := state.registers.pc }
+      { state := state, intent := emptyIntent }
+  | some entry =>
+      match entry.stage with
+      | .correctPC =>
+          let iduIntent : IduIntent := {
+            source := .pc
+            direction := .decrement
+            destination := .pc
+            oldAddress := entry.returnPC }
+          let cycleIntent : CycleIntent := {
+            address := entry.returnPC
+            idu := iduIntent
+            poll := .dispatch }
+          let entry := { entry with stage := .decrementSP }
+          { state := { state with interrupt := some entry }, intent := cycleIntent }
+      | .decrementSP =>
+          let iduIntent : IduIntent := {
+            source := .sp
+            direction := .decrement
+            destination := .sp
+            oldAddress := state.registers.sp }
+          let cycleIntent : CycleIntent := {
+            address := state.registers.sp
+            idu := iduIntent
+            poll := .dispatch }
+          let registers := { state.registers with sp := Word.ofNat (state.registers.sp.toNat + 65535) }
+          let entry := { entry with stage := .writeHigh }
+          let state := { state with registers := registers }
+          { state := { state with interrupt := some entry }, intent := cycleIntent }
+      | .writeHigh =>
+          let iduIntent : IduIntent := {
+            source := .sp
+            direction := .decrement
+            destination := .sp
+            oldAddress := state.registers.sp }
+          let cycleIntent : CycleIntent := {
+            address := state.registers.sp
+            control := .write
+            data := .driven entry.returnPC.highByte
+            idu := iduIntent
+            poll := .dispatch }
+          let registers := { state.registers with sp := Word.ofNat (state.registers.sp.toNat + 65535) }
+          let entry := { entry with stage := .writeLow }
+          let state := { state with registers := registers }
+          { state := { state with interrupt := some entry }, intent := cycleIntent }
+      | .writeLow =>
+          let selected := Interrupt.priorityMask input.pendingInterrupts
+          let vector := Interrupt.vector selected
+          let cycleIntent : CycleIntent := {
+            address := state.registers.sp
+            control := .write
+            data := .driven entry.returnPC.lowByte
+            poll := .dispatch
+            acknowledge := selected }
+          let entry := { entry with stage := .fetchVector, vector := vector, acknowledge := selected }
+          { state := { state with interrupt := some entry }, intent := cycleIntent }
+      | .fetchVector =>
+          let iduIntent : IduIntent := {
+            source := .pc
+            direction := .increment
+            destination := .pc
+            oldAddress := entry.vector }
+          let cycleIntent : CycleIntent := {
+            address := entry.vector
+            control := .read
+            readKind := .vector
+            fetch := .generic
+            idu := iduIntent
+            commit := { pc := true, ir := true }
+            poll := .dispatch }
+          let registers := { state.registers with pc := Word.ofNat (entry.vector.toNat + 1) }
+          let state := { state with registers := registers }
+          let state := { state with interrupt := none }
+          let state := { state with phase := .execute }
+          let next := Pipeline.install state entry.vector input.read.fold
+          { state := next, intent := cycleIntent }
+
 private def finishSuccessor (state : CoreState) (input : CoreInput) : CoreState :=
   let target := successorAddress state
   let registers := commitRegisters state
@@ -245,25 +336,28 @@ private def finishSuccessor (state : CoreState) (input : CoreInput) : CoreState 
   match state.shape with
   | some .halt =>
       let effectiveIme := state.ime || state.scheduledImeEnable
-      if !effectiveIme && input.pendingInterrupts.toNat != 0 then
-        let registers := { registers with pc := target }
-        let state := { state with registers := registers }
+      let state := { state with registers := { registers with pc := target } }
+      if effectiveIme && input.pendingInterrupts.toNat != 0 then
+        startInterrupt state target
+      else if !effectiveIme && input.pendingInterrupts.toNat != 0 then
         let state := { state with ime := imeUpdate.1 }
         let state := { state with scheduledImeEnable := imeUpdate.2 }
         let state := { state with haltBug := true }
         Pipeline.install state target input.read.fold
       else
-        let state := { state with registers := { registers with pc := target } }
         let state := { state with ime := imeUpdate.1 }
         let state := { state with scheduledImeEnable := imeUpdate.2 }
         let state := { state with mode := .halted }
         { state with remaining := [] }
   | _ =>
-      let registers := { registers with pc := Word.ofNat (target.toNat + 1) }
       let state := { state with registers := registers }
       let state := { state with ime := imeUpdate.1 }
       let state := { state with scheduledImeEnable := imeUpdate.2 }
-      Pipeline.install state target input.read.fold
+      if imeUpdate.1 && input.pendingInterrupts.toNat != 0 then
+        startInterrupt { state with registers := { registers with pc := target } } target
+      else
+        let registers := { registers with pc := Word.ofNat (target.toNat + 1) }
+        Pipeline.install { state with registers := registers } target input.read.fold
 
 /-- Advance one physical fetched-IR M-cycle carrying exactly four CPU T-cycles. -/
 def stepMachineCycle (state : CoreState) (input : CoreInput) : CoreOutput :=
@@ -274,15 +368,35 @@ def stepMachineCycle (state : CoreState) (input : CoreInput) : CoreOutput :=
         clocks := { cpuExecution := true, machine := true, oscillator := true } }
       { state := state, intent := heldIntent }
   | .halted =>
-      let haltedIntent : CycleIntent := {
-        address := state.registers.pc
-        clocks := { cpuExecution := false, machine := true, oscillator := true } }
-      { state := state, intent := haltedIntent }
+      if input.pendingInterrupts.toNat = 0 then
+        let haltedIntent : CycleIntent := {
+          address := state.registers.pc
+          clocks := { cpuExecution := false, machine := true, oscillator := true } }
+        { state := state, intent := haltedIntent }
+      else if state.ime then
+        interruptCycle (startInterrupt state state.registers.pc) input
+      else
+        let wakeIntent : CycleIntent := {
+          address := state.registers.pc
+          clocks := { cpuExecution := true, machine := true, oscillator := true } }
+        let next := { state with mode := .running }
+        let next := { next with phase := .bootstrap }
+        let next := { next with ir := none }
+        let next := { next with shape := none }
+        let next := { next with remaining := [] }
+        { state := next, intent := wakeIntent }
   | .stopped _ =>
       let stoppedIntent : CycleIntent := {
         address := state.registers.pc
-        clocks := { cpuExecution := false, machine := false, oscillator := false } }
-      { state := state, intent := stoppedIntent }
+        clocks := { cpuExecution := false, machine := false, oscillator := input.wake } }
+      let next := if input.wake then
+        let next := { state with mode := .running }
+        let next := { next with phase := .bootstrap }
+        let next := { next with ir := none }
+        let next := { next with shape := none }
+        { next with remaining := [] }
+        else state
+      { state := next, intent := stoppedIntent }
   | .running =>
       match state.phase with
       | .bootstrap =>
@@ -299,6 +413,7 @@ def stepMachineCycle (state : CoreState) (input : CoreInput) : CoreOutput :=
             commit := { pc := true, ir := true }
             poll := .genericFetch }
           { state := next, intent := fetchIntent }
+      | .interrupt => interruptCycle state input
       | .execute =>
           match state.currentOp? with
           | none =>

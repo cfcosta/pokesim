@@ -12,10 +12,12 @@ import Sm83.Flags
 import Sm83.FlatMemory
 import Sm83.Functional
 import Sm83.Instruction
+import Sm83.Interrupt
 import Sm83.Registers
 import Sm83.Proofs.Arithmetic
 import Sm83.Proofs.Decode
 import Sm83.Proofs.Functional
+import Sm83.Proofs.Interrupt
 import Sm83.Proofs.Pipeline
 import Sm83.Pipeline
 import Sm83.Profile

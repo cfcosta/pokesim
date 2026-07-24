@@ -72,6 +72,7 @@ structure CycleIntent where
   idu : IduIntent := {}
   commit : CommitSet := {}
   poll : InterruptPoll := .none
+  acknowledge : Byte := 0
   clocks : ClockIntent := {}
   deriving Repr, DecidableEq
 
