@@ -9,6 +9,7 @@ import Battle.Action
 import Battle.Codec
 import Battle.TypeChart
 import Battle.Data.Moves
+import Battle.Data.Species
 import Battle.Damage
 import Battle.DamageTests
 import Battle.Outcome
