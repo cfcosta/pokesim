@@ -3,6 +3,7 @@
 import Sm83.Alu
 import Sm83.Basic
 import Sm83.Byte
+import Sm83.Catalogue
 import Sm83.Clock
 import Sm83.CoreState
 import Sm83.Cycle
