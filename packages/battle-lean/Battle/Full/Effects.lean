@@ -62,6 +62,20 @@ inductive Event where
   | signal (signal : Signal)
   deriving Repr, DecidableEq, BEq
 
+/-- Bounded executable search over the link recurrence. Fuel 2305 covers a full
+256-step orbit for each of the nine live bytes; exhaustion remains explicit for
+malformed RNG states rather than becoming a miss. -/
+private def drawAccepted : Nat → Rng.LinkRng → (UInt8 → Bool) → String →
+    Option (UInt8 × Rng.LinkRng × List Event)
+  | 0, _, _, _ => none
+  | fuel + 1, rng, accepts, site =>
+      let (raw, rng) := rng.next
+      if accepts raw then some (raw, rng, [.rawRng site raw])
+      else match drawAccepted fuel rng accepts site with
+        | none => none
+        | some (accepted, rng, events) =>
+            some (accepted, rng, .rawRng (site ++ "-rejected") raw :: events)
+
 structure Outcome where
   context : Context
   signal : Signal := .continue
@@ -273,15 +287,14 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
       if context.mode == .trainer then ⟨context, .failed, []⟩ else ⟨context, .escaped, [.signal .escaped]⟩
   | .sleep =>
       if !hit || context.defender.active.status != 0 then ⟨context, .failed, []⟩
-      else
-        let (raw, rng) := context.rng.next
-        let turns := raw &&& Wram.Status.slpMask
-        if turns == 0 then ⟨{ context with rng }, .rngStuck,
-          [.rawRng "sleep-rejected" raw, .signal .rngStuck]⟩
-        else
-          let mon := { context.defender.active with status := turns }
-          ⟨withDefender { context with rng } { context.defender with active := mon },
-            .continue, [.rawRng "sleep-turns" raw, .statusApplied turns]⟩
+      else match drawAccepted 2305 context.rng
+          (fun raw => (raw &&& Wram.Status.slpMask) != 0) "sleep-turns" with
+        | none => ⟨context, .rngStuck, [.signal .rngStuck]⟩
+        | some (raw, rng, events) =>
+            let turns := raw &&& Wram.Status.slpMask
+            let mon := { context.defender.active with status := turns }
+            ⟨withDefender { context with rng } { context.defender with active := mon },
+              .continue, events ++ [.statusApplied turns]⟩
   | .ohko => if context.attacker.active.speed ≥ context.defender.active.speed then
       ⟨context, .oneHitKo, [.signal .oneHitKo]⟩ else ⟨context, .failed, []⟩
   | .charge invulnerable =>
@@ -336,9 +349,11 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
       let move := context.defender.active.moves.getD context.moveSlot.val 0
       if !hit || move == 0 then ⟨context, .failed, []⟩ else ⟨context, .callMove move, [.signal (.callMove move)]⟩
   | .metronome =>
-      let (raw, rng) := context.rng.next
-      let move := (raw.toNat % 165 + 1).toUInt8
-      ⟨{ context with rng }, .callMove move, [.rawRng "metronome" raw, .signal (.callMove move)]⟩
+      match drawAccepted 2305 context.rng
+          (fun raw => raw != 0 && raw < 165 && raw != 118) "metronome" with
+      | none => ⟨context, .rngStuck, [.signal .rngStuck]⟩
+      | some (move, rng, events) =>
+          ⟨{ context with rng }, .callMove move, events ++ [.signal (.callMove move)]⟩
   | .leechSeed =>
       if !hit || context.defender.active.type1 == TypeChart.grass ||
           context.defender.active.type2 == TypeChart.grass || context.defender.volatile.seeded then
@@ -360,22 +375,26 @@ def applyAfter (effect moveType : UInt8) (hit targetFainted : Bool)
     (damage : UInt16) (context : Context) : Outcome :=
   match (plan effect).mechanic with
   | .poisonSide threshold =>
-      let (success, context, event) := sideChance threshold context
-      if hit && success then
-        let out := poison false context
-        { out with events := event :: out.events }
-      else ⟨context, .continue, [event]⟩
-  | .burnSide threshold | .freezeSide threshold | .paralyzeSide threshold =>
-      let mechanic := (plan effect).mechanic
-      let (success, context, event) := sideChance threshold context
-      if !hit || !success then ⟨context, .continue, [event]⟩
+      if !hit then { context := context }
       else
-        let status := match mechanic with
-          | .burnSide _ => mask Wram.Status.brn
-          | .freezeSide _ => mask Wram.Status.frz
-          | _ => mask Wram.Status.par
-        let out := applyMajorStatus status moveType context
-        { out with events := event :: out.events }
+        let (success, context, event) := sideChance threshold context
+        if success then
+          let out := poison false context
+          { out with events := event :: out.events }
+        else ⟨context, .continue, [event]⟩
+  | .burnSide threshold | .freezeSide threshold | .paralyzeSide threshold =>
+      if !hit then { context := context }
+      else
+        let mechanic := (plan effect).mechanic
+        let (success, context, event) := sideChance threshold context
+        if !success then ⟨context, .continue, [event]⟩
+        else
+          let status := match mechanic with
+            | .burnSide _ => mask Wram.Status.brn
+            | .freezeSide _ => mask Wram.Status.frz
+            | _ => mask Wram.Status.par
+          let out := applyMajorStatus status moveType context
+          { out with events := event :: out.events }
   | .drain | .dreamEater =>
       if !hit then { context := context } else
         let amount := UInt16.ofNat (max 1 (damage.toNat / 2))
@@ -397,29 +416,35 @@ def applyAfter (effect moveType : UInt8) (hit targetFainted : Bool)
       ⟨context, .repeatHits count, events ++ [.signal (.repeatHits count)]⟩
   | .attackTwice | .twineedle => ⟨context, .repeatHits 2, [.signal (.repeatHits 2)]⟩
   | .flinchSide threshold =>
-      let (success, context, event) := sideChance threshold context
-      if hit && success && !context.defender.volatile.hasSubstitute then
-        let volatile := { context.defender.volatile with
-          status1 := setBit context.defender.volatile.status1 Wram.BattleStatus1.flinched
-          status2 := clearBit context.defender.volatile.status2 Wram.BattleStatus2.needsToRecharge }
-        ⟨setDefenderVolatile context volatile, .continue, [event]⟩
-      else ⟨context, .continue, [event]⟩
+      if !hit then { context := context }
+      else
+        let (success, context, event) := sideChance threshold context
+        if success && !context.defender.volatile.hasSubstitute then
+          let volatile := { context.defender.volatile with
+            status1 := setBit context.defender.volatile.status1 Wram.BattleStatus1.flinched
+            status2 := clearBit context.defender.volatile.status2 Wram.BattleStatus2.needsToRecharge }
+          ⟨setDefenderVolatile context volatile, .continue, [event]⟩
+        else ⟨context, .continue, [event]⟩
   | .recoil =>
       if !hit then { context := context } else
         let recoil := UInt16.ofNat (max 1 (damage.toNat / 4))
         ⟨damageSelf context recoil, .continue, [.recoil recoil]⟩
   | .confusionSide =>
-      let (success, context, event) := sideChance 25 context
-      if hit && success then
-        let out := confuse context
-        { out with events := event :: out.events }
-      else ⟨context, .continue, [event]⟩
+      if !hit then { context := context }
+      else
+        let (success, context, event) := sideChance 25 context
+        if success then
+          let out := confuse context
+          { out with events := event :: out.events }
+        else ⟨context, .continue, [event]⟩
   | .statDownSide stat =>
-      let (success, context, event) := sideChance 85 context
-      if hit && success then
-        let out := lowerStage context stat 1
-        { out with events := event :: out.events }
-      else ⟨context, .continue, [event]⟩
+      if !hit then { context := context }
+      else
+        let (success, context, event) := sideChance 85 context
+        if success then
+          let out := lowerStage context stat 1
+          { out with events := event :: out.events }
+        else ⟨context, .continue, [event]⟩
   | .hyperBeam =>
       if hit && !targetFainted then
         let volatile := { context.attacker.volatile with

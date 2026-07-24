@@ -152,7 +152,21 @@ private def resolveAccuracy (mechanic : EffectPlan.Mechanic) (move : Step.Resolv
     let (raw, rng) := rng.next
     (Accuracy.hits effective raw, rng, [.rng "accuracy" raw])
 
-private def initialDamage (mechanic : EffectPlan.Mechanic) (moveId : MoveId)
+private def drawPsywave : Nat → Side → UInt8 → Rng.LinkRng →
+    Option (UInt8 × Rng.LinkRng × List Event)
+  | 0, _, _, _ => none
+  | fuel + 1, who, bound, rng =>
+      let (raw, rng) := rng.next
+      let perspective := if who == .player then LinkBugs.PsywavePerspective.playerAttack
+        else .enemyAttack
+      if LinkBugs.psywaveAccepts perspective bound raw then
+        some (raw, rng, [.rng "psywave" raw])
+      else match drawPsywave fuel who bound rng with
+        | none => none
+        | some (accepted, rng, events) =>
+            some (accepted, rng, .rng "psywave-rejected" raw :: events)
+
+private def initialDamage (mechanic : EffectPlan.Mechanic) (moveId : MoveId) (who : Side)
     (move : Step.ResolvedMove) (attacker defender : Battle.SideState) (critical : Bool)
     (rng : Rng.LinkRng) :
     Except (DamageStats.Result × List Event) (UInt16 × Rng.LinkRng × List Event) :=
@@ -161,10 +175,10 @@ private def initialDamage (mechanic : EffectPlan.Mechanic) (moveId : MoveId)
   | .oneHitKo => .ok (0xFFFF, rng, [])
   | .failed => .ok (0, rng, [])
   | .psywave =>
-      let (raw, rng) := rng.next
       let bound := UInt8.ofNat (attacker.active.level.toNat + attacker.active.level.toNat / 2)
-      if raw < bound then .ok (UInt16.ofNat raw.toNat, rng, [.rng "psywave" raw])
-      else .ok (0, rng, [.rng "psywave-rejected" raw])
+      match drawPsywave 2305 who bound rng with
+      | none => .ok (0, rng, [])
+      | some (damage, rng, events) => .ok (UInt16.ofNat damage.toNat, rng, events)
   | _ =>
       if move.power == 0 then .ok (0, rng, [])
       else
@@ -356,7 +370,7 @@ private def attack (state : State) (who : Side) (action : Full.Action)
               let counter := if previous.power != 0 && validType then
                 UInt16.ofNat (min 0xffff (state.sharedDamage.toNat * 2)) else 0
               .ok (counter, rng, [])
-            else initialDamage mechanic moveId move attacker defenderFull.active critical rng
+            else initialDamage mechanic moveId who move attacker defenderFull.active critical rng
           match damageResult with
           | .error _ => .divisionFreeze state critEvents
           | .ok (damage, rng, damageEvents) =>
