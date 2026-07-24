@@ -26,12 +26,12 @@ finite check could stand in for it. `genMon_numeric_valid` bundles all ten facts
 only on the chosen `SpeciesEntry` and the clamped move count `k = max 1 (min (min
 moveCount NUM_MOVES) pool.size)`. `k` saturates at `min NUM_MOVES pool.size ≤ 4`,
 so ranging `moveCount` over `0..5` realises **every** moveset any call can
-produce, for each of the six provisional `pokedex` entries — the guards below are
-therefore exhaustive over the reachable moveset space, not a sample. (A fully
-symbolic version would need custom induction over `noRepeats`/`dropWhile` for an
-*arbitrary* well-formed entry; with the real table finite and small, enumeration
-is the honest, complete tool. When `Rom/Tables` replaces the provisional dex,
-re-run the same guards over the real 151 entries — or discharge the general lemma.)
+produce, for each of the **151 real** `pokedex` entries — the guards below are
+therefore exhaustive over the entire reachable moveset space, not a sample. (A
+fully symbolic version would need custom induction over `noRepeats`/`dropWhile`
+for an *arbitrary* well-formed entry; with the real table finite, enumeration is
+the honest, complete tool. When the ROM certificate (task #24) re-certifies
+`Battle/Data/*`, these same guards re-run unchanged over the certified table.)
 
 `maxLevel`/`numMoves`/`maxStatValue` are the `Battle.RL` / `Battle.Wram` mirrors
 of `MAX_LEVEL`, `NUM_MOVES`, `MAX_STAT_VALUE`.
@@ -145,10 +145,11 @@ theorem genMon_numeric_valid :
 
 `moveCounts` ranges over every value that yields a distinct clamped `k` (0 and 1
 both give `k = 1`; anything `≥ pool.size` saturates), so these guards realise
-every reachable moveset for every provisional species, at the level/DV corners
-that also stress `calcStat`. A failing `#guard` fails the build. -/
+every reachable moveset for every one of the 151 real species, at the level/DV
+corners that also stress `calcStat`. A failing `#guard` fails the build. -/
 
-/-- `0..5` — covers every clamp outcome of `k` for pools of size `1..NUM_MOVES`. -/
+/-- `0..5` — covers every clamp outcome of `k` for a pool of any size `≥ 1`
+    (`k` caps at `min NUM_MOVES pool.size ≤ 4`, so `moveCount ≥ 5` adds nothing). -/
 private def moveCounts : List Nat := [0, 1, 2, 3, 4, 5]
 
 /-- The three moveset-structure predicates hold for every generated mon. -/

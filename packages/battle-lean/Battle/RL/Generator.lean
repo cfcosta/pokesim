@@ -3,6 +3,7 @@ Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.RL.LegalTeam
+import Battle.Data.Moves
 
 /-!
 # Team generator — byte-faithful `CalcStat` and legal mon/team synthesis
@@ -40,15 +41,21 @@ Every value in the whole `UInt8³ × UInt16` domain keeps the ROM's 3-byte
 `× 255 = 153765 < 2²⁴`), so plain `Nat` arithmetic reproduces the hardware
 exactly and only the final `min … MAX_STAT_VALUE` can bite.
 
-## Data is a seam (`COORDINATION.md` seam 3)
+## Data comes from the transcribed tables (`Battle/Data/*`)
 
-`SpeciesEntry`/`pokedex`/`movePP` are **PROVISIONAL** — a handful of real species
-with their real ROM base stats/types/catch rates (`data/pokemon/base_stats/*`) and
-real move IDs/PP (`data/moves/moves.asm`), enough to exercise the generator. They
-are **not** the full 151-species tables; point them at GPT's ROM-decoded
-`Rom/Tables` when it lands and the generator sharpens with no code change. Species
-IDs here are Pokédex numbers for readability — the ROM's internal indices differ,
-and the real `Dex` will supply the mapping.
+`pokedex` is now the **full 151-species** table: `speciesEntry` reads each real
+species' base stats / types / catch rate from `Battle.Data.speciesData` and its
+move pool from `Battle.Data.learnset`, and `movePP` reads `Battle.Data.moveData`.
+`SpeciesEntry.speciesId` is the ROM **internal** index the party structs store
+(the model's `SpeciesId`), so a generated mon's `species` needs no remapping. The
+tables are authored from the disassembly; when the ROM certificate (task #24)
+lands, `Battle/Data/*` sharpens from "authored" to "ROM-certified" and this
+generator inherits it with no code change.
+
+Move *identity* selection is still the sorted-pool prefix (a `moveCount`-length
+slice of `learnset`); which specific moves — beyond count — is a future entropy
+knob. Every drawn move is in the species' learnset, so a generated mon is
+`monLegal Dex.gen1 .canonical` by construction.
 -/
 
 namespace Battle.RL
@@ -97,14 +104,14 @@ def packDVs (atkDV defDV spdDV spcDV : UInt16) : UInt16 :=
 def padTo {α : Type} (n : Nat) (fill : α) (xs : Array α) : Array α :=
   xs.extract 0 n ++ (List.replicate (n - xs.size) fill).toArray
 
-/-! ## The data seam (PROVISIONAL — replace with ROM-decoded `Rom/Tables`) -/
+/-! ## The data seam (`Battle/Data/*`, authored from the disassembly) -/
 
-/-- PROVISIONAL per-species generator data: real ROM base stats/types/catch rate
-    (`data/pokemon/base_stats/*`) plus a small pool of real, distinct, non-zero,
-    learnable move IDs to draw a moveset from. **Not** the full ROM tables. -/
+/-- Per-species generator data, read from `Battle/Data/*`: real ROM base
+    stats/types/catch rate and the species' full learnable move pool. -/
 structure SpeciesEntry where
-  /-- Species ID stamped into the generated mon (Pokédex number here). -/
-  dexId : SpeciesId
+  /-- Internal species index stamped into the generated mon's `species` (the ROM
+      byte the party/box/battle structs store, the model's `SpeciesId`). -/
+  speciesId : SpeciesId
   baseHp : UInt8
   baseAtk : UInt8
   baseDef : UInt8
@@ -113,49 +120,34 @@ structure SpeciesEntry where
   type1 : UInt8
   type2 : UInt8
   catchRate : UInt8
-  /-- The moves this species may be generated with (a `1..NUM_MOVES` slice of its
-      learnset): distinct, non-zero, first entry is what a 1-move mon gets. -/
+  /-- The moves this species may be generated with — its full learnset pool
+      (level-up ∪ TM/HM ∪ pre-evolutions): distinct, non-zero, and the sorted
+      prefix is what a `k`-move mon gets. -/
   movePool : Array MoveId
   deriving Repr, DecidableEq, BEq, Inhabited
 
-/-- PROVISIONAL base PP by move ID (`data/moves/moves.asm`). Fallback `5` for any
-    move outside this scaffolding pool. -/
-def movePP : MoveId → UInt8
-  | 1 => 35    -- POUND
-  | 10 => 35   -- SCRATCH
-  | 22 => 10   -- VINE_WHIP
-  | 33 => 35   -- TACKLE
-  | 39 => 30   -- TAIL_WHIP
-  | 45 => 40   -- GROWL
-  | 52 => 25   -- EMBER
-  | 55 => 25   -- WATER_GUN
-  | 84 => 30   -- THUNDERSHOCK
-  | 98 => 30   -- QUICK_ATTACK
-  | _ => 5
+/-- Base PP by move ID, from the `Battle.Data.Moves` table (`data/moves/moves.asm`).
+    `moveData 0` is the zero row, so `movePP 0 = 0`. -/
+def movePP (id : MoveId) : UInt8 := (Battle.Data.moveData id).pp
 
-/-- PROVISIONAL Pokédex slice: six real species with real base stats/types/catch
-    rates and small learnable move pools. Sizes 1..4 exercise the move clamp
-    (Mew's single-move pool forces `k = 1`). Type/move IDs are the ROM constants
-    (`constants/type_constants.asm`, `constants/move_constants.asm`). -/
-def pokedex : Array SpeciesEntry := #[
-  -- Bulbasaur: Grass/Poison, TACKLE/GROWL/VINE_WHIP
-  { dexId := 1, baseHp := 45, baseAtk := 49, baseDef := 49, baseSpd := 45, baseSpc := 65,
-    type1 := 0x16, type2 := 0x03, catchRate := 45, movePool := #[33, 45, 22] },
-  -- Charmander: Fire, SCRATCH/GROWL/EMBER
-  { dexId := 4, baseHp := 39, baseAtk := 52, baseDef := 43, baseSpd := 65, baseSpc := 50,
-    type1 := 0x14, type2 := 0x14, catchRate := 45, movePool := #[10, 45, 52] },
-  -- Squirtle: Water, TACKLE/TAIL_WHIP/WATER_GUN
-  { dexId := 7, baseHp := 44, baseAtk := 48, baseDef := 65, baseSpd := 43, baseSpc := 50,
-    type1 := 0x15, type2 := 0x15, catchRate := 45, movePool := #[33, 39, 55] },
-  -- Rattata: Normal, TACKLE/TAIL_WHIP/QUICK_ATTACK
-  { dexId := 19, baseHp := 30, baseAtk := 56, baseDef := 35, baseSpd := 72, baseSpc := 25,
-    type1 := 0x00, type2 := 0x00, catchRate := 255, movePool := #[33, 39, 98] },
-  -- Pikachu: Electric, THUNDERSHOCK/GROWL/QUICK_ATTACK/TAIL_WHIP
-  { dexId := 25, baseHp := 35, baseAtk := 55, baseDef := 30, baseSpd := 90, baseSpc := 50,
-    type1 := 0x17, type2 := 0x17, catchRate := 190, movePool := #[84, 45, 98, 39] },
-  -- Mew: Psychic, POUND (single-move pool)
-  { dexId := 151, baseHp := 100, baseAtk := 100, baseDef := 100, baseSpd := 100, baseSpc := 100,
-    type1 := 0x18, type2 := 0x18, catchRate := 45, movePool := #[1] }]
+/-- The generator data for an internal species index, drawn from the transcribed
+    tables: base header from `Battle.Data.speciesData`, move pool from
+    `Battle.Data.learnset`. -/
+def speciesEntry (i : SpeciesId) : SpeciesEntry :=
+  let d := Battle.Data.speciesData i
+  { speciesId := i, baseHp := d.baseHp, baseAtk := d.baseAtk, baseDef := d.baseDef,
+    baseSpd := d.baseSpd, baseSpc := d.baseSpc, type1 := d.type1, type2 := d.type2,
+    catchRate := d.catchRate, movePool := Battle.Data.learnset i }
+
+/-- Every real (non-glitch) internal species index, ascending — the 151 species
+    the generator can draw. -/
+def realSpeciesIds : Array SpeciesId :=
+  (Array.range 191).filterMap (fun i =>
+    if Battle.Data.isRealSpecies i.toUInt8 then some i.toUInt8 else none)
+
+/-- The full Gen-1 Pokédex as generator entries — all 151 real species, in
+    internal-index order, with ROM base stats/types/catch rates and full learnsets. -/
+def pokedex : Array SpeciesEntry := realSpeciesIds.map speciesEntry
 
 /-- The `pokedex` entry for an index, wrapping modulo its size (`pokedex` is
     non-empty, so this is total and never returns the `default`). -/
@@ -182,7 +174,7 @@ def genMon (e : SpeciesEntry) (level atkDV defDV spdDV spcDV : UInt8)
   let mhp := calcStat e.baseHp hpIV lvl 0 true
   let k := max 1 (min (min moveCount numMoves) e.movePool.size)
   let chosen := e.movePool.extract 0 k
-  { species := e.dexId, hp := mhp, boxLevel := lvl, status := 0,
+  { species := e.speciesId, hp := mhp, boxLevel := lvl, status := 0,
     type1 := e.type1, type2 := e.type2, catchRate := e.catchRate,
     moves := padTo numMoves 0 chosen,
     dvs := packDVs a.toUInt16 d.toUInt16 s.toUInt16 c.toUInt16,
@@ -215,21 +207,22 @@ def genTeam (choices : Array GenChoice) : Team := choices.map genMonOf
 
 /-! ## Fidelity guards -/
 
-/-- A `SpeciesEntry` the generator can safely draw from: `1..NUM_MOVES` distinct,
-    non-zero moves (so the generated moveset is packed, distinct, non-empty). -/
+/-- A `SpeciesEntry` the generator can safely draw from: a non-empty, distinct,
+    non-zero move pool (`genMon` takes a `≤ NUM_MOVES` prefix, so any such prefix
+    is itself packed, distinct, non-empty — the pool may hold more than
+    `NUM_MOVES` moves, as real learnsets do). -/
 def entryWf (e : SpeciesEntry) : Bool :=
-  1 ≤ e.movePool.size && e.movePool.size ≤ numMoves &&
-    e.movePool.all (· != 0) && noRepeats e.movePool.toList
+  1 ≤ e.movePool.size && e.movePool.all (· != 0) && noRepeats e.movePool.toList
 
-/-- The `Dex` induced by the provisional `pokedex`, for checking generated mons
-    against `Battle.RL.monLegal` (fixture, **not** ROM data). -/
-def genDex : Dex :=
-  { validSpecies := fun sp => pokedex.any (fun e => e.dexId == sp),
-    canLearn := fun sp mv => pokedex.any (fun e => e.dexId == sp && e.movePool.contains mv) }
+/-- The canonical Gen-1 `Dex` (`Battle.Data`-backed) the generated mons are checked
+    against — every drawn move is in the species' learnset, so a generated mon is
+    `monLegal genDex .canonical` by construction. -/
+def genDex : Dex := Dex.gen1
 
--- The provisional table is well-formed (every pool is a legal moveset source).
+-- Every real species is a well-formed generator source (non-empty, distinct,
+-- non-zero learn pool) — the full 151-entry table.
 #guard pokedex.all entryWf
-#guard pokedex.size == 6
+#guard pokedex.size == 151
 
 -- `ceilSqrt255` is the saturating "smallest b with b² ≥ n".
 #guard ceilSqrt255 0 == 1
@@ -280,9 +273,17 @@ def genDex : Dex :=
 #guard padTo 4 (0 : UInt8) #[1, 2, 3, 4, 5] == #[1, 2, 3, 4]
 #guard padTo 4 (0 : UInt8) #[1, 2, 3, 4] == #[1, 2, 3, 4]
 
--- `genMon` produces the expected Bulbasaur (index 0) at L100, perfect DVs, 3 moves.
-private def bulba100 : MonState := genMon (entryOf 0) 100 15 15 15 15 3
-#guard bulba100.species == 1
+-- `speciesEntry` reads the real ROM header + learnset for an internal index.
+#guard (speciesEntry 153).speciesId == 153                          -- BULBASAUR
+#guard (speciesEntry 153).baseHp == 45 && (speciesEntry 153).baseSpc == 65
+#guard (speciesEntry 153).type1 == 0x16 && (speciesEntry 153).type2 == 0x03  -- Grass/Poison
+#guard (speciesEntry 1).speciesId == 1                              -- RHYDON
+#guard (speciesEntry 1).type1 == 0x04 && (speciesEntry 1).type2 == 0x05      -- Ground/Rock
+
+-- `genMon` produces the expected Bulbasaur (internal 153) at L100, perfect DVs, 3
+-- moves. Base stats match the ROM `CalcStat`; moves are the sorted learnset prefix.
+private def bulba100 : MonState := genMon (speciesEntry 153) 100 15 15 15 15 3
+#guard bulba100.species == 153
 #guard bulba100.level == 100
 #guard bulba100.maxHp == 230
 #guard bulba100.hp == 230                      -- starts full
@@ -290,42 +291,49 @@ private def bulba100 : MonState := genMon (entryOf 0) 100 15 15 15 15 3
 #guard bulba100.defense == 133
 #guard bulba100.speed == 125
 #guard bulba100.special == 165
-#guard bulba100.moves == #[33, 45, 22, 0]      -- packed, distinct
-#guard bulba100.pp == #[35, 40, 10, 0]         -- real base PP, padded
+#guard bulba100.moves == #[14, 15, 22, 0]      -- packed, distinct (learnset prefix)
+#guard bulba100.pp == #[30, 30, 10, 0]         -- real base PP, padded
 #guard bulba100.dvs == 0xFFFF
 #guard bulba100.type1 == 0x16 && bulba100.type2 == 0x03
 #guard battleValid bulba100
 #guard monLegal genDex .canonical bulba100
 
--- Mew (index 5): single-move pool forces `k = 1` even when 4 are requested.
-private def mew100 : MonState := genMon (entryOf 5) 100 15 15 15 15 4
-#guard mew100.species == 151
+-- Mew (internal 21): all-100 base stats; its huge (57-move) pool fills all 4 slots.
+private def mew100 : MonState := genMon (speciesEntry 21) 100 15 15 15 15 4
+#guard mew100.species == 21
 #guard mew100.maxHp == 340
 #guard mew100.attack == 235
-#guard mew100.moves == #[1, 0, 0, 0]
-#guard mew100.pp == #[35, 0, 0, 0]
+#guard mew100.moves == #[1, 5, 6, 13]
+#guard mew100.pp == #[35, 20, 20, 10]
 #guard monLegal genDex .canonical mew100
 
--- Level clamping: over/under-range levels pin to MAX_LEVEL / 1.
-#guard (genMon (entryOf 0) 200 0 0 0 0 1).level == 100
-#guard (genMon (entryOf 0) 0 0 0 0 0 1).level == 1
+-- Magikarp (internal 133): a 2-move pool clamps `k` even when 4 are requested.
+private def karp100 : MonState := genMon (speciesEntry 133) 100 15 15 15 15 4
+#guard karp100.species == 133
+#guard karp100.moves == #[33, 150, 0, 0]       -- Tackle, Splash — pool exhausted at 2
+#guard karp100.pp == #[35, 40, 0, 0]
+#guard monLegal genDex .canonical karp100
 
--- Every provisional species, across parameter extremes, is legal by construction.
+-- Level clamping: over/under-range levels pin to MAX_LEVEL / 1.
+#guard (genMon (speciesEntry 153) 200 0 0 0 0 1).level == 100
+#guard (genMon (speciesEntry 153) 0 0 0 0 0 1).level == 1
+
+-- Every real species, across parameter extremes, is legal by construction (151).
 #guard pokedex.all (fun e => monLegal genDex .canonical (genMon e 73 3 11 15 4 3))
 #guard pokedex.all (fun e => battleValid (genMon e 1 0 0 0 0 4))
 #guard pokedex.all (fun e => battleValid (genMon e 100 15 15 15 15 1))
 
 -- `genTeam` assembles a legal party; each mode and the size bounds hold.
 private def sampleTeam : Team := genTeam #[
-  { entry := entryOf 0, level := 50, atkDV := 9, defDV := 8, spdDV := 7, spcDV := 6, moveCount := 2 },
-  { entry := entryOf 1, level := 100, atkDV := 15, defDV := 15, spdDV := 15, spcDV := 15, moveCount := 4 },
-  { entry := entryOf 5, level := 5, atkDV := 0, defDV := 0, spdDV := 0, spcDV := 0, moveCount := 1 }]
+  { entry := speciesEntry 153, level := 50, atkDV := 9, defDV := 8, spdDV := 7, spcDV := 6, moveCount := 2 },
+  { entry := speciesEntry 1, level := 100, atkDV := 15, defDV := 15, spdDV := 15, spcDV := 15, moveCount := 4 },
+  { entry := speciesEntry 133, level := 5, atkDV := 0, defDV := 0, spdDV := 0, spcDV := 0, moveCount := 1 }]
 
 #guard sampleTeam.size == 3
 #guard teamLegal genDex .rangeOnly sampleTeam
 #guard teamLegal genDex .movesetOpen sampleTeam
 #guard teamLegal genDex .canonical sampleTeam
-#guard sampleTeam[0]?.map (·.moves) == some #[33, 45, 0, 0]   -- Bulbasaur, first 2 of pool
-#guard sampleTeam[1]?.map (·.moves) == some #[10, 45, 52, 0]  -- Charmander, pool exhausted at 3
+#guard sampleTeam[0]?.map (·.moves) == some #[14, 15, 0, 0]   -- Bulbasaur, first 2 of pool
+#guard sampleTeam[1]?.map (·.moves) == some #[5, 6, 23, 25]   -- Rhydon, first 4 of pool
 
 end Battle.RL

@@ -3,6 +3,8 @@ Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.State
+import Battle.Data.Species
+import Battle.Data.Learnsets
 
 /-!
 # Legal teams — decidable legality predicates for the RL generator
@@ -27,12 +29,17 @@ how much *cartridge obtainability* to also demand:
 
 ## Data is a seam, not a second copy of the ROM
 
-Species validity and learnsets are ROM tables GPT decodes with a round-trip
-certificate (`COORDINATION.md` seam 3), so the obtainability predicates are
-*parameterised* over a `Dex`. `Dex.permissive` here is bounded-but-permissive
-scaffolding for the `#guard`s (and clearly **not** the canonical 151-species /
-per-species-learnset filter); point `Dex` at `Rom/Tables` when it lands and these
-predicates sharpen with no code change. `MAX_LEVEL = 100`
+Species validity and learnsets are ROM tables, so the obtainability predicates
+are *parameterised* over a `Dex`. `Dex.gen1` is the canonical instance, wired to
+the disassembly-transcribed data modules (`Battle/Data/Species.lean`'s
+`isRealSpecies`, `Battle/Data/Learnsets.lean`'s `canLearn`): a real (non-glitch)
+Pokémon iff its internal index resolves to a dex number, learnable iff the move
+is in that species' pool (level-up ∪ TM/HM ∪ pre-evolutions). `Dex.permissive`
+is retained only as loose scaffolding — the whole representable range, glitch
+slots and all — for range-only exploration and to document the seam shape. Both
+are *authored from* the disassembly; the ROM round-trip certificate (task #24)
+re-decodes the same tables and proves them equal, so `Dex.gen1` sharpens from
+"authored" to "ROM-certified" with no code change here. `MAX_LEVEL = 100`
 (`constants/battle_constants.asm`); `NUM_MOVES`, `MAX_STAT_VALUE`, `PARTY_LENGTH`
 from `Battle.Wram`.
 -/
@@ -70,10 +77,20 @@ structure Dex where
   /-- Can this species legally learn this move (level-up ∪ TM/HM)? -/
   canLearn : SpeciesId → MoveId → Bool
 
-/-- PROVISIONAL scaffolding: accepts any species index / move in the ROM's
-    representable ranges (Gen 1 has 190 internal mon slots, 165 moves). This is
-    **not** the canonical filter — glitch slots pass — it only exercises the
-    predicate shape until `Rom/Tables` supplies the real `Dex`. -/
+/-- The canonical Gen-1 obtainability tables, from the disassembly-transcribed
+    data modules: a species is valid iff it is a real (non-glitch) Pokémon
+    (`Battle.Data.isRealSpecies`), and can learn exactly the moves in its pool
+    (`Battle.Data.canLearn` — level-up ∪ TM/HM ∪ pre-evolutions). This is the
+    default the RL generator is checked against; the ROM certificate (task #24)
+    re-derives it. -/
+def Dex.gen1 : Dex :=
+  { validSpecies := Battle.Data.isRealSpecies,
+    canLearn := Battle.Data.canLearn }
+
+/-- LOOSE scaffolding: accepts any species index / move in the ROM's representable
+    ranges (Gen 1 has 190 internal mon slots, 165 moves). This is **not** the
+    canonical filter — glitch slots pass — it is retained only to exercise the
+    predicate shape and range-only exploration; prefer `Dex.gen1`. -/
 def Dex.permissive : Dex :=
   { validSpecies := fun s => 1 ≤ s.toNat && s.toNat ≤ 190,
     canLearn := fun _ mv => 1 ≤ mv.toNat && mv.toNat ≤ 165 }
@@ -174,6 +191,22 @@ private def unlearnableMon : MonState := { legalMon with moves := #[52, 99, 0, 0
 #guard learnsetLegal tinyDex legalMon
 #guard learnsetLegal tinyDex unlearnableMon == false       -- 99 not in {52, 33}
 #guard learnsetLegal Dex.permissive unlearnableMon         -- but 99 ≤ 165, so permissive allows
+
+-- The canonical `Dex.gen1`, wired to the transcribed data tables.
+private def bulbaMon : MonState :=
+  { species := 153, hp := 45, boxLevel := 5, status := 0, type1 := 0x16, type2 := 0x03,
+    catchRate := 45, moves := #[33, 45, 0, 0], dvs := 0xFFFF, level := 5,
+    maxHp := 45, attack := 12, defense := 12, speed := 12, special := 14,
+    pp := #[35, 40, 0, 0] }
+#guard Dex.gen1.validSpecies 153 && Dex.gen1.validSpecies 21      -- BULBASAUR, MEW are real
+#guard Dex.gen1.validSpecies 31 == false                          -- $1F MissingNo slot
+#guard Dex.gen1.validSpecies 0 == false                           -- NO_MON
+#guard Dex.gen1.canLearn 153 33 && Dex.gen1.canLearn 153 45       -- Bulbasaur: Tackle, Growl
+#guard Dex.gen1.canLearn 153 56 == false                          -- ...but not Hydro Pump
+#guard monLegal Dex.gen1 .canonical bulbaMon                      -- real species, learnable moves
+#guard monLegal Dex.gen1 .canonical { bulbaMon with moves := #[33, 56, 0, 0] } == false  -- Hydro Pump unlearnable
+#guard monLegal Dex.gen1 .movesetOpen { bulbaMon with species := 31 } == false  -- glitch species rejected
+#guard monLegal Dex.gen1 .rangeOnly { bulbaMon with species := 31 }             -- range-only ignores species
 
 -- Modes select how much obtainability to enforce, on top of `battleValid`.
 #guard monLegal tinyDex .canonical legalMon
