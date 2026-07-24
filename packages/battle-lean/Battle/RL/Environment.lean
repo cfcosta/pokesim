@@ -123,14 +123,15 @@ structure Observation where
 `legalActions` returns only `.fight` constructors. -/
 abbrev PolicyAction := Battle.Action
 
-/-- Dynamically reset both sides and leave the remaining entropy in the battle
-RNG. Both reset teams carry canonical-legality proofs. -/
-def reset (rng : Rng.LinkRng) : State :=
-  let (player, rng, playerRepaired) := sampleSide rng
-  let (enemy, rng, enemyRepaired) := sampleSide rng
+/-- Dynamically reset both sides from generator entropy while installing a
+separate battle RNG. Team sampling can never perturb battle randomness. Both
+reset teams carry canonical-legality proofs. -/
+def reset (generatorRng battleRng : Rng.LinkRng) : State :=
+  let (player, generatorRng, playerRepaired) := sampleSide generatorRng
+  let (enemy, _, enemyRepaired) := sampleSide generatorRng
   { playerReset := player
     enemyReset := enemy
-    battle := BattleState.start player.active enemy.active rng .link
+    battle := BattleState.start player.active enemy.active battleRng .link
     repairedReset := playerRepaired || enemyRepaired }
 
 /-- RL completion occurs only after the explicit settled-return phase. -/
@@ -198,13 +199,13 @@ def settle (state : State) : State :=
       { state with battle := { state.battle with phase := .returned ⟨terminal⟩ } }
   | _ => state
 
-@[simp] theorem reset_player_legal (rng : Rng.LinkRng) :
-    teamLegal genDex .canonical (reset rng).playerReset.team.1 = true :=
-  (reset rng).playerReset.team.2
+@[simp] theorem reset_player_legal (generatorRng battleRng : Rng.LinkRng) :
+    teamLegal genDex .canonical (reset generatorRng battleRng).playerReset.team.1 = true :=
+  (reset generatorRng battleRng).playerReset.team.2
 
-@[simp] theorem reset_enemy_legal (rng : Rng.LinkRng) :
-    teamLegal genDex .canonical (reset rng).enemyReset.team.1 = true :=
-  (reset rng).enemyReset.team.2
+@[simp] theorem reset_enemy_legal (generatorRng battleRng : Rng.LinkRng) :
+    teamLegal genDex .canonical (reset generatorRng battleRng).enemyReset.team.1 = true :=
+  (reset generatorRng battleRng).enemyReset.team.2
 
 /-- Settling an ending state is the only environment operation that establishes
 `done`; the terminal witness is retained unchanged. -/
@@ -215,7 +216,7 @@ theorem settle_done {state : State} {terminal : Outcome.BattleTerminal}
 
 /-! ## Reset guards -/
 
-private def reset0 : State := reset Rng.seed0
+private def reset0 : State := reset Rng.seed0 Rng.seed0
 
 #guard !reset0.repairedReset
 #guard teamLegal genDex .canonical reset0.playerReset.team.1
