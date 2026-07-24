@@ -1,0 +1,45 @@
+name: SM83 Lean
+
+on:
+  push:
+    paths:
+      - "packages/sm83-lean/**"
+      - "tools/check-sm83-*.py"
+      - "flake.nix"
+      - "flake.lock"
+      - "lean-toolchain"
+      - ".github/workflows/sm83.yml"
+  pull_request:
+    paths:
+      - "packages/sm83-lean/**"
+      - "tools/check-sm83-*.py"
+      - "flake.nix"
+      - "flake.lock"
+      - "lean-toolchain"
+      - ".github/workflows/sm83.yml"
+  workflow_dispatch:
+
+jobs:
+  build-and-conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Build proof library and conformance runners
+        run: nix develop -c lake -d packages/sm83-lean build
+      - name: Check public package boundary
+        run: python3 tools/check-sm83-release.py
+      - name: Fetch pinned external fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init -q /tmp/mooneye
+          git -C /tmp/mooneye fetch -q --depth=1 https://github.com/Gekkio/mooneye-test-suite.git 31510e12eea6286d36eea060a6adde755e1067aa
+          git -C /tmp/mooneye checkout -q FETCH_HEAD
+          git init -q /tmp/sm83-tests
+          git -C /tmp/sm83-tests fetch -q --depth=1 https://github.com/SingleStepTests/sm83.git f9c30210245dd691661db39f5ace022c465ecc2f
+          git -C /tmp/sm83-tests checkout -q FETCH_HEAD
+      - name: Check all DAA rows
+        run: python3 tools/check-sm83-daa.py /tmp/mooneye
+      - name: Check all normal instruction fixtures
+        run: python3 tools/check-sm83-singlestep.py /tmp/sm83-tests
