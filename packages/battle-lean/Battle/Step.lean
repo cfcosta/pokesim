@@ -234,6 +234,29 @@ def resolveTurn (pMove eMove : ResolvedMove) (s : BattleState) : BattleState × 
                  ev0 ++ ev1 ++ ev2 ++ [TurnEvent.terminalReached t.cause t.verdict])
     | none => (s2, ev0 ++ ev1 ++ ev2)
 
+/-! ## Scripted play
+
+A thin driver that folds `resolveTurn` across a fixed list of per-turn move pairs
+— the deterministic backbone a scripted battle (and the `#guard` fixtures) runs
+on. Once a terminal is reached the fold no-ops every remaining turn, so the RNG
+is never advanced past the faint and a script longer than the battle yields the
+same state as one cut to length. -/
+
+/-- Resolve one scripted turn, or leave a finished battle untouched. -/
+def stepTurn (moves : ResolvedMove × ResolvedMove) (s : BattleState) : BattleState × List TurnEvent :=
+  if s.phase.isTerminal then (s, [])
+  else resolveTurn moves.1 moves.2 s
+
+/-- Play a fixed script of `(playerMove, enemyMove)` turns, threading the state
+    and concatenating each turn's event log, stopping at the first terminal. -/
+def runScript (script : List (ResolvedMove × ResolvedMove)) (s : BattleState) :
+    BattleState × List TurnEvent :=
+  script.foldl
+    (fun (acc : BattleState × List TurnEvent) mv =>
+      let (s', ev) := stepTurn mv acc.1
+      (s', acc.2 ++ ev))
+    (s, [])
+
 /-! ## Fidelity guards -/
 
 -- Primitive mechanics.
