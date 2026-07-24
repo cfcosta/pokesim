@@ -1423,6 +1423,19 @@ private theorem initOpponent_secondStoreHigh_byte {machine : Machine}
   simpa [symbol, Rom.Closure.romOffset, Rom.Closure.Symbols.initOpponent] using
     bytes.initOpponent_secondStoreHigh
 
+private theorem initOpponent_jumpOffset_byte {machine : Machine}
+    (entry : AtInitOpponent machine)
+    (bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom) :
+    GameBoy.Memory.read machine.memory (Word.ofNat 0x6F22) = 0x1A := by
+  let symbol : Rom.Closure.Symbol := ⟨0x0F, Word.ofNat 0x6F22⟩
+  have selected : symbol.Selected machine.memory.cartridge := by
+    change GameBoy.Mbc3.selectedRomBank machine.memory.cartridge = 15
+    simpa using entry.2.1
+  rw [Rom.Closure.read_selected_symbol machine.memory symbol entry.1
+    (by native_decide) selected]
+  simpa [symbol, Rom.Closure.romOffset, Rom.Closure.Symbols.initOpponent] using
+    bytes.initOpponent_jumpOffset
+
 private theorem initOpponent_jumpOpcode_byte {machine : Machine}
     (entry : AtInitOpponent machine)
     (bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom) :
@@ -1778,6 +1791,228 @@ theorem atInitOpponent_jump_ready {machine : Machine}
         Run.successorAddress, Run.commitRegisters, Run.commitIme, folded,
         Pipeline.install, Decode.base, increment, effective, pendingZero,
         Pipeline.taken, Cycle.physicalSchedule, Cycle.logicalSchedule]
+
+/-- Mapping remains canonical through the two immediate reads, `$CFD8` write,
+and jump-opcode successor fetch. -/
+theorem atInitOpponent_after_twelfth_mapping {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes)
+    (w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12 : Bool)
+    (firstNoInterrupt : FirstBoundaryNoInterrupt machine w1 w2 w3 w4)
+    (secondNoInterrupt : SecondBoundaryNoInterrupt machine w1 w2 w3 w4 w5 w6 w7 w8) :
+    let m1 := (GameBoy.Adapter.stepMachineCycle machine w1).machine
+    let m2 := (GameBoy.Adapter.stepMachineCycle m1 w2).machine
+    let m3 := (GameBoy.Adapter.stepMachineCycle m2 w3).machine
+    let m4 := (GameBoy.Adapter.stepMachineCycle m3 w4).machine
+    let m5 := (GameBoy.Adapter.stepMachineCycle m4 w5).machine
+    let m6 := (GameBoy.Adapter.stepMachineCycle m5 w6).machine
+    let m7 := (GameBoy.Adapter.stepMachineCycle m6 w7).machine
+    let m8 := (GameBoy.Adapter.stepMachineCycle m7 w8).machine
+    let m9 := (GameBoy.Adapter.stepMachineCycle m8 w9).machine
+    let m10 := (GameBoy.Adapter.stepMachineCycle m9 w10).machine
+    let m11 := (GameBoy.Adapter.stepMachineCycle m10 w11).machine
+    let m12 := (GameBoy.Adapter.stepMachineCycle m11 w12).machine
+    m12.memory.cartridge = machine.memory.cartridge ∧
+      m12.memory.bootMapped = machine.memory.bootMapped := by
+  let m1 := (GameBoy.Adapter.stepMachineCycle machine w1).machine
+  let m2 := (GameBoy.Adapter.stepMachineCycle m1 w2).machine
+  let m3 := (GameBoy.Adapter.stepMachineCycle m2 w3).machine
+  let m4 := (GameBoy.Adapter.stepMachineCycle m3 w4).machine
+  let m5 := (GameBoy.Adapter.stepMachineCycle m4 w5).machine
+  let m6 := (GameBoy.Adapter.stepMachineCycle m5 w6).machine
+  let m7 := (GameBoy.Adapter.stepMachineCycle m6 w7).machine
+  let m8 := (GameBoy.Adapter.stepMachineCycle m7 w8).machine
+  let m9 := (GameBoy.Adapter.stepMachineCycle m8 w9).machine
+  let m10 := (GameBoy.Adapter.stepMachineCycle m9 w10).machine
+  let m11 := (GameBoy.Adapter.stepMachineCycle m10 w11).machine
+  have core8 : m8.core = initOpponentThirdReadyCore machine :=
+    atInitOpponent_third_ready_no_interrupt ready w1 w2 w3 w4 w5 w6 w7 w8
+      firstNoInterrupt secondNoInterrupt
+  have core9 : m9.core = initOpponentSecondStoreAfterLowCore machine :=
+    atInitOpponent_secondStore_after_low ready w1 w2 w3 w4 w5 w6 w7 w8 w9
+      firstNoInterrupt secondNoInterrupt
+  have write11 := atInitOpponent_secondStore_write ready
+    w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 firstNoInterrupt secondNoInterrupt
+  have core11 : m11.core = initOpponentSecondStoreAfterWriteCore machine := write11.2.2.2
+  have map8 := atInitOpponent_after_eighth_mapping ready
+    w1 w2 w3 w4 w5 w6 w7 w8 firstNoInterrupt
+  have read9 : (GameBoy.Adapter.stepMachineCycle m8 w9).probe.intent.control = .read := by
+    simp [GameBoy.Adapter.stepMachineCycle, core8, initOpponentThirdReadyCore,
+      initOpponentStoreReadyCore, Sm83.Run.stepMachineCycle, CoreState.currentOp?,
+      Run.intent, Run.opControl]
+  have map9 : m9.memory.cartridge = m8.memory.cartridge ∧
+      m9.memory.bootMapped = m8.memory.bootMapped :=
+    ⟨GameBoy.Adapter.read_cycle_preserves_cartridge m8 w9 read9,
+      GameBoy.Adapter.read_cycle_preserves_bootMapped m8 w9 read9⟩
+  have read10 : (GameBoy.Adapter.stepMachineCycle m9 w10).probe.intent.control = .read := by
+    simp [GameBoy.Adapter.stepMachineCycle, core9, initOpponentSecondStoreAfterLowCore,
+      initOpponentThirdReadyCore, initOpponentStoreReadyCore,
+      Sm83.Run.stepMachineCycle, CoreState.currentOp?, Run.intent, Run.opControl]
+  have map10 : m10.memory.cartridge = machine.memory.cartridge ∧
+      m10.memory.bootMapped = machine.memory.bootMapped :=
+    ⟨(GameBoy.Adapter.read_cycle_preserves_cartridge m9 w10 read10).trans (map9.1.trans map8.1),
+      (GameBoy.Adapter.read_cycle_preserves_bootMapped m9 w10 read10).trans (map9.2.trans map8.2)⟩
+  have map11cycle := GameBoy.Adapter.write_cycle_preserves_mapping m10 w11
+    (GameBoy.Memory.read machine.memory (Word.ofNat 0xD059)) write11.2.1 write11.2.2.1
+    (by rw [write11.1]; decide) (by rw [write11.1]; decide)
+  have map11 : m11.memory.cartridge = machine.memory.cartridge ∧
+      m11.memory.bootMapped = machine.memory.bootMapped :=
+    ⟨map11cycle.1.trans map10.1, map11cycle.2.trans map10.2⟩
+  have read12 : (GameBoy.Adapter.stepMachineCycle m11 w12).probe.intent.control = .read := by
+    simp [GameBoy.Adapter.stepMachineCycle, core11, initOpponentSecondStoreAfterWriteCore,
+      initOpponentThirdReadyCore, initOpponentStoreReadyCore,
+      Sm83.Run.stepMachineCycle, CoreState.currentOp?, Run.intent, Run.opControl]
+  exact ⟨(GameBoy.Adapter.read_cycle_preserves_cartridge m11 w12 read12).trans map11.1,
+    (GameBoy.Adapter.read_cycle_preserves_bootMapped m11 w12 read12).trans map11.2⟩
+
+def initOpponentJumpAfterOffsetCore (machine : Machine) : CoreState :=
+  { initOpponentJumpReadyCore machine with
+    registers := { (initOpponentJumpReadyCore machine).registers with
+      pc := Word.ofNat 0x6F23 }
+    remaining := [.internal, .successorFetch]
+    latches := { low := 0x1A } }
+
+/-- The live `JR` consumes retained offset `$1A`. -/
+theorem atInitOpponent_jump_after_offset {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes)
+    (w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12 w13 : Bool)
+    (firstNoInterrupt : FirstBoundaryNoInterrupt machine w1 w2 w3 w4)
+    (secondNoInterrupt : SecondBoundaryNoInterrupt machine w1 w2 w3 w4 w5 w6 w7 w8)
+    (thirdNoInterrupt : ThirdBoundaryNoInterrupt machine
+      w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12) :
+    let m1 := (GameBoy.Adapter.stepMachineCycle machine w1).machine
+    let m2 := (GameBoy.Adapter.stepMachineCycle m1 w2).machine
+    let m3 := (GameBoy.Adapter.stepMachineCycle m2 w3).machine
+    let m4 := (GameBoy.Adapter.stepMachineCycle m3 w4).machine
+    let m5 := (GameBoy.Adapter.stepMachineCycle m4 w5).machine
+    let m6 := (GameBoy.Adapter.stepMachineCycle m5 w6).machine
+    let m7 := (GameBoy.Adapter.stepMachineCycle m6 w7).machine
+    let m8 := (GameBoy.Adapter.stepMachineCycle m7 w8).machine
+    let m9 := (GameBoy.Adapter.stepMachineCycle m8 w9).machine
+    let m10 := (GameBoy.Adapter.stepMachineCycle m9 w10).machine
+    let m11 := (GameBoy.Adapter.stepMachineCycle m10 w11).machine
+    let m12 := (GameBoy.Adapter.stepMachineCycle m11 w12).machine
+    let m13 := (GameBoy.Adapter.stepMachineCycle m12 w13).machine
+    m13.core = initOpponentJumpAfterOffsetCore machine := by
+  let m1 := (GameBoy.Adapter.stepMachineCycle machine w1).machine
+  let m2 := (GameBoy.Adapter.stepMachineCycle m1 w2).machine
+  let m3 := (GameBoy.Adapter.stepMachineCycle m2 w3).machine
+  let m4 := (GameBoy.Adapter.stepMachineCycle m3 w4).machine
+  let m5 := (GameBoy.Adapter.stepMachineCycle m4 w5).machine
+  let m6 := (GameBoy.Adapter.stepMachineCycle m5 w6).machine
+  let m7 := (GameBoy.Adapter.stepMachineCycle m6 w7).machine
+  let m8 := (GameBoy.Adapter.stepMachineCycle m7 w8).machine
+  let m9 := (GameBoy.Adapter.stepMachineCycle m8 w9).machine
+  let m10 := (GameBoy.Adapter.stepMachineCycle m9 w10).machine
+  let m11 := (GameBoy.Adapter.stepMachineCycle m10 w11).machine
+  let m12 := (GameBoy.Adapter.stepMachineCycle m11 w12).machine
+  have core12 : m12.core = initOpponentJumpReadyCore machine :=
+    atInitOpponent_jump_ready ready w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12
+      firstNoInterrupt secondNoInterrupt thirdNoInterrupt
+  have mapping := atInitOpponent_after_twelfth_mapping ready
+    w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12 firstNoInterrupt secondNoInterrupt
+  have intent : (GameBoy.Adapter.stepMachineCycle m12 w13).probe.intent.address = Word.ofNat 0x6F22 ∧
+      (GameBoy.Adapter.stepMachineCycle m12 w13).probe.intent.control = .read := by
+    simp [GameBoy.Adapter.stepMachineCycle, core12, initOpponentJumpReadyCore,
+      initOpponentThirdReadyCore, initOpponentStoreReadyCore,
+      Sm83.Run.stepMachineCycle, CoreState.currentOp?, Run.intent, Run.opAddress,
+      Run.opControl]
+  have stable := GameBoy.Adapter.stableReadWindow_rom m12 w13 intent.2
+    (mapping.2.trans ready.checkpoint.1) (by rw [intent.1]; decide)
+  have value : GameBoy.Memory.read m12.memory (Word.ofNat 0x6F22) = 0x1A := by
+    rw [GameBoy.Memory.read_rom_unmapped m12.memory (Word.ofNat 0x6F22)
+      (mapping.2.trans ready.checkpoint.1) (by native_decide)]
+    rw [mapping.1]
+    rw [← GameBoy.Memory.read_rom_unmapped machine.memory (Word.ofNat 0x6F22)
+      ready.checkpoint.1 (by native_decide)]
+    exact initOpponent_jumpOffset_byte ready.checkpoint bytes
+  rw [intent.1, value] at stable
+  have folded := GameBoy.Adapter.stableReadWindow_cpu_fold m12 w13 0x1A stable
+  change (GameBoy.Adapter.stepMachineCycle m12 w13).cpuOutput.state =
+    initOpponentJumpAfterOffsetCore machine
+  rw [GameBoy.Adapter.processor_composition]
+  simp [core12, initOpponentJumpReadyCore, initOpponentJumpAfterOffsetCore,
+    initOpponentThirdReadyCore, initOpponentStoreReadyCore,
+    Sm83.Run.stepMachineCycle, CoreState.currentOp?, Run.processNonFetch, folded]
+  native_decide
+
+def initOpponentJumpAfterInternalCore (machine : Machine) : CoreState :=
+  { initOpponentJumpReadyCore machine with
+    registers := { (initOpponentJumpReadyCore machine).registers with
+      pc := Word.ofNat 0x6F23 }
+    remaining := [.successorFetch]
+    latches := { low := 0x1A } }
+
+/-- The JR internal cycle resolves the successor bus address to canonical
+`InitBattleCommon` at `$6F3D`. -/
+theorem atInitOpponent_jump_target_intent {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes)
+    (w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12 w13 w14 w15 : Bool)
+    (firstNoInterrupt : FirstBoundaryNoInterrupt machine w1 w2 w3 w4)
+    (secondNoInterrupt : SecondBoundaryNoInterrupt machine w1 w2 w3 w4 w5 w6 w7 w8)
+    (thirdNoInterrupt : ThirdBoundaryNoInterrupt machine
+      w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12) :
+    let m1 := (GameBoy.Adapter.stepMachineCycle machine w1).machine
+    let m2 := (GameBoy.Adapter.stepMachineCycle m1 w2).machine
+    let m3 := (GameBoy.Adapter.stepMachineCycle m2 w3).machine
+    let m4 := (GameBoy.Adapter.stepMachineCycle m3 w4).machine
+    let m5 := (GameBoy.Adapter.stepMachineCycle m4 w5).machine
+    let m6 := (GameBoy.Adapter.stepMachineCycle m5 w6).machine
+    let m7 := (GameBoy.Adapter.stepMachineCycle m6 w7).machine
+    let m8 := (GameBoy.Adapter.stepMachineCycle m7 w8).machine
+    let m9 := (GameBoy.Adapter.stepMachineCycle m8 w9).machine
+    let m10 := (GameBoy.Adapter.stepMachineCycle m9 w10).machine
+    let m11 := (GameBoy.Adapter.stepMachineCycle m10 w11).machine
+    let m12 := (GameBoy.Adapter.stepMachineCycle m11 w12).machine
+    let m13 := (GameBoy.Adapter.stepMachineCycle m12 w13).machine
+    let m14 := (GameBoy.Adapter.stepMachineCycle m13 w14).machine
+    let intent := (GameBoy.Adapter.stepMachineCycle m14 w15).probe.intent
+    m14.core = initOpponentJumpAfterInternalCore machine ∧
+      intent.address = Rom.Closure.Symbols.initBattleSetup.address ∧
+      intent.control = .read ∧ intent.readKind = .opcode := by
+  let m1 := (GameBoy.Adapter.stepMachineCycle machine w1).machine
+  let m2 := (GameBoy.Adapter.stepMachineCycle m1 w2).machine
+  let m3 := (GameBoy.Adapter.stepMachineCycle m2 w3).machine
+  let m4 := (GameBoy.Adapter.stepMachineCycle m3 w4).machine
+  let m5 := (GameBoy.Adapter.stepMachineCycle m4 w5).machine
+  let m6 := (GameBoy.Adapter.stepMachineCycle m5 w6).machine
+  let m7 := (GameBoy.Adapter.stepMachineCycle m6 w7).machine
+  let m8 := (GameBoy.Adapter.stepMachineCycle m7 w8).machine
+  let m9 := (GameBoy.Adapter.stepMachineCycle m8 w9).machine
+  let m10 := (GameBoy.Adapter.stepMachineCycle m9 w10).machine
+  let m11 := (GameBoy.Adapter.stepMachineCycle m10 w11).machine
+  let m12 := (GameBoy.Adapter.stepMachineCycle m11 w12).machine
+  let m13 := (GameBoy.Adapter.stepMachineCycle m12 w13).machine
+  let m14 := (GameBoy.Adapter.stepMachineCycle m13 w14).machine
+  have core13 : m13.core = initOpponentJumpAfterOffsetCore machine :=
+    atInitOpponent_jump_after_offset ready w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12 w13
+      firstNoInterrupt secondNoInterrupt thirdNoInterrupt
+  have core14 : m14.core = initOpponentJumpAfterInternalCore machine := by
+    change (GameBoy.Adapter.stepMachineCycle m13 w14).cpuOutput.state =
+      initOpponentJumpAfterInternalCore machine
+    rw [GameBoy.Adapter.processor_composition]
+    simp [core13, initOpponentJumpAfterOffsetCore, initOpponentJumpAfterInternalCore,
+      initOpponentJumpReadyCore, initOpponentThirdReadyCore, initOpponentStoreReadyCore,
+      Sm83.Run.stepMachineCycle, CoreState.currentOp?, Run.processNonFetch]
+  refine ⟨core14, ?_⟩
+  have intentEq : (GameBoy.Adapter.stepMachineCycle m14 w15).probe.intent =
+      Run.intent (initOpponentJumpAfterInternalCore machine) .successorFetch := by
+    change (Run.stepMachineCycle m14.core
+      { read := .stable 0xFF
+        pendingInterrupts := GameBoy.Devices.pendingInterrupts m14.memory.devices
+        wake := w15 }).intent = _
+    rw [core14]
+    simp [initOpponentJumpAfterInternalCore, initOpponentJumpReadyCore,
+      initOpponentThirdReadyCore, initOpponentStoreReadyCore,
+      Sm83.Run.stepMachineCycle, CoreState.currentOp?]
+  rw [intentEq]
+  simp [Run.intent, Run.opAddress, Run.successorAddress, Run.opControl,
+    Run.opReadKind, initOpponentJumpAfterInternalCore, initOpponentJumpReadyCore,
+    initOpponentThirdReadyCore, initOpponentStoreReadyCore,
+    Rom.Closure.Symbols.initBattleSetup]
+  native_decide
 
 /-- State coupling maintained from entry through the outer return. -/
 structure Holds (context : Context) (low : Machine) (high : Episode.State) : Prop where

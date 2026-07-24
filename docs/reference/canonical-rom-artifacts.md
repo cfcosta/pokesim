@@ -65,7 +65,9 @@ commits the supplied opponent to WRAM `$CF91` at T3R, fetches the next `$EA`
 at `$6F1E`, and establishes its exact hidden checkpoint without bootstrap
 reinitialization. The same stream then consumes `$D8 $CF`, drives the supplied
 opponent to `$CFD8`, and installs canonical `JR $1A` (`$18`) at `$6F21` after the
-third retirement.
+third retirement. The live jump then consumes `$1A`, completes its internal IDU
+cycle, and proves the next opcode bus intent targets canonical
+`InitBattleCommon` at `$6F3D`.
 
 ## Address closure
 

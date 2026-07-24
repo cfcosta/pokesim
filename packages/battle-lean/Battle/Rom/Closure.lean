@@ -88,6 +88,7 @@ namespace Symbols
 
 def initBattle : Symbol := ⟨0x0F, 0x6F12⟩
 def initOpponent : Symbol := ⟨0x0F, 0x6F18⟩
+def initBattleSetup : Symbol := ⟨0x0F, 0x6F3D⟩
 def initBattleCommon : Symbol := ⟨0x0F, 0x6FEB⟩
 def startBattle : Symbol := ⟨0x0F, 0x411E⟩
 def endOfBattle : Symbol := ⟨0x04, 0x77AA⟩
