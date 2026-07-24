@@ -5,6 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License").
 import Battle.Step
 import Battle.Resolve
 import Battle.Data.Species
+import Battle.Accuracy
 
 /-!
 # Faithful ordinary damaging-turn kernel
@@ -38,15 +39,12 @@ def supportedMove (id : MoveId) : Bool :=
   let data := Data.moveData id
   id != 0 && data.power != 0 && data.effect == Data.Effect.noAdditional
 
-/-- Gen-1's hardcoded high-critical move list. -/
-def highCriticalMove (id : MoveId) : Bool :=
-  id == 2 || id == 75 || id == 152 || id == 163
+/-- Compatibility aliases for the shared critical module. -/
+def highCriticalMove (id : MoveId) : Bool := Critical.highCriticalMove id
 
-/-- Fresh-state critical threshold from base Speed. Regular moves use
-`floor(baseSpeed/2)`; high-critical moves multiply that by eight and cap at 255. -/
+/-- Fresh-state threshold: Focus Energy is absent in this restricted profile. -/
 def criticalThreshold (species : SpeciesId) (move : MoveId) : UInt8 :=
-  let half := (Data.speciesData species).baseSpd.toNat / 2
-  (if highCriticalMove move then min 255 (half * 8) else half).toUInt8
+  Critical.threshold species move false
 
 #guard criticalThreshold 153 33 == 22  -- Bulbasaur base Speed 45, Tackle
 #guard criticalThreshold 153 75 == 176 -- Razor Leaf: floor(45/2) × 8
@@ -187,7 +185,8 @@ private def resolveAttack (state : BattleState) (attacker : Side) (slot : Fin 4)
   | none => .rngStuck { state with rng := rngAfterCrit } initialEvents
   | some (damage, rngAfterDamage, damageEvents) =>
       let (accuracyRaw, rngAfterAccuracy) := rngAfterDamage.next
-      let hitByAccuracy := accuracyRaw < move.accuracy
+      let effectiveAccuracy := Accuracy.calcHitChance move.accuracy 7 7
+      let hitByAccuracy := Accuracy.hits effectiveAccuracy accuracyRaw
       let hit := hitByAccuracy && damage != 0
       let dealt := if hit then damage else 0
       let hpAfter := Step.saturatingSub defenderMon.hp dealt

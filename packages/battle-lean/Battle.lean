@@ -12,6 +12,8 @@ import Battle.Data.Moves
 import Battle.Data.Species
 import Battle.Data.Learnsets
 import Battle.Damage
+import Battle.Critical
+import Battle.Accuracy
 import Battle.DamageTests
 import Battle.Outcome
 import Battle.State

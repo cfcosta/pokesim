@@ -4,6 +4,7 @@ Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.State
 import Battle.Damage
+import Battle.Critical
 
 /-!
 # One attacking turn — `resolveTurn`
@@ -117,11 +118,8 @@ inductive TurnEvent where
     compares `BattleRandom` against this: `rand < 128` → player first. -/
 def speedTieThreshold : UInt8 := 128
 
-/-- `CriticalHitTest`'s roll test (`core.asm:4534-4539`): rotate the byte left
-    three times (`rlc a` ×3) and crit iff the result is below the threshold. -/
-def critHits (threshold rand : UInt8) : Bool :=
-  let rotated := (rand <<< 3) ||| (rand >>> 5)
-  decide (rotated < threshold)
+/-- Compatibility alias for the shared exact critical comparison. -/
+def critHits (threshold rand : UInt8) : Bool := Critical.occurs threshold rand
 
 /-- 16-bit HP subtraction clamped at 0, matching `ApplyDamage`'s underflow guard
     (the ROM sets HP to 0 rather than wrapping). -/
