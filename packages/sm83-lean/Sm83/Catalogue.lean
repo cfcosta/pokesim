@@ -128,6 +128,33 @@ theorem baseRow_shape (opcode : Byte) :
 example : (baseRow 0x10).takenTCycles = 4 ∧
     (Cycle.tcycles .stop).value = 8 := by native_decide
 
+private def baseRowValid (opcode : Byte) : Bool :=
+  let row := baseRow opcode
+  match Decode.base opcode with
+  | .legal .stop => row.disposition == .legal && row.shape == some .stop &&
+      row.length == 2 && row.untakenTCycles == 4 && row.takenTCycles == 4
+  | .legal shape => row.disposition == .legal && row.shape == some shape &&
+      row.length == shape.encodedLength &&
+      row.untakenTCycles == (Cycle.tcycles shape false).value &&
+      row.takenTCycles == (Cycle.tcycles shape true).value && row.flags == flagPolicy shape
+  | .prefix => row.disposition == .prefix && row.shape == none && row.length == 1
+  | .locked _ => row.disposition == .locked && row.shape == none && row.length == 1
+
+private def cbRowValid (opcode : Byte) : Bool :=
+  let row := cbRow opcode
+  let shape := Decode.cb opcode
+  row.disposition == .legal && row.cbPrefixed && row.shape == some shape &&
+    row.length == 2 && row.untakenTCycles == (Cycle.tcycles shape false).value &&
+    row.takenTCycles == (Cycle.tcycles shape true).value && row.flags == flagPolicy shape
+
+/-- Every generated base row has the decoder disposition, length, timing, and flag policy. -/
+theorem every_base_row_valid : ∀ opcode : Byte, baseRowValid opcode := by
+  native_decide
+
+/-- Every generated CB row has the decoder shape, two-byte length, timing, and flag policy. -/
+theorem every_cb_row_valid : ∀ opcode : Byte, cbRowValid opcode := by
+  native_decide
+
 /-- All 512 generated rows are present. -/
 theorem complete_row_count : (baseRows ++ cbRows).length = 512 := by
   rw [List.length_append, baseRows_length, cbRows_length]
