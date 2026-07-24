@@ -165,5 +165,12 @@ theorem reviewed_covers (outcome : StopOutcome) :
     | exact ⟨{ buttonSelected := false, speedSwitchRequested := true, interruptPending := true, ime := false }, 0, rfl⟩
     | exact ⟨{ buttonSelected := false, speedSwitchRequested := true, interruptPending := true, ime := true }, 0, rfl⟩
 
+/-- Every reviewed outcome has a complete profile-step witness. -/
+theorem reviewed_step_covers (outcome : StopOutcome) :
+    ∃ context byte effect, step reviewed context byte outcome effect := by
+  obtain ⟨context, byte, outcomeAllowed⟩ := reviewed_covers outcome
+  obtain ⟨effect, effectAllowed⟩ := effect_covers outcome
+  exact ⟨context, byte, effect, outcomeAllowed, effectAllowed⟩
+
 end StopProfile
 end Sm83
