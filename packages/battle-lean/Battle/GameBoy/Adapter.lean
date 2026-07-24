@@ -187,6 +187,16 @@ theorem runEdges_length (intent : CycleIntent) (pins : List PinIntent)
     split <;> rfl
   · split <;> rfl
 
+/-- Read cycles cannot mutate WRAM at any half-edge. -/
+@[simp] theorem stepEdge_read_preserves_wram (memory : Memory.State)
+    (intent : CycleIntent) (pin : PinIntent) (read : intent.control = .read) :
+    (stepEdge memory intent pin).1.wram = memory.wram := by
+  simp [stepEdge, read]
+  split
+  · rw [Memory.stepDma_preserves_wram]
+    split <;> rfl
+  · split <;> rfl
+
 /-- ROM reads remain stable across a read half-edge even while clocked devices
 and DMA advance. -/
 @[simp] theorem stepEdge_read_preserves_rom_read (memory : Memory.State)
@@ -258,6 +268,71 @@ theorem stableReadWindow_rom (machine : Machine) (wake : Bool)
   rw [HalfEdge.map_selected_read intent (Memory.read machine.memory intent.address) read] at drives
   simpa [stableDrivePattern] using drives
 
+/-- WRAM reads remain stable across read half-edges. -/
+@[simp] theorem stepEdge_read_preserves_wram_read (memory : Memory.State)
+    (intent : CycleIntent) (pin : PinIntent) (address : Word)
+    (read : intent.control = .read) (low : 0xC000 ≤ address.toNat)
+    (high : address.toNat < 0xE000) :
+    Memory.read (stepEdge memory intent pin).1 address = Memory.read memory address := by
+  rw [Memory.read_wram _ address low high, Memory.read_wram memory address low high]
+  rw [stepEdge_read_preserves_wram memory intent pin read]
+
+private theorem runEdges_read_wram_drives (intent : CycleIntent)
+    (reference : Memory.State) (pins : List PinIntent) (memory : Memory.State)
+    (drives : List (Option Byte)) (observations : List EdgeObservation)
+    (read : intent.control = .read) (low : 0xC000 ≤ intent.address.toNat)
+    (high : intent.address.toNat < 0xE000)
+    (same : Memory.read memory intent.address = Memory.read reference intent.address)
+    (valid : ∀ pin ∈ pins, pin.selected = true → pin.address = some intent.address) :
+    (runEdges intent pins memory drives observations).drives =
+      drives ++ pins.map (fun pin =>
+        if pin.selected then some (Memory.read reference intent.address) else none) := by
+  induction pins generalizing memory drives observations with
+  | nil => simp [runEdges]
+  | cons pin rest induction =>
+      have headAddress : pin.selected = true → pin.address = some intent.address := by
+        intro selected
+        exact valid pin (by simp) selected
+      have drive : (stepEdge memory intent pin).2.drive =
+          if pin.selected then some (Memory.read reference intent.address) else none := by
+        by_cases selected : pin.selected = true
+        · simp [stepEdge, edgeDrive, read, selected, headAddress selected, same]
+        · have selectedFalse : pin.selected = false := by
+            cases equation : pin.selected <;> simp_all
+          simp [stepEdge, edgeDrive, read, selectedFalse]
+      have nextSame : Memory.read (stepEdge memory intent pin).1 intent.address =
+          Memory.read reference intent.address := by
+        rw [stepEdge_read_preserves_wram_read memory intent pin intent.address read low high]
+        exact same
+      have restValid : ∀ next ∈ rest, next.selected = true →
+          next.address = some intent.address := by
+        intro next member selected
+        exact valid next (by simp [member]) selected
+      rw [runEdges]
+      rw [induction (stepEdge memory intent pin).1
+        (drives ++ [(stepEdge memory intent pin).2.drive])
+        (observations ++ [(stepEdge memory intent pin).2]) nextSame restValid]
+      simp [drive, List.append_assoc]
+
+/-- Stable WRAM storage discharges a temporal read-window premise. -/
+theorem stableReadWindow_wram (machine : Machine) (wake : Bool)
+    (read : (stepMachineCycle machine wake).probe.intent.control = .read)
+    (low : 0xC000 ≤ (stepMachineCycle machine wake).probe.intent.address.toNat)
+    (high : (stepMachineCycle machine wake).probe.intent.address.toNat < 0xE000) :
+    StableReadWindow machine wake
+      (Memory.read machine.memory (stepMachineCycle machine wake).probe.intent.address) := by
+  let intent := (stepMachineCycle machine wake).probe.intent
+  change (runEdges intent (HalfEdge.expand intent) machine.memory [] []).drives =
+    stableDrivePattern (Memory.read machine.memory intent.address)
+  change intent.control = .read at read
+  change 0xC000 ≤ intent.address.toNat at low
+  change intent.address.toNat < 0xE000 at high
+  have drives := runEdges_read_wram_drives intent machine.memory
+    (HalfEdge.expand intent) machine.memory [] [] read low high rfl
+    (fun _ member selected => HalfEdge.selected_address member selected)
+  rw [HalfEdge.map_selected_read intent (Memory.read machine.memory intent.address) read] at drives
+  simpa [stableDrivePattern] using drives
+
 /-- A complete edge list preserves cartridge state throughout a read cycle. -/
 theorem runEdges_read_preserves_cartridge (intent : CycleIntent)
     (pins : List PinIntent) (memory : Memory.State)
@@ -285,6 +360,19 @@ theorem runEdges_read_preserves_bootMapped (intent : CycleIntent)
       simp only [runEdges]
       rw [induction]
       exact stepEdge_read_preserves_bootMapped memory intent pin read
+
+/-- A complete edge list preserves WRAM throughout a read cycle. -/
+theorem runEdges_read_preserves_wram (intent : CycleIntent)
+    (pins : List PinIntent) (memory : Memory.State)
+    (drives : List (Option Byte)) (observations : List EdgeObservation)
+    (read : intent.control = .read) :
+    (runEdges intent pins memory drives observations).memory.wram = memory.wram := by
+  induction pins generalizing memory drives observations with
+  | nil => rfl
+  | cons pin rest induction =>
+      simp only [runEdges]
+      rw [induction]
+      exact stepEdge_read_preserves_wram memory intent pin read
 
 /-- Every machine cycle contains exactly four rising T-edges. -/
 theorem four_tcycles (intent : CycleIntent) :
@@ -322,6 +410,15 @@ theorem read_cycle_preserves_bootMapped (machine : Machine) (wake : Bool)
     (stepMachineCycle machine wake).machine.memory.bootMapped =
       machine.memory.bootMapped := by
   simpa [stepMachineCycle] using runEdges_read_preserves_bootMapped
+    (stepMachineCycle machine wake).probe.intent
+    (HalfEdge.expand (stepMachineCycle machine wake).probe.intent)
+    machine.memory [] [] read
+
+/-- A composed read cycle preserves WRAM. -/
+theorem read_cycle_preserves_wram (machine : Machine) (wake : Bool)
+    (read : (stepMachineCycle machine wake).probe.intent.control = .read) :
+    (stepMachineCycle machine wake).machine.memory.wram = machine.memory.wram := by
+  simpa [stepMachineCycle] using runEdges_read_preserves_wram
     (stepMachineCycle machine wake).probe.intent
     (HalfEdge.expand (stepMachineCycle machine wake).probe.intent)
     machine.memory [] [] read

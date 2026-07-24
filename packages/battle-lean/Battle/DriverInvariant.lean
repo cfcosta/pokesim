@@ -390,6 +390,225 @@ theorem atInitOpponent_third_intent {machine : Machine}
     ready.shape]
   native_decide
 
+/-- Both ROM-read cycles preserve the supplied-opponent WRAM image. -/
+theorem atInitOpponent_after_second_wram {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes) (firstWake secondWake : Bool) :
+    let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+    let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+    afterSecond.memory.wram = machine.memory.wram := by
+  let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+  have firstRead := (atInitOpponent_first_intent ready firstWake).2.1
+  have firstWram := GameBoy.Adapter.read_cycle_preserves_wram machine firstWake firstRead
+  have secondRead := (atInitOpponent_second_intent ready firstWake secondWake).2.1
+  have secondWram := GameBoy.Adapter.read_cycle_preserves_wram afterFirst secondWake secondRead
+  exact secondWram.trans firstWram
+
+/-- WRAM stability discharges the supplied-opponent data-read window. -/
+theorem atInitOpponent_third_stable {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes)
+    (firstWake secondWake thirdWake : Bool) :
+    let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+    let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+    GameBoy.Adapter.StableReadWindow afterSecond thirdWake
+      (GameBoy.Memory.read machine.memory (Word.ofNat 0xD059)) := by
+  let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+  let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+  have intent := atInitOpponent_third_intent ready firstWake secondWake thirdWake
+  have stable := GameBoy.Adapter.stableReadWindow_wram afterSecond thirdWake intent.2.1
+    (by rw [intent.1]; decide) (by rw [intent.1]; decide)
+  have wram := atInitOpponent_after_second_wram ready firstWake secondWake
+  have value : GameBoy.Memory.read afterSecond.memory (Word.ofNat 0xD059) =
+      GameBoy.Memory.read machine.memory (Word.ofNat 0xD059) := by
+    rw [GameBoy.Memory.read_wram afterSecond.memory (Word.ofNat 0xD059)
+      (by decide) (by decide)]
+    rw [GameBoy.Memory.read_wram machine.memory (Word.ofNat 0xD059)
+      (by decide) (by decide)]
+    rw [wram]
+  rw [intent.1, value] at stable
+  exact stable
+
+def initOpponentAfterDataCore (machine : Machine) : CoreState :=
+  { machine.core with
+    registers := { machine.core.registers with pc := Word.ofNat 0x6F1B }
+    remaining := [.successorFetch]
+    latches := { machine.core.latches with
+      low := 0x59
+      high := 0xD0
+      data := GameBoy.Memory.read machine.memory (Word.ofNat 0xD059) } }
+
+/-- Exact hidden core state after reading supplied-opponent WRAM. -/
+theorem atInitOpponent_after_third_core_eq {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes)
+    (firstWake secondWake thirdWake : Bool) :
+    let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+    let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+    (GameBoy.Adapter.stepMachineCycle afterSecond thirdWake).machine.core =
+      initOpponentAfterDataCore machine := by
+  let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+  let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+  have secondCore : afterSecond.core = initOpponentAfterHighCore machine :=
+    atInitOpponent_after_second_core_eq ready firstWake secondWake
+  have folded := GameBoy.Adapter.stableReadWindow_cpu_fold afterSecond thirdWake
+    (GameBoy.Memory.read machine.memory (Word.ofNat 0xD059))
+    (atInitOpponent_third_stable ready firstWake secondWake thirdWake)
+  change (GameBoy.Adapter.stepMachineCycle afterSecond thirdWake).cpuOutput.state =
+    initOpponentAfterDataCore machine
+  rw [GameBoy.Adapter.processor_composition]
+  simp [secondCore, initOpponentAfterHighCore, initOpponentAfterDataCore,
+    Sm83.Run.stepMachineCycle, ready.checkpoint.2.2.2.1,
+    ready.checkpoint.2.2.2.2.1, CoreState.currentOp?, Run.processNonFetch,
+    Run.updatePointer, folded, ready.shape]
+
+/-- All three read cycles preserve canonical ROM mapping. -/
+theorem atInitOpponent_after_third_mapping {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes)
+    (firstWake secondWake thirdWake : Bool) :
+    let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+    let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+    let afterThird := (GameBoy.Adapter.stepMachineCycle afterSecond thirdWake).machine
+    afterThird.memory.cartridge = machine.memory.cartridge ∧
+      afterThird.memory.bootMapped = machine.memory.bootMapped := by
+  let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+  let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+  have first := atInitOpponent_first_cycle_mapping ready firstWake
+  have secondRead := (atInitOpponent_second_intent ready firstWake secondWake).2.1
+  have secondCartridge := GameBoy.Adapter.read_cycle_preserves_cartridge
+    afterFirst secondWake secondRead
+  have secondBoot := GameBoy.Adapter.read_cycle_preserves_bootMapped
+    afterFirst secondWake secondRead
+  have thirdRead := (atInitOpponent_third_intent ready firstWake secondWake thirdWake).2.1
+  have thirdCartridge := GameBoy.Adapter.read_cycle_preserves_cartridge
+    afterSecond thirdWake thirdRead
+  have thirdBoot := GameBoy.Adapter.read_cycle_preserves_bootMapped
+    afterSecond thirdWake thirdRead
+  exact ⟨thirdCartridge.trans (secondCartridge.trans first.1),
+    thirdBoot.trans (secondBoot.trans first.2)⟩
+
+/-- The overlapped successor fetch occurs at `$6F1B`. -/
+theorem atInitOpponent_successor_intent {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes)
+    (firstWake secondWake thirdWake fourthWake : Bool) :
+    let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+    let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+    let afterThird := (GameBoy.Adapter.stepMachineCycle afterSecond thirdWake).machine
+    let intent := (GameBoy.Adapter.stepMachineCycle afterThird fourthWake).probe.intent
+    intent.address = Word.ofNat 0x6F1B ∧ intent.control = .read ∧
+      intent.readKind = .opcode := by
+  let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+  let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+  let afterThird := (GameBoy.Adapter.stepMachineCycle afterSecond thirdWake).machine
+  change let intent := (GameBoy.Adapter.stepMachineCycle afterThird fourthWake).probe.intent
+    intent.address = Word.ofNat 0x6F1B ∧ intent.control = .read ∧
+      intent.readKind = .opcode
+  have coreEq : afterThird.core = initOpponentAfterDataCore machine :=
+    atInitOpponent_after_third_core_eq ready firstWake secondWake thirdWake
+  simp [GameBoy.Adapter.stepMachineCycle, coreEq, initOpponentAfterDataCore,
+    Sm83.Run.stepMachineCycle, ready.checkpoint.2.2.2.1,
+    ready.checkpoint.2.2.2.2.1, CoreState.currentOp?, Run.intent,
+    Run.opAddress, Run.successorAddress, Run.opControl, Run.opReadKind,
+    Run.opFetch, Run.opCommit, Run.opPoll, Run.opIdu, ready.shape]
+
+/-- The canonical successor byte after the first instruction is `$EA`. -/
+theorem atInitOpponent_successor_byte {machine : Machine}
+    (entry : AtInitOpponent machine)
+    (bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom) :
+    GameBoy.Memory.read machine.memory (Word.ofNat 0x6F1B) = 0xEA := by
+  let symbol : Rom.Closure.Symbol := ⟨0x0F, Word.ofNat 0x6F1B⟩
+  have selected : symbol.Selected machine.memory.cartridge := by
+    change GameBoy.Mbc3.selectedRomBank machine.memory.cartridge = 15
+    simpa using entry.2.1
+  have mapped := Rom.Closure.read_selected_symbol machine.memory symbol entry.1
+    (by native_decide) selected
+  rw [mapped]
+  simpa [symbol, Rom.Closure.romOffset, Rom.Closure.Symbols.initOpponent] using
+    bytes.initOpponent_successor
+
+/-- ROM stability discharges the overlapped successor-fetch window. -/
+theorem atInitOpponent_successor_stable {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes)
+    (firstWake secondWake thirdWake fourthWake : Bool) :
+    let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+    let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+    let afterThird := (GameBoy.Adapter.stepMachineCycle afterSecond thirdWake).machine
+    GameBoy.Adapter.StableReadWindow afterThird fourthWake 0xEA := by
+  let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+  let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+  let afterThird := (GameBoy.Adapter.stepMachineCycle afterSecond thirdWake).machine
+  have intent := atInitOpponent_successor_intent ready firstWake secondWake thirdWake fourthWake
+  have mapping := atInitOpponent_after_third_mapping ready firstWake secondWake thirdWake
+  have stable := GameBoy.Adapter.stableReadWindow_rom afterThird fourthWake intent.2.1
+    (mapping.2.trans ready.checkpoint.1) (by rw [intent.1]; decide)
+  have value : GameBoy.Memory.read afterThird.memory (Word.ofNat 0x6F1B) = 0xEA := by
+    rw [GameBoy.Memory.read_rom_unmapped afterThird.memory (Word.ofNat 0x6F1B)
+      (mapping.2.trans ready.checkpoint.1) (by native_decide)]
+    rw [mapping.1]
+    have original := atInitOpponent_successor_byte ready.checkpoint bytes
+    rw [GameBoy.Memory.read_rom_unmapped machine.memory (Word.ofNat 0x6F1B)
+      ready.checkpoint.1 (by native_decide)] at original
+    exact original
+  rw [intent.1, value] at stable
+  exact stable
+
+/-- The fourth cycle is the unique retirement boundary for the first
+canonical instruction. -/
+theorem atInitOpponent_first_retirement {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes)
+    (firstWake secondWake thirdWake : Bool) :
+    let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+    let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+    let afterThird := (GameBoy.Adapter.stepMachineCycle afterSecond thirdWake).machine
+    Retirement.atRetirement afterThird.core = true := by
+  let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+  let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+  let afterThird := (GameBoy.Adapter.stepMachineCycle afterSecond thirdWake).machine
+  have coreEq : afterThird.core = initOpponentAfterDataCore machine :=
+    atInitOpponent_after_third_core_eq ready firstWake secondWake thirdWake
+  change Retirement.atRetirement afterThird.core = true
+  rw [coreEq]
+  simp [initOpponentAfterDataCore, Retirement.atRetirement,
+    CoreState.currentOp?, ready.checkpoint.2.2.2.1,
+    ready.checkpoint.2.2.2.2.1, ready.shape]
+
+/-- The completed `LD A,($D059)` commits the supplied opponent and preserves a
+boundary witness even when a pending interrupt takes the overlapped fetch. -/
+theorem atInitOpponent_first_instruction_commits {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes)
+    (firstWake secondWake thirdWake fourthWake : Bool) :
+    let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+    let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+    let afterThird := (GameBoy.Adapter.stepMachineCycle afterSecond thirdWake).machine
+    let afterFourth := (GameBoy.Adapter.stepMachineCycle afterThird fourthWake).machine
+    afterFourth.core.registers.a =
+        GameBoy.Memory.read machine.memory (Word.ofNat 0xD059) ∧
+      afterFourth.core.boundaryPC = some (Word.ofNat 0x6F1B) := by
+  let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+  let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+  let afterThird := (GameBoy.Adapter.stepMachineCycle afterSecond thirdWake).machine
+  have thirdCore : afterThird.core = initOpponentAfterDataCore machine :=
+    atInitOpponent_after_third_core_eq ready firstWake secondWake thirdWake
+  have folded := GameBoy.Adapter.stableReadWindow_cpu_fold afterThird fourthWake 0xEA
+    (atInitOpponent_successor_stable ready firstWake secondWake thirdWake fourthWake)
+  change let afterFourth := (GameBoy.Adapter.stepMachineCycle afterThird fourthWake).cpuOutput.state
+    afterFourth.registers.a = GameBoy.Memory.read machine.memory (Word.ofNat 0xD059) ∧
+      afterFourth.boundaryPC = some (Word.ofNat 0x6F1B)
+  rw [GameBoy.Adapter.processor_composition]
+  simp [thirdCore, initOpponentAfterDataCore, Sm83.Run.stepMachineCycle,
+    ready.checkpoint.2.2.2.1, ready.checkpoint.2.2.2.2.1,
+    CoreState.currentOp?, Run.finishSuccessor, Run.successorAddress,
+    Run.commitRegisters, Run.commitIme, ready.shape, folded,
+    Run.startInterrupt, Pipeline.install, Decode.base]
+  split <;> simp
+  all_goals split <;> simp
+  all_goals split <;> simp
+
 /-- State coupling maintained from entry through the outer return. -/
 structure Holds (context : Context) (low : Machine) (high : Episode.State) : Prop where
   bankInImage : Rom.Closure.RomBankInImage low.memory.cartridge

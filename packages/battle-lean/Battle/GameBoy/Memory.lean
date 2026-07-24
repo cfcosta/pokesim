@@ -113,12 +113,27 @@ def stepDma (state : State) : State :=
   · rfl
   · split <;> rfl
 
+@[simp] theorem stepDma_preserves_wram (state : State) :
+    (stepDma state).wram = state.wram := by
+  simp only [stepDma]
+  split <;> rename_i equation
+  · rfl
+  · split <;> rfl
+
 @[simp] theorem stepDma_preserves_bootMapped (state : State) :
     (stepDma state).bootMapped = state.bootMapped := by
   simp only [stepDma]
   split <;> rename_i equation
   · rfl
   · split <;> rfl
+
+@[simp] theorem read_wram (state : State) (address : Word)
+    (low : 0xC000 ≤ address.toNat) (high : address.toNat < 0xE000) :
+    read state address = Mbc3.readArray state.wram (address.toNat - 0xC000) := by
+  have notRom0 : ¬address.toNat < 0x8000 := by omega
+  have notVram : ¬address.toNat < 0xA000 := by omega
+  have notCart : ¬address.toNat < 0xC000 := by omega
+  simp [read, notRom0, notVram, notCart, high]
 
 @[simp] theorem read_boot_mapped (state : State) (address : Word)
     (mapped : state.bootMapped = true) (range : address.toNat < 0x100) :

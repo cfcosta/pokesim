@@ -54,8 +54,10 @@ entry byte is `$FA`, decoded as `LD A,(a16)`. The stronger
 `AtInitOpponentReady` checkpoint also records IR, next PC, physical schedule,
 latches, interrupt slot, boundary PC, and HALT-bug state. Half-edge stability
 then proves the first two physical reads consume `$59` at `$6F19` and `$D0` at
-`$6F1A`; the resulting hidden core state addresses supplied-opponent WRAM byte
-`$D059` on the third M-cycle.
+`$6F1A`. WRAM stability discharges the `$D059` data window, and canonical ROM
+stability supplies successor byte `$EA` at `$6F1B`. The four-cycle theorem
+commits `A := read($D059)` and preserves the retirement boundary even when a
+pending interrupt takes the overlapped successor fetch.
 
 ## Address closure
 
