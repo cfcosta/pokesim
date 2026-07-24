@@ -19,3 +19,4 @@ import Battle.Driver
 import Battle.DriverInvariant
 import Battle.Fixtures
 import Battle.RL.LegalTeam
+import Battle.RL.Generator
