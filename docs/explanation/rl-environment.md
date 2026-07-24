@@ -420,6 +420,13 @@ only supported nonempty fight slots; invalid, inactive, and RNG-stuck outcomes
 are distinct. A faint enters `ending`, and only the separate no-op profile
 cleanup `settle` enters `returned` and makes `done = true`.
 
+`Battle.RL.SelfPlay` runs two policies over that interface with independent
+exploration RNGs and records replay transitions. Its decision budget produces a
+separate `truncated` stop reason and can never manufacture a battle terminal.
+The `battleSelfPlay` executable runs 100 independently seeded random-policy
+mirrors and fails on repaired reset, blocking, invalid action, RNG-stuck state,
+or truncation.
+
 ## RL release checks
 
 Before exposing a stable API:

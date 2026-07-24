@@ -37,6 +37,27 @@ abstract battle model against it.
 The byte-level specification this package implements is the companion
 battle-mechanics reference (14 chapters + SPEC).
 
+## Current executable self-play profile
+
+`Battle.RL.Environment` is intentionally narrower than the final engine. It
+runs dynamically generated, proof-carrying one-mon teams using only ordinary
+nonzero-power moves with no additional effect. Inside that boundary it preserves
+link RNG consumption, priority/Speed ties, PP, critical hits, damage rejection,
+accuracy, HP, witnessed terminal state, and separate cleanup/return. Unsupported
+moves and actions are rejected rather than approximated.
+
+`Battle.RL.SelfPlay` supplies policy isolation, legal masks, observations,
+external horizons, replay transitions, and model-against-itself execution. A
+100-episode native smoke matrix is available with:
+
+```sh
+nix develop -c lake -d packages/battle-lean exe battleSelfPlay
+```
+
+This profile is suitable for restricted RL experiments. It is not yet a claim
+that status moves, additional effects, switching, items, or full six-mon Gen-1
+battles are implemented.
+
 ## Build
 
 From the repository root:

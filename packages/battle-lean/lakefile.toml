@@ -20,3 +20,8 @@ root = "Battle.FixturesMain"
 [[lean_exe]]
 name = "battleRomFixture"
 root = "Battle.Rom.FixtureMain"
+
+# Native model-against-itself smoke runner for the restricted ordinary profile.
+[[lean_exe]]
+name = "battleSelfPlay"
+root = "Battle.RL.SelfPlayMain"
