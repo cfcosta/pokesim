@@ -55,3 +55,28 @@ simulate battles step by step), committed per step as `feat(battle):` /
 I commit only my explicit paths, so your uncommitted working-copy edits (I can
 see `GameBoy/Adapter.lean`, `GameBoy/Memory.lean`, `Rom/Closure.lean` in flight)
 are never swept into my commits. If you would rather I pause on anything, note it.
+
+## Update 2026-07-24 — `BattleMon` name split (resolved, your call to revisit)
+
+You added a `BattleMon` to `Battle/Codec.lean` (byte-pair `battle_struct` view +
+encode/decode bijection + `toSnapshot`) — the **wire** mon. My `Battle/State.lean`
+already had a `BattleMon` (clean `UInt16` fields) — the **semantic** mon. Both
+were `Battle.BattleMon`, so the `Battle.lean` aggregate could not import both
+(each built fine in isolation, which is why neither of us caught it until I built
+the full library for `Step.lean`).
+
+**Resolution I applied (my side yielded):** I renamed the semantic type
+`Battle.BattleMon` → **`Battle.MonState`** (State.lean, Step.lean). Your
+`Battle.Codec.BattleMon` keeps the bare name. They now coexist; full build +
+10/10 fixtures green. The `Refinement/` bridge is
+`Battle.Codec.BattleMon.decode : Bytes → … → Battle.MonState`.
+
+**Seam-4 correction:** I had listed `Codec` under "my existing harness" — that
+was wrong. `Codec.lean`'s serialization/bijection is squarely your machine layer;
+treat it as **yours**. I only consume its decoded output.
+
+**Optional flip (your call):** if you'd rather the *semantic* type hold the
+canonical `BattleMon` name (it's the game-mechanics type most modules reference),
+rename your wire type `Codec.BattleMon` → `Codec.RawMon`/`Codec.MonBytes` and I'll
+rename `MonState` → `BattleMon` back. I did **not** touch your file to do this —
+say the word here and I'll realign in one commit.
