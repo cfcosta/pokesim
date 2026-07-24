@@ -3,6 +3,7 @@ Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.Basic
+import Battle.Accuracy
 
 /-!
 # Damage-stat selection, screen overflow, and badge stacking
@@ -42,6 +43,12 @@ def resolve (attack defense : UInt16) (screen : Bool) : Result :=
   let defense := if screen then defense <<< 1 else defense
   let stats := scalePair attack defense
   if stats.defense == 0 then .divisionFreeze stats else .ready stats
+
+/-- Recalculate one battle stat from its unmodified word and RAM stage, capped
+at 999 and floored to one. -/
+def applyStage (stat : UInt16) (stage : UInt8) : UInt16 :=
+  let ratio := Accuracy.stageRatios.getD (stage.toNat - 1) ⟨1, 1⟩
+  UInt16.ofNat (max 1 (min 999 (stat.toNat * ratio.numerator / ratio.denominator)))
 
 /-- One badge reapplication: 9/8 with integer truncation, capped at 999. -/
 def badgeBoost (stat : UInt16) : UInt16 :=
@@ -92,6 +99,14 @@ theorem screen_hurts_696 :
     resolve 300 696 false = .ready { attack := 75, defense := 174 } ∧
     resolve 300 696 true = .ready { attack := 75, defense := 92 } := by
   native_decide
+
+/-- Neutral stage preserves every canonical positive stat up to 999. -/
+theorem applyStage_neutral (stat : UInt16) (positive : 0 < stat.toNat)
+    (bounded : stat.toNat ≤ 999) : applyStage stat 7 = stat := by
+  have ratio : Accuracy.stageRatios.getD 6 ⟨1, 1⟩ = ⟨1, 1⟩ := by native_decide
+  apply UInt16.toNat.inj
+  simp [applyStage, ratio]
+  omega
 
 /-- Badge boost stacking progression from the externally highlighted canonical
 arithmetic witness. -/
