@@ -1,6 +1,7 @@
 -- This module serves as the root of the `Battle` library.
 -- Import modules here that should be built as part of the library.
 import Battle.Basic
+import Battle.Types
 import Battle.Wram
 import Battle.Checkpoint
 import Battle.Rng
@@ -9,6 +10,7 @@ import Battle.Codec
 import Battle.TypeChart
 import Battle.Damage
 import Battle.DamageTests
+import Battle.Outcome
 import Battle.Diff
 import Battle.Driver
 import Battle.DriverInvariant
