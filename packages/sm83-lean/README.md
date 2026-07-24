@@ -20,6 +20,18 @@ From the repository root:
 nix develop -c lake -d packages/sm83-lean build
 ```
 
+The default build compiles both the proof library and a streaming conformance
+runner. To validate the pinned SingleStep corpus without copying its fixture
+data into this package:
+
+```sh
+python3 tools/check-sm83-singlestep.py /path/to/sm83-tests
+```
+
+This checks all 498,000 context-free legal-instruction cases. HALT and STOP are
+excluded from ordinary completion vectors and covered by profile/sequence
+proofs because their corpus rows do not contain the required system context.
+
 ## License
 
 Apache-2.0. The implementation is clean-room code based on the cited factual
