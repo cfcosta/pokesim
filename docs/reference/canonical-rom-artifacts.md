@@ -57,7 +57,9 @@ then proves the first two physical reads consume `$59` at `$6F19` and `$D0` at
 `$6F1A`. WRAM stability discharges the `$D059` data window, and canonical ROM
 stability supplies successor byte `$EA` at `$6F1B`. The four-cycle theorem
 commits `A := read($D059)` and preserves the retirement boundary even when a
-pending interrupt takes the overlapped successor fetch.
+pending interrupt takes the overlapped successor fetch. Under the explicit
+no-interrupt-accepted branch, the proof also establishes the exact next fetched
+IR: `$EA` (`LD (a16),A`) at `$6F1B`, with next PC `$6F1C` and reset latches.
 
 ## Address closure
 

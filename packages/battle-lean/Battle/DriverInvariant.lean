@@ -609,6 +609,77 @@ theorem atInitOpponent_first_instruction_commits {machine : Machine}
   all_goals split <;> simp
   all_goals split <;> simp
 
+def initOpponentStoreReadyCore (machine : Machine) : CoreState :=
+  { machine.core with
+    registers := { machine.core.registers with
+      a := GameBoy.Memory.read machine.memory (Word.ofNat 0xD059)
+      pc := Word.ofNat 0x6F1C }
+    ime := machine.core.ime || machine.core.scheduledImeEnable
+    scheduledImeEnable := false
+    haltBug := machine.core.haltBug
+    mode := .running
+    phase := .execute
+    ir := some { address := Word.ofNat 0x6F1B, byte := 0xEA }
+    shape := some .ldAbsA
+    remaining := [.immediateLow, .immediateHigh, .writeAddress, .successorFetch]
+    latches := {}
+    interrupt := none
+    boundaryPC := some (Word.ofNat 0x6F1B) }
+
+/-- If the boundary poll does not accept an interrupt, successor byte `$EA` is
+installed as the exact next fetched-IR checkpoint. -/
+theorem atInitOpponent_next_ready_no_interrupt {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes)
+    (firstWake secondWake thirdWake fourthWake : Bool)
+    (noInterrupt :
+      let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+      let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+      let afterThird := (GameBoy.Adapter.stepMachineCycle afterSecond thirdWake).machine
+      ¬((Run.commitIme (initOpponentAfterDataCore machine)).1 = true ∧
+        (GameBoy.Adapter.stepMachineCycle afterThird fourthWake).cpuInput.pendingInterrupts.toNat ≠ 0)) :
+    let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+    let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+    let afterThird := (GameBoy.Adapter.stepMachineCycle afterSecond thirdWake).machine
+    let afterFourth := (GameBoy.Adapter.stepMachineCycle afterThird fourthWake).machine
+    afterFourth.core = initOpponentStoreReadyCore machine := by
+  let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+  let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+  let afterThird := (GameBoy.Adapter.stepMachineCycle afterSecond thirdWake).machine
+  have thirdCore : afterThird.core = initOpponentAfterDataCore machine :=
+    atInitOpponent_after_third_core_eq ready firstWake secondWake thirdWake
+  have folded := GameBoy.Adapter.stableReadWindow_cpu_fold afterThird fourthWake 0xEA
+    (atInitOpponent_successor_stable ready firstWake secondWake thirdWake fourthWake)
+  have increment : Word.ofNat ((Word.ofNat 0x6F1B).toNat + 1) =
+      Word.ofNat 0x6F1C := by native_decide
+  change (GameBoy.Adapter.stepMachineCycle afterThird fourthWake).cpuOutput.state =
+    initOpponentStoreReadyCore machine
+  rw [GameBoy.Adapter.processor_composition]
+  cases scheduled : machine.core.scheduledImeEnable with
+  | false =>
+      have noDispatch : ¬(machine.core.ime = true ∧
+          (GameBoy.Adapter.stepMachineCycle afterThird fourthWake).cpuInput.pendingInterrupts.toNat ≠ 0) := by
+        intro accepted
+        apply noInterrupt
+        exact ⟨by simpa [Run.commitIme, initOpponentAfterDataCore,
+          ready.shape, scheduled] using accepted.1, accepted.2⟩
+      simp [thirdCore, initOpponentAfterDataCore, initOpponentStoreReadyCore,
+        Sm83.Run.stepMachineCycle, ready.checkpoint.2.2.2.1,
+        ready.checkpoint.2.2.2.2.1, CoreState.currentOp?, Run.finishSuccessor,
+        Run.successorAddress, Run.commitRegisters, Run.commitIme, ready.shape,
+        folded, Pipeline.install, Decode.base, increment, scheduled, noDispatch,
+        Pipeline.taken, Cycle.physicalSchedule, Cycle.logicalSchedule]
+  | true =>
+      have pendingZero :
+          (GameBoy.Adapter.stepMachineCycle afterThird fourthWake).cpuInput.pendingInterrupts.toNat = 0 := by
+        simpa [Run.commitIme, initOpponentAfterDataCore, ready.shape, scheduled] using noInterrupt
+      simp [thirdCore, initOpponentAfterDataCore, initOpponentStoreReadyCore,
+        Sm83.Run.stepMachineCycle, ready.checkpoint.2.2.2.1,
+        ready.checkpoint.2.2.2.2.1, CoreState.currentOp?, Run.finishSuccessor,
+        Run.successorAddress, Run.commitRegisters, Run.commitIme, ready.shape,
+        folded, Pipeline.install, Decode.base, increment, scheduled, pendingZero,
+        Pipeline.taken, Cycle.physicalSchedule, Cycle.logicalSchedule]
+
 /-- State coupling maintained from entry through the outer return. -/
 structure Holds (context : Context) (low : Machine) (high : Episode.State) : Prop where
   bankInImage : Rom.Closure.RomBankInImage low.memory.cartridge
