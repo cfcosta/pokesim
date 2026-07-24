@@ -12,6 +12,20 @@ structure StopContext where
   speedSwitchRequested : Bool
   interruptPending : Bool
   ime : Bool
+  speedMode : Bool := false
+  hardwareRevision : Nat := 0
+  deriving Repr, DecidableEq, Inhabited
+
+inductive StopDisposition where
+  | continueRunning | haltLike | stopped | unstable
+  deriving Repr, DecidableEq, Inhabited
+
+structure StopEffect where
+  bytesConsumed : Nat
+  disposition : StopDisposition
+  resetDivider : Bool
+  toggleSpeed : Bool
+  pauseMCycles : Option Nat := none
   deriving Repr, DecidableEq, Inhabited
 
 inductive StopOutcome where
@@ -49,6 +63,43 @@ end InvalidLockProfile
 
 namespace StopProfile
 
+/-- System-visible effects associated with an outcome; unstable effects stay unconstrained. -/
+def effectPermits (outcome : StopOutcome) (effect : StopEffect) : Prop :=
+  match outcome with
+  | .oneByteContinue => effect = {
+      bytesConsumed := 1
+      disposition := .continueRunning
+      resetDivider := false
+      toggleSpeed := false }
+  | .oneByteStop => effect = {
+      bytesConsumed := 1
+      disposition := .stopped
+      resetDivider := true
+      toggleSpeed := false }
+  | .twoByteStop => effect = {
+      bytesConsumed := 2
+      disposition := .stopped
+      resetDivider := true
+      toggleSpeed := false }
+  | .twoByteHalt => effect = {
+      bytesConsumed := 2
+      disposition := .haltLike
+      resetDivider := false
+      toggleSpeed := false }
+  | .twoByteSpeedSwitchHalt => effect.bytesConsumed = 2 ∧ effect.disposition = .haltLike ∧
+      effect.resetDivider = true ∧ effect.toggleSpeed = true
+  | .oneByteSpeedSwitchContinue => effect = {
+      bytesConsumed := 1
+      disposition := .continueRunning
+      resetDivider := true
+      toggleSpeed := true }
+  | .unstableSpeedSwitch => effect.disposition = .unstable
+
+/-- Combined profile step keeps unresolved pauses and glitch effects relational. -/
+def step (profile : StopProfile) (context : StopContext) (byte : Byte)
+    (outcome : StopOutcome) (effect : StopEffect) : Prop :=
+  profile.permits context byte outcome ∧ effectPermits outcome effect
+
 /-- The reviewed seven-way decision relation; unstable silicon behavior remains relational. -/
 def reviewed : StopProfile where
   permits context _ outcome :=
@@ -61,6 +112,45 @@ def reviewed : StopProfile where
     else if context.interruptPending then outcome = .oneByteStop
     else outcome = .twoByteStop
   decidablePermits := by intros; infer_instance
+
+/-- Every outcome has at least one system-effect witness. -/
+theorem effect_covers (outcome : StopOutcome) : ∃ effect, effectPermits outcome effect := by
+  cases outcome
+  · exact ⟨{
+      bytesConsumed := 1
+      disposition := .continueRunning
+      resetDivider := false
+      toggleSpeed := false }, rfl⟩
+  · exact ⟨{
+      bytesConsumed := 1
+      disposition := .stopped
+      resetDivider := true
+      toggleSpeed := false }, rfl⟩
+  · exact ⟨{
+      bytesConsumed := 2
+      disposition := .stopped
+      resetDivider := true
+      toggleSpeed := false }, rfl⟩
+  · exact ⟨{
+      bytesConsumed := 2
+      disposition := .haltLike
+      resetDivider := false
+      toggleSpeed := false }, rfl⟩
+  · exact ⟨{
+      bytesConsumed := 2
+      disposition := .haltLike
+      resetDivider := true
+      toggleSpeed := true }, by simp [effectPermits]⟩
+  · exact ⟨{
+      bytesConsumed := 1
+      disposition := .continueRunning
+      resetDivider := true
+      toggleSpeed := true }, rfl⟩
+  · exact ⟨{
+      bytesConsumed := 0
+      disposition := .unstable
+      resetDivider := false
+      toggleSpeed := false }, rfl⟩
 
 /-- All seven constructors are reachable under some reviewed context. -/
 theorem reviewed_covers (outcome : StopOutcome) :
