@@ -31,6 +31,7 @@ import Battle.BugCompatibility
 import Battle.Full.State
 import Battle.Full.Status
 import Battle.Full.Items
+import Battle.Full.EffectPlan
 import Battle.Refinement.Bridge
 import Battle.Refinement.Trace
 import Battle.Refinement.Simulation
