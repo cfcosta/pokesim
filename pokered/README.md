@@ -13,11 +13,6 @@ It builds the following ROMs:
 To set up the repository, see [**INSTALL.md**](INSTALL.md).
 
 
-## Formally verified battle simulator
-
-Planning for the Lean 4 battle simulator is in [**SPEC.md**](SPEC.md), including a separately verified and commit-pinned SM83 processor package and a measured-evidence DMG-CPU B system profile. The supporting audits, verification boundary, source map, mechanics checklist, and RL design are indexed in [**docs/README.md**](docs/README.md).
-
-
 ## See also
 
 - [**Wiki**][wiki] (includes [tutorials][tutorials])
