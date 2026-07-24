@@ -45,6 +45,20 @@ def expand (intent : CycleIntent) : List PinIntent := machineHalfEdges.map fun e
     data := if intent.control == .write && writeWindow edge then intent.data else .released
     sampleRead := intent.control == .read && readSample edge }
 
+theorem selected_address {intent : CycleIntent} {pin : PinIntent}
+    (member : pin ∈ expand intent) (selected : pin.selected = true) :
+    pin.address = some intent.address := by
+  simp [expand, machineHalfEdges] at member
+  rcases member with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+    simp_all [isT4R, afterSelect]
+
+theorem map_selected_read (intent : CycleIntent) (value : Byte)
+    (read : intent.control = .read) :
+    (expand intent).map (fun pin => if pin.selected then some value else none) =
+      [none, some value, some value, some value, some value, some value,
+        some value, none] := by
+  simp [expand, machineHalfEdges, read, isT4R, afterSelect]
+
 @[simp] theorem expand_length (intent : CycleIntent) : (expand intent).length = 8 := by
   simp [expand]
 

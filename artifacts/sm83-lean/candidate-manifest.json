@@ -5,7 +5,7 @@
   "status": "clean-room-candidate-specification",
   "license": "Apache-2.0",
   "lean_toolchain": "leanprover/lean4:4.30.0",
-  "tree_sha256": "b6312fc3c4291cfb5b10cb60d75b69a06fbe1c7b4a6ce9cc00b24ba35a13ca15",
+  "tree_sha256": "5dadd53eb98e378a86790b9aaf41e1b4917402f7ef1ce64ad71b0c800d0ad794",
   "proof_scope": {
     "ordinary_legal_base_entries": 242,
     "cb_entries": 256,
@@ -39,7 +39,7 @@
     "Sm83/FlatAdapter.lean": "040bf9a1af0673ac1458316c310a1b90f84907cc2eb4f6934dac831408c20c76",
     "Sm83/FlatMemory.lean": "9085a7c22894036486eb7db62d893eef0ea730e8b62ae60832b1abc4fbc0ec70",
     "Sm83/Functional.lean": "faf90c9a818b17a8d413f844fb49113265882a1c302efa07f692a482f147ae9f",
-    "Sm83/HalfEdge.lean": "33114bd3677dd78d7f58f0379c7be262ad5920770efb138ee116ebb556343098",
+    "Sm83/HalfEdge.lean": "3f1c2865a318dc723cf729a91253e62fc82b1286cbecd5c3fca2dc29c76bbff0",
     "Sm83/Hoare.lean": "e6f87333a8692dbd96e2cc188d40b93994053169accd2a65219aa2fe0f4a6f79",
     "Sm83/Instruction.lean": "9c0cae18df466b48ba6088bc97e359f882786064d3fbb3cb54103a61b84a1cd9",
     "Sm83/Interrupt.lean": "7793334d0a2465b34c6f58f5829c5598a1d70572eee7222fb5105d913e794298",
