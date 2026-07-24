@@ -34,6 +34,24 @@ example :
     fetched.mode = .locked (Byte.ofNat 0xD3) ∧ fetched.remaining = [] := by
   native_decide
 
+/-- IME=0 with a pending request duplicates the following byte through the HALT bug. -/
+example :
+    let halt := (Run.stepMachineCycle Pipeline.bootstrap (input 0x76)).state
+    let duplicated := (Run.stepMachineCycle halt {
+      read := .stable 0x3E, pendingInterrupts := 1 }).state
+    let immediate := (Run.stepMachineCycle duplicated (input 0x3E)).state
+    duplicated.haltBug = true ∧ duplicated.registers.pc = 1 ∧
+      duplicated.ir.map (·.address) = some 1 ∧ immediate.latches.low = 0x3E := by
+  native_decide
+
+/-- An IME=0 halted core wakes without dispatch when a request appears. -/
+example :
+    let halted : CoreState := { mode := .halted, registers := { pc := 0x1234 } }
+    let output := Run.stepMachineCycle halted { read := .stable 0, pendingInterrupts := 1 }
+    output.state.mode = .running ∧ output.state.phase = .bootstrap ∧
+      output.state.registers.pc = 0x1234 := by
+  native_decide
+
 example :
     let halted : CoreState := { mode := .halted }
     let output := Run.stepMachineCycle halted (input 0xFF)

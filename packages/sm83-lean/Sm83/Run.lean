@@ -4,6 +4,7 @@ Licensed under the Apache License, Version 2.0 (the "License").
 -/
 
 import Sm83.Pipeline
+import Sm83.Profile
 
 namespace Sm83
 
@@ -432,6 +433,19 @@ def runMachineCycles : Nat → CoreState → (CoreState → CoreInput) → CoreS
   | fuel + 1, state, respond =>
       let output := stepMachineCycle state (respond state)
       runMachineCycles fuel output.state respond
+
+/-- Relational wrapper leaves post-lock external pin levels profile-qualified. -/
+inductive MachineCycleStep (lockProfile : InvalidLockProfile) :
+    CoreState → CoreInput → CoreOutput → Prop where
+  | deterministic {state input output}
+      (notLocked : ∀ opcode, state.mode ≠ .locked opcode)
+      (equation : stepMachineCycle state input = output) :
+      MachineCycleStep lockProfile state input output
+  | invalidLock {state input output opcode}
+      (locked : state.mode = .locked opcode)
+      (unchanged : output.state = state)
+      (permitted : lockProfile.permits opcode output.intent) :
+      MachineCycleStep lockProfile state input output
 
 inductive MachineRunResult where
   | reached (state : CoreState) (intents : List CycleIntent) (cycles : Nat)

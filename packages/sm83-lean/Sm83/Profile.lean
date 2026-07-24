@@ -31,6 +31,22 @@ structure StopProfile where
 
 attribute [instance] StopProfile.decidablePermits
 
+structure InvalidLockProfile where
+  permits : Byte → CycleIntent → Prop
+  decidablePermits : ∀ opcode intent, Decidable (permits opcode intent)
+
+attribute [instance] InvalidLockProfile.decidablePermits
+
+namespace InvalidLockProfile
+
+/-- Digital semantics leave retained address/data/control levels relational after lock. -/
+def retainedLevels : InvalidLockProfile where
+  permits _ intent := intent.fetch = .none ∧ intent.commit = {} ∧
+    intent.poll = .none ∧ intent.acknowledge = 0
+  decidablePermits := by intros; infer_instance
+
+end InvalidLockProfile
+
 namespace StopProfile
 
 /-- The reviewed seven-way decision relation; unstable silicon behavior remains relational. -/
