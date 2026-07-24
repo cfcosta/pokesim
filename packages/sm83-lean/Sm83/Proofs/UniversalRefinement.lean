@@ -2898,5 +2898,225 @@ theorem cb_refinement_count : cbRefinedCount = 256 := by
 theorem normal_refinement_entry_count : ordinaryBaseCount + cbRefinedCount = 498 := by
   native_decide
 
+/-- A proof-relevant classification tying every normal base shape to the local
+universal theorem that implements it. -/
+inductive NormalBaseFamily : InstructionShape → Prop where
+  | register {shape} (family : RegisterSingleCycle shape) : NormalBaseFamily shape
+  | immediateRegister {shape} (family : ImmediateRegisterShape shape) : NormalBaseFamily shape
+  | ld16 (target : Reg16) : NormalBaseFamily (.ld16Imm target)
+  | internal16 {shape} (family : Internal16Shape shape) : NormalBaseFamily shape
+  | hlRead {shape} (family : BaseHLReadShape shape) : NormalBaseFamily shape
+  | hlWrite (source : Reg8) : NormalBaseFamily (.ld8 .atHL (.reg source))
+  | hlModify {shape} (family : BaseHLModifyShape shape) : NormalBaseFamily shape
+  | hlImmediate : NormalBaseFamily (.ld8Imm .atHL)
+  | mem16Write (destination : Mem16) : NormalBaseFamily (.ldMem16A destination)
+  | mem16Read (source : Mem16) : NormalBaseFamily (.ldAFromMem16 source)
+  | ldhCWrite : NormalBaseFamily .ldhCA
+  | ldhCRead : NormalBaseFamily .ldhAC
+  | ldhImmediate {shape} (family : LdhImmediateShape shape) : NormalBaseFamily shape
+  | absoluteA {shape} (family : AbsoluteAShape shape) : NormalBaseFamily shape
+  | pop (target : Stack16) : NormalBaseFamily (.pop target)
+  | stackStore {shape} (family : StackStoreShape shape) : NormalBaseFamily shape
+  | ldHLSP : NormalBaseFamily .ldHLFromSPPlus
+  | addSP : NormalBaseFamily .addSP
+  | jr : NormalBaseFamily .jr
+  | jrCond (condition : Condition) : NormalBaseFamily (.jrCond condition)
+  | jp : NormalBaseFamily .jp
+  | jpCond (condition : Condition) : NormalBaseFamily (.jpCond condition)
+  | call : NormalBaseFamily .call
+  | callCond (condition : Condition) : NormalBaseFamily (.callCond condition)
+  | returns {shape} (family : ReturnShape shape) : NormalBaseFamily shape
+  | retCond (condition : Condition) : NormalBaseFamily (.retCond condition)
+  | ldAbsSP : NormalBaseFamily .ldAbsSP
+
+/-- The common conclusion of every normal base family, abstracting over its
+shape-dependent physical M-cycle count. -/
+def NormalRefinesIn (before : FunctionalState) (cycles : Nat) : Prop :=
+  let logical := Functional.step before 0
+  let physical := FlatAdapter.run cycles (physicalInitial before) noInterrupts
+  Retirement.Snapshot.atBoundary physical.core =
+      Retirement.Snapshot.ofFunctional logical.state ∧
+    physical.memory = logical.state.memory ∧
+    physical.trace.dropLast = logical.trace
+
+/-- Proof-relevant coverage is complete for the exact syntactic normal domain. -/
+theorem ordinaryBaseRefined_has_family {shape : InstructionShape}
+    (covered : ordinaryBaseRefined shape = true) : Nonempty (NormalBaseFamily shape) := by
+  cases shape with
+  | nop => exact ⟨.register .nop⟩
+  | ld16Imm target => exact ⟨.ld16 target⟩
+  | ldMem16A destination => exact ⟨.mem16Write destination⟩
+  | ldAFromMem16 source => exact ⟨.mem16Read source⟩
+  | ldAbsSP => exact ⟨.ldAbsSP⟩
+  | inc16 target => exact ⟨.internal16 (.inc target)⟩
+  | dec16 target => exact ⟨.internal16 (.dec target)⟩
+  | addHL source => exact ⟨.internal16 (.addHL source)⟩
+  | inc8 target =>
+      cases target with
+      | reg register => exact ⟨.register (.inc8 register)⟩
+      | atHL => exact ⟨.hlModify .inc⟩
+  | dec8 target =>
+      cases target with
+      | reg register => exact ⟨.register (.dec8 register)⟩
+      | atHL => exact ⟨.hlModify .dec⟩
+  | ld8Imm target =>
+      cases target with
+      | reg register => exact ⟨.immediateRegister (.ld8 register)⟩
+      | atHL => exact ⟨.hlImmediate⟩
+  | accRotate operation => exact ⟨.register (.accRotate operation)⟩
+  | daa => exact ⟨.register .daa⟩
+  | cpl => exact ⟨.register .cpl⟩
+  | scf => exact ⟨.register .scf⟩
+  | ccf => exact ⟨.register .ccf⟩
+  | jr => exact ⟨.jr⟩
+  | jrCond condition => exact ⟨.jrCond condition⟩
+  | stop => simp [ordinaryBaseRefined] at covered
+  | ld8 destination source =>
+      cases destination with
+      | reg destination =>
+          cases source with
+          | reg source => exact ⟨.register (.ld8 destination source)⟩
+          | atHL => exact ⟨.hlRead (.ld8 destination)⟩
+      | atHL =>
+          cases source with
+          | reg source => exact ⟨.hlWrite source⟩
+          | atHL => simp [ordinaryBaseRefined] at covered
+  | halt => simp [ordinaryBaseRefined] at covered
+  | aluA operation source =>
+      cases source with
+      | reg register => exact ⟨.register (.aluA operation register)⟩
+      | atHL => exact ⟨.hlRead (.alu operation)⟩
+  | retCond condition => exact ⟨.retCond condition⟩
+  | ret => exact ⟨.returns .ret⟩
+  | reti => exact ⟨.returns .reti⟩
+  | pop target => exact ⟨.pop target⟩
+  | jpCond condition => exact ⟨.jpCond condition⟩
+  | jp => exact ⟨.jp⟩
+  | jpHL => exact ⟨.register .jpHL⟩
+  | ldhImmA => exact ⟨.ldhImmediate .writeA⟩
+  | ldhAImm => exact ⟨.ldhImmediate .readA⟩
+  | ldhCA => exact ⟨.ldhCWrite⟩
+  | ldhAC => exact ⟨.ldhCRead⟩
+  | ldAbsA => exact ⟨.absoluteA .writeA⟩
+  | ldAAbs => exact ⟨.absoluteA .readA⟩
+  | addSP => exact ⟨.addSP⟩
+  | ldHLFromSPPlus => exact ⟨.ldHLSP⟩
+  | ldSPHL => exact ⟨.internal16 .ldSPHL⟩
+  | di => exact ⟨.register .di⟩
+  | ei => exact ⟨.register .ei⟩
+  | callCond condition => exact ⟨.callCond condition⟩
+  | push source => exact ⟨.stackStore (.push source)⟩
+  | call => exact ⟨.call⟩
+  | aluAImm operation => exact ⟨.immediateRegister (.alu operation)⟩
+  | rst vector => exact ⟨.stackStore (.rst vector)⟩
+  | cbRotate operation target => simp [ordinaryBaseRefined] at covered
+  | bit index target => simp [ordinaryBaseRefined] at covered
+  | res index target => simp [ordinaryBaseRefined] at covered
+  | set index target => simp [ordinaryBaseRefined] at covered
+
+/-- One quantified theorem dispatches to every ordinary base local simulation;
+conditional families select their exact taken or untaken duration. -/
+theorem normal_base_refines (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (family : NormalBaseFamily shape)
+    (running : before.mode = .running) (noHaltBug : before.haltBug = false)
+    (atPC : before.memory.read before.registers.pc = opcode)
+    (decoded : Decode.base opcode = .legal shape) :
+    ∃ cycles, NormalRefinesIn before cycles := by
+  cases family with
+  | register proof => exact ⟨2, register_single_cycle_refines before opcode _ proof running noHaltBug atPC decoded⟩
+  | immediateRegister proof => exact ⟨3, immediate_register_refines before opcode _ proof running noHaltBug atPC decoded⟩
+  | ld16 target => exact ⟨4, ld16_immediate_refines before opcode target running noHaltBug atPC decoded⟩
+  | internal16 proof => exact ⟨3, internal16_refines before opcode _ proof running noHaltBug atPC decoded⟩
+  | hlRead proof => exact ⟨3, base_hl_read_refines before opcode _ proof running noHaltBug atPC decoded⟩
+  | hlWrite source => exact ⟨3, base_hl_write_refines before opcode source running noHaltBug atPC decoded⟩
+  | hlModify proof => exact ⟨4, base_hl_modify_refines before opcode _ proof running noHaltBug atPC decoded⟩
+  | hlImmediate => exact ⟨4, hl_immediate_refines before opcode running noHaltBug atPC decoded⟩
+  | mem16Write destination => exact ⟨3, mem16_write_refines before opcode destination running noHaltBug atPC decoded⟩
+  | mem16Read source => exact ⟨3, mem16_read_refines before opcode source running noHaltBug atPC decoded⟩
+  | ldhCWrite => exact ⟨3, ldh_c_write_refines before opcode running noHaltBug atPC decoded⟩
+  | ldhCRead => exact ⟨3, ldh_c_read_refines before opcode running noHaltBug atPC decoded⟩
+  | ldhImmediate proof => exact ⟨4, ldh_immediate_refines before opcode _ proof running noHaltBug atPC decoded⟩
+  | absoluteA proof => exact ⟨5, absolute_a_refines before opcode _ proof running noHaltBug atPC decoded⟩
+  | pop target => exact ⟨4, pop_refines before opcode target running noHaltBug atPC decoded⟩
+  | stackStore proof => exact ⟨5, stack_store_refines before opcode _ proof running noHaltBug atPC decoded⟩
+  | ldHLSP => exact ⟨4, ld_hl_sp_plus_refines before opcode running noHaltBug atPC decoded⟩
+  | addSP => exact ⟨5, add_sp_refines before opcode running noHaltBug atPC decoded⟩
+  | jr => exact ⟨4, jr_refines before opcode running noHaltBug atPC decoded⟩
+  | jrCond condition =>
+      cases held : Alu.conditionHolds condition before.registers.flags with
+      | false => exact ⟨3, jr_cond_untaken_refines before opcode condition running noHaltBug atPC decoded held⟩
+      | true => exact ⟨4, jr_cond_taken_refines before opcode condition running noHaltBug atPC decoded held⟩
+  | jp => exact ⟨5, jp_refines before opcode running noHaltBug atPC decoded⟩
+  | jpCond condition =>
+      cases held : Alu.conditionHolds condition before.registers.flags with
+      | false => exact ⟨4, jp_cond_untaken_refines before opcode condition running noHaltBug atPC decoded held⟩
+      | true => exact ⟨5, jp_cond_taken_refines before opcode condition running noHaltBug atPC decoded held⟩
+  | call => exact ⟨7, call_refines before opcode running noHaltBug atPC decoded⟩
+  | callCond condition =>
+      cases held : Alu.conditionHolds condition before.registers.flags with
+      | false => exact ⟨4, call_cond_untaken_refines before opcode condition running noHaltBug atPC decoded held⟩
+      | true => exact ⟨7, call_cond_taken_refines before opcode condition running noHaltBug atPC decoded held⟩
+  | returns proof => exact ⟨5, return_refines before opcode _ proof running noHaltBug atPC decoded⟩
+  | retCond condition =>
+      cases held : Alu.conditionHolds condition before.registers.flags with
+      | false => exact ⟨3, ret_cond_untaken_refines before opcode condition running noHaltBug atPC decoded held⟩
+      | true => exact ⟨6, ret_cond_taken_refines before opcode condition running noHaltBug atPC decoded held⟩
+  | ldAbsSP => exact ⟨6, ld_abs_sp_refines before opcode running noHaltBug atPC decoded⟩
+
+/-- Decoder-level closure produces a proof-relevant family witness for every
+ordinary legal base byte. -/
+theorem decoded_normal_base_has_family (opcode : Byte) (shape : InstructionShape)
+    (decoded : Decode.base opcode = .legal shape)
+    (normal : shape ≠ .halt ∧ shape ≠ .stop) : Nonempty (NormalBaseFamily shape) := by
+  apply ordinaryBaseRefined_has_family
+  have covered := every_base_byte_covered opcode
+  cases shape <;> simp_all [baseCoverageValid, ordinaryBaseRefined]
+
+/-- Proof-relevant classification for all CB decoder results. -/
+inductive NormalCbFamily : InstructionShape → Prop where
+  | register {shape} (family : CbRegisterShape shape) : NormalCbFamily shape
+  | bitHL (index : BitIndex) : NormalCbFamily (.bit index .atHL)
+  | modifyHL {shape} (family : CbModifyHL shape) : NormalCbFamily shape
+
+/-- Boolean CB closure yields a proof-relevant family witness. -/
+theorem cbRefined_has_family {shape : InstructionShape}
+    (covered : cbRefined shape = true) : Nonempty (NormalCbFamily shape) := by
+  cases shape with
+  | cbRotate operation target =>
+      cases target with
+      | reg register => exact ⟨.register (.rotate operation register)⟩
+      | atHL => exact ⟨.modifyHL (.rotate operation)⟩
+  | bit index target =>
+      cases target with
+      | reg register => exact ⟨.register (.bit index register)⟩
+      | atHL => exact ⟨.bitHL index⟩
+  | res index target =>
+      cases target with
+      | reg register => exact ⟨.register (.res index register)⟩
+      | atHL => exact ⟨.modifyHL (.res index)⟩
+  | set index target =>
+      cases target with
+      | reg register => exact ⟨.register (.set index register)⟩
+      | atHL => exact ⟨.modifyHL (.set index)⟩
+  | _ => simp [cbRefined] at covered
+
+/-- One quantified theorem dispatches to every CB local simulation. -/
+theorem normal_cb_refines (before : FunctionalState) (subopcode : Byte)
+    (shape : InstructionShape) (family : NormalCbFamily shape)
+    (running : before.mode = .running) (noHaltBug : before.haltBug = false)
+    (atPrefix : before.memory.read before.registers.pc = 0xCB)
+    (atSubopcode : before.memory.read (Word.ofNat (before.registers.pc.toNat + 1)) = subopcode)
+    (decoded : Decode.cb subopcode = shape) :
+    ∃ cycles, NormalRefinesIn before cycles := by
+  cases family with
+  | register proof => exact ⟨3, cb_register_refines before subopcode _ proof running noHaltBug atPrefix atSubopcode decoded⟩
+  | bitHL index => exact ⟨4, cb_bit_hl_refines before subopcode index running noHaltBug atPrefix atSubopcode decoded⟩
+  | modifyHL proof => exact ⟨5, cb_modify_hl_refines before subopcode _ proof running noHaltBug atPrefix atSubopcode decoded⟩
+
+/-- Every decoded CB byte has a proof-relevant family witness. -/
+theorem decoded_cb_has_family (opcode : Byte) :
+    Nonempty (NormalCbFamily (Decode.cb opcode)) :=
+  cbRefined_has_family (every_cb_byte_covered opcode)
+
 end Proofs.UniversalRefinement
 end Sm83
