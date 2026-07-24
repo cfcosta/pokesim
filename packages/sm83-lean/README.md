@@ -51,11 +51,13 @@ data into this package:
 
 ```sh
 python3 tools/check-sm83-release.py
+python3 tools/check-sm83-daa.py /path/to/mooneye-test-suite
 python3 tools/check-sm83-singlestep.py /path/to/sm83-tests
 ```
 
 The release check rejects proof escapes, undeclared public dependencies, and a
-missing license/module boundary. The corpus checks all 498,000 context-free
+missing license/module boundary. The DAA gate checks all 4,096 A/ZNHC rows
+from pinned Mooneye source. The instruction corpus checks all 498,000 context-free
 legal-instruction cases against both the
 de-overlapped functional runner and the fetched-IR physical core. It compares
 registers, flags, memory, IME, and ordered active bus transactions after

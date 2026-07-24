@@ -1,6 +1,6 @@
 name = "sm83-lean"
 version = "0.1.0"
-defaultTargets = ["Sm83", "sm83-conformance"]
+defaultTargets = ["Sm83", "sm83-conformance", "sm83-daa-conformance"]
 
 [[lean_lib]]
 name = "Sm83"
@@ -8,3 +8,7 @@ name = "Sm83"
 [[lean_exe]]
 name = "sm83-conformance"
 root = "Sm83.ConformanceMain"
+
+[[lean_exe]]
+name = "sm83-daa-conformance"
+root = "Sm83.DaaConformanceMain"
