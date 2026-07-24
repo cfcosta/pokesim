@@ -19,8 +19,11 @@ abbrev Machine := GameBoy.Adapter.Machine
 constructors require concrete checkpoint predicates in `MachineStep`. -/
 inductive LowEvent where
   | cycle (intent : CycleIntent) (readValue : Byte) (retires : Bool)
+  | enteredBattle
+  | turnAdvanced (turn : Nat)
   | terminal (witness : Episode.TerminalWitness)
   | epilogue (witness : Episode.TerminalWitness)
+  | cleanup (witness : Episode.TerminalWitness)
   | outerReturn (witness : Episode.TerminalWitness)
   deriving Repr, DecidableEq
 
@@ -29,6 +32,8 @@ address/IR/WRAM/stack predicates and proves they are reached by ROM execution. -
 structure Context where
   returnAddress : Word
   initialSP : Word
+  battleEntered : Machine → Prop
+  turnAdvanced : Machine → Nat → Prop
   terminalReached : Machine → Episode.TerminalWitness → Prop
   epilogueReached : Machine → Episode.TerminalWitness → Prop
   returned : Machine → Episode.TerminalWitness → Prop
@@ -48,20 +53,28 @@ inductive MachineStep (context : Context) : Machine → List LowEvent → Machin
       MachineStep context machine [.epilogue witness] machine
   | returnMarker {machine witness}
       (checkpoint : context.returned machine witness) :
-      MachineStep context machine [.outerReturn witness] machine
+      MachineStep context machine [.cleanup witness, .outerReturn witness] machine
+
+/-- Semantic projection of one physical bus cycle. Unlisted bus traffic is
+retained in the machine proof but hidden from the battle protocol. -/
+def projectCycleObservation (intent : CycleIntent) (value : Byte) :
+    Option Episode.Observation :=
+  if intent.control = .read && intent.address = 0xFF04 then
+    some (.rng "rDIV" value.toNat.toUInt8)
+  else if intent.control = .read && intent.address = 0xFF00 then
+    some (.input "rP1" value.toNat.toUInt8)
+  else if intent.control = .read && intent.address = 0xFF01 then
+    some (.input "rSB" value.toNat.toUInt8)
+  else none
 
 /-- Processor/device events projected into the independent battle protocol. -/
 def projectEvent : LowEvent → Option Episode.Event
-  | .cycle intent value _ =>
-      if intent.control = .read && intent.address = 0xFF04 then
-        some (.observed (.rng "rDIV" value.toNat.toUInt8))
-      else if intent.control = .read && intent.address = 0xFF00 then
-        some (.observed (.input "rP1" value.toNat.toUInt8))
-      else if intent.control = .read && intent.address = 0xFF01 then
-        some (.observed (.input "rSB" value.toNat.toUInt8))
-      else none
+  | .cycle intent value _ => (projectCycleObservation intent value).map .observed
+  | .enteredBattle => some .enteredBattle
+  | .turnAdvanced turn => some (.turnAdvanced turn)
   | .terminal witness => some (.terminal witness)
   | .epilogue witness => some (.epilogue witness)
+  | .cleanup witness => some (.cleanup witness)
   | .outerReturn witness => some (.outerReturn witness)
 
 /-- Rank used by the physical-to-driver stuttering proof. Successor retirement
@@ -1449,5 +1462,220 @@ theorem useFinite {context : Context} (localProof : LocalObligation context)
     (HighFinal := Episode.Final)
     (outcomeRel := Eq)
     localProof (finalRefinement context) initial execution returned
+
+/-! ## Continuous proof-carrying driver
+
+The untracked `MachineStep` relation above exposes the original local obligation.
+The following monitor makes the protocol phase and timing witnesses explicit,
+without changing the physical machine. Each monitor transition still requires a
+concrete adapter equation or ROM checkpoint. This removes ephemeral-PC marker
+problems and gives a total establish/preserve/use theorem. -/
+
+structure TrackedMachine where
+  machine : Machine
+  phase : Episode.Phase := .initializing
+  turn : Nat := 0
+  machineCycles : Nat := 0
+  machineInstructions : Nat := 0
+  deriving Repr, DecidableEq
+
+@[inline] def TrackedMachine.abstract (state : TrackedMachine) : Episode.State :=
+  { phase := state.phase
+    turn := state.turn
+    machineCycles := state.machineCycles
+    machineInstructions := state.machineInstructions }
+
+@[inline] def TrackedMachine.active (state : TrackedMachine) : Prop :=
+  ∀ witness, state.phase ≠ .returned witness
+
+inductive TrackedStep (context : Context) :
+    TrackedMachine → List LowEvent → TrackedMachine → Prop where
+  | cycle {before output wake}
+      (active : before.active)
+      (equation : GameBoy.Adapter.stepMachineCycle before.machine wake = output) :
+      TrackedStep context before
+        [.cycle output.cpuOutput.intent output.cpuInput.read.fold
+          (Retirement.atRetirement before.machine.core)]
+        { before with
+          machine := output.machine
+          machineCycles := before.machineCycles + 1
+          machineInstructions := before.machineInstructions +
+            if Retirement.atRetirement before.machine.core then 1 else 0 }
+  | enterBattle {before}
+      (phase : before.phase = .initializing)
+      (checkpoint : context.battleEntered before.machine) :
+      TrackedStep context before [.enteredBattle]
+        { before with phase := .battling }
+  | advanceTurn {before}
+      (phase : before.phase = .battling)
+      (checkpoint : context.turnAdvanced before.machine (before.turn + 1)) :
+      TrackedStep context before [.turnAdvanced (before.turn + 1)]
+        { before with turn := before.turn + 1 }
+  | terminalMarker {before witness}
+      (phase : before.phase = .battling)
+      (turn : witness.turn = before.turn)
+      (checkpoint : context.terminalReached before.machine witness) :
+      TrackedStep context before [.terminal witness]
+        { before with phase := .ending witness false }
+  | epilogueMarker {before witness}
+      (phase : before.phase = .ending witness false)
+      (checkpoint : context.epilogueReached before.machine witness) :
+      TrackedStep context before [.epilogue witness]
+        { before with phase := .ending witness true }
+  | returnMarker {before witness}
+      (phase : before.phase = .ending witness true)
+      (checkpoint : context.returned before.machine witness) :
+      TrackedStep context before [.cleanup witness, .outerReturn witness]
+        { before with phase := .returned witness }
+
+/-- The full driver invariant is exact equality with the independent episode
+state. The physical machine remains present on the low side and can only move by
+`Adapter.stepMachineCycle`. -/
+def TrackedHolds (low : TrackedMachine) (high : Episode.State) : Prop :=
+  low.abstract = high
+
+@[simp] theorem tracked_establish (machine : Machine) :
+    TrackedHolds ({ machine } : TrackedMachine)
+      ({ phase := .initializing } : Episode.State) := rfl
+
+/-- Every continuously monitored physical cycle or justified ROM checkpoint is
+matched by exactly one independent protocol transition. -/
+theorem tracked_directSimulation (context : Context) :
+    DirectSimulation (TrackedStep context) Episode.Step TrackedHolds projectEvent := by
+  intro lowBefore lowAfter highBefore lowTrace related step
+  rw [← related]
+  cases step with
+  | cycle active equation =>
+      refine ⟨_, ?_, rfl⟩
+      apply Episode.Step.machineCycle
+      simpa [TrackedMachine.active, Episode.active, TrackedMachine.abstract] using active
+  | enterBattle phase checkpoint =>
+      refine ⟨_, ?_, rfl⟩
+      simpa [TrackedMachine.abstract, projectTrace, projectEvent, phase] using
+        (Episode.Step.initialize (state := lowBefore.abstract) (by simpa [TrackedMachine.abstract] using phase))
+  | advanceTurn phase checkpoint =>
+      refine ⟨_, ?_, rfl⟩
+      simpa [TrackedMachine.abstract, projectTrace, projectEvent, phase] using
+        (Episode.Step.nextTurn (state := lowBefore.abstract) (by simpa [TrackedMachine.abstract] using phase))
+  | terminalMarker phase turn checkpoint =>
+      refine ⟨_, ?_, rfl⟩
+      simpa [TrackedMachine.abstract, projectTrace, projectEvent, phase] using
+        (Episode.Step.finish (state := lowBefore.abstract)
+          (witness := ‹Episode.TerminalWitness›)
+          (by simpa [TrackedMachine.abstract] using phase)
+          (by simpa [TrackedMachine.abstract] using turn))
+  | epilogueMarker phase checkpoint =>
+      refine ⟨_, ?_, rfl⟩
+      simpa [TrackedMachine.abstract, projectTrace, projectEvent, phase] using
+        (Episode.Step.epilogue (state := lowBefore.abstract)
+          (witness := ‹Episode.TerminalWitness›)
+          (by simpa [TrackedMachine.abstract] using phase))
+  | returnMarker phase checkpoint =>
+      refine ⟨_, ?_, rfl⟩
+      simpa [TrackedMachine.abstract, projectTrace, projectEvent, phase] using
+        (Episode.Step.returnOuter (state := lowBefore.abstract)
+          (witness := ‹Episode.TerminalWitness›)
+          (by simpa [TrackedMachine.abstract] using phase))
+
+inductive TrackedFinal : TrackedMachine → Episode.TerminalWitness → Prop where
+  | returned {state witness}
+      (phase : state.phase = .returned witness) : TrackedFinal state witness
+
+/-- Exact protocol equality makes outer-return outcome refinement immediate. -/
+theorem trackedFinalRefinement :
+    FinalRefinement TrackedHolds TrackedFinal Episode.Final Eq := by
+  intro low high witness related final
+  cases final with
+  | returned phase =>
+      refine ⟨witness, .returned ?_, rfl⟩
+      rw [← related]
+      simpa [TrackedMachine.abstract] using phase
+
+/-- Establish/preserve/use for every finite continuous physical execution. No
+fuel result can inhabit `TrackedFinal`; completion requires the justified outer
+return marker with the original terminal witness. -/
+theorem tracked_useFinite {context : Context}
+    {lowInitial lowFinal : TrackedMachine} {highInitial : Episode.State}
+    (initial : TrackedHolds lowInitial highInitial)
+    {trace : List LowEvent} {witness : Episode.TerminalWitness}
+    (execution : TraceSteps (TrackedStep context) lowInitial trace lowFinal)
+    (returned : TrackedFinal lowFinal witness) :
+    ∃ highFinal highWitness,
+      TraceSteps Episode.Step highInitial (projectTrace projectEvent trace) highFinal ∧
+      Episode.Final highFinal highWitness ∧ witness = highWitness := by
+  obtain ⟨highFinal, highExecution, related⟩ :=
+    DirectSimulation.liftSteps (tracked_directSimulation context) initial execution
+  obtain ⟨highWitness, final, outcome⟩ := trackedFinalRefinement related returned
+  exact ⟨highFinal, highWitness, highExecution, final, outcome⟩
+
+/-- Canonical entry assumptions establish both the processor safety relation
+and the exact tracked protocol relation. -/
+theorem establishTracked {context : Context} {low : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes low.memory.cartridge.rom}
+    (assumptions : EntryAssumptions context low bytes) :
+    Holds context low ({ phase := .initializing } : Episode.State) ∧
+      TrackedHolds ({ machine := low } : TrackedMachine)
+        ({ phase := .initializing } : Episode.State) :=
+  ⟨establish assumptions, tracked_establish low⟩
+
+/-- Full canonical establish/preserve/use theorem from `AtInitOpponentReady` to
+the witnessed outer return. Every physical transition in `execution` is an
+actual composed adapter cycle or a checkpoint justified by `context`. -/
+theorem canonical_useFinite {context : Context} {low : Machine} {final : TrackedMachine}
+    {bytes : Rom.Closure.RequiredEntryBytes low.memory.cartridge.rom}
+    (assumptions : EntryAssumptions context low bytes)
+    {trace : List LowEvent} {witness : Episode.TerminalWitness}
+    (execution : TraceSteps (TrackedStep context)
+      ({ machine := low } : TrackedMachine) trace final)
+    (returned : TrackedFinal final witness) :
+    ∃ highFinal highWitness,
+      TraceSteps Episode.Step ({ phase := .initializing } : Episode.State)
+        (projectTrace projectEvent trace) highFinal ∧
+      Episode.Final highFinal highWitness ∧ witness = highWitness := by
+  have entry := establishTracked assumptions
+  exact tracked_useFinite entry.2 execution returned
+
+/-- Whole finite/divergent/reactive behavior lifting. As required for semantic
+observation projection, preservation of infinitely recurring reactions remains
+an explicit adapter/environment premise. -/
+theorem tracked_useBehavior {context : Context}
+    (reactions : PreservesReaction (TrackedStep context) Episode.Step
+      TrackedHolds projectEvent (tracked_directSimulation context))
+    {lowInitial : TrackedMachine} {highInitial : Episode.State}
+    (initial : TrackedHolds lowInitial highInitial)
+    (behavior : MachineBehavior (TrackedStep context) TrackedFinal lowInitial) :
+    ∃ highBehavior : MachineBehavior Episode.Step Episode.Final highInitial,
+      BehaviorRefines projectEvent Eq behavior highBehavior := by
+  exact DirectSimulation.liftBehavior
+    (LowState := TrackedMachine)
+    (HighState := Episode.State)
+    (LowEvent := LowEvent)
+    (HighEvent := Episode.Event)
+    (LowStep := TrackedStep context)
+    (HighStep := Episode.Step)
+    (Related := TrackedHolds)
+    (LowOutcome := Episode.TerminalWitness)
+    (HighOutcome := Episode.TerminalWitness)
+    (LowFinal := TrackedFinal)
+    (HighFinal := Episode.Final)
+    (outcomeRel := Eq)
+    projectEvent (tracked_directSimulation context) trackedFinalRefinement
+    reactions initial behavior
+
+/-- Whole-behavior canonical entry theorem. Silent divergence is lifted
+unconditionally; reactive divergence uses the explicit reaction-preservation
+premise rather than treating raw physical cycles as semantic observations. -/
+theorem canonical_useBehavior {context : Context} {low : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes low.memory.cartridge.rom}
+    (assumptions : EntryAssumptions context low bytes)
+    (reactions : PreservesReaction (TrackedStep context) Episode.Step
+      TrackedHolds projectEvent (tracked_directSimulation context))
+    (behavior : MachineBehavior (TrackedStep context) TrackedFinal
+      ({ machine := low } : TrackedMachine)) :
+    ∃ highBehavior : MachineBehavior Episode.Step Episode.Final
+        ({ phase := .initializing } : Episode.State),
+      BehaviorRefines projectEvent Eq behavior highBehavior := by
+  have entry := establishTracked assumptions
+  exact tracked_useBehavior reactions entry.2 behavior
 
 end Battle.DriverInvariant

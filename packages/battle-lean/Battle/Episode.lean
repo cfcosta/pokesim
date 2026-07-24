@@ -45,6 +45,8 @@ inductive Phase where
 structure State where
   phase : Phase := .initializing
   turn : Nat := 0
+  /-- Physical M-cycles, distinct from retired architectural instructions. -/
+  machineCycles : Nat := 0
   machineInstructions : Nat := 0
   deriving Repr, DecidableEq
 
@@ -75,6 +77,14 @@ def active (state : State) : Prop :=
   ∀ witness, state.phase ≠ .returned witness
 
 inductive Step : State → List Event → State → Prop where
+  /-- One physical processor M-cycle. Its optional semantic observation is the
+  only visible event; retirement and timing remain separate counters. -/
+  | machineCycle {state} (retired : Bool) (observation : Option Observation)
+      (active : active state) :
+      Step state (observation.map Event.observed).toList
+        { state with
+          machineCycles := state.machineCycles + 1
+          machineInstructions := state.machineInstructions + if retired then 1 else 0 }
   | initialize {state}
       (phase : state.phase = .initializing) :
       Step state [.enteredBattle] { state with phase := .battling }
@@ -121,6 +131,7 @@ theorem returned_step_witness {before after : State} {trace : List Event}
     before.phase = .ending witness true ∧
       trace = [.cleanup witness, .outerReturn witness] := by
   cases step with
+  | machineCycle retired observation active => exact False.elim (active witness returned)
   | instruction active => exact False.elim (active witness returned)
   | observe active => exact False.elim (active witness returned)
   | «initialize» => simp_all

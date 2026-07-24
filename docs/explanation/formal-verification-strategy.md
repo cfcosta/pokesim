@@ -136,6 +136,8 @@ Machine instructions do not align one-to-one with high-level functions. The corr
 
 Suggested checkpoints are explicit `InitOpponent` entry, completed mode-specific loading, action selection, fixed actions, actor execution, completed move, completed residual, replacement, a witnessed `StartBattle` terminal edge, post-`EndOfBattle` cleanup, and the outer restored return.
 
+`Battle.DriverInvariant.TrackedMachine` now carries proof-only protocol phase, turn, M-cycle, and retirement counters beside the unchanged physical machine. `tracked_directSimulation` proves every adapter cycle or justified checkpoint marker matches one independent `Episode.Step`; `canonical_useFinite` and `canonical_useBehavior` establish, preserve, and use that invariant through the witnessed outer return. These theorems do not assume checkpoint reachability: the remaining ROM proof must show the canonical instruction stream reaches each marker with the required witness.
+
 The terminal edge includes its control-flow witness and moves the high-level machine into an `ending` phase. It is not final `done`: Pay Day, evolution cancellation/move learning, cleanup, restored caller fields, and bank/stack/carry return remain. `EndOfBattle` clears `wEscapedFromBattle`, mode, and opponent fields, while several terminal paths share raw result zero, so no final-WRAM-only decoder can recover every cause. Simultaneous active faint is ordering metadata and may be nonterminal when reserves exist. The epilogue is proved as a separate composition from the witnessed checkpoint.
 
 The relation includes the current battle phase. This prevents a byte with two WRAM-union meanings from being decoded under the wrong interpretation.
