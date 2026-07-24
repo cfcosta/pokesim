@@ -1,6 +1,13 @@
 {"version": "1.2.0",
  "packagesDir": ".lake/packages",
- "packages": [],
+ "packages":
+ [{"type": "path",
+   "scope": "",
+   "name": "«sm83-lean»",
+   "manifestFile": "lake-manifest.json",
+   "inherited": false,
+   "dir": "../sm83-lean",
+   "configFile": "lakefile.toml"}],
  "name": "«battle-lean»",
  "lakeDir": ".lake",
  "fixedToolchain": false}

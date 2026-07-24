@@ -2,5 +2,10 @@ name = "battle-lean"
 version = "0.1.0"
 defaultTargets = ["Battle"]
 
+# The verified SM83 core is the L0 oracle the differential harness drives.
+[[require]]
+name = "sm83-lean"
+path = "../sm83-lean"
+
 [[lean_lib]]
 name = "Battle"
