@@ -20,6 +20,7 @@
 | Progression arithmetic | `Battle.Full.Progression` | Six growth curves, level inversion, divided awards, sequential boosts, stat EXP saturation, DV/stat formulas, learning/evolution requests |
 | Move learning | `Battle.Full.Learning` | Duplicate/empty-slot paths, try/forget/abandon prompts, cancellation, HM deletion rejection, base PP installation |
 | Money/epilogue | `Battle.Full.Money` | Three-byte BCD saturation, Pay Day, trainer prize, raw-result and link evolution guards |
+| Evolution protocol | `Battle.Full.Evolution` | Flagged slot order, level/item/trade matching, wild item-alias input, cancellation, stat/HP update, nested learning |
 | Turn composition | `Battle.Full.Engine` | Actions, ordering, status, damage/effects, items, residuals, faint/replacement, terminal witness |
 | RL protocol | `Battle.Full.Environment` | Dynamic proof-carrying parties, observations, legal actions, external-random requests |
 | Self-play | `Battle.Full.SelfPlay` | Independent policy RNGs, nested continuations, finite/open behavior distinction |
@@ -49,9 +50,8 @@ The following remain outside `ModelCoverage`:
 
 - decoded-ROM refinement for battle routines and effect handlers;
 - integration of the modeled traded-Pokémon disobedience state machine into turn composition;
-- integration of modeled EXP/stat progression and nested move learning with
-  participation flags, accepted/cancelled evolution, and complete post-battle
-  request sequencing;
+- integration of modeled EXP/stat progression, move learning, and evolution
+  protocols with battle participation flags and complete post-battle sequencing;
 - exact presentation/menu traces and selection-scratch behavior;
 - continuous fetched-IR execution from battle entry through cleanup and return;
 - full hardware assumptions for non-link `Random`, waits, audio, serial, and

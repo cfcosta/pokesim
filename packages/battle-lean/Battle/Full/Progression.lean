@@ -185,15 +185,18 @@ def award (rate : GrowthRate) (species : Data.SpeciesData) (source : AwardSource
       else [] }
 
 inductive EvolutionTrigger where
-  | afterBattle
+  | afterBattle (aliasedItem : Option UInt8 := none)
   | item (item : UInt8)
   | trade
   deriving Repr, DecidableEq, BEq
 
 private def methodMatches (level : UInt8) (trigger : EvolutionTrigger) :
     Data.Progression.EvolutionMethod → Bool
-  | .level required => trigger == .afterBattle && level ≥ required
-  | .item item minimum => trigger == .item item && level ≥ minimum
+  | .level required => (match trigger with | .afterBattle _ => true | _ => false) && level ≥ required
+  | .item item minimum => (match trigger with
+      | .item used => used == item
+      | .afterBattle (some used) => used == item
+      | _ => false) && level ≥ minimum
   | .trade minimum => trigger == .trade && level ≥ minimum
 
 /-- First matching evolution row, preserving source order. `canEvolve` is the
