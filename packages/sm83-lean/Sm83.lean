@@ -22,6 +22,7 @@ import Sm83.Interrupt
 import Sm83.Registers
 import Sm83.Relation
 import Sm83.Reset
+import Sm83.Retirement
 import Sm83.Proofs.Arithmetic
 import Sm83.Proofs.Cycle
 import Sm83.Proofs.Decode
