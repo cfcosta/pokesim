@@ -120,6 +120,8 @@ evolution/learnset pointers, and 190 internal-index order bytes.
 `Battle.Rom.Tables` supplies lossless universal row codecs and canonical decoders.
 It follows the variable evolution payloads and reconstructs the 191 internal-slot
 learn pools from level-one moves, level-up moves, TM/HM flags, and transitive
-pre-evolutions. `RequiredTableBytes` exposes the caller-supplied proof boundary;
-the temporary ROM fixture checks agreement with all independently authored
-`Battle.Data` arrays.
+pre-evolutions. It also certifies internal-index growth-rate IDs, initial moves,
+exact level/item/trade evolution records, and ordered level/move pairs against
+`Battle.Data.Progression`. `RequiredTableBytes` exposes the caller-supplied proof
+boundary; the temporary ROM fixture checks agreement with all independently
+authored `Battle.Data` arrays.

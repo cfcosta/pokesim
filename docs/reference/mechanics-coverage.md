@@ -71,9 +71,9 @@ The project has moved beyond discovery for the processor, canonical build, initi
 | Trainer action AI | [47 count + pointer rows](trainer-ai-dispatch.md) | `pokered/data/trainers/ai_pointers.asm` | Discovered |
 | Special trainer moves | lone/team patches | `pokered/data/trainers/special_moves.asm` | Discovered |
 | Learnsets/evolutions | 190 pointers + variable payloads | `pokered/data/pokemon/evos_moves.asm` | ROM-certified |
-| Growth rates | 6 coefficient records | `pokered/data/growth_rates.asm` | Discovered |
+| Growth rates | 6 coefficient records | `pokered/data/growth_rates.asm` | ROM-certified |
 | Battle item dispatch | [83 ordinary entries](item-dispatch.md) before TM/HM IDs | `pokered/engine/items/item_effects.asm` | Discovered |
-| Evolution entries | level/item/trade records followed by moves | `pokered/data/pokemon/evos_moves.asm` | Discovered |
+| Evolution entries | level/item/trade records followed by moves | `pokered/data/pokemon/evos_moves.asm` | ROM-certified |
 | Bag/current box layouts | ordered items and capture destination | WRAM structures and inventory/box helpers | Discovered |
 | Internal-to-Pokédex map | 190 entries including zero/MissingNo. slots | `pokered/data/pokemon/dex_order.asm` | ROM-certified |
 

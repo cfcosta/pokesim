@@ -4,6 +4,7 @@ Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.Full.State
 import Battle.Data.Species
+import Battle.Data.Progression
 
 /-!
 # Experience and stat progression
@@ -18,6 +19,14 @@ namespace Battle.Full.Progression
 inductive GrowthRate where
   | mediumFast | slightlyFast | slightlySlow | mediumSlow | fast | slow
   deriving Repr, DecidableEq, BEq
+
+def GrowthRate.ofId : UInt8 → GrowthRate
+  | 0 => .mediumFast
+  | 1 => .slightlyFast
+  | 2 => .slightlySlow
+  | 3 => .mediumSlow
+  | 4 => .fast
+  | _ => .slow
 
 structure StatExp where
   hp : UInt16
@@ -150,7 +159,7 @@ def calculateStats (data : Data.SpeciesData) (mon : MonState) (statExp : StatExp
 /-- Award one living flagged recipient. Callers perform gain-flag/fainted
 filtering and supply the species growth row. -/
 def award (rate : GrowthRate) (species : Data.SpeciesData) (source : AwardSource)
-    (context : AwardContext) (mon : PersistentMon) : Result :=
+    (context : AwardContext) (mon : PersistentMon) (partyIndex : Nat := 0) : Result :=
   let divided := divideSource source context.recipients
   let statExp : StatExp :=
     { hp := saturatingAdd16 mon.statExp.hp divided.baseHp
@@ -166,10 +175,51 @@ def award (rate : GrowthRate) (species : Data.SpeciesData) (source : AwardSource
   let recalculated := calculateStats species mon.battle statExp newLevel
   let hpDelta := recalculated.maxHp - mon.battle.maxHp
   let battle := { recalculated with hp := mon.battle.hp + hpDelta }
+  let row := Data.Progression.rows.getD mon.battle.species.toNat { evolutions := #[], levelMoves := #[] }
+  let learned := row.levelMoves.find? (fun entry => entry.level == newLevel)
   { mon := { mon with battle, experience, statExp }
     expGained := gained
     levelsGained := newLevel - oldLevel
-    requests := [] }
+    requests := if newLevel != oldLevel then
+      learned.map (fun entry => [.learnMove partyIndex entry.move]) |>.getD []
+      else [] }
+
+inductive EvolutionTrigger where
+  | afterBattle
+  | item (item : UInt8)
+  | trade
+  deriving Repr, DecidableEq, BEq
+
+private def methodMatches (level : UInt8) (trigger : EvolutionTrigger) :
+    Data.Progression.EvolutionMethod → Bool
+  | .level required => trigger == .afterBattle && level ≥ required
+  | .item item minimum => trigger == .item item && level ≥ minimum
+  | .trade minimum => trigger == .trade && level ≥ minimum
+
+/-- First matching evolution row, preserving source order. `canEvolve` is the
+post-battle participation/level-up flag maintained by the caller. -/
+def evolutionTarget? (mon : PersistentMon) (trigger : EvolutionTrigger)
+    (canEvolve : Bool := true) : Option SpeciesId :=
+  if !canEvolve then none
+  else
+    let row := Data.Progression.rows.getD mon.battle.species.toNat
+      { evolutions := #[], levelMoves := #[] }
+    (row.evolutions.find? fun evolution => methodMatches mon.battle.level trigger evolution.method).map
+      Data.Progression.Evolution.target
+
+/-- Apply accepted evolution: identity, base types/catch rate and calculated
+stats change; current HP receives the Max-HP delta and moves remain intact. -/
+def evolve (mon : PersistentMon) (target : SpeciesId) : PersistentMon :=
+  let data := Data.speciesData target
+  let oldMax := mon.battle.maxHp
+  let changed := { mon.battle with
+    species := target
+    type1 := data.type1
+    type2 := data.type2
+    catchRate := data.catchRate }
+  let battle := calculateStats data changed mon.statExp mon.battle.level
+  let battle := { battle with hp := mon.battle.hp + (battle.maxHp - oldMax) }
+  { mon with battle }
 
 /-- Medium-fast level 100 is exactly one million EXP. -/
 example : experienceAtLevel .mediumFast 100 = 1000000 := by native_decide

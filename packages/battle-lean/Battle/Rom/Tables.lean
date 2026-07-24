@@ -6,6 +6,7 @@ import Battle.Rom.Closure
 import Battle.Data.Moves
 import Battle.Data.Species
 import Battle.Data.Learnsets
+import Battle.Data.Progression
 
 /-!
 # Canonical ROM battle-data decoders
@@ -280,12 +281,18 @@ def evosMovesPointersInRange (rom : Array Sm83.Byte) : Bool :=
 /-! ## Evolution/level-up payloads -/
 
 structure Evolution where
+  method : Data.Progression.EvolutionMethod
   target : UInt8
+  deriving Repr, DecidableEq, BEq
+
+structure LevelMove where
+  level : UInt8
+  move : UInt8
   deriving Repr, DecidableEq, BEq
 
 structure EvosMoves where
   evolutions : List Evolution
-  levelMoves : List UInt8
+  levelMoves : List LevelMove
   deriving Repr, DecidableEq, BEq
 
 private def parseEvolutions (rom : Array Sm83.Byte) : Nat → Nat →
@@ -297,27 +304,43 @@ private def parseEvolutions (rom : Array Sm83.Byte) : Nat → Nat →
         some ([], offset + 1)
       else if tag == 1 then
         match parseEvolutions rom (offset + 3) fuel with
-        | some (tail, next) => some ({ target := byteAt rom (offset + 2) } :: tail, next)
+        | some (tail, next) =>
+            let evolution : Evolution :=
+              { method := .level (byteAt rom (offset + 1))
+                target := byteAt rom (offset + 2) }
+            some (evolution :: tail, next)
         | none => none
       else if tag == 2 then
         match parseEvolutions rom (offset + 4) fuel with
-        | some (tail, next) => some ({ target := byteAt rom (offset + 3) } :: tail, next)
+        | some (tail, next) =>
+            let evolution : Evolution :=
+              { method := .item (byteAt rom (offset + 1)) (byteAt rom (offset + 2))
+                target := byteAt rom (offset + 3) }
+            some (evolution :: tail, next)
         | none => none
       else if tag == 3 then
         match parseEvolutions rom (offset + 3) fuel with
-        | some (tail, next) => some ({ target := byteAt rom (offset + 2) } :: tail, next)
+        | some (tail, next) =>
+            let evolution : Evolution :=
+              { method := .trade (byteAt rom (offset + 1))
+                target := byteAt rom (offset + 2) }
+            some (evolution :: tail, next)
         | none => none
       else
         none
 
-private def parseLevelMoves (rom : Array Sm83.Byte) : Nat → Nat → Option (List UInt8)
+private def parseLevelMoves (rom : Array Sm83.Byte) : Nat → Nat → Option (List LevelMove)
   | _, 0 => none
   | offset, fuel + 1 =>
       if byteAt rom offset == 0 then
         some []
       else
         match parseLevelMoves rom (offset + 2) fuel with
-        | some tail => some (byteAt rom (offset + 1) :: tail)
+        | some tail =>
+            let levelMove : LevelMove :=
+              { level := byteAt rom offset
+                move := byteAt rom (offset + 1) }
+            some (levelMove :: tail)
         | none => none
 
 def decodeEvosMovesAt (rom : Array Sm83.Byte) (pointer : EvosMovesPointer) :
@@ -380,7 +403,7 @@ private def directMovePools (rom : Array Sm83.Byte) : Array (List UInt8) :=
           else match evos[internal - 1]? with
             | some (some entry) => entry.levelMoves
             | _ => []
-        normalizeMoves (row.initialMoves ++ levelMoves ++ row.tmhmMoves)).toArray
+        normalizeMoves (row.initialMoves ++ levelMoves.map LevelMove.move ++ row.tmhmMoves)).toArray
 
 private def evolutionEdges (rom : Array Sm83.Byte) : List (Nat × Nat) :=
   (decodeEvosMoves rom).toList.zipIdx.flatMap fun indexed =>
@@ -405,6 +428,41 @@ def decodeLearnPools (rom : Array Sm83.Byte) : Array (Array UInt8) :=
   let edges := evolutionEdges rom
   ((List.range (TableLayout.speciesIndexCount + 1)).map fun internal =>
     (inheritedPool direct edges internal TableLayout.speciesIndexCount).toArray).toArray
+
+/-- Growth-rate IDs re-keyed from Pokédex rows to internal species IDs. -/
+def decodeGrowthRates (rom : Array Sm83.Byte) : Array UInt8 :=
+  let rows := decodeBaseStatsRows rom
+  let order := decodePokedexOrder rom
+  ((List.range (TableLayout.speciesIndexCount + 1)).map fun internal =>
+    match rowForInternal rows order internal with
+    | none => 0
+    | some row => row.growthRate).toArray
+
+/-- Nonblank initial moves re-keyed to internal species IDs. -/
+def decodeInitialMoves (rom : Array Sm83.Byte) : Array (Array UInt8) :=
+  let rows := decodeBaseStatsRows rom
+  let order := decodePokedexOrder rom
+  ((List.range (TableLayout.speciesIndexCount + 1)).map fun internal =>
+    match rowForInternal rows order internal with
+    | none => #[]
+    | some row => row.initialMoves.filter (fun move => move != 0) |>.toArray).toArray
+
+private def toProgressionEvolution (evolution : Evolution) : Data.Progression.Evolution :=
+  { method := evolution.method, target := evolution.target }
+
+private def toProgressionMove (move : LevelMove) : Data.Progression.LevelMove :=
+  { level := move.level, move := move.move }
+
+/-- Exact evolution methods and level/move pairs, retaining pointer-table order. -/
+def decodeProgressionRows (rom : Array Sm83.Byte) : Array Data.Progression.Row :=
+  let decoded := decodeEvosMoves rom
+  ((List.range (TableLayout.speciesIndexCount + 1)).map fun internal =>
+    if internal == 0 then { evolutions := #[], levelMoves := #[] }
+    else match decoded.getD (internal - 1) none with
+      | none => { evolutions := #[], levelMoves := #[] }
+      | some row =>
+          { evolutions := (row.evolutions.map toProgressionEvolution).toArray
+            levelMoves := (row.levelMoves.map toProgressionMove).toArray }).toArray
 
 /-! ## Caller-supplied proof certificate -/
 
@@ -433,15 +491,22 @@ structure RequiredTableBytes (rom : Array Sm83.Byte) : Prop where
       (decodeEvosMovesPointers rom).toList.flatMap EvosMovesPointer.encodeList
   evosMovesPointers : evosMovesPointersInRange rom = true
   learnPools : decodeLearnPools rom = Data.learnPools
+  growthRates : decodeGrowthRates rom = Data.Progression.growthRates
+  initialMoves : decodeInitialMoves rom = Data.Progression.initialMoves
+  progressionRows : decodeProgressionRows rom = Data.Progression.rows
 
 /-- The single certificate exposes ROM agreement to all model consumers. -/
 theorem certified_tables {rom : Array Sm83.Byte} (certificate : RequiredTableBytes rom) :
     decodeMoves rom = Data.moves ∧
       decodeBaseStats rom = Data.baseStats ∧
       decodePokedexOrder rom = Data.pokedexOrder ∧
-      decodeLearnPools rom = Data.learnPools :=
+      decodeLearnPools rom = Data.learnPools ∧
+      decodeGrowthRates rom = Data.Progression.growthRates ∧
+      decodeInitialMoves rom = Data.Progression.initialMoves ∧
+      decodeProgressionRows rom = Data.Progression.rows :=
   ⟨certificate.moves, certificate.baseStats, certificate.pokedexOrder,
-    certificate.learnPools⟩
+    certificate.learnPools, certificate.growthRates, certificate.initialMoves,
+    certificate.progressionRows⟩
 
 /-- Runtime version used only by the temporary-ROM integration fixture. -/
 def agreesWithAuthored (rom : Array Sm83.Byte) : Bool :=
@@ -450,6 +515,9 @@ def agreesWithAuthored (rom : Array Sm83.Byte) : Bool :=
     decodeBaseStats rom == Data.baseStats &&
     decodePokedexOrder rom == Data.pokedexOrder &&
     evosMovesPointersInRange rom &&
-    decodeLearnPools rom == Data.learnPools
+    decodeLearnPools rom == Data.learnPools &&
+    decodeGrowthRates rom == Data.Progression.growthRates &&
+    decodeInitialMoves rom == Data.Progression.initialMoves &&
+    decodeProgressionRows rom == Data.Progression.rows
 
 end Battle.Rom.Tables

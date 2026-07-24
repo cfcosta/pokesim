@@ -6,6 +6,7 @@ import Battle.Full.SelfPlay
 import Battle.Full.Capture
 import Battle.Full.Safari
 import Battle.Full.TrainerController
+import Battle.Full.Progression
 import Battle.BugCompatibility
 
 /-!
@@ -33,6 +34,8 @@ structure ModelCoverage : Prop where
     RL.teamLegal RL.genDex .canonical state.enemyReset.1 = true
   captureBallDomain :
     [1, 2, 3, 4, 8].all (fun item => (Capture.Ball.ofItem item).isSome) = true
+  progressionDomains : Data.Progression.growthRates.size = 191 ∧
+    Data.Progression.initialMoves.size = 191 ∧ Data.Progression.rows.size = 191
 
 /-- Dispatch, generator, and externally audited bug closure for the full model. -/
 theorem model_coverage : ModelCoverage :=
@@ -42,6 +45,8 @@ theorem model_coverage : ModelCoverage :=
     externalBugs := BugCompatibility.all_external_bugs_supported
     generatedPlayerLegal := Environment.player_reset_legal
     generatedEnemyLegal := Environment.enemy_reset_legal
-    captureBallDomain := by native_decide }
+    captureBallDomain := by native_decide
+    progressionDomains := ⟨Data.Progression.growthRates_size,
+      Data.Progression.initialMoves_size, Data.Progression.rows_size⟩ }
 
 end Battle.Full.Support
