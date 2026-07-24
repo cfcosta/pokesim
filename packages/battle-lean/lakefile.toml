@@ -1,0 +1,6 @@
+name = "battle-lean"
+version = "0.1.0"
+defaultTargets = ["Battle"]
+
+[[lean_lib]]
+name = "Battle"
