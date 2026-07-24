@@ -8,6 +8,7 @@ import Battle.Action
 import Battle.Codec
 import Battle.TypeChart
 import Battle.Damage
+import Battle.DamageTests
 import Battle.Diff
 import Battle.Driver
 import Battle.DriverInvariant
