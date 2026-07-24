@@ -18,6 +18,7 @@ import Sm83.Hoare
 import Sm83.Instruction
 import Sm83.Interrupt
 import Sm83.Registers
+import Sm83.Relation
 import Sm83.Proofs.Arithmetic
 import Sm83.Proofs.Decode
 import Sm83.Proofs.Functional
