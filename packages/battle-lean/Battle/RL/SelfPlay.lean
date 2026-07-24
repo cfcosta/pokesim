@@ -53,6 +53,7 @@ inductive StopReason : Environment.State → Type where
   | blocked {state} (side : Side) : StopReason state
   | invalidPolicy {state} : StopReason state
   | rngStuck {state} : StopReason state
+  | divisionFreeze {state} : StopReason state
 
 structure Run where
   finalState : Environment.State
@@ -123,6 +124,10 @@ def runFor : Nat → Policy → Policy → Environment.State →
                       { finalState := next, transitions := [],
                         playerPolicyRng := playerRng, enemyPolicyRng := enemyRng,
                         stop := .rngStuck }
+                  | .divisionFreeze next _ =>
+                      { finalState := next, transitions := [],
+                        playerPolicyRng := playerRng, enemyPolicyRng := enemyRng,
+                        stop := .divisionFreeze }
               | _, _ =>
                   { finalState := state, transitions := [],
                     playerPolicyRng := playerRng, enemyPolicyRng := enemyRng,
@@ -155,6 +160,7 @@ theorem finished_reason_done {state : Environment.State} (reason : StopReason st
   | blocked => trivial
   | invalidPolicy => trivial
   | rngStuck => trivial
+  | divisionFreeze => trivial
 
 /-! ## Self-play guards -/
 

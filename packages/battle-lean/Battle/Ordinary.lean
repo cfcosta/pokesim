@@ -88,6 +88,7 @@ inductive Event where
   | checkpoint (event : Step.TurnEvent)
   | rng (site : String) (raw : UInt8)
   | damageFactor (factor : UInt8)
+  | divisionFreeze (defender : Side) (scaledDefense : UInt8)
   deriving Repr, DecidableEq, BEq
 
 private def drawDamageFactorAux : Nat → Rng.LinkRng →
@@ -149,12 +150,14 @@ inductive AttackResult where
   | complete (state : BattleState) (events : List Event)
       (terminal : Option Outcome.BattleTerminal)
   | rngStuck (state : BattleState) (events : List Event)
+  | divisionFreeze (state : BattleState) (events : List Event)
   deriving Repr
 
 inductive TurnResult where
   | complete (state : BattleState) (events : List Event)
   | invalidAction (state : BattleState)
   | rngStuck (state : BattleState) (events : List Event)
+  | divisionFreeze (state : BattleState) (events : List Event)
   deriving Repr
 
 private def resolveAttack (state : BattleState) (attacker : Side) (slot : Fin 4) :
@@ -169,41 +172,46 @@ private def resolveAttack (state : BattleState) (attacker : Side) (slot : Fin 4)
   let (critRaw, rngAfterCrit) := state.rng.next
   let threshold := criticalThreshold attackerMon.species moveId
   let critical := Step.critHits threshold critRaw
-  let base := Damage.calcBaseDamage attackerMon.level critical move.power
-    attackerMon.attack defenderMon.defense
-  let typed := Damage.adjustDamageForType move.type attackerMon.type1 attackerMon.type2
-    defenderMon.type1 defenderMon.type2 base
   let initialEvents :=
     [.checkpoint (.attackStart attacker moveId), .rng "critical" critRaw] ++
       if critical then [.checkpoint (.critical attacker)] else []
-  let randomized :=
-    if typed < 2 then some (typed, rngAfterCrit, [])
-    else match drawDamageFactor rngAfterCrit with
-      | none => none
-      | some (factor, rng, events) => some (Damage.randomizeDamage factor typed, rng, events)
-  match randomized with
-  | none => .rngStuck { state with rng := rngAfterCrit } initialEvents
-  | some (damage, rngAfterDamage, damageEvents) =>
-      let (accuracyRaw, rngAfterAccuracy) := rngAfterDamage.next
-      let effectiveAccuracy := Accuracy.calcHitChance move.accuracy 7 7
-      let hitByAccuracy := Accuracy.hits effectiveAccuracy accuracyRaw
-      let hit := hitByAccuracy && damage != 0
-      let dealt := if hit then damage else 0
-      let hpAfter := Step.saturatingSub defenderMon.hp dealt
-      let updatedDefender := { defenderMon with hp := hpAfter }
-      let state := replaceActive { state with rng := rngAfterAccuracy }
-        defender updatedDefender
-      let fainted := hpAfter == 0
-      let events := initialEvents ++ damageEvents ++ [.rng "accuracy" accuracyRaw] ++
-        (if hit then [.checkpoint (.damageDealt attacker dealt hpAfter)]
-         else [.checkpoint (.missed attacker)]) ++
-        (if fainted then [.checkpoint (.fainted defender)] else [])
-      let terminal :=
-        if fainted then
-          some (Outcome.BattleTerminal.mk' (.partyExhausted defender) state.mode .player
-            (if defender == .enemy then 0 else 1))
-        else none
-      .complete state events terminal
+  match DamageStats.resolve attackerMon.attack defenderMon.defense false with
+  | .divisionFreeze stats =>
+      .divisionFreeze { state with rng := rngAfterCrit }
+        (initialEvents ++ [.divisionFreeze defender stats.defense])
+  | .ready stats =>
+      let base := Damage.calcBaseDamage attackerMon.level critical move.power
+        (UInt16.ofNat stats.attack.toNat) (UInt16.ofNat stats.defense.toNat)
+      let typed := Damage.adjustDamageForType move.type attackerMon.type1 attackerMon.type2
+        defenderMon.type1 defenderMon.type2 base
+      let randomized :=
+        if typed < 2 then some (typed, rngAfterCrit, [])
+        else match drawDamageFactor rngAfterCrit with
+          | none => none
+          | some (factor, rng, events) => some (Damage.randomizeDamage factor typed, rng, events)
+      match randomized with
+      | none => .rngStuck { state with rng := rngAfterCrit } initialEvents
+      | some (damage, rngAfterDamage, damageEvents) =>
+          let (accuracyRaw, rngAfterAccuracy) := rngAfterDamage.next
+          let effectiveAccuracy := Accuracy.calcHitChance move.accuracy 7 7
+          let hitByAccuracy := Accuracy.hits effectiveAccuracy accuracyRaw
+          let hit := hitByAccuracy && damage != 0
+          let dealt := if hit then damage else 0
+          let hpAfter := Step.saturatingSub defenderMon.hp dealt
+          let updatedDefender := { defenderMon with hp := hpAfter }
+          let state := replaceActive { state with rng := rngAfterAccuracy }
+            defender updatedDefender
+          let fainted := hpAfter == 0
+          let events := initialEvents ++ damageEvents ++ [.rng "accuracy" accuracyRaw] ++
+            (if hit then [.checkpoint (.damageDealt attacker dealt hpAfter)]
+             else [.checkpoint (.missed attacker)]) ++
+            (if fainted then [.checkpoint (.fainted defender)] else [])
+          let terminal :=
+            if fainted then
+              some (Outcome.BattleTerminal.mk' (.partyExhausted defender) state.mode .player
+                (if defender == .enemy then 0 else 1))
+            else none
+          .complete state events terminal
 
 /-- Resolve one restricted fight-vs-fight turn. No unsupported action is coerced
 into another move, and an exhausted damage RNG remains distinguishable. -/
@@ -222,6 +230,7 @@ def resolveTurn (playerSlot enemySlot : Fin 4) (state : BattleState) : TurnResul
     let slotOf := fun side => if side == .player then playerSlot else enemySlot
     match resolveAttack state first (slotOf first) with
     | .rngStuck state events => .rngStuck state (orderEvents ++ events)
+    | .divisionFreeze state events => .divisionFreeze state (orderEvents ++ events)
     | .complete state events (some terminal) =>
         .complete { state with phase := .ending terminal }
           (orderEvents ++ events ++ [.checkpoint (.terminalReached terminal.cause terminal.verdict)])
@@ -229,6 +238,8 @@ def resolveTurn (playerSlot enemySlot : Fin 4) (state : BattleState) : TurnResul
         let second := first.other
         match resolveAttack state second (slotOf second) with
         | .rngStuck state events => .rngStuck state (orderEvents ++ firstEvents ++ events)
+        | .divisionFreeze state events =>
+            .divisionFreeze state (orderEvents ++ firstEvents ++ events)
         | .complete state events terminal =>
             let state := { state with turn := state.turn + 1 }
             match terminal with

@@ -21,6 +21,7 @@ structure BatchStats where
   blocked : Nat := 0
   invalid : Nat := 0
   rngStuck : Nat := 0
+  divisionFreeze : Nat := 0
   repaired : Nat := 0
   playerWins : Nat := 0
   enemyWins : Nat := 0
@@ -43,6 +44,7 @@ private def classify (stats : BatchStats) (run : SelfPlay.Run) : BatchStats :=
   | .blocked _ => { stats with blocked := stats.blocked + 1 }
   | .invalidPolicy => { stats with invalid := stats.invalid + 1 }
   | .rngStuck => { stats with rngStuck := stats.rngStuck + 1 }
+  | .divisionFreeze => { stats with divisionFreeze := stats.divisionFreeze + 1 }
 
 private def runOne (episode : Nat) : SelfPlay.Run :=
   SelfPlay.runEpisode 256 SelfPlay.randomPolicy SelfPlay.randomPolicy
@@ -57,9 +59,10 @@ private def stats : BatchStats :=
 def main : IO UInt32 := do
   IO.println s!"episodes=100 finished={stats.finished} truncated={stats.truncated} blocked={stats.blocked}"
   IO.println s!"wins={stats.playerWins} losses={stats.enemyWins} draws={stats.draws} transitions={stats.transitions}"
-  IO.println s!"repaired={stats.repaired} invalid={stats.invalid} rng_stuck={stats.rngStuck}"
+  IO.println s!"repaired={stats.repaired} invalid={stats.invalid} rng_stuck={stats.rngStuck} division_freeze={stats.divisionFreeze}"
   if stats.finished == 100 && stats.truncated == 0 && stats.blocked == 0 &&
-      stats.invalid == 0 && stats.rngStuck == 0 && stats.repaired == 0 then
+      stats.invalid == 0 && stats.rngStuck == 0 && stats.divisionFreeze == 0 &&
+      stats.repaired == 0 then
     IO.println "PASS 100/100 restricted self-play episodes"
     pure 0
   else

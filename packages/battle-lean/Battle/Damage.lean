@@ -3,6 +3,7 @@ Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.TypeChart
+import Battle.DamageStats
 
 /-!
 # Damage calculation
@@ -22,9 +23,9 @@ RandomizeDamage                 ; ×[217,255]/255, if damage ≥ 2     (asm 5410
 This module models the **numeric pipeline** given *resolved* inputs. Stat
 selection (physical vs special via `SPECIAL`), stat-stage modifiers, the crit
 reset to unmodified stats, Reflect/Light-Screen doubling, and the `/4`
-overflow-scaling all happen in `GetDamageVars` and depend on battle state; the
-turn layer (`Battle.State`/`Battle.Step`) resolves them and feeds the already-
-chosen `attack`/`defense`/`level` here. What `crit` controls *here* is only the
+overflow-scaling all happen in `GetDamageVars` and depend on battle state;
+`Battle.DamageStats` implements the exact screen/scaling/freeze boundary and the
+turn layer feeds its resolved bytes here. What `crit` controls *here* is only the
 level-doubling inside the formula.
 
 Out of scope for this module (effect-gated branches inside `CalculateDamage`,

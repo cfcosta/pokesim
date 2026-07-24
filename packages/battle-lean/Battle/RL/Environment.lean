@@ -175,6 +175,7 @@ inductive StepResult where
   | transitioned (state : State) (events : List Ordinary.Event)
   | invalidAction (state : State)
   | rngStuck (state : State) (events : List Ordinary.Event)
+  | divisionFreeze (state : State) (events : List Ordinary.Event)
   | inactive (state : State)
 
 /-- Apply simultaneous self-play choices. Only actions returned by
@@ -188,6 +189,7 @@ def step (state : State) (player enemy : PolicyAction) : StepResult :=
           | .complete battle events => .transitioned { state with battle } events
           | .invalidAction _ => .invalidAction state
           | .rngStuck battle events => .rngStuck { state with battle } events
+          | .divisionFreeze battle events => .divisionFreeze { state with battle } events
       | _, _ => .invalidAction state
   | _ => .inactive state
 
