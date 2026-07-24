@@ -4,6 +4,7 @@ Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.Full.EffectPlan
 import Battle.Full.Items
+import Battle.Full.Money
 import Battle.Effects.Substitute
 import Battle.Effects.Healing
 import Battle.LinkBugs
@@ -31,7 +32,7 @@ structure Context where
   moveSlot : Fin 4
   mode : BattleMode
   rng : Rng.LinkRng
-  payDayMoney : UInt16 := 0
+  payDayMoney : Money.Bcd3 := Money.Bcd3.ofNat 0
   defenderLastMove : MoveId := 0
   deriving Repr, DecidableEq
 
@@ -389,7 +390,7 @@ def applyAfter (effect moveType : UInt8) (hit targetFainted : Bool)
       let attacker := { context.attacker with active := mon, volatile := volatile }
       { context := withAttacker context attacker }
   | .payDay =>
-      let money := context.payDayMoney + UInt16.ofNat (context.attacker.active.level.toNat * 2)
+      let money := Money.addPayDay context.payDayMoney context.attacker.active.level
       { context := { context with payDayMoney := money } }
   | .multiHit =>
       let (count, context, events) := multiHitCount context

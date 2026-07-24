@@ -24,7 +24,9 @@ structure State where
   forcedReplacement : Option Side := none
   playerLastMove : MoveId := 0
   enemyLastMove : MoveId := 0
-  payDayMoney : UInt16 := 0
+  payDayMoney : Money.Bcd3 := Money.Bcd3.ofNat 0
+  playerMoney : Money.Bcd3 := Money.Bcd3.ofNat 0
+  trainerPrize : Money.Bcd3 := Money.Bcd3.ofNat 0
   runAttempts : UInt8 := 0
   deriving Repr, DecidableEq
 
@@ -230,6 +232,9 @@ private def recordFaint (state : State) (fainted : Side) : State × List Event :
   if fullSide.partyExhausted then
     let terminal := terminalFor state fainted
     let state := { state with battle := { state.battle with phase := .ending terminal } }
+    let state := if fainted == .enemy && state.battle.mode == .trainer then
+      { state with playerMoney := state.playerMoney.add state.trainerPrize }
+      else state
     ({ state with forcedReplacement := none }, [.fainted fainted, .terminal terminal])
   else
     ({ state with forcedReplacement := some fainted },

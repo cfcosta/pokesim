@@ -23,6 +23,8 @@ structure State where
   enemyReset : RL.DynamicGenerator.CanonicalTeam
   repairedReset : Bool
   box : Array MonState := #[]
+  canEvolveFlags : UInt8 := 0
+  lastEpilogue : Option Money.EpilogueResult := none
 
 structure Observation where
   playerSpecies : Array SpeciesId
@@ -67,12 +69,22 @@ def done (state : State) : Bool :=
   | .returned _ => true
   | _ => false
 
-/-- No-op full-profile epilogue boundary. -/
+/-- Apply the money/evolution guard and explicit cleanup boundary. Generated
+resets have no progression flags; callers with flagged recipients must resolve
+those evolution requests before invoking this boundary. -/
 def settle (state : State) : State :=
   match state.engine.battle.phase with
   | .ending terminal =>
-      { state with engine := { state.engine with battle :=
-        { state.engine.battle with phase := .returned ⟨terminal⟩ } } }
+      if state.canEvolveFlags != 0 then state
+      else
+        let result := Money.epilogue
+          { linkBattle := state.engine.battle.mode == .link
+            rawBattleResult := terminal.rawResult
+            playerMoney := state.engine.playerMoney
+            payDayMoney := state.engine.payDayMoney }
+        let engine := { state.engine with playerMoney := result.playerMoney, battle :=
+          { state.engine.battle with phase := .returned ⟨terminal⟩ } }
+        { state with engine, lastEpilogue := some result }
   | _ => state
 
 private def currentParty (state : State) (who : Side) : Array MonState :=
