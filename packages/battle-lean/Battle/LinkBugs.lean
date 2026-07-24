@@ -75,6 +75,17 @@ theorem psywave_link_desync :
     psywaveDesyncSeed.next.2.index = 1 := by
   exact ⟨playerPsywaveWitness, enemyPsywaveWitness, by native_decide, by native_decide⟩
 
+/-- Public existential form of the relational desync, independent of the private
+regression seed name. -/
+theorem psywave_link_desync_exists :
+    ∃ seed playerFinal enemyFinal,
+      PsywaveResolves .playerAttack 75 seed 5 playerFinal [0, 5] ∧
+      PsywaveResolves .enemyAttack 75 seed 0 enemyFinal [0] ∧
+      playerFinal.index = 2 ∧ enemyFinal.index = 1 := by
+  exact ⟨psywaveDesyncSeed, psywaveDesyncSeed.next.2.next.2,
+    psywaveDesyncSeed.next.2, playerPsywaveWitness, enemyPsywaveWitness,
+    by native_decide, by native_decide⟩
+
 /-- A nonzero first byte below the bound resolves identically on both sides. -/
 theorem psywave_sync_on_direct_nonzero :
     let seed : Rng.LinkRng :=

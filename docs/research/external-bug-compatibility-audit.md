@@ -48,3 +48,25 @@ the following without importing the external tree:
 The external project proves translated arithmetic functions, not decoded
 canonical-ROM routine refinement. Matching or exceeding that theorem scope does
 not close this repository's separate ROM-to-model refinement obligation.
+
+## Completion
+
+`Battle.BugCompatibility.all_external_bugs_supported` now constructs one
+proof-carrying certificate with a field for every matrix row. Its dependencies
+are executable project modules:
+
+| Rows | Project implementation |
+|---|---|
+| B01, B03 | `Battle.Critical` |
+| B02, B12 | `Battle.Accuracy` |
+| B04 | `Battle.Effects.Substitute` |
+| B05 | `Battle.Effects.Healing` |
+| B06, B07 | `Battle.TrainerAI` |
+| B08, B09 | `Battle.LinkBugs` |
+| B10, B11, B13 | `Battle.DamageStats` |
+
+The certificate includes universal comparison characterizations, universal HP
+false-failure enumeration, universal trainer-control-flow equations, relational
+link witnesses, universal 16-bit scaling, and exact interaction witnesses. The
+ordinary execution path directly uses the shared critical, accuracy, and damage-
+stat primitives and propagates division freeze as a distinct stop reason.
