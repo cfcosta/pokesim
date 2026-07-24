@@ -1,0 +1,123 @@
+/-
+Copyright 2026 Cainã Costa
+Licensed under the Apache License, Version 2.0 (the "License").
+-/
+import Battle.Full.Items
+
+/-!
+# Full battle action domain and legality
+
+Unlike the link nybble channel, this policy domain includes ordinary bag items.
+Mode and phase restrictions are explicit; forced replacement admits only living
+reserve switches (plus link forfeit), and Struggle appears only when every
+nonempty move has zero current PP.
+-/
+
+namespace Battle.Full
+
+inductive Action where
+  | fight (slot : Fin 4)
+  | switch (target : Fin 6)
+  | item (request : Items.Request)
+  | struggle
+  | noAction
+  | run
+  deriving Repr, DecidableEq, BEq
+
+structure ActionContext where
+  side : Full.SideState
+  bag : Items.Bag
+  mode : BattleMode
+  forcedReplacement : Bool := false
+  deriving Repr, DecidableEq
+
+private def currentPp (packed : UInt8) : UInt8 := packed &&& Wram.ppMask
+
+private def usableMoveSlot (side : Full.SideState) (slot : Nat) : Bool :=
+  side.active.active.moves.getD slot 0 != 0 &&
+    currentPp (side.active.active.pp.getD slot 0) != 0 &&
+    side.active.volatile.disabledMoveNumber != side.active.active.moves.getD slot 0
+
+/-- All four move slots are exhausted/empty after masking PP-Up bits. -/
+def mustStruggle (side : Full.SideState) : Bool :=
+  !(Array.range Wram.numMoves).any (usableMoveSlot side)
+
+/-- Item is policy-reachable in this mode and bag. Handler-level contextual
+failure remains distinct and is returned by `Items.use`. -/
+def itemSelectable (context : ActionContext) (request : Items.Request) : Bool :=
+  context.mode != .link && context.bag.contains request.item &&
+    Items.disposition request.item != .battleReject &&
+    Items.disposition request.item != .outOfRange
+
+/-- Exact action validity at a choice boundary. -/
+def legal (context : ActionContext) (action : Action) : Bool :=
+  if context.forcedReplacement then
+    match action with
+    | .switch target => context.side.canSwitchTo target.val
+    | .run => context.mode == .link
+    | _ => false
+  else
+    match context.mode with
+    | .safari =>
+        match action with
+        | .item request => [1, 2, 3, 4, 8, 0x15, 0x16].contains request.item.toNat
+        | .run => true
+        | _ => false
+    | .oldMan => action == .noAction
+    | _ =>
+        match action with
+        | .fight slot => !mustStruggle context.side && usableMoveSlot context.side slot.val
+        | .struggle => mustStruggle context.side
+        | .switch target =>
+            !context.side.active.volatile.trapping && context.side.canSwitchTo target.val
+        | .item request => itemSelectable context request
+        | .run => true
+        | .noAction => context.side.active.volatile.recharging ||
+            context.side.active.volatile.chargingUp ||
+            bitSet context.side.active.volatile.status1 Wram.BattleStatus1.storingEnergy ||
+            bitSet context.side.active.volatile.status1 Wram.BattleStatus1.thrashingAbout
+
+/-- Finite legal-action vector for policies. -/
+def legalActions (context : ActionContext) : Array Action :=
+  let fights := (Array.range 4).filterMap fun slot =>
+    if h : slot < 4 then
+      let action := Action.fight ⟨slot, h⟩
+      if legal context action then some action else none
+    else none
+  let switches := (Array.range 6).filterMap fun target =>
+    if h : target < 6 then
+      let action := Action.switch ⟨target, h⟩
+      if legal context action then some action else none
+    else none
+  let special := [.struggle, .noAction, .run].toArray.filter (legal context)
+  fights ++ switches ++ special
+
+/-! ## Legality theorems -/
+
+/-- At a forced-replacement boundary, switch legality is exactly the
+party-state switch predicate. -/
+theorem forced_switch_exact (context : ActionContext) (target : Fin 6)
+    (forced : context.forcedReplacement = true) :
+    legal context (.switch target) = context.side.canSwitchTo target.val := by
+  unfold legal
+  rw [forced]
+  rfl
+
+/-- A fight slot can be legal only when Struggle is not required. -/
+theorem legal_fight_not_exhausted (context : ActionContext) (slot : Fin 4)
+    (fight : legal context (.fight slot) = true)
+    (ordinaryMode : context.mode ≠ .safari)
+    (notTutorial : context.mode ≠ .oldMan)
+    (notForced : context.forcedReplacement = false) :
+    mustStruggle context.side = false := by
+  unfold legal at fight
+  simp [notForced] at fight
+  cases mode : context.mode <;> simp_all
+
+/-- Link mode never admits an item. -/
+theorem link_item_illegal (side : Full.SideState) (bag : Items.Bag)
+    (request : Items.Request) :
+    legal { side, bag, mode := .link } (.item request) = false := by
+  rfl
+
+end Battle.Full
