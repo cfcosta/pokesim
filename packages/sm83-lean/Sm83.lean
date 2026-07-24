@@ -3,6 +3,9 @@
 import Sm83.Basic
 import Sm83.Byte
 import Sm83.Clock
+import Sm83.Decode
+import Sm83.Encode
 import Sm83.Flags
 import Sm83.Instruction
 import Sm83.Registers
+import Sm83.Proofs.Decode
