@@ -196,6 +196,18 @@ theorem atInitOpponent_first_intent {machine : Machine}
     Run.opControl, Run.opReadKind, ready.checkpoint.2.2.2.2.2.2.1,
     Rom.Closure.Symbols.initOpponent]
 
+/-- The canonical first immediate-read cycle preserves the selected bank and
+boot-overlay state while devices advance on their own clock edges. -/
+theorem atInitOpponent_first_cycle_mapping {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes) (wake : Bool) :
+    let after := (GameBoy.Adapter.stepMachineCycle machine wake).machine
+    after.memory.cartridge = machine.memory.cartridge ∧
+      after.memory.bootMapped = machine.memory.bootMapped := by
+  have read := (atInitOpponent_first_intent ready wake).2.1
+  exact ⟨GameBoy.Adapter.read_cycle_preserves_cartridge machine wake read,
+    GameBoy.Adapter.read_cycle_preserves_bootMapped machine wake read⟩
+
 /-- State coupling maintained from entry through the outer return. -/
 structure Holds (context : Context) (low : Machine) (high : Episode.State) : Prop where
   bankInImage : Rom.Closure.RomBankInImage low.memory.cartridge

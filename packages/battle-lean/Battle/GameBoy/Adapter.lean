@@ -140,6 +140,67 @@ theorem runEdges_length (intent : CycleIntent) (pins : List PinIntent)
       simp [runEdges, induction]
       omega
 
+/-- Read cycles cannot mutate cartridge banking/storage at any half-edge. -/
+@[simp] theorem stepEdge_read_preserves_cartridge (memory : Memory.State)
+    (intent : CycleIntent) (pin : PinIntent) (read : intent.control = .read) :
+    (stepEdge memory intent pin).1.cartridge = memory.cartridge := by
+  simp [stepEdge, read]
+  split
+  · rw [Memory.stepDma_preserves_cartridge]
+    split <;> rfl
+  · split <;> rfl
+
+/-- Read cycles cannot remap the boot ROM at any half-edge. -/
+@[simp] theorem stepEdge_read_preserves_bootMapped (memory : Memory.State)
+    (intent : CycleIntent) (pin : PinIntent) (read : intent.control = .read) :
+    (stepEdge memory intent pin).1.bootMapped = memory.bootMapped := by
+  simp [stepEdge, read]
+  split
+  · rw [Memory.stepDma_preserves_bootMapped]
+    split <;> rfl
+  · split <;> rfl
+
+/-- ROM reads remain stable across a read half-edge even while clocked devices
+and DMA advance. -/
+theorem stepEdge_read_preserves_rom_read (memory : Memory.State)
+    (intent : CycleIntent) (pin : PinIntent) (address : Word)
+    (read : intent.control = .read) (unmapped : memory.bootMapped = false)
+    (range : address.toNat < 0x8000) :
+    Memory.read (stepEdge memory intent pin).1 address = Memory.read memory address := by
+  have cartridge := stepEdge_read_preserves_cartridge memory intent pin read
+  have boot := stepEdge_read_preserves_bootMapped memory intent pin read
+  rw [Memory.read_rom_unmapped _ address (by simpa [boot] using unmapped) range]
+  rw [Memory.read_rom_unmapped memory address unmapped range]
+  rw [cartridge]
+
+/-- A complete edge list preserves cartridge state throughout a read cycle. -/
+theorem runEdges_read_preserves_cartridge (intent : CycleIntent)
+    (pins : List PinIntent) (memory : Memory.State)
+    (drives : List (Option Byte)) (observations : List EdgeObservation)
+    (read : intent.control = .read) :
+    (runEdges intent pins memory drives observations).memory.cartridge =
+      memory.cartridge := by
+  induction pins generalizing memory drives observations with
+  | nil => rfl
+  | cons pin rest induction =>
+      simp only [runEdges]
+      rw [induction]
+      exact stepEdge_read_preserves_cartridge memory intent pin read
+
+/-- A complete edge list preserves boot-ROM mapping throughout a read cycle. -/
+theorem runEdges_read_preserves_bootMapped (intent : CycleIntent)
+    (pins : List PinIntent) (memory : Memory.State)
+    (drives : List (Option Byte)) (observations : List EdgeObservation)
+    (read : intent.control = .read) :
+    (runEdges intent pins memory drives observations).memory.bootMapped =
+      memory.bootMapped := by
+  induction pins generalizing memory drives observations with
+  | nil => rfl
+  | cons pin rest induction =>
+      simp only [runEdges]
+      rw [induction]
+      exact stepEdge_read_preserves_bootMapped memory intent pin read
+
 /-- Every machine cycle contains exactly four rising T-edges. -/
 theorem four_tcycles (intent : CycleIntent) :
     ((HalfEdge.expand intent).filter (fun pin => isRising pin.halfEdge)).length = 4 := by
@@ -159,6 +220,26 @@ theorem one_t3r (intent : CycleIntent) :
 @[simp] theorem step_edge_count (machine : Machine) (wake : Bool) :
     (stepMachineCycle machine wake).edges.length = 8 := by
   simp [stepMachineCycle, runEdges_length]
+
+/-- A composed read cycle preserves cartridge mapping and immutable storage. -/
+theorem read_cycle_preserves_cartridge (machine : Machine) (wake : Bool)
+    (read : (stepMachineCycle machine wake).probe.intent.control = .read) :
+    (stepMachineCycle machine wake).machine.memory.cartridge =
+      machine.memory.cartridge := by
+  simpa [stepMachineCycle] using runEdges_read_preserves_cartridge
+    (stepMachineCycle machine wake).probe.intent
+    (HalfEdge.expand (stepMachineCycle machine wake).probe.intent)
+    machine.memory [] [] read
+
+/-- A composed read cycle cannot remap the boot ROM. -/
+theorem read_cycle_preserves_bootMapped (machine : Machine) (wake : Bool)
+    (read : (stepMachineCycle machine wake).probe.intent.control = .read) :
+    (stepMachineCycle machine wake).machine.memory.bootMapped =
+      machine.memory.bootMapped := by
+  simpa [stepMachineCycle] using runEdges_read_preserves_bootMapped
+    (stepMachineCycle machine wake).probe.intent
+    (HalfEdge.expand (stepMachineCycle machine wake).probe.intent)
+    machine.memory [] [] read
 
 /-- The probe and actual CPU step have identical complete cycle intent because
 read data cannot influence the current cycle's pins. -/

@@ -106,6 +106,20 @@ def stepDma (state : State) : State :=
     read state address = Mbc3.read state.cartridge address := by
   simp [read, range, unmapped]
 
+@[simp] theorem stepDma_preserves_cartridge (state : State) :
+    (stepDma state).cartridge = state.cartridge := by
+  simp only [stepDma]
+  split <;> rename_i equation
+  · rfl
+  · split <;> rfl
+
+@[simp] theorem stepDma_preserves_bootMapped (state : State) :
+    (stepDma state).bootMapped = state.bootMapped := by
+  simp only [stepDma]
+  split <;> rename_i equation
+  · rfl
+  · split <;> rfl
+
 @[simp] theorem read_boot_mapped (state : State) (address : Word)
     (mapped : state.bootMapped = true) (range : address.toNat < 0x100) :
     read state address = Mbc3.readArray state.bootRom.bytes address.toNat := by
