@@ -9,6 +9,7 @@ import Sm83.Cycle
 import Sm83.Decode
 import Sm83.Encode
 import Sm83.Flags
+import Sm83.FlatAdapter
 import Sm83.FlatMemory
 import Sm83.Functional
 import Sm83.HalfEdge
@@ -21,6 +22,7 @@ import Sm83.Proofs.Decode
 import Sm83.Proofs.Functional
 import Sm83.Proofs.Interrupt
 import Sm83.Proofs.Pipeline
+import Sm83.Proofs.Refinement
 import Sm83.Pipeline
 import Sm83.Profile
 import Sm83.Program
