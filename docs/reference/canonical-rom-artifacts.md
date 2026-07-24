@@ -50,7 +50,10 @@ checked against every rebuilt or caller-supplied ROM. Lean callers provide
 `Rom.Closure.RequiredEntryBytes`; this is deliberate because an uninterpreted
 caller-supplied hash function cannot by itself prove individual array values.
 `DriverInvariant.atInitOpponent_shape` then proves that the fetched canonical
-entry byte is `$FA`, decoded as `LD A,(a16)`.
+entry byte is `$FA`, decoded as `LD A,(a16)`. The stronger
+`AtInitOpponentReady` checkpoint also records IR, next PC, physical schedule,
+latches, interrupt slot, boundary PC, and HALT-bug state; its first-cycle theorem
+proves an immediate read at `$6F19`, whose canonical value is `$59`.
 
 ## Address closure
 

@@ -151,6 +151,51 @@ theorem atInitOpponent_shape {machine : Machine}
         | _ => none) = some .ldAAbs
       rw [byteEq, Rom.Closure.initOpponent_opcode_decode]
 
+/-- Full canonical entry checkpoint, including the fetched IR address/byte and
+all hidden pipeline witnesses needed to execute the first M-cycle. -/
+structure AtInitOpponentReady (machine : Machine)
+    (bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom) : Prop where
+  checkpoint : AtInitOpponent machine
+  ir : machine.core.ir = some {
+    address := Rom.Closure.Symbols.initOpponent.address
+    byte := 0xFA }
+  shape : machine.core.shape = some .ldAAbs
+  remaining : machine.core.remaining =
+    [.immediateLow, .immediateHigh, .readAddress, .successorFetch]
+  latches : machine.core.latches = {}
+  interrupt : machine.core.interrupt = none
+  boundaryPC : machine.core.boundaryPC = some Rom.Closure.Symbols.initOpponent.address
+  haltBug : machine.core.haltBug = false
+
+/-- The first immediate byte is read from the canonical physical ROM offset. -/
+theorem atInitOpponent_immediateLow {machine : Machine}
+    (entry : AtInitOpponent machine)
+    (bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom) :
+    GameBoy.Memory.read machine.memory (Word.ofNat 0x6F19) = 0x59 := by
+  let symbol : Rom.Closure.Symbol := ⟨0x0F, Word.ofNat 0x6F19⟩
+  have selected : symbol.Selected machine.memory.cartridge := by
+    change GameBoy.Mbc3.selectedRomBank machine.memory.cartridge = 15
+    simpa using entry.2.1
+  have mapped := Rom.Closure.read_selected_symbol machine.memory symbol entry.1
+    (by native_decide) selected
+  rw [mapped]
+  simpa [symbol, Rom.Closure.romOffset, Rom.Closure.Symbols.initOpponent] using
+    bytes.initOpponent_immediateLow
+
+/-- The first canonical cycle reads the low byte of `$D059` from `$6F19`.
+Device read data cannot change this address/control intent. -/
+theorem atInitOpponent_first_intent {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes) (wake : Bool) :
+    let intent := (GameBoy.Adapter.stepMachineCycle machine wake).probe.intent
+    intent.address = Word.ofNat 0x6F19 ∧ intent.control = .read ∧
+      intent.readKind = .immediate := by
+  simp [GameBoy.Adapter.stepMachineCycle, Sm83.Run.stepMachineCycle,
+    ready.checkpoint.2.2.2.1, ready.checkpoint.2.2.2.2.1,
+    CoreState.currentOp?, ready.remaining, Run.intent, Run.opAddress,
+    Run.opControl, Run.opReadKind, ready.checkpoint.2.2.2.2.2.2.1,
+    Rom.Closure.Symbols.initOpponent]
+
 /-- State coupling maintained from entry through the outer return. -/
 structure Holds (context : Context) (low : Machine) (high : Episode.State) : Prop where
   bankInImage : Rom.Closure.RomBankInImage low.memory.cartridge
@@ -169,8 +214,9 @@ structure Holds (context : Context) (low : Machine) (high : Episode.State) : Pro
     high.phase = .returned witness
 
 /-- Exact assumptions needed to establish the driver invariant at entry. -/
-structure EntryAssumptions (context : Context) (low : Machine) : Prop where
-  entry : AtInitOpponent low
+structure EntryAssumptions (context : Context) (low : Machine)
+    (bytes : Rom.Closure.RequiredEntryBytes low.memory.cartridge.rom) : Prop where
+  ready : AtInitOpponentReady low bytes
   reset : SuppliedWildReset low.memory
   pipeline : Pipeline.WellFormed low.core
   fetchedByte : ∀ fetched, low.core.ir = some fetched → fetched.address.toNat < 0x8000 →
@@ -179,10 +225,11 @@ structure EntryAssumptions (context : Context) (low : Machine) : Prop where
 
 /-- Establish the invariant at the fetched `InitOpponent` checkpoint. -/
 theorem establish {context : Context} {low : Machine}
-    (assumptions : EntryAssumptions context low) :
+    {bytes : Rom.Closure.RequiredEntryBytes low.memory.cartridge.rom}
+    (assumptions : EntryAssumptions context low bytes) :
     Holds context low ({ phase := .initializing } : Episode.State) := by
   refine {
-    bankInImage := assumptions.entry.2.2.1
+    bankInImage := assumptions.ready.checkpoint.2.2.1
     pipeline := assumptions.pipeline
     noInvalidLock := ?_
     noStop := ?_
@@ -190,10 +237,10 @@ theorem establish {context : Context} {low : Machine}
     phaseSound := trivial
     returnAgreement := ?_ }
   · intro opcode locked
-    rw [assumptions.entry.2.2.2.1] at locked
+    rw [assumptions.ready.checkpoint.2.2.2.1] at locked
     contradiction
   · intro byte stopped
-    rw [assumptions.entry.2.2.2.1] at stopped
+    rw [assumptions.ready.checkpoint.2.2.2.1] at stopped
     contradiction
   · intro witness returned
     exact False.elim (assumptions.noPrematureReturn witness returned)
