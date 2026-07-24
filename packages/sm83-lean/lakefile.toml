@@ -1,0 +1,6 @@
+name = "sm83-lean"
+version = "0.1.0"
+defaultTargets = ["Sm83"]
+
+[[lean_lib]]
+name = "Sm83"
