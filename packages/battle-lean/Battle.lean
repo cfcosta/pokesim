@@ -32,6 +32,7 @@ import Battle.Full.State
 import Battle.Full.Status
 import Battle.Full.Items
 import Battle.Full.EffectPlan
+import Battle.Full.Effects
 import Battle.Refinement.Bridge
 import Battle.Refinement.Trace
 import Battle.Refinement.Simulation
