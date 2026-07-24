@@ -492,6 +492,31 @@ def stepMachineCycle (state : CoreState) (input : CoreInput) : CoreOutput :=
                 else processNonFetch state operation input
               { state := next, intent := cycleIntent }
 
+/-- The current cycle's complete intent is independent of read-bus data. This
+justifies a system adapter probing address/control before constructing a temporal
+read response; pending interrupt and wake inputs remain fixed. -/
+theorem intent_read_independent (state : CoreState) (left right : ReadResponse)
+    (pendingInterrupts : Byte) (wake : Bool) :
+    (stepMachineCycle state { read := left, pendingInterrupts, wake }).intent =
+      (stepMachineCycle state { read := right, pendingInterrupts, wake }).intent := by
+  cases modeEq : state.mode with
+  | running =>
+      cases phaseEq : state.phase with
+      | bootstrap => simp [stepMachineCycle, modeEq, phaseEq]
+      | execute =>
+          cases operationEq : state.currentOp? <;>
+            simp [stepMachineCycle, modeEq, phaseEq, operationEq]
+      | interrupt =>
+          cases entryEq : state.interrupt with
+          | none => simp [stepMachineCycle, modeEq, phaseEq, interruptCycle, entryEq]
+          | some entry =>
+              cases stageEq : entry.stage <;>
+                simp [stepMachineCycle, modeEq, phaseEq, interruptCycle, entryEq, stageEq]
+  | halted =>
+      simp [stepMachineCycle, modeEq, startInterrupt, interruptCycle]
+  | stopped => simp [stepMachineCycle, modeEq]
+  | locked => simp [stepMachineCycle, modeEq]
+
 /-- Fuel-bounded physical runner. Fuel exhaustion is represented by returning the current state. -/
 def runMachineCycles : Nat → CoreState → (CoreState → CoreInput) → CoreState
   | 0, state, _ => state
