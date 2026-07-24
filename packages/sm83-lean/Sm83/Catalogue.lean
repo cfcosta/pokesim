@@ -74,6 +74,9 @@ private def legalRow (opcode : Byte) (cbPrefixed : Bool) (shape : InstructionSha
 /-- Encoding-derived base row. PREFIX and invalid lock bytes have explicit dispositions. -/
 def baseRow (opcode : Byte) : CatalogueRow :=
   match Decode.base opcode with
+  | .legal .stop =>
+      let row := legalRow opcode false .stop
+      { row with untakenTCycles := 4, takenTCycles := 4 }
   | .legal shape => legalRow opcode false shape
   | .prefix => {
       opcode
@@ -113,9 +116,17 @@ theorem baseRow_shape (opcode : Byte) :
     (baseRow opcode).shape = match Decode.base opcode with
       | .legal shape => some shape
       | .prefix | .locked _ => none := by
-  cases decoded : Decode.base opcode <;> simp [baseRow, decoded, legalRow]
+  cases decoded : Decode.base opcode
+  · rename_i shape
+    cases shape <;> simp [baseRow, decoded, legalRow]
+  · simp [baseRow, decoded]
+  · simp [baseRow, decoded]
 
 @[simp] theorem cbRow_shape (opcode : Byte) : (cbRow opcode).shape = some (Decode.cb opcode) := rfl
+
+/-- STOP's pinned four-T-cycle entry metadata is not a completion-duration claim. -/
+example : (baseRow 0x10).takenTCycles = 4 ∧
+    (Cycle.tcycles .stop).value = 8 := by native_decide
 
 /-- All 512 generated rows are present. -/
 theorem complete_row_count : (baseRows ++ cbRows).length = 512 := by
