@@ -182,6 +182,21 @@ theorem atInitOpponent_immediateLow {machine : Machine}
   simpa [symbol, Rom.Closure.romOffset, Rom.Closure.Symbols.initOpponent] using
     bytes.initOpponent_immediateLow
 
+/-- The second immediate byte is the canonical high byte `$D0`. -/
+theorem atInitOpponent_immediateHigh {machine : Machine}
+    (entry : AtInitOpponent machine)
+    (bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom) :
+    GameBoy.Memory.read machine.memory (Word.ofNat 0x6F1A) = 0xD0 := by
+  let symbol : Rom.Closure.Symbol := ⟨0x0F, Word.ofNat 0x6F1A⟩
+  have selected : symbol.Selected machine.memory.cartridge := by
+    change GameBoy.Mbc3.selectedRomBank machine.memory.cartridge = 15
+    simpa using entry.2.1
+  have mapped := Rom.Closure.read_selected_symbol machine.memory symbol entry.1
+    (by native_decide) selected
+  rw [mapped]
+  simpa [symbol, Rom.Closure.romOffset, Rom.Closure.Symbols.initOpponent] using
+    bytes.initOpponent_immediateHigh
+
 /-- The first canonical cycle reads the low byte of `$D059` from `$6F19`.
 Device read data cannot change this address/control intent. -/
 theorem atInitOpponent_first_intent {machine : Machine}
@@ -196,6 +211,68 @@ theorem atInitOpponent_first_intent {machine : Machine}
     Run.opControl, Run.opReadKind, ready.checkpoint.2.2.2.2.2.2.1,
     Rom.Closure.Symbols.initOpponent]
 
+/-- Canonical ROM immutability and the half-edge mapping discharge the stable
+read-window premise for the first cycle. -/
+theorem atInitOpponent_first_stable {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes) (wake : Bool) :
+    GameBoy.Adapter.StableReadWindow machine wake 0x59 := by
+  have intent := atInitOpponent_first_intent ready wake
+  have stable := GameBoy.Adapter.stableReadWindow_rom machine wake intent.2.1
+    ready.checkpoint.1 (by rw [intent.1]; decide)
+  rw [intent.1, atInitOpponent_immediateLow ready.checkpoint bytes] at stable
+  exact stable
+
+/-- Under the proved stable ROM window, the CPU consumes canonical immediate
+byte `$59`. -/
+theorem atInitOpponent_first_cpu_read {machine : Machine} (wake : Bool)
+    (stable : GameBoy.Adapter.StableReadWindow machine wake 0x59) :
+    (GameBoy.Adapter.stepMachineCycle machine wake).cpuInput.read.fold = 0x59 :=
+  GameBoy.Adapter.stableReadWindow_cpu_fold machine wake 0x59 stable
+
+def initOpponentAfterLowCore (machine : Machine) : CoreState :=
+  { machine.core with
+    registers := { machine.core.registers with pc := Word.ofNat 0x6F1A }
+    remaining := [.immediateHigh, .readAddress, .successorFetch]
+    latches := { machine.core.latches with low := 0x59 } }
+
+/-- Exact hidden core state after the first canonical M-cycle. -/
+theorem atInitOpponent_after_first_core_eq {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes) (wake : Bool) :
+    (GameBoy.Adapter.stepMachineCycle machine wake).machine.core =
+      initOpponentAfterLowCore machine := by
+  have folded := atInitOpponent_first_cpu_read wake
+    (atInitOpponent_first_stable ready wake)
+  change (GameBoy.Adapter.stepMachineCycle machine wake).cpuOutput.state =
+    initOpponentAfterLowCore machine
+  rw [GameBoy.Adapter.processor_composition]
+  simp [Sm83.Run.stepMachineCycle, ready.checkpoint.2.2.2.1,
+    ready.checkpoint.2.2.2.2.1, CoreState.currentOp?, ready.remaining,
+    Run.processNonFetch, folded, ready.shape, initOpponentAfterLowCore,
+    ready.checkpoint.2.2.2.2.2.2.1, Rom.Closure.Symbols.initOpponent]
+  native_decide
+
+/-- The first physical cycle advances the fetched instruction to its high-byte
+read checkpoint and records low immediate byte `$59`. -/
+theorem atInitOpponent_after_first_core {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes) (wake : Bool) :
+    let after := (GameBoy.Adapter.stepMachineCycle machine wake).machine.core
+    after.registers.pc = Word.ofNat 0x6F1A ∧ after.latches.low = 0x59 ∧
+      after.remaining = [.immediateHigh, .readAddress, .successorFetch] := by
+  have folded := atInitOpponent_first_cpu_read wake
+    (atInitOpponent_first_stable ready wake)
+  change let after := (GameBoy.Adapter.stepMachineCycle machine wake).cpuOutput.state
+    after.registers.pc = Word.ofNat 0x6F1A ∧ after.latches.low = 0x59 ∧
+      after.remaining = [.immediateHigh, .readAddress, .successorFetch]
+  rw [GameBoy.Adapter.processor_composition]
+  simp [Sm83.Run.stepMachineCycle, ready.checkpoint.2.2.2.1,
+    ready.checkpoint.2.2.2.2.1, CoreState.currentOp?, ready.remaining,
+    Run.processNonFetch, folded, ready.shape,
+    ready.checkpoint.2.2.2.2.2.2.1, Rom.Closure.Symbols.initOpponent]
+  native_decide
+
 /-- The canonical first immediate-read cycle preserves the selected bank and
 boot-overlay state while devices advance on their own clock edges. -/
 theorem atInitOpponent_first_cycle_mapping {machine : Machine}
@@ -207,6 +284,111 @@ theorem atInitOpponent_first_cycle_mapping {machine : Machine}
   have read := (atInitOpponent_first_intent ready wake).2.1
   exact ⟨GameBoy.Adapter.read_cycle_preserves_cartridge machine wake read,
     GameBoy.Adapter.read_cycle_preserves_bootMapped machine wake read⟩
+
+/-- The mapped canonical high immediate remains `$D0` after the first read
+cycle's device clocks. -/
+theorem atInitOpponent_after_first_immediateHigh {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes) (wake : Bool) :
+    let after := (GameBoy.Adapter.stepMachineCycle machine wake).machine
+    GameBoy.Memory.read after.memory (Word.ofNat 0x6F1A) = 0xD0 := by
+  let after := (GameBoy.Adapter.stepMachineCycle machine wake).machine
+  change GameBoy.Memory.read after.memory (Word.ofNat 0x6F1A) = 0xD0
+  have mapping := atInitOpponent_first_cycle_mapping ready wake
+  have boot : after.memory.bootMapped = false := mapping.2.trans ready.checkpoint.1
+  rw [GameBoy.Memory.read_rom_unmapped after.memory (Word.ofNat 0x6F1A)
+    boot (by native_decide)]
+  rw [mapping.1]
+  have high := atInitOpponent_immediateHigh ready.checkpoint bytes
+  rw [GameBoy.Memory.read_rom_unmapped machine.memory (Word.ofNat 0x6F1A)
+    ready.checkpoint.1 (by native_decide)] at high
+  exact high
+
+/-- The second canonical cycle reads high immediate byte `$D0` at `$6F1A`. -/
+theorem atInitOpponent_second_intent {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes) (firstWake secondWake : Bool) :
+    let after := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+    let intent := (GameBoy.Adapter.stepMachineCycle after secondWake).probe.intent
+    intent.address = Word.ofNat 0x6F1A ∧ intent.control = .read ∧
+      intent.readKind = .immediate := by
+  let after := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+  change let intent := (GameBoy.Adapter.stepMachineCycle after secondWake).probe.intent
+    intent.address = Word.ofNat 0x6F1A ∧ intent.control = .read ∧
+      intent.readKind = .immediate
+  have coreEq : after.core = initOpponentAfterLowCore machine :=
+    atInitOpponent_after_first_core_eq ready firstWake
+  simp [GameBoy.Adapter.stepMachineCycle, coreEq, initOpponentAfterLowCore,
+    Sm83.Run.stepMachineCycle, ready.checkpoint.2.2.2.1,
+    ready.checkpoint.2.2.2.2.1, CoreState.currentOp?, Run.intent,
+    Run.opAddress, Run.opControl, Run.opReadKind, Run.opFetch,
+    Run.opCommit, Run.opPoll, Run.opIdu]
+
+/-- ROM stability also discharges the second cycle's temporal window. -/
+theorem atInitOpponent_second_stable {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes) (firstWake secondWake : Bool) :
+    let after := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+    GameBoy.Adapter.StableReadWindow after secondWake 0xD0 := by
+  let after := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+  have intent := atInitOpponent_second_intent ready firstWake secondWake
+  have mapping := atInitOpponent_first_cycle_mapping ready firstWake
+  have stable := GameBoy.Adapter.stableReadWindow_rom after secondWake intent.2.1
+    (mapping.2.trans ready.checkpoint.1) (by rw [intent.1]; decide)
+  rw [intent.1, atInitOpponent_after_first_immediateHigh ready firstWake] at stable
+  exact stable
+
+def initOpponentAfterHighCore (machine : Machine) : CoreState :=
+  { machine.core with
+    registers := { machine.core.registers with pc := Word.ofNat 0x6F1B }
+    remaining := [.readAddress, .successorFetch]
+    latches := { machine.core.latches with low := 0x59, high := 0xD0 } }
+
+/-- Exact hidden core state after both canonical immediate-byte cycles. -/
+theorem atInitOpponent_after_second_core_eq {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes) (firstWake secondWake : Bool) :
+    let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+    (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine.core =
+      initOpponentAfterHighCore machine := by
+  let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+  have firstCore : afterFirst.core = initOpponentAfterLowCore machine :=
+    atInitOpponent_after_first_core_eq ready firstWake
+  have folded := GameBoy.Adapter.stableReadWindow_cpu_fold afterFirst secondWake 0xD0
+    (atInitOpponent_second_stable ready firstWake secondWake)
+  change (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).cpuOutput.state =
+    initOpponentAfterHighCore machine
+  rw [GameBoy.Adapter.processor_composition]
+  simp [firstCore, initOpponentAfterLowCore, initOpponentAfterHighCore,
+    Sm83.Run.stepMachineCycle, ready.checkpoint.2.2.2.1,
+    ready.checkpoint.2.2.2.2.1, CoreState.currentOp?, Run.processNonFetch,
+    folded]
+  native_decide
+
+/-- The third cycle addresses supplied-opponent WRAM byte `$D059`. -/
+theorem atInitOpponent_third_intent {machine : Machine}
+    {bytes : Rom.Closure.RequiredEntryBytes machine.memory.cartridge.rom}
+    (ready : AtInitOpponentReady machine bytes)
+    (firstWake secondWake thirdWake : Bool) :
+    let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+    let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+    let intent := (GameBoy.Adapter.stepMachineCycle afterSecond thirdWake).probe.intent
+    intent.address = Word.ofNat 0xD059 ∧ intent.control = .read ∧
+      intent.readKind = .data := by
+  let afterFirst := (GameBoy.Adapter.stepMachineCycle machine firstWake).machine
+  let afterSecond := (GameBoy.Adapter.stepMachineCycle afterFirst secondWake).machine
+  change let intent := (GameBoy.Adapter.stepMachineCycle afterSecond thirdWake).probe.intent
+    intent.address = Word.ofNat 0xD059 ∧ intent.control = .read ∧
+      intent.readKind = .data
+  have coreEq : afterSecond.core = initOpponentAfterHighCore machine :=
+    atInitOpponent_after_second_core_eq ready firstWake secondWake
+  simp [GameBoy.Adapter.stepMachineCycle, coreEq, initOpponentAfterHighCore,
+    Sm83.Run.stepMachineCycle, ready.checkpoint.2.2.2.1,
+    ready.checkpoint.2.2.2.2.1, CoreState.currentOp?, Run.intent,
+    Run.opAddress, Run.readAddress, Run.opControl, Run.opReadKind,
+    Run.opFetch, Run.opCommit, Run.opPoll, Run.opIdu, CoreState.wz,
+    ready.shape]
+  native_decide
 
 /-- State coupling maintained from entry through the outer return. -/
 structure Holds (context : Context) (low : Machine) (high : Episode.State) : Prop where

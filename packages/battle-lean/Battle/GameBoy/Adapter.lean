@@ -77,6 +77,24 @@ def runEdges (intent : CycleIntent) :
 def readResponse (drives : List (Option Byte)) : ReadResponse :=
   ⟨fun edge => drives[edge.val]?.join⟩
 
+private def stableDrivePattern (value : Byte) : List (Option Byte) :=
+  [none, some value, some value, some value, some value, some value,
+    some value, none]
+
+private theorem stableDrivePattern_fold : ∀ value : Byte,
+    (readResponse (stableDrivePattern value)).fold = value := by
+  native_decide
+
+/-- Explicit temporal-window premise for a stable cartridge/device read. It is
+separate from address/control probing because dynamic internal-bus reads are
+allowed to fold changing low bits. -/
+def StableReadWindow (machine : Machine) (wake : Bool) (value : Byte) : Prop :=
+  let pending := Devices.pendingInterrupts machine.memory.devices
+  let probeInput : CoreInput := { read := .stable 0xFF, pendingInterrupts := pending, wake }
+  let probe := Run.stepMachineCycle machine.core probeInput
+  let edgeRun := runEdges probe.intent (HalfEdge.expand probe.intent) machine.memory [] []
+  edgeRun.drives = stableDrivePattern value
+
 /-- CPU-visible output of one composed Game Boy machine cycle. -/
 structure Output where
   machine : Machine
@@ -109,6 +127,15 @@ def stepMachineCycle (machine : Machine) (wake : Bool := false) : Output :=
     cpuOutput
     pins
     edges := edgeRun.observations }
+
+/-- A proved stable temporal window is consumed as exactly that CPU byte. -/
+theorem stableReadWindow_cpu_fold (machine : Machine) (wake : Bool) (value : Byte)
+    (stable : StableReadWindow machine wake value) :
+    (stepMachineCycle machine wake).cpuInput.read.fold = value := by
+  unfold StableReadWindow at stable
+  simp only [stepMachineCycle]
+  rw [stable]
+  exact stableDrivePattern_fold value
 
 /-- Pin-relevant equality between the address/control cycle discovered by the
 probe and the cycle executed with the temporal read response. -/
@@ -162,7 +189,7 @@ theorem runEdges_length (intent : CycleIntent) (pins : List PinIntent)
 
 /-- ROM reads remain stable across a read half-edge even while clocked devices
 and DMA advance. -/
-theorem stepEdge_read_preserves_rom_read (memory : Memory.State)
+@[simp] theorem stepEdge_read_preserves_rom_read (memory : Memory.State)
     (intent : CycleIntent) (pin : PinIntent) (address : Word)
     (read : intent.control = .read) (unmapped : memory.bootMapped = false)
     (range : address.toNat < 0x8000) :
@@ -172,6 +199,64 @@ theorem stepEdge_read_preserves_rom_read (memory : Memory.State)
   rw [Memory.read_rom_unmapped _ address (by simpa [boot] using unmapped) range]
   rw [Memory.read_rom_unmapped memory address unmapped range]
   rw [cartridge]
+
+private theorem runEdges_read_rom_drives (intent : CycleIntent)
+    (reference : Memory.State) (pins : List PinIntent) (memory : Memory.State)
+    (drives : List (Option Byte)) (observations : List EdgeObservation)
+    (read : intent.control = .read) (unmapped : memory.bootMapped = false)
+    (range : intent.address.toNat < 0x8000)
+    (same : Memory.read memory intent.address = Memory.read reference intent.address)
+    (valid : ∀ pin ∈ pins, pin.selected = true → pin.address = some intent.address) :
+    (runEdges intent pins memory drives observations).drives =
+      drives ++ pins.map (fun pin =>
+        if pin.selected then some (Memory.read reference intent.address) else none) := by
+  induction pins generalizing memory drives observations with
+  | nil => simp [runEdges]
+  | cons pin rest induction =>
+      have headAddress : pin.selected = true → pin.address = some intent.address := by
+        intro selected
+        exact valid pin (by simp) selected
+      have drive : (stepEdge memory intent pin).2.drive =
+          if pin.selected then some (Memory.read reference intent.address) else none := by
+        by_cases selected : pin.selected = true
+        · simp [stepEdge, edgeDrive, read, selected, headAddress selected, same]
+        · have selectedFalse : pin.selected = false := by
+            cases equation : pin.selected <;> simp_all
+          simp [stepEdge, edgeDrive, read, selectedFalse]
+      have nextUnmapped : (stepEdge memory intent pin).1.bootMapped = false := by
+        rw [stepEdge_read_preserves_bootMapped memory intent pin read]
+        exact unmapped
+      have nextSame : Memory.read (stepEdge memory intent pin).1 intent.address =
+          Memory.read reference intent.address := by
+        rw [stepEdge_read_preserves_rom_read memory intent pin intent.address read unmapped range]
+        exact same
+      have restValid : ∀ next ∈ rest, next.selected = true →
+          next.address = some intent.address := by
+        intro next member selected
+        exact valid next (by simp [member]) selected
+      rw [runEdges]
+      rw [induction (stepEdge memory intent pin).1
+        (drives ++ [(stepEdge memory intent pin).2.drive])
+        (observations ++ [(stepEdge memory intent pin).2]) nextUnmapped nextSame restValid]
+      simp [drive, List.append_assoc]
+
+/-- Stable ROM storage discharges the temporal read-window premise. -/
+theorem stableReadWindow_rom (machine : Machine) (wake : Bool)
+    (read : (stepMachineCycle machine wake).probe.intent.control = .read)
+    (unmapped : machine.memory.bootMapped = false)
+    (range : (stepMachineCycle machine wake).probe.intent.address.toNat < 0x8000) :
+    StableReadWindow machine wake
+      (Memory.read machine.memory (stepMachineCycle machine wake).probe.intent.address) := by
+  let intent := (stepMachineCycle machine wake).probe.intent
+  change (runEdges intent (HalfEdge.expand intent) machine.memory [] []).drives =
+    stableDrivePattern (Memory.read machine.memory intent.address)
+  change intent.control = .read at read
+  change intent.address.toNat < 0x8000 at range
+  have drives := runEdges_read_rom_drives intent machine.memory
+    (HalfEdge.expand intent) machine.memory [] [] read unmapped range rfl
+    (fun _ member selected => HalfEdge.selected_address member selected)
+  rw [HalfEdge.map_selected_read intent (Memory.read machine.memory intent.address) read] at drives
+  simpa [stableDrivePattern] using drives
 
 /-- A complete edge list preserves cartridge state throughout a read cycle. -/
 theorem runEdges_read_preserves_cartridge (intent : CycleIntent)

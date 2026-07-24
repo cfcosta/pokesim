@@ -148,6 +148,13 @@ structure RequiredEntryBytes (rom : Array Byte) : Prop where
   have second := congrArg (fun bytes => bytes[1]?) witness.initOpponent
   simpa [bytesAt, initOpponentPrefix] using second
 
+@[simp] theorem RequiredEntryBytes.initOpponent_immediateHigh {rom : Array Byte}
+    (witness : RequiredEntryBytes rom) :
+    GameBoy.Mbc3.readArray rom
+      (romOffset Symbols.initOpponent.bank.toNat Symbols.initOpponent.address + 2) = 0xD0 := by
+  have third := congrArg (fun bytes => bytes[2]?) witness.initOpponent
+  simpa [bytesAt, initOpponentPrefix] using third
+
 /-- The retained first entry byte decodes as canonical `LD A,(a16)`. -/
 @[simp] theorem initOpponent_opcode_decode :
     Decode.base 0xFA = .legal .ldAAbs := by

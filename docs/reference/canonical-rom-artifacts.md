@@ -52,8 +52,10 @@ caller-supplied hash function cannot by itself prove individual array values.
 `DriverInvariant.atInitOpponent_shape` then proves that the fetched canonical
 entry byte is `$FA`, decoded as `LD A,(a16)`. The stronger
 `AtInitOpponentReady` checkpoint also records IR, next PC, physical schedule,
-latches, interrupt slot, boundary PC, and HALT-bug state; its first-cycle theorem
-proves an immediate read at `$6F19`, whose canonical value is `$59`.
+latches, interrupt slot, boundary PC, and HALT-bug state. Half-edge stability
+then proves the first two physical reads consume `$59` at `$6F19` and `$D0` at
+`$6F1A`; the resulting hidden core state addresses supplied-opponent WRAM byte
+`$D059` on the third M-cycle.
 
 ## Address closure
 
