@@ -27,25 +27,25 @@ structure FunctionalResult where
 
 namespace Functional
 
-private structure Context where
+structure Context where
   state : FunctionalState
   trace : List BusEvent := []
 
-private def read (context : Context) (kind : ReadKind) (address : Word) : Byte × Context :=
+def read (context : Context) (kind : ReadKind) (address : Word) : Byte × Context :=
   let value := context.state.memory.read address
   (value, { context with trace := context.trace ++ [.read kind address value] })
 
-private def write (context : Context) (address : Word) (value : Byte) : Context :=
+def write (context : Context) (address : Word) (value : Byte) : Context :=
   { state := { context.state with memory := context.state.memory.write address value }
     trace := context.trace ++ [.write address value] }
 
-private def idle (context : Context) (address : Word) : Context :=
+def idle (context : Context) (address : Word) : Context :=
   { context with trace := context.trace ++ [.idle address] }
 
-private def withRegisters (context : Context) (registers : Registers) : Context :=
+def withRegisters (context : Context) (registers : Registers) : Context :=
   { context with state := { context.state with registers } }
 
-private def fetchImmediate : (count : Nat) → Context → List Byte × Context
+def fetchImmediate : (count : Nat) → Context → List Byte × Context
   | 0, context => ([], context)
   | count + 1, context =>
       let address := context.state.registers.pc
@@ -54,70 +54,70 @@ private def fetchImmediate : (count : Nat) → Context → List Byte × Context
       let (rest, context) := fetchImmediate count context
       (value :: rest, context)
 
-private def immediate8 (bytes : List Byte) : Byte := bytes.getD 0 0
+def immediate8 (bytes : List Byte) : Byte := bytes.getD 0 0
 
-private def immediate16 (bytes : List Byte) : Word :=
+def immediate16 (bytes : List Byte) : Word :=
   Word.ofBytes (bytes.getD 1 0) (bytes.getD 0 0)
 
-private def readTarget (context : Context) : Target8 → Byte × Context
+def readTarget (context : Context) : Target8 → Byte × Context
   | .reg register => (context.state.registers.get8 register, context)
   | .atHL => read context .data context.state.registers.hl
 
-private def writeTarget (context : Context) (target : Target8) (value : Byte) : Context :=
+def writeTarget (context : Context) (target : Target8) (value : Byte) : Context :=
   match target with
   | .reg register => withRegisters context (context.state.registers.set8 register value)
   | .atHL => write context context.state.registers.hl value
 
-private def memoryAddress (registers : Registers) : Mem16 → Word
+def memoryAddress (registers : Registers) : Mem16 → Word
   | .atBC => registers.bc
   | .atDE => registers.de
   | .atHLInc | .atHLDec => registers.hl
 
-private def updateMemoryPointer (registers : Registers) : Mem16 → Registers
+def updateMemoryPointer (registers : Registers) : Mem16 → Registers
   | .atHLInc => registers.setHL (Word.ofNat (registers.hl.toNat + 1))
   | .atHLDec => registers.setHL (Word.ofNat (registers.hl.toNat + 65535))
   | .atBC | .atDE => registers
 
-private def readMem16 (context : Context) (source : Mem16) : Byte × Context :=
+def readMem16 (context : Context) (source : Mem16) : Byte × Context :=
   let address := memoryAddress context.state.registers source
   let (value, context) := read context .data address
   (value, withRegisters context (updateMemoryPointer context.state.registers source))
 
-private def writeMem16 (context : Context) (destination : Mem16) (value : Byte) : Context :=
+def writeMem16 (context : Context) (destination : Mem16) (value : Byte) : Context :=
   let address := memoryAddress context.state.registers destination
   let context := write context address value
   withRegisters context (updateMemoryPointer context.state.registers destination)
 
-private def decrementSP (registers : Registers) : Registers :=
+def decrementSP (registers : Registers) : Registers :=
   { registers with sp := Word.ofNat (registers.sp.toNat + 65535) }
 
-private def incrementSP (registers : Registers) : Registers :=
+def incrementSP (registers : Registers) : Registers :=
   { registers with sp := Word.ofNat (registers.sp.toNat + 1) }
 
 /-- Initial idle/decrement, high write/decrement, then low write: exactly two decrements. -/
-private def pushWord (context : Context) (value : Word) : Context :=
+def pushWord (context : Context) (value : Word) : Context :=
   let context := idle context context.state.registers.sp
   let context := withRegisters context (decrementSP context.state.registers)
   let context := write context context.state.registers.sp value.highByte
   let context := withRegisters context (decrementSP context.state.registers)
   write context context.state.registers.sp value.lowByte
 
-private def popWord (context : Context) : Word × Context :=
+def popWord (context : Context) : Word × Context :=
   let (low, context) := read context .stack context.state.registers.sp
   let context := withRegisters context (incrementSP context.state.registers)
   let (high, context) := read context .stack context.state.registers.sp
   let context := withRegisters context (incrementSP context.state.registers)
   (Word.ofBytes high low, context)
 
-private def matureIme (context : Context) : Context :=
+def matureIme (context : Context) : Context :=
   if context.state.scheduledImeEnable then
     { context with state := { context.state with ime := true, scheduledImeEnable := false } }
   else context
 
-private def setFlags (context : Context) (flags : Flags) : Context :=
+def setFlags (context : Context) (flags : Flags) : Context :=
   withRegisters context { context.state.registers with flags }
 
-private def executeShape (context : Context) (shape : InstructionShape) (immediate : List Byte)
+def executeShape (context : Context) (shape : InstructionShape) (immediate : List Byte)
     (pendingInterrupts : Byte) : Context :=
   let registers := context.state.registers
   match shape with

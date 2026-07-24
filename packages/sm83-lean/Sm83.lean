@@ -1,6 +1,7 @@
 -- This module serves as the root of the `Sm83` library.
 -- Import modules here that should be built as part of the library.
 import Sm83.Alu
+import Sm83.Architectural
 import Sm83.Basic
 import Sm83.Behavior
 import Sm83.Byte
