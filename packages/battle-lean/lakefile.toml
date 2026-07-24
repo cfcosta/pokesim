@@ -15,3 +15,8 @@ name = "Battle"
 [[lean_exe]]
 name = "battleFixtures"
 root = "Battle.FixturesMain"
+
+# Consumes a caller-supplied, hash-checked temporary canonical ROM.
+[[lean_exe]]
+name = "battleRomFixture"
+root = "Battle.Rom.FixtureMain"

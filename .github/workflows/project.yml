@@ -13,8 +13,12 @@ jobs:
       - uses: cachix/install-nix-action@v31
       - name: Check pristine imported source
         run: python3 tools/check-pokered-source.py
-      - name: Rebuild canonical Red and compare retained map artifacts
-        run: nix develop -c python3 tools/check-pokered-build.py --rebuild --jobs 4
+      - name: Rebuild canonical Red and exercise the battle ROM fixture
+        run: |
+          rom="$(mktemp --suffix=.gbc)"
+          trap 'rm -f "$rom"' EXIT
+          nix develop -c python3 tools/check-pokered-build.py --rebuild --jobs 4 --output-rom "$rom"
+          nix develop -c lake -d packages/battle-lean exe battleRomFixture "$rom"
       - name: Build battle and DMG-CPU B adapter proofs
         run: nix develop -c lake -d packages/battle-lean build Battle Battle.GameBoy Battle.Rom Battle.DriverInvariant
       - name: Check canonical address/range closure

@@ -30,12 +30,17 @@ The ROM is rebuilt and hash-checked but is not retained in this repository.
 python3 tools/check-pokered-build.py
 python3 tools/check-pokered-closure.py
 nix develop -c python3 tools/check-pokered-build.py --rebuild --jobs 4
+nix develop -c python3 tools/check-pokered-build.py --rebuild --output-rom /tmp/pokered.gbc
+nix develop -c lake -d packages/battle-lean exe battleRomFixture /tmp/pokered.gbc
 ```
 
 `--rebuild` copies the pristine source to a temporary directory, builds
 `pokered.gbc`, verifies both ROM digests, and byte-compares the generated symbol
 and map files with the retained artifacts. It also verifies three retained
-16-byte entry witnesses. It leaves `pokered/` unchanged.
+16-byte entry witnesses. `--output-rom` optionally copies that verified build to
+a caller-selected temporary path for the battle fixture runner. The repository
+and Lake package never retain the ROM; proof modules continue to require
+explicit byte-window witnesses rather than turning an IO check into a theorem.
 
 ## Retained entry-byte witnesses
 

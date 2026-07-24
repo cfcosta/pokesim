@@ -158,7 +158,7 @@ def command_version(command: str) -> str:
     return subprocess.check_output([executable, "--version"], text=True).strip()
 
 
-def rebuild(manifest: dict[str, object], jobs: int) -> None:
+def rebuild(manifest: dict[str, object], jobs: int, output_rom: Path | None = None) -> None:
     version = command_version("rgbasm")
     if version != "rgbasm v1.0.2":
         raise AssertionError(f"unexpected RGBDS: {version}")
@@ -193,11 +193,20 @@ def rebuild(manifest: dict[str, object], jobs: int) -> None:
         if generated_map.read_bytes() != (ARTIFACTS / "pokered.map").read_bytes():
             raise AssertionError("rebuilt map file differs from retained artifact")
 
+        if output_rom is not None:
+            output_rom.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(generated_rom, output_rom)
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--rebuild", action="store_true", help="build in a temporary checkout and compare")
     parser.add_argument("--rom", type=Path, help="verify a caller-supplied ROM without retaining it")
+    parser.add_argument(
+        "--output-rom",
+        type=Path,
+        help="copy a verified temporary rebuild here for downstream tests",
+    )
     parser.add_argument("--jobs", type=int, default=4)
     args = parser.parse_args()
 
@@ -215,11 +224,13 @@ def main() -> int:
     symbols = verify_symbols(symbol_path)
     verify_entry_metadata(manifest, symbols)
 
+    if args.output_rom and not args.rebuild:
+        raise AssertionError("--output-rom requires --rebuild")
     if args.rom:
         verify_rom(args.rom, rom_record)
         verify_entry_bytes(args.rom, manifest)
     if args.rebuild:
-        rebuild(manifest, args.jobs)
+        rebuild(manifest, args.jobs, args.output_rom)
 
     mode = "rebuilt" if args.rebuild else "retained"
     print(
