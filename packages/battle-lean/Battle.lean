@@ -18,6 +18,8 @@ import Battle.State
 import Battle.Step
 import Battle.StepTests
 import Battle.Resolve
+import Battle.Ordinary
+import Battle.OrdinaryTests
 import Battle.Refinement.Bridge
 import Battle.Refinement.Trace
 import Battle.Refinement.Simulation

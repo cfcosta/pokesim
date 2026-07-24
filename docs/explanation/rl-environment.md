@@ -328,6 +328,14 @@ Recommended reset presets:
 
 `selfPlay` must not be called cartridge trainer AI. It is an environment controller configuration around the same move mechanics.
 
+The first executable mechanics profile is `Battle.Ordinary`. It deliberately
+admits only fresh active mons using nonzero-power `NO_ADDITIONAL_EFFECT` moves.
+Within that boundary it retains exact move priority, Speed ties, PP decrement,
+base-Speed critical thresholds, critical RNG rotation, damage-byte `rrca` and
+`≥217` rejection, STAB/type adjustment, the 1/256 accuracy ceiling, HP
+subtraction, and faint interruption. Unsupported effects, empty slots, zero PP,
+and an exhausted RNG search are explicit results rather than approximated moves.
+
 ## Snapshot protocol
 
 Snapshots should use a canonical, versioned byte format defined in Lean.
