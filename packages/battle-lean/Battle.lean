@@ -29,3 +29,4 @@ import Battle.Fixtures
 import Battle.RL.LegalTeam
 import Battle.RL.Generator
 import Battle.RL.GeneratorSafe
+import Battle.RL.DynamicGenerator

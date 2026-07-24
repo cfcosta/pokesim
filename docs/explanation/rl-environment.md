@@ -292,6 +292,15 @@ Generator.generate :
 
 The theorem states generated teams are legal. It does not claim uniformity unless a separate probability proof is supplied.
 
+The first implemented sampler is `Battle.RL.DynamicGenerator.sample`. It consumes
+the deterministic link RNG, samples party size, species, DVs, move count, and a
+cyclic move-pool offset, and returns the subtype
+`{team // teamLegal Dex.gen1 .canonical team = true}`. It currently fixes level
+at 100 because the certified hot-path pool is level-agnostic; that supplies a
+constructive level at which every retained level-up move is available. A
+fail-closed, explicitly flagged recovery team prevents malformed entropy or a
+future generator regression from emitting an invalid episode reset.
+
 Useful distributions include:
 
 - uniform species, fixed level;
