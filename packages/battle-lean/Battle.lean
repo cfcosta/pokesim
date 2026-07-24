@@ -40,6 +40,7 @@ import Battle.Full.Safari
 import Battle.Full.Escape
 import Battle.Full.Disobedience
 import Battle.Full.Progression
+import Battle.Full.Learning
 import Battle.Full.TrainerController
 import Battle.Full.Environment
 import Battle.Full.SelfPlay
