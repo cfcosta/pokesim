@@ -100,6 +100,15 @@ def vblank : Symbol := ⟨0x00, 0x2024⟩
 def wBattleResult : Symbol := ⟨0x00, 0xCF0B⟩
 def wIsInBattle : Symbol := ⟨0x00, 0xD057⟩
 
+/-! Canonical data-table symbols retained from `pokered.sym`. Mew's base-data
+row is physically separate from the 150-row `BaseStats` block. -/
+def moves : Symbol := ⟨0x0E, 0x4000⟩
+def baseStats : Symbol := ⟨0x0E, 0x43DE⟩
+def mewBaseStats : Symbol := ⟨0x01, 0x425B⟩
+def evosMovesPointerTable : Symbol := ⟨0x0E, 0x705C⟩
+def evosMovesData : Symbol := ⟨0x0E, 0x71D8⟩
+def pokedexOrder : Symbol := ⟨0x10, 0x5024⟩
+
 end Symbols
 
 @[inline] def romOffset (bank : Nat) (address : Word) : Nat :=
@@ -108,6 +117,63 @@ end Symbols
 
 @[inline] def bytesAt (rom : Array Byte) (offset count : Nat) : List Byte :=
   (List.range count).map fun index => GameBoy.Mbc3.readArray rom (offset + index)
+
+/-- Physical byte offset of a retained symbol in the one-megabyte ROM image. -/
+@[inline] def Symbol.offset (symbol : Symbol) : Nat :=
+  romOffset symbol.bank.toNat symbol.address
+
+/-! ## Canonical data-table layout
+
+These cardinalities are part of the ROM format, not inferred from the authored
+model tables. They pin each retained symbol to the exact byte range emitted by
+RGBDS. -/
+namespace TableLayout
+
+def moveCount : Nat := 165
+def moveEntrySize : Nat := 6
+def movesSize : Nat := moveCount * moveEntrySize
+
+def ordinaryBaseStatsCount : Nat := 150
+def baseStatsEntrySize : Nat := 28
+def ordinaryBaseStatsSize : Nat := ordinaryBaseStatsCount * baseStatsEntrySize
+
+def speciesIndexCount : Nat := 190
+def evosMovesPointerSize : Nat := speciesIndexCount * 2
+def pokedexOrderSize : Nat := speciesIndexCount
+
+def evosMovesDataSize : Nat := 0x79EC - Symbols.evosMovesData.address.toNat
+
+/-- `Moves` occupies exactly the bytes before `BaseStats`. -/
+@[simp] theorem moves_end :
+    Symbols.moves.offset + movesSize = Symbols.baseStats.offset := by
+  native_decide
+
+/-- The ordinary `BaseStats` block has 150 rows; Mew is stored separately. -/
+@[simp] theorem ordinary_base_stats_end :
+    Symbols.baseStats.offset + ordinaryBaseStatsSize =
+      romOffset 0x0E (Word.ofNat 0x5446) := by
+  native_decide
+
+/-- Mew's detached row is one complete 28-byte base-data record. -/
+@[simp] theorem mew_base_stats_end :
+    Symbols.mewBaseStats.offset + baseStatsEntrySize =
+      romOffset 0x01 (Word.ofNat 0x4277) := by
+  native_decide
+
+/-- The 190 little-endian evolution/learnset pointers end where their payload
+begins. -/
+@[simp] theorem evos_moves_pointers_end :
+    Symbols.evosMovesPointerTable.offset + evosMovesPointerSize =
+      Symbols.evosMovesData.offset := by
+  native_decide
+
+/-- The internal-index-to-dex table occupies exactly 190 bytes. -/
+@[simp] theorem pokedex_order_end :
+    Symbols.pokedexOrder.offset + pokedexOrderSize =
+      romOffset 0x10 (Word.ofNat 0x50E2) := by
+  native_decide
+
+end TableLayout
 
 def initOpponentPrefix : List Byte :=
   [0xFA, 0x59, 0xD0, 0xEA, 0x91, 0xCF, 0xEA, 0xD8,

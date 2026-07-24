@@ -102,3 +102,13 @@ not fetch invalid opcodes or STOP.
 | `VBlank` | `00:2024` |
 | `wBattleResult` | `00:cf0b` |
 | `wIsInBattle` | `00:d057` |
+| `Moves` | `0e:4000` |
+| `BaseStats` (150 ordinary rows) | `0e:43de` |
+| `MewBaseStats` | `01:425b` |
+| `EvosMovesPointerTable` | `0e:705c` |
+| first evolution/learnset payload | `0e:71d8` |
+| `PokedexOrder` | `10:5024` |
+
+`Rom.Closure.TableLayout` proves the fixed ranges: 165 six-byte move rows,
+150 28-byte ordinary base-stat rows plus Mew's detached row, 190 two-byte
+evolution/learnset pointers, and 190 internal-index order bytes.
