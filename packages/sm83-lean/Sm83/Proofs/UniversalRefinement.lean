@@ -777,5 +777,310 @@ theorem base_hl_write_refines (before : FunctionalState) (opcode : Byte)
   all_goals cases before.scheduledImeEnable <;>
     simp [Retirement.Snapshot.atBoundary, Retirement.Snapshot.ofFunctional]
 
+/-- The two base `(HL)` read-modify-write arithmetic families. -/
+inductive BaseHLModifyShape : InstructionShape → Prop where
+  | inc : BaseHLModifyShape (.inc8 .atHL)
+  | dec : BaseHLModifyShape (.dec8 .atHL)
+
+private def baseHLModifyValue (state : FunctionalState) (shape : InstructionShape)
+    (value : Byte) : Byte :=
+  match shape with
+  | .inc8 .atHL => (Alu.inc8 value state.registers.flags).value
+  | .dec8 .atHL => (Alu.dec8 value state.registers.flags).value
+  | _ => value
+
+private def baseHLModifyReadCore (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (value : Byte) : CoreState :=
+  { baseFetchedCore state opcode shape with
+    remaining := [.writeHL, .successorFetch]
+    latches := { data := value, conditionTaken := true } }
+
+private def baseHLModifyRead (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (value : Byte) : FlatCoreState :=
+  { core := baseHLModifyReadCore state opcode shape value
+    memory := state.memory
+    trace := [.read .opcode state.registers.pc opcode,
+      .read .data state.registers.hl value] }
+
+private def baseHLModifyWriteCore (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (value : Byte) : CoreState :=
+  { baseHLModifyReadCore state opcode shape value with remaining := [.successorFetch] }
+
+private def baseHLModifyWritten (state : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (value : Byte) : FlatCoreState :=
+  let written := baseHLModifyValue state shape value
+  { core := baseHLModifyWriteCore state opcode shape value
+    memory := state.memory.write state.registers.hl written
+    trace := [.read .opcode state.registers.pc opcode,
+      .read .data state.registers.hl value,
+      .write state.registers.hl written] }
+
+private theorem step_base_hl_modify_read (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (family : BaseHLModifyShape shape) :
+    FlatAdapter.step (baseFetched before opcode shape) =
+      baseHLModifyRead before opcode shape (before.memory.read before.registers.hl) := by
+  cases family <;>
+    simp [FlatAdapter.step, baseFetched, baseFetchedCore, baseHLModifyRead,
+      baseHLModifyReadCore, Pipeline.taken, Cycle.physicalSchedule,
+      Cycle.logicalSchedule, Cycle.targetIsMemory, CoreState.currentOp?,
+      Run.stepMachineCycle, Run.intent, Run.opFetch, Run.opCommit, Run.opPoll,
+      Run.opControl, Run.opAddress, Run.opReadKind, Run.opIdu,
+      Run.processNonFetch, Run.updatePointer, Registers.hl, FlatAdapter.event]
+
+private theorem step_base_hl_modify_write (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (family : BaseHLModifyShape shape) :
+    let value := before.memory.read before.registers.hl
+    FlatAdapter.step (baseHLModifyRead before opcode shape value) =
+      baseHLModifyWritten before opcode shape value := by
+  cases family <;>
+    simp [FlatAdapter.step, baseHLModifyRead, baseHLModifyReadCore,
+      baseHLModifyWritten, baseHLModifyWriteCore, baseHLModifyValue,
+      baseFetchedCore, Pipeline.taken, Cycle.physicalSchedule,
+      Cycle.logicalSchedule, Cycle.targetIsMemory, CoreState.currentOp?,
+      Run.stepMachineCycle, Run.intent, Run.opFetch, Run.opCommit, Run.opPoll,
+      Run.opControl, Run.opAddress, Run.opReadKind, Run.opIdu,
+      Run.processNonFetch, Run.writeValue, Registers.hl, FlatAdapter.event]
+
+set_option maxHeartbeats 3000000 in
+/-- Universal refinement for `INC (HL)` and `DEC (HL)`. -/
+theorem base_hl_modify_refines (before : FunctionalState) (opcode : Byte)
+    (shape : InstructionShape) (family : BaseHLModifyShape shape)
+    (running : before.mode = .running)
+    (noHaltBug : before.haltBug = false)
+    (atPC : before.memory.read before.registers.pc = opcode)
+    (decoded : Decode.base opcode = .legal shape) :
+    let logical := Functional.step before 0
+    let physical := FlatAdapter.run 4 (physicalInitial before) noInterrupts
+    Retirement.Snapshot.atBoundary physical.core =
+        Retirement.Snapshot.ofFunctional logical.state ∧
+      physical.memory = logical.state.memory ∧
+      physical.trace.dropLast = logical.trace := by
+  rw [show FlatAdapter.run 4 (physicalInitial before) noInterrupts =
+      FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
+        (FlatAdapter.step (physicalInitial before)))) by rfl]
+  rw [fetch_legal before opcode shape atPC noHaltBug decoded]
+  rw [step_base_hl_modify_read before opcode shape family]
+  rw [step_base_hl_modify_write before opcode shape family]
+  cases family <;>
+    simp [Functional.step, running, atPC, decoded, noHaltBug,
+      baseHLModifyWritten, baseHLModifyWriteCore, baseHLModifyReadCore,
+      baseHLModifyValue, baseFetchedCore, Pipeline.taken,
+      Cycle.physicalSchedule, Cycle.logicalSchedule, Cycle.targetIsMemory,
+      FlatAdapter.step, CoreState.currentOp?, Run.stepMachineCycle, Run.intent,
+      Run.opFetch, Run.opCommit, Run.opPoll, Run.opControl, Run.opAddress,
+      Run.successorAddress, Run.opReadKind, Run.opIdu, Run.finishSuccessor,
+      Run.commitRegisters, Run.commitIme, Run.targetValue, Run.setTarget,
+      Functional.fetchImmediate, InstructionShape.immediateBytes,
+      Functional.executeShape, Functional.readTarget, Functional.read,
+      Functional.write, Functional.writeTarget, Functional.matureIme,
+      Functional.withRegisters, Functional.setFlags, Registers.hl,
+      FlatAdapter.event]
+  all_goals cases before.scheduledImeEnable <;>
+    simp [Retirement.Snapshot.atBoundary, Retirement.Snapshot.ofFunctional]
+
+private def hlImmediateCore (state : FunctionalState) (opcode value : Byte) : CoreState :=
+  { baseFetchedCore state opcode (.ld8Imm .atHL) with
+    registers := { state.registers with pc := Word.ofNat (state.registers.pc.toNat + 2) }
+    remaining := [.writeHL, .successorFetch]
+    latches := { low := value, conditionTaken := true } }
+
+private def hlImmediateState (state : FunctionalState) (opcode value : Byte) : FlatCoreState :=
+  { core := hlImmediateCore state opcode value
+    memory := state.memory
+    trace := [.read .opcode state.registers.pc opcode,
+      .read .immediate (Word.ofNat (state.registers.pc.toNat + 1)) value] }
+
+private def hlImmediateWrittenCore (state : FunctionalState) (opcode value : Byte) : CoreState :=
+  { hlImmediateCore state opcode value with remaining := [.successorFetch] }
+
+private def hlImmediateWritten (state : FunctionalState) (opcode value : Byte) : FlatCoreState :=
+  { core := hlImmediateWrittenCore state opcode value
+    memory := state.memory.write state.registers.hl value
+    trace := [.read .opcode state.registers.pc opcode,
+      .read .immediate (Word.ofNat (state.registers.pc.toNat + 1)) value,
+      .write state.registers.hl value] }
+
+private theorem step_hl_immediate (before : FunctionalState) (opcode : Byte) :
+    FlatAdapter.step (baseFetched before opcode (.ld8Imm .atHL)) =
+      hlImmediateState before opcode
+        (before.memory.read (Word.ofNat (before.registers.pc.toNat + 1))) := by
+  simp [FlatAdapter.step, baseFetched, baseFetchedCore, hlImmediateState,
+    hlImmediateCore, Pipeline.taken, Cycle.physicalSchedule,
+    Cycle.logicalSchedule, Cycle.targetIsMemory, CoreState.currentOp?,
+    Run.stepMachineCycle, Run.intent, Run.opFetch, Run.opCommit, Run.opPoll,
+    Run.opControl, Run.opAddress, Run.opReadKind, Run.opIdu,
+    Run.processNonFetch, increment_twice, FlatAdapter.event]
+
+private theorem step_hl_immediate_write (before : FunctionalState) (opcode : Byte) :
+    let value := before.memory.read (Word.ofNat (before.registers.pc.toNat + 1))
+    FlatAdapter.step (hlImmediateState before opcode value) =
+      hlImmediateWritten before opcode value := by
+  simp [FlatAdapter.step, hlImmediateState, hlImmediateCore,
+    hlImmediateWritten, hlImmediateWrittenCore, baseFetchedCore,
+    Pipeline.taken, Cycle.physicalSchedule, Cycle.logicalSchedule,
+    Cycle.targetIsMemory, CoreState.currentOp?, Run.stepMachineCycle,
+    Run.intent, Run.opFetch, Run.opCommit, Run.opPoll, Run.opControl,
+    Run.opAddress, Run.opReadKind, Run.opIdu, Run.processNonFetch,
+    Run.writeValue, Registers.hl, FlatAdapter.event]
+
+set_option maxHeartbeats 3000000 in
+/-- Universal refinement for `LD (HL),n`. -/
+theorem hl_immediate_refines (before : FunctionalState) (opcode : Byte)
+    (running : before.mode = .running) (noHaltBug : before.haltBug = false)
+    (atPC : before.memory.read before.registers.pc = opcode)
+    (decoded : Decode.base opcode = .legal (.ld8Imm .atHL)) :
+    let logical := Functional.step before 0
+    let physical := FlatAdapter.run 4 (physicalInitial before) noInterrupts
+    Retirement.Snapshot.atBoundary physical.core =
+        Retirement.Snapshot.ofFunctional logical.state ∧
+      physical.memory = logical.state.memory ∧
+      physical.trace.dropLast = logical.trace := by
+  rw [show FlatAdapter.run 4 (physicalInitial before) noInterrupts =
+      FlatAdapter.step (FlatAdapter.step (FlatAdapter.step
+        (FlatAdapter.step (physicalInitial before)))) by rfl]
+  rw [fetch_legal before opcode (.ld8Imm .atHL) atPC noHaltBug decoded]
+  rw [step_hl_immediate before opcode]
+  rw [step_hl_immediate_write before opcode]
+  simp [Functional.step, running, atPC, decoded, noHaltBug,
+    hlImmediateWritten, hlImmediateWrittenCore, hlImmediateCore,
+    baseFetchedCore, Pipeline.taken, Cycle.physicalSchedule,
+    Cycle.logicalSchedule, Cycle.targetIsMemory, FlatAdapter.step,
+    CoreState.currentOp?, Run.stepMachineCycle, Run.intent, Run.opFetch,
+    Run.opCommit, Run.opPoll, Run.opControl, Run.opAddress,
+    Run.successorAddress, Run.opReadKind, Run.opIdu, Run.finishSuccessor,
+    Run.commitRegisters, Run.commitIme, Run.setTarget,
+    Functional.fetchImmediate, Functional.read, Functional.immediate8,
+    InstructionShape.immediateBytes, Functional.executeShape,
+    Functional.write, Functional.writeTarget, Functional.withRegisters,
+    Functional.matureIme,
+    Registers.hl, increment_twice, FlatAdapter.event]
+  all_goals cases before.scheduledImeEnable <;>
+    simp [Retirement.Snapshot.atBoundary, Retirement.Snapshot.ofFunctional]
+
+private def mem16WriteCore (state : FunctionalState) (opcode : Byte)
+    (destination : Mem16) : CoreState :=
+  let core := baseFetchedCore state opcode (.ldMem16A destination)
+  { Run.updatePointer core with remaining := [.successorFetch] }
+
+private def mem16Written (state : FunctionalState) (opcode : Byte)
+    (destination : Mem16) : FlatCoreState :=
+  let address := Run.memAddress state.registers destination
+  { core := mem16WriteCore state opcode destination
+    memory := state.memory.write address state.registers.a
+    trace := [.read .opcode state.registers.pc opcode,
+      .write address state.registers.a] }
+
+private theorem step_mem16_write (before : FunctionalState) (opcode : Byte)
+    (destination : Mem16) :
+    FlatAdapter.step (baseFetched before opcode (.ldMem16A destination)) =
+      mem16Written before opcode destination := by
+  cases destination <;>
+    simp [FlatAdapter.step, baseFetched, baseFetchedCore, mem16Written,
+      mem16WriteCore, Pipeline.taken, Cycle.physicalSchedule,
+      Cycle.logicalSchedule, CoreState.currentOp?, Run.stepMachineCycle,
+      Run.intent, Run.opFetch, Run.opCommit, Run.opPoll, Run.opControl,
+      Run.opAddress, Run.readAddress, Run.memAddress, Run.opReadKind,
+      Run.opIdu, Run.processNonFetch, Run.updatePointer, Run.writeValue,
+      Registers.bc, Registers.de, Registers.hl, Registers.setHL,
+      FlatAdapter.event]
+
+set_option maxHeartbeats 3000000 in
+/-- Universal refinement for `LD (BC/DE/HL+/HL-),A`. -/
+theorem mem16_write_refines (before : FunctionalState) (opcode : Byte)
+    (destination : Mem16) (running : before.mode = .running)
+    (noHaltBug : before.haltBug = false)
+    (atPC : before.memory.read before.registers.pc = opcode)
+    (decoded : Decode.base opcode = .legal (.ldMem16A destination)) :
+    let logical := Functional.step before 0
+    let physical := FlatAdapter.run 3 (physicalInitial before) noInterrupts
+    Retirement.Snapshot.atBoundary physical.core =
+        Retirement.Snapshot.ofFunctional logical.state ∧
+      physical.memory = logical.state.memory ∧
+      physical.trace.dropLast = logical.trace := by
+  rw [show FlatAdapter.run 3 (physicalInitial before) noInterrupts =
+      FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (physicalInitial before))) by rfl]
+  rw [fetch_legal before opcode (.ldMem16A destination) atPC noHaltBug decoded]
+  rw [step_mem16_write before opcode destination]
+  cases destination <;>
+    simp [Functional.step, running, atPC, decoded, noHaltBug, mem16Written,
+      mem16WriteCore, baseFetchedCore, Pipeline.taken,
+      Cycle.physicalSchedule, Cycle.logicalSchedule, FlatAdapter.step,
+      CoreState.currentOp?, Run.stepMachineCycle, Run.intent, Run.opFetch,
+      Run.opCommit, Run.opPoll, Run.opControl, Run.opAddress,
+      Run.successorAddress, Run.memAddress, Run.opReadKind,
+      Run.opIdu, Run.finishSuccessor, Run.commitRegisters, Run.commitIme,
+      Run.updatePointer, Functional.fetchImmediate,
+      InstructionShape.immediateBytes, Functional.executeShape,
+      Functional.writeMem16, Functional.memoryAddress,
+      Functional.updateMemoryPointer, Functional.write,
+      Functional.withRegisters, Functional.matureIme, Registers.bc,
+      Registers.de, Registers.hl,
+      Registers.setHL, FlatAdapter.event]
+  all_goals cases before.scheduledImeEnable <;>
+    simp [Retirement.Snapshot.atBoundary, Retirement.Snapshot.ofFunctional]
+
+private def mem16ReadCore (state : FunctionalState) (opcode : Byte)
+    (source : Mem16) (value : Byte) : CoreState :=
+  let core := baseFetchedCore state opcode (.ldAFromMem16 source)
+  { Run.updatePointer { core with latches := { data := value } } with
+    remaining := [.successorFetch] }
+
+private def mem16Read (state : FunctionalState) (opcode : Byte)
+    (source : Mem16) (value : Byte) : FlatCoreState :=
+  let address := Run.memAddress state.registers source
+  { core := mem16ReadCore state opcode source value
+    memory := state.memory
+    trace := [.read .opcode state.registers.pc opcode,
+      .read .data address value] }
+
+private theorem step_mem16_read (before : FunctionalState) (opcode : Byte)
+    (source : Mem16) :
+    FlatAdapter.step (baseFetched before opcode (.ldAFromMem16 source)) =
+      mem16Read before opcode source
+        (before.memory.read (Run.memAddress before.registers source)) := by
+  cases source <;>
+    simp [FlatAdapter.step, baseFetched, baseFetchedCore, mem16Read,
+      mem16ReadCore, Pipeline.taken, Cycle.physicalSchedule,
+      Cycle.logicalSchedule, CoreState.currentOp?, Run.stepMachineCycle,
+      Run.intent, Run.opFetch, Run.opCommit, Run.opPoll, Run.opControl,
+      Run.opAddress, Run.readAddress, Run.memAddress, Run.opReadKind,
+      Run.opIdu, Run.processNonFetch, Run.updatePointer, Registers.bc,
+      Registers.de, Registers.hl, Registers.setHL, FlatAdapter.event]
+
+set_option maxHeartbeats 3000000 in
+/-- Universal refinement for `LD A,(BC/DE/HL+/HL-)`. -/
+theorem mem16_read_refines (before : FunctionalState) (opcode : Byte)
+    (source : Mem16) (running : before.mode = .running)
+    (noHaltBug : before.haltBug = false)
+    (atPC : before.memory.read before.registers.pc = opcode)
+    (decoded : Decode.base opcode = .legal (.ldAFromMem16 source)) :
+    let logical := Functional.step before 0
+    let physical := FlatAdapter.run 3 (physicalInitial before) noInterrupts
+    Retirement.Snapshot.atBoundary physical.core =
+        Retirement.Snapshot.ofFunctional logical.state ∧
+      physical.memory = logical.state.memory ∧
+      physical.trace.dropLast = logical.trace := by
+  rw [show FlatAdapter.run 3 (physicalInitial before) noInterrupts =
+      FlatAdapter.step (FlatAdapter.step (FlatAdapter.step (physicalInitial before))) by rfl]
+  rw [fetch_legal before opcode (.ldAFromMem16 source) atPC noHaltBug decoded]
+  rw [step_mem16_read before opcode source]
+  cases source <;>
+    simp [Functional.step, running, atPC, decoded, noHaltBug, mem16Read,
+      mem16ReadCore, baseFetchedCore, Pipeline.taken,
+      Cycle.physicalSchedule, Cycle.logicalSchedule, FlatAdapter.step,
+      CoreState.currentOp?, Run.stepMachineCycle, Run.intent, Run.opFetch,
+      Run.opCommit, Run.opPoll, Run.opControl, Run.opAddress,
+      Run.successorAddress, Run.memAddress, Run.opReadKind,
+      Run.opIdu, Run.finishSuccessor, Run.commitRegisters, Run.commitIme,
+      Run.updatePointer, Functional.fetchImmediate,
+      InstructionShape.immediateBytes, Functional.executeShape,
+      Functional.readMem16, Functional.memoryAddress,
+      Functional.updateMemoryPointer, Functional.read,
+      Functional.withRegisters, Functional.matureIme, Registers.bc,
+      Registers.de, Registers.hl,
+      Registers.setHL, FlatAdapter.event]
+  all_goals cases before.scheduledImeEnable <;>
+    simp [Retirement.Snapshot.atBoundary, Retirement.Snapshot.ofFunctional]
+
 end Proofs.UniversalRefinement
 end Sm83
