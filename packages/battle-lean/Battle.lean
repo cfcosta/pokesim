@@ -29,6 +29,7 @@ import Battle.TrainerAI
 import Battle.LinkBugs
 import Battle.BugCompatibility
 import Battle.Full.State
+import Battle.Full.Status
 import Battle.Refinement.Bridge
 import Battle.Refinement.Trace
 import Battle.Refinement.Simulation
