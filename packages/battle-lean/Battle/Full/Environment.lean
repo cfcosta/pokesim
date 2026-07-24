@@ -3,6 +3,7 @@ Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.Full.Engine
+import Battle.Full.Capture
 import Battle.RL.DynamicGenerator
 
 /-!
@@ -21,6 +22,7 @@ structure State where
   playerReset : RL.DynamicGenerator.CanonicalTeam
   enemyReset : RL.DynamicGenerator.CanonicalTeam
   repairedReset : Bool
+  box : Array MonState := #[]
 
 structure Observation where
   playerSpecies : Array SpeciesId
@@ -56,7 +58,8 @@ def reset (generatorRng battleRng : Rng.LinkRng)
   { engine := { battle, playerBag, enemyBag }
     playerReset := player.team
     enemyReset := enemy.team
-    repairedReset := player.repaired || enemy.repaired }
+    repairedReset := player.repaired || enemy.repaired
+    box := #[] }
 
 /-- Done only after explicit cleanup settlement. -/
 def done (state : State) : Bool :=
@@ -119,6 +122,47 @@ def step (state : State) (player enemy : Full.Action) : StepResult :=
 
 def resumeNested (state : State) (who : Side) (move : MoveId) : StepResult :=
   lift state (Engine.resumeNested state.engine who move)
+
+/-- Supply the hardware-Random bytes for a pending non-link ball throw. Rejected
+Rand1 remains a request for another byte; successful capture appends to party or
+box and enters the witnessed ending phase. -/
+def resolveCapture (state : State) (ball : Capture.Ball) (rand1 rand2 : UInt8)
+    (ghost : Bool := false) : Capture.Result × State :=
+  let enemy := state.engine.battle.enemy.active.active
+  let playerParty := state.engine.battle.player.syncOutgoing.party.mons
+  let input : Capture.Input :=
+    { ball
+      currentHp := enemy.hp
+      maxHp := enemy.maxHp
+      status := enemy.status
+      catchRate := enemy.catchRate
+      species := enemy.species
+      transformed := bitSet state.engine.battle.enemy.active.volatile.status3
+        Wram.BattleStatus3.transformed
+      trainerBattle := state.engine.battle.mode == .trainer || state.engine.battle.mode == .link
+      ghostBattle := ghost
+      oldManTutorial := state.engine.battle.mode == .oldMan
+      partyCount := playerParty.size.toUInt8
+      boxCount := state.box.size.toUInt8
+      rand1
+      rand2 }
+  let result := Capture.attempt input
+  match result with
+  | .caught stored _ =>
+      let captured := { enemy with species := stored }
+      let (engine, box) :=
+        if state.engine.battle.mode == .oldMan then (state.engine, state.box)
+        else if playerParty.size < Wram.partyLength then
+          let player := state.engine.battle.player.syncOutgoing
+          let player := { player with party := { mons := player.party.mons.push captured } }
+          ({ state.engine with battle := state.engine.battle.setSide .player player }, state.box)
+        else (state.engine, state.box.push captured)
+      let cause := if state.engine.battle.mode == .oldMan then
+        Outcome.TerminalCause.tutorialCapture else .capture
+      let terminal := Outcome.BattleTerminal.mk' cause engine.battle.mode .player 2
+      let engine := { engine with battle := { engine.battle with phase := .ending terminal } }
+      (result, { state with engine, box })
+  | _ => (result, state)
 
 @[simp] theorem player_reset_legal (state : State) :
     teamLegal genDex .canonical state.playerReset.1 = true := state.playerReset.2
