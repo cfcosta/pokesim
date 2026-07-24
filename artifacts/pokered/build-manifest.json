@@ -1,0 +1,24 @@
+{
+  "pokered_commit": "405b6246372d7e5a2cb029cbb65219b13286b8c9",
+  "pokered_source_manifest_sha256": "f5890088a5806da5b8517addfa8de4aa8626c9483ae6dbbbb7637cf647cef1c9",
+  "rgbds_commit": "3b1606c63c1671fd6675747507fe95d7f72da2d9",
+  "rgbds_version": "1.0.2+hotfix",
+  "rom": {
+    "file": "pokered.gbc",
+    "size": 1048576,
+    "sha1": "ea9bcae617fdf159b045185467ae58b2e4a48b9a",
+    "sha256": "5ca7ba01642a3b27b0cc0b5349b52792795b62d3ed977e98a09390659af96b7b"
+  },
+  "symbols": {
+    "file": "pokered.sym",
+    "lines": 21137,
+    "size": 708622,
+    "sha256": "4dc25c1c467a947c2b0aa18628ddd048b4d1de50166a58e190db885e5577c33f"
+  },
+  "map": {
+    "file": "pokered.map",
+    "lines": 20559,
+    "size": 897323,
+    "sha256": "2bc9e32847add776618f3a5cb98c383c85842fa52f9f5d48474f32f32738c9fb"
+  }
+}

@@ -10,8 +10,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
       - name: Check pristine imported source
         run: python3 tools/check-pokered-source.py
+      - name: Rebuild canonical Red and compare retained map artifacts
+        run: nix develop -c python3 tools/check-pokered-build.py --rebuild --jobs 4
       - name: Check documentation against nested source
         run: python3 tools/validate-docs.py
       - name: Compile Python tooling

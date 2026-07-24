@@ -34,6 +34,8 @@
         };
         inherit (pkgs) mkShell;
 
+        rgbds-1_0_2-hotfix = pkgs.callPackage ./nix/rgbds-1.0.2-hotfix.nix { };
+
         formatter =
           (treefmt-nix.lib.evalModule pkgs {
             projectRootFile = "flake.nix";
@@ -63,14 +65,24 @@
         };
       in
       {
-        checks = { inherit pre-commit-check; };
+        checks = {
+          inherit pre-commit-check;
+          rgbds = rgbds-1_0_2-hotfix;
+        };
+
+        packages = {
+          rgbds = rgbds-1_0_2-hotfix;
+          default = rgbds-1_0_2-hotfix;
+        };
 
         devShells.default = mkShell {
           name = "pokegame";
 
           buildInputs = with pkgs; [
             formatter
+            gnumake
             lean4
+            rgbds-1_0_2-hotfix
           ];
         };
 
