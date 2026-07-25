@@ -136,6 +136,36 @@ private def summaryHolds (spec : Prefix) (enemyTurn : Bool)
     Driver.toByte (final.memory.read wPlayerBattleStatus2) == expectedPlayer &&
     Driver.toByte (final.memory.read wEnemyBattleStatus2) == expectedEnemy
 
+/-! ## Continuous flat fetched-IR lifting -/
+
+private def physicalInitial (state : FunctionalState) : FlatCoreState :=
+  { core := {
+      Pipeline.bootstrap state.registers with
+      ime := state.ime
+      scheduledImeEnable := state.scheduledImeEnable
+      haltBug := state.haltBug }
+    memory := state.memory }
+
+private def physicalSummaryHolds (spec : Prefix) (enemyTurn : Bool)
+    (playerStatus enemyStatus : UInt8) : Bool :=
+  let functional := run spec enemyTurn playerStatus enemyStatus
+  let initial := before spec enemyTurn playerStatus enemyStatus
+  let expected := expectedTrace spec enemyTurn playerStatus enemyStatus
+  let final := Driver.finalState functional
+  let successor := if final.registers.pc == Word.ofNat (spec.entry.toNat + 17) then
+    spec.successOpcode else spec.failureOpcode
+  let physical := FlatAdapter.run (expected.length + 1) (physicalInitial initial)
+    (fun _ _ => 0)
+  let projected := FlatAdapter.project physical
+  Driver.reachedReturn functional &&
+    physical.trace == expected ++ [.read .opcode final.registers.pc successor] &&
+    projected.registers == final.registers && projected.mode == .running &&
+    physical.core.boundaryPC.isSome &&
+    Driver.toByte (physical.memory.read wPlayerBattleStatus2) ==
+      Driver.toByte (final.memory.read wPlayerBattleStatus2) &&
+    Driver.toByte (physical.memory.read wEnemyBattleStatus2) ==
+      Driver.toByte (final.memory.read wEnemyBattleStatus2)
+
 private def exhaustive (spec : Prefix) : Bool :=
   (List.range 256).all fun player =>
     (List.range 256).all fun enemy =>
@@ -145,9 +175,39 @@ private def exhaustive (spec : Prefix) : Bool :=
 private theorem exhaustive_focus : exhaustive focusEnergy = true := by native_decide
 private theorem exhaustive_mist : exhaustive mist = true := by native_decide
 
+private def physicalExhaustive (spec : Prefix) : Bool :=
+  (List.range 256).all fun player =>
+    (List.range 256).all fun enemy =>
+      physicalSummaryHolds spec false player.toUInt8 enemy.toUInt8 &&
+        physicalSummaryHolds spec true player.toUInt8 enemy.toUInt8
+
+private theorem physical_exhaustive_focus : physicalExhaustive focusEnergy = true := by
+  native_decide
+private theorem physical_exhaustive_mist : physicalExhaustive mist = true := by
+  native_decide
+
 private theorem of_exhaustive {spec : Prefix} (checked : exhaustive spec = true)
     (enemyTurn : Bool) (playerStatus enemyStatus : UInt8) :
     summaryHolds spec enemyTurn playerStatus enemyStatus = true := by
+  have players := List.all_eq_true.mp checked
+  have player := players playerStatus.toNat
+    (List.mem_range.mpr (UInt8.toNat_lt playerStatus))
+  have enemies := List.all_eq_true.mp player
+  have both := enemies enemyStatus.toNat
+    (List.mem_range.mpr (UInt8.toNat_lt enemyStatus))
+  have playerRound : playerStatus.toNat.toUInt8 = playerStatus := by
+    apply UInt8.toNat.inj
+    simp
+  have enemyRound : enemyStatus.toNat.toUInt8 = enemyStatus := by
+    apply UInt8.toNat.inj
+    simp
+  simp only [playerRound, enemyRound] at both
+  cases enemyTurn <;> simp_all
+
+private theorem physical_of_exhaustive {spec : Prefix}
+    (checked : physicalExhaustive spec = true) (enemyTurn : Bool)
+    (playerStatus enemyStatus : UInt8) :
+    physicalSummaryHolds spec enemyTurn playerStatus enemyStatus = true := by
   have players := List.all_eq_true.mp checked
   have player := players playerStatus.toNat
     (List.mem_range.mpr (UInt8.toNat_lt playerStatus))
@@ -173,6 +233,17 @@ theorem mist_exact (enemyTurn : Bool) (playerStatus enemyStatus : UInt8) :
     summaryHolds mist enemyTurn playerStatus enemyStatus = true :=
   of_exhaustive exhaustive_mist enemyTurn playerStatus enemyStatus
 
+/-- Continuous fetched-IR Focus Energy prefix with one successor overlap. -/
+theorem focusEnergy_physical_exact (enemyTurn : Bool)
+    (playerStatus enemyStatus : UInt8) :
+    physicalSummaryHolds focusEnergy enemyTurn playerStatus enemyStatus = true :=
+  physical_of_exhaustive physical_exhaustive_focus enemyTurn playerStatus enemyStatus
+
+/-- Continuous fetched-IR Mist prefix with one successor overlap. -/
+theorem mist_physical_exact (enemyTurn : Bool) (playerStatus enemyStatus : UInt8) :
+    physicalSummaryHolds mist enemyTurn playerStatus enemyStatus = true :=
+  physical_of_exhaustive physical_exhaustive_mist enemyTurn playerStatus enemyStatus
+
 structure RequiredPrefixBytes (rom : Array Byte) : Prop where
   focusWindow : Tables.tableBytes rom
     (romOffset 0x09 (Word.ofNat focusEnergy.entry.toNat)) focusEnergy.bytes.length =
@@ -196,10 +267,14 @@ theorem canonical_effect_prefixes_exact {sha256 : Sha256} {rom : CanonicalRom}
           mist.bytes.map (fun byte => byte.toNat.toUInt8) ∧
       (∀ enemyTurn playerStatus enemyStatus,
         summaryHolds focusEnergy enemyTurn playerStatus enemyStatus = true) ∧
+      (∀ enemyTurn playerStatus enemyStatus,
+        summaryHolds mist enemyTurn playerStatus enemyStatus = true) ∧
+      (∀ enemyTurn playerStatus enemyStatus,
+        physicalSummaryHolds focusEnergy enemyTurn playerStatus enemyStatus = true) ∧
       ∀ enemyTurn playerStatus enemyStatus,
-        summaryHolds mist enemyTurn playerStatus enemyStatus = true :=
+        physicalSummaryHolds mist enemyTurn playerStatus enemyStatus = true :=
   ⟨certificate.prefixes.focusWindow, certificate.prefixes.mistWindow,
-    focusEnergy_exact, mist_exact⟩
+    focusEnergy_exact, mist_exact, focusEnergy_physical_exact, mist_physical_exact⟩
 
 /-- Runtime fixture predicate only. -/
 def prefixWindowsAgree (rom : Array Byte) : Bool :=

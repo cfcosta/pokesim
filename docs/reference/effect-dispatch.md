@@ -274,9 +274,10 @@ fetch, with equal projected registers and affected WRAM.
 banked `FocusEnergyEffect_` and `MistEffect_` implementations. Both side branches
 and every pair of incoming status bytes reach the exact success-presentation or
 already-active-failure PC; successful paths set only the acting side's bit and
-failed paths preserve both bytes. The following animation/text tails still need
-frame/timing summaries. Whole-battle reachability and full Game Boy device
-lifting also remain separate.
+failed paths preserve both bytes. Both complete prefixes also run continuously
+through fetched IR with exactly one successor overlap and equal projected state.
+The following animation/text tails still need frame/timing summaries.
+Whole-battle reachability and full Game Boy device lifting remain separate.
 
 ## Proof obligations
 

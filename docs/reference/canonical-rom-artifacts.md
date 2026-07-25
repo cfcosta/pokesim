@@ -159,6 +159,8 @@ Game Boy device-adapter reachability remains separate.
 (`09:7f86`) and `MistEffect_` (`0c:7f2b`). Universal execution reaches either
 the exact post-mutation presentation boundary or the already-active failure
 boundary and proves acting-side-only status writes before presentation code.
+Both prefixes additionally compose through continuous flat fetched-IR execution
+with one successor-fetch overlap.
 
 `Battle.Rom.CombatTables` closes three more mechanics-critical data seams: the
 four high-critical move IDs and terminator, all 82 ordered type-effect triples
