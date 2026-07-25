@@ -11,7 +11,7 @@
 | Status and residuals | `Battle.Full.Status` | Status-gate order, conditional RNG, poison/burn/seed residuals, Toxic counter interaction |
 | Item dispatch | `Battle.Full.Items` | Explicit disposition for IDs `$01..$53`; executable battle-use handlers; Max Ether packed-byte bug |
 | Effect dispatch | `Battle.Full.EffectPlan` | Typed plans for all effect IDs `$00..$56`; all 165 canonical move rows covered |
-| Effect execution | `Battle.Full.Effects` | State transformers and explicit control signals for every effect family; exact stat-stage arithmetic; Haze/Transform stat rows; and cartridge-ordered Mimic replacement; Haze target-only curing and selected-move cancellation |
+| Effect execution | `Battle.Full.Effects` | State transformers and explicit control signals for every effect family; exact stat-stage arithmetic; Haze/Transform stat rows; and cartridge-ordered Mimic replacement; Haze cancellation; status-stat mutation, recharge bypass, side-effect draw ordering, asymmetric freeze cleanup, and fire defrost |
 | Trainer controller | `Battle.Full.TrainerController`, `Battle.Full.Environment` | All 47 class rows, scoring layers, action counts/routines, direct-Random actions, minimum-score slot rejection, executable plans |
 | Capture | `Battle.Full.Capture`, `Battle.Full.CaptureProtocol` | Ball arithmetic, shake counts, rebuilt stored rows, nested naming/defaults, party append, box slot-one parallel shifts, malformed no-storage paths |
 | Safari | `Battle.Full.Safari`, `Battle.Full.Environment` | Integrated ball/bait/rock/run protocol, rejection factors, catch mutation, last-ball ordering, post-action escape and terminal causes |
@@ -39,7 +39,7 @@ The certificate is independent of the external source tree.
 ```text
 episodes=100 finished=88 truncated=12 nested_open=0
 blocked=0 invalid=0 rng_stuck=0 division_freeze=0 other=0
-repaired=0 transitions=50814
+repaired=0 transitions=50819
 ```
 
 The 12 horizon-open runs are not terminal outcomes; status-heavy generated

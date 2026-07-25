@@ -419,7 +419,8 @@ match damageResult with
 | .error _ => .divisionFreeze state critEvents
 | .ok (damage, rng, damageEvents) =>
     let (hit, rng, accuracyEvents) :=
-      if continuedTrap then (true, rng, [])
+      if continuedTrap || (mechanic == .sleep && defenderFull.active.volatile.recharging) then
+        (true, rng, [])
       else if requiresAccuracy mechanic move.power then
         resolveAccuracy mechanic move attacker defenderFull.active rng
       else (true, rng, [])

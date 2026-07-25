@@ -209,6 +209,11 @@ private def applyMajorStatus (status : UInt8) (moveType : UInt8)
     ⟨context, .failed, []⟩
   else
     let mon := { target with status }
+    let mon := if status == mask Wram.Status.brn then
+      { mon with attack := UInt16.ofNat (mon.attack.toNat / 2) }
+      else if status == mask Wram.Status.par then
+        { mon with speed := UInt16.ofNat (mon.speed.toNat / 4) }
+      else mon
     ⟨withDefender context { context.defender with active := mon }, .continue,
       [.statusApplied status]⟩
 
@@ -383,7 +388,13 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
               ⟨{ context with rng }, .escaped, events ++ [.signal .escaped]⟩
             else ⟨{ context with rng }, .failed, events⟩
   | .sleep =>
-      if !hit || context.defender.active.status != 0 then ⟨context, .failed, []⟩
+      let recharging := context.defender.volatile.recharging
+      let volatile := { context.defender.volatile with
+        status2 := clearBit context.defender.volatile.status2
+          Wram.BattleStatus2.needsToRecharge }
+      let context := setDefenderVolatile context volatile
+      if !recharging && (!hit || context.defender.active.status != 0) then
+        ⟨context, .failed, []⟩
       else match drawAccepted 2305 context.rng
           (fun raw => (raw &&& Wram.Status.slpMask) != 0) "sleep-turns" with
         | none => ⟨context, .rngStuck, [.signal .rngStuck]⟩
@@ -497,7 +508,14 @@ def applyAfter (effect moveType : UInt8) (hit targetFainted : Bool)
           { out with events := event :: out.events }
         else ⟨context, .continue, [event]⟩
   | .burnSide threshold | .freezeSide threshold | .paralyzeSide threshold =>
-      if !hit then { context := context }
+      if !hit || context.defender.volatile.hasSubstitute then { context := context }
+      else if context.defender.active.status != 0 then
+        if context.defender.active.frozen && moveType == TypeChart.fire then
+          let mon := { context.defender.active with status := 0 }
+          { context := withDefender context { context.defender with active := mon } }
+        else { context := context }
+      else if context.defender.active.type1 == moveType ||
+          context.defender.active.type2 == moveType then { context := context }
       else
         let mechanic := (plan effect).mechanic
         let (success, context, event) := sideChance threshold context
@@ -508,6 +526,13 @@ def applyAfter (effect moveType : UInt8) (hit targetFainted : Bool)
             | .freezeSide _ => mask Wram.Status.frz
             | _ => mask Wram.Status.par
           let out := applyMajorStatus status moveType context
+          let out := if status == mask Wram.Status.frz &&
+              context.attackerSide == .player then
+            let volatile := { out.context.defender.volatile with
+              status2 := clearBit out.context.defender.volatile.status2
+                Wram.BattleStatus2.needsToRecharge }
+            { out with context := setDefenderVolatile out.context volatile }
+            else out
           { out with events := event :: out.events }
   | .drain | .dreamEater =>
       if !hit then { context := context } else
