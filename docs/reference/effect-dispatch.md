@@ -332,8 +332,11 @@ entry. `Battle.Rom.HazeDispatchRoutine` proves player and enemy effect `$19`
 selection reach wrapper `$7B1E` in 14 and 15 decoded instructions respectively;
 the pointer tail derives zero-based slot `$18` and byte offset `$30`. The
 wrapper's three decoded instructions load target `$79DA`, bank `$04`, and
-jump to `Bankswitch`. That MBC transition and the later `CallBankF` animation
-remain named external execution contracts rather than assumed flat-memory steps.
+jump to `Bankswitch`. Once that body is supplied as an exact execution summary,
+`jumpMoveEffect_returns` decodes the outer shell back to the move executor,
+including its required `B = 1` completion flag. The MBC transition and later
+`CallBankF` animation remain named external contracts rather than assumed
+flat-memory steps.
 
 The remaining animation/text tails still need frame/timing summaries.
 Whole-battle reachability and full Game Boy device lifting remain separate.

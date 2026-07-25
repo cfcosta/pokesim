@@ -21,6 +21,8 @@ namespace Battle.Rom.HazeDispatchRoutine
 
 open Sm83 Battle.Rom.Closure
 
+private def outerEntry : UInt16 := 0x7132
+private def outerBytes : List Byte := [0xCD, 0x38, 0x71, 0x06, 0x01, 0xC9]
 private def entry : UInt16 := 0x7138
 private def dispatchBytes : List Byte :=
   [0xF0, 0xF3, 0xA7, 0xFA, 0xD3, 0xCF, 0x28, 0x03,
@@ -195,7 +197,52 @@ theorem enemy_haze_dispatch_exact (state : FunctionalState)
     (dispatchTarget (selectEnemy state)) (by simpa using selected) tail,
     contract.tail.pointerTarget⟩
 
+/-! ## JumpMoveEffect return shell -/
+
+def jumpEffectCall (s : FunctionalState) := RoutineSummary.callAbsolute s
+def jumpEffectFlag (s : FunctionalState) := RoutineSummary.ldBImmediate s
+def jumpEffectReturn (s : FunctionalState) := RoutineSummary.ret (jumpEffectFlag s)
+
+/-- The body reached through `_JumpMoveEffect` includes bank switching,
+`HazeEffect_`, animation, and text. It remains an explicit exact-count execution
+summary at this boundary. -/
+structure JumpMoveEffectReturnContract (state returned : FunctionalState) (count : Nat) : Prop where
+  q0 : RoutineSummary.Quiet state
+  opCall : state.memory.read state.registers.pc = 0xCD
+  bodyExecution : (RoutineSummary.runSteps count (jumpEffectCall state)).state = returned
+  returnedQuiet : RoutineSummary.Quiet returned
+  op06 : returned.memory.read returned.registers.pc = 0x06
+  flagValue : returned.memory.read (Word.ofNat (returned.registers.pc.toNat + 1)) = 0x01
+  qFlag : RoutineSummary.Quiet (jumpEffectFlag returned)
+  opC9 : (jumpEffectFlag returned).memory.read (jumpEffectFlag returned).registers.pc = 0xC9
+
+/-- Once the explicit Haze body returns, the two decoded outer instructions set
+`B = 1` and return to `ExecutePlayerMove`/`ExecuteEnemyMove`. -/
+theorem jumpMoveEffect_returns (state returned : FunctionalState) (count : Nat)
+    (contract : JumpMoveEffectReturnContract state returned count) :
+    (RoutineSummary.runSteps (count + 3) state).state = jumpEffectReturn returned ∧
+    (jumpEffectReturn returned).registers.b = 0x01 := by
+  have call := oneStep (RoutineSummary.step_callAbsolute state contract.q0.1
+    contract.q0.2.2 contract.q0.2.1 contract.opCall)
+  have entered := RoutineSummary.runSteps_state_add 1 count state (jumpEffectCall state)
+    returned call contract.bodyExecution
+  have flag := oneStep (RoutineSummary.step_ldBImmediate returned contract.returnedQuiet.1
+    contract.returnedQuiet.2.2 contract.returnedQuiet.2.1 contract.op06)
+  have returns := oneStep (RoutineSummary.step_ret (jumpEffectFlag returned) contract.qFlag.1
+    contract.qFlag.2.2 contract.qFlag.2.1 contract.opC9)
+  have shell := RoutineSummary.runSteps_state_add 1 1 returned (jumpEffectFlag returned)
+    (jumpEffectReturn returned) flag returns
+  constructor
+  · have all := RoutineSummary.runSteps_state_add (1 + count) 2 state returned
+      (jumpEffectReturn returned) entered (by simpa using shell)
+    simpa [Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using all
+  · simp [jumpEffectReturn, jumpEffectFlag, RoutineSummary.ret,
+      RoutineSummary.ldBImmediate, contract.flagValue, Registers.set8]
+
 structure RequiredHazeDispatchBytes (rom : Array Byte) : Prop where
+  outerWindow : Tables.tableBytes rom
+      (romOffset 0x0F (Word.ofNat outerEntry.toNat)) outerBytes.length =
+    outerBytes.map (fun byte => byte.toNat.toUInt8)
   dispatchWindow : Tables.tableBytes rom
       (romOffset 0x0F (Word.ofNat entry.toNat)) dispatchBytes.length =
     dispatchBytes.map (fun byte => byte.toNat.toUInt8)
@@ -206,6 +253,8 @@ structure CanonicalHazeDispatchBytes (sha256 : Sha256) (rom : CanonicalRom) : Pr
 
 /-- Runtime fixture predicate only. -/
 def windowAgrees (rom : Array Byte) : Bool :=
+  decide (Tables.tableBytes rom (romOffset 0x0F (Word.ofNat outerEntry.toNat))
+    outerBytes.length = outerBytes.map (fun byte => byte.toNat.toUInt8)) &&
   decide (Tables.tableBytes rom (romOffset 0x0F (Word.ofNat entry.toNat))
     dispatchBytes.length = dispatchBytes.map (fun byte => byte.toNat.toUInt8))
 
