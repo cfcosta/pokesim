@@ -185,7 +185,7 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [x] canceling Fight preserves stale selected move/record and highlighted `wPlayerMoveListIndex` (`Battle.Full.Selection.cancel_preserves`)
 - [x] stale selected move influences Quick Attack/Counter order for item/switch turns (`Battle.Full.Engine.stale_counter_nonfight_priority`)
 - [x] stale loaded power/type influences enemy Counter (`Battle.Full.Engine.stale_tackle_record_enables_counter`)
-- [ ] player send-out clears selected-slot index/move number but retains selected move, shared damage, and adjacent loaded-record scratch
+- [x] player send-out clears loaded move number but retains selected move, shared damage, and adjacent loaded-record scratch (`Battle.Full.Engine.send_out_clears_move_but_retains_record`, `send_out_retains_stale_priority`)
 - [x] ordinary move-menu SELECT swaps active move IDs and PP (`Battle.Full.Selection.swapMoves_exact`)
 - [ ] move swap updates party move IDs and PP, including transformed active/party mismatch
 - [x] move swap updates disabled-slot encoding (`Battle.Full.Selection.swapMoves_exact`)
@@ -719,7 +719,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] badge boost stacking with screen catastrophe (`Battle.BugWitnesses.badge_screen_catastrophe_occurs`)
 - [x] Counter shared/stale state behavior, including highlighted-then-cancelled move (`Battle.Full.Selection.cancel_preserves`, `Battle.Full.Engine.stale_tackle_record_enables_counter`)
 - [x] stale Quick Attack/Counter ordering for non-move player actions (`Battle.Full.Engine.stale_counter_nonfight_priority`)
-- [x] Quick Attack/Counter priority is removed by player send-out's move-ID clear while the rest of the loaded record stays stale (`Battle.Full.Engine.send_out_clears_move_but_retains_record`, `send_out_removes_stale_priority`)
+- [x] stale Quick Attack/Counter ordering survives player send-out because only loaded `wPlayerMoveNum`, not `wPlayerSelectedMove`, is cleared (`Battle.Full.Engine.send_out_clears_move_but_retains_record`, `send_out_retains_stale_priority`)
 - [x] Jump Kick miss recoil based on zeroed damage (`Battle.Full.Engine.jumpKick_zeroed_damage_recoil`)
 - [x] Substitute self-damage turn-flip interaction (`Battle.Full.Engine.turn_flipped_self_damage_selects_opponent`)
 - [x] enemy PP not decremented (`Battle.Full.Engine.enemy_pp_not_decremented`)

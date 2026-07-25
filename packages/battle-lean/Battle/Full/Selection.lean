@@ -16,7 +16,10 @@ consuming a battle turn.
 namespace Battle.Full.Selection
 
 structure MoveScratch where
+  /-- `wPlayerSelectedMove`, consulted by priority and Counter. -/
   selectedMove : MoveId := 0
+  /-- `wPlayerMoveNum`, adjacent loaded-record identity cleared on send-out. -/
+  loadedMove : MoveId := 0
   highlightedSlot : UInt8 := 0
   power : UInt8 := 0
   type : UInt8 := 0
@@ -58,6 +61,7 @@ def highlight (state : State) (slot : Fin 4) : State × Event :=
     let move := state.side.active.active.moves.getD slot.val 0
     let data := Data.moveData move
     let scratch := { scratch with selectedMove := move }
+    let scratch := { scratch with loadedMove := move }
     let scratch := { scratch with power := data.power }
     let scratch := { scratch with type := data.type }
     let scratch := { scratch with accuracy := data.accuracy }
@@ -119,6 +123,7 @@ theorem enabled_highlight_loads (state : State) (slot : Fin 4)
     let after := (highlight state slot).1
     let move := state.side.active.active.moves.getD slot.val 0
     after.scratch.selectedMove = move ∧
+    after.scratch.loadedMove = move ∧
     after.scratch.power = (Data.moveData move).power ∧
     after.scratch.type = (Data.moveData move).type ∧
     after.scratch.accuracy = (Data.moveData move).accuracy ∧
@@ -143,6 +148,7 @@ theorem disabled_highlight_preserves_record (state : State) (slot : Fin 4)
     (disabled : disabledSlot state.side = some slot.val) :
     let after := (highlight state slot).1.scratch
     after.selectedMove = state.scratch.selectedMove ∧
+    after.loadedMove = state.scratch.loadedMove ∧
     after.power = state.scratch.power ∧ after.type = state.scratch.type ∧
     after.accuracy = state.scratch.accuracy ∧ after.pp = state.scratch.pp := by
   simp [highlight, disabled]
