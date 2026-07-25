@@ -147,6 +147,14 @@ def ldAtDeA (s : FunctionalState) : FunctionalState :=
   let s := { s with memory }
   { s with haltBug := false }
 
+/-- State transformer for `LD [HL+],A`. -/
+def ldAtHlIncA (s : FunctionalState) : FunctionalState :=
+  let memory := s.memory.write s.registers.hl s.registers.a
+  let registers := (advancePc s).setHL (Word.ofNat (s.registers.hl.toNat + 1))
+  let s := { s with registers }
+  let s := { s with memory }
+  { s with haltBug := false }
+
 /-- State transformer for `INC DE`. -/
 def incDe (s : FunctionalState) : FunctionalState :=
   let registers := (advancePc s).setDE (Word.ofNat (s.registers.de.toNat + 1))
@@ -181,7 +189,8 @@ macro "routine_instruction_simp" : tactic => `(tactic|
     Functional.writeTarget, Functional.matureIme, Functional.setFlags,
     Registers.setHL, Registers.setDE, Registers.hl, Registers.de, Registers.set8,
     Registers.set16, Registers.get16, Registers.get8, Functional.immediate8,
-    Word.highByte, Word.lowByte, advancePc, ldAFromHlInc, ldAtDeA, incDe, decB,
+    Word.highByte, Word.lowByte, advancePc, ldAFromHlInc, ldAtDeA, ldAtHlIncA,
+    incDe, decB,
     jrNz, *])
 
 /-- Exact decoded `LD A,[HL+]` state equation. -/
@@ -204,6 +213,17 @@ theorem step_ldAtDeA (state : FunctionalState)
   have decoded : Decode.base (0x12 : Byte) = .legal (.ldMem16A .atDE) := by
     native_decide
   rw [step_legal_state state 0x12 _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `LD [HL+],A` state equation. -/
+theorem step_ldAtHlIncA (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0x22) :
+    (Functional.step state).state = ldAtHlIncA state := by
+  have decoded : Decode.base (0x22 : Byte) = .legal (.ldMem16A .atHLInc) := by
+    native_decide
+  rw [step_legal_state state 0x22 _ running opcode decoded]
   routine_instruction_simp
 
 /-- Exact decoded `INC DE` state equation. -/

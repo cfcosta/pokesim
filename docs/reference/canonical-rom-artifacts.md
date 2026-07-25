@@ -156,7 +156,9 @@ decoded architectural instructions for an arbitrary symbolic source byte, and
 `resetStats_block_effect` proves the copy, pointer, counter, and branch invariant
 without enumerating the eight-byte stat vector. `resetStats_eight_exact` then
 composes all forty loop instructions under explicit per-head code/stability
-contracts and yields the exact eight-byte copy fold. Whole-handler call reachability
+contracts and yields the exact eight-byte copy fold. The same compositional
+method proves all twenty-four `ResetStatMods` loop instructions produce an exact
+eight-byte fill with the caller's accumulator value. Whole-handler call reachability
 and presentation-tail composition remain separate obligations.
 
 `Battle.Rom.EffectRoutines.CanonicalLeafEffectsBytes` adds exact code-window

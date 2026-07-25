@@ -354,6 +354,147 @@ theorem resetStats_eight_exact (initial : FunctionalState)
     · rw [states]
       exact iterateResetStatsBlocks_memory 8 initial
 
+/-! ## ResetStatMods -/
+
+private def resetModsLoop : Word := 0x7A45
+
+/-- One three-instruction stat-modifier fill iteration. -/
+def resetModsBlock (state : FunctionalState) : FunctionalState :=
+  RoutineSummary.jrNz (RoutineSummary.decB (RoutineSummary.ldAtHlIncA state))
+
+structure ResetModsBlockContract (state : FunctionalState) : Prop where
+  quiet : RoutineSummary.Quiet state
+  pc : state.registers.pc = resetModsLoop
+  op22 : state.memory.read 0x7A45 = 0x22
+  op05 : state.memory.read 0x7A46 = 0x05
+  op20 : state.memory.read 0x7A47 = 0x20
+  safe05 : state.registers.hl ≠ 0x7A46
+  safe20 : state.registers.hl ≠ 0x7A47
+
+/-- One `ResetStatMods` loop iteration follows the three decoded opcodes. -/
+theorem resetMods_block_exact (state : FunctionalState)
+    (contract : ResetModsBlockContract state) :
+    (RoutineSummary.runSteps 3 state).state = resetModsBlock state := by
+  have first := RoutineSummary.step_ldAtHlIncA state contract.quiet.1
+    contract.quiet.2.2 contract.quiet.2.1 (by simpa [contract.pc, resetModsLoop] using contract.op22)
+  let s1 := RoutineSummary.ldAtHlIncA state
+  have running1 : s1.mode = .running := by
+    simp [s1, RoutineSummary.ldAtHlIncA, contract.quiet.1]
+  have scheduled1 : s1.scheduledImeEnable = false := by
+    simp [s1, RoutineSummary.ldAtHlIncA, contract.quiet.2.2]
+  have halt1 : s1.haltBug = false := by simp [s1, RoutineSummary.ldAtHlIncA]
+  have pc1 : s1.registers.pc = 0x7A46 := by
+    simp [s1, RoutineSummary.ldAtHlIncA, RoutineSummary.advancePc, Registers.setHL,
+      contract.pc, resetModsLoop]
+    native_decide
+  have op05' : s1.memory.read s1.registers.pc = 0x05 := by
+    rw [pc1]
+    change (state.memory.write state.registers.hl state.registers.a).read 0x7A46 = 0x05
+    rw [FlatMemory.read_write_other]
+    · exact contract.op05
+    · exact Ne.symm contract.safe05
+  have second := RoutineSummary.step_decB s1 running1 scheduled1 halt1 op05'
+  let s2 := RoutineSummary.decB s1
+  have running2 : s2.mode = .running := by simp [s2, RoutineSummary.decB, running1]
+  have scheduled2 : s2.scheduledImeEnable = false := by
+    simp [s2, RoutineSummary.decB, scheduled1]
+  have halt2 : s2.haltBug = false := by simp [s2, RoutineSummary.decB]
+  have pc2 : s2.registers.pc = 0x7A47 := by
+    simp [s2, RoutineSummary.decB, RoutineSummary.advancePc, Registers.set8, pc1]
+    native_decide
+  have op20' : s2.memory.read s2.registers.pc = 0x20 := by
+    rw [pc2]
+    change (state.memory.write state.registers.hl state.registers.a).read 0x7A47 = 0x20
+    rw [FlatMemory.read_write_other]
+    · exact contract.op20
+    · exact Ne.symm contract.safe20
+  have third := RoutineSummary.step_jrNz s2 running2 scheduled2 halt2 op20'
+  simp only [RoutineSummary.runSteps]
+  rw [first, second, third]
+  rfl
+
+@[simp] theorem resetModsBlock_memory (state : FunctionalState) :
+    (resetModsBlock state).memory =
+      state.memory.write state.registers.hl state.registers.a := by
+  let mid := RoutineSummary.decB (RoutineSummary.ldAtHlIncA state)
+  have data := jrNz_data mid
+  rw [show (resetModsBlock state).memory = mid.memory by
+    simpa [resetModsBlock, mid] using data.1]
+  simp [mid, RoutineSummary.decB, RoutineSummary.ldAtHlIncA]
+
+@[simp] theorem resetModsBlock_hl (state : FunctionalState) :
+    (resetModsBlock state).registers.hl = Word.ofNat (state.registers.hl.toNat + 1) := by
+  let mid := RoutineSummary.decB (RoutineSummary.ldAtHlIncA state)
+  have data := jrNz_data mid
+  rw [show (resetModsBlock state).registers.hl = mid.registers.hl by
+    simpa [resetModsBlock, mid] using data.2.1]
+  simp [mid, RoutineSummary.decB, RoutineSummary.ldAtHlIncA,
+    RoutineSummary.advancePc, Registers.setHL, Registers.set8, Registers.hl]
+
+@[simp] theorem resetModsBlock_a (state : FunctionalState) :
+    (resetModsBlock state).registers.a = state.registers.a := by
+  simp only [resetModsBlock, RoutineSummary.jrNz]
+  split <;> simp [RoutineSummary.decB, RoutineSummary.ldAtHlIncA,
+    RoutineSummary.advancePc, Registers.set8, Registers.setHL]
+
+/-- Pure repeated-byte fill matching `ResetStatMods`. -/
+def fillBytes : Nat → FlatMemory → Word → Byte → FlatMemory
+  | 0, memory, _, _ => memory
+  | count + 1, memory, destination, value =>
+      fillBytes count (memory.write destination value)
+        (Word.ofNat (destination.toNat + 1)) value
+
+def iterateResetModsBlocks : Nat → FunctionalState → FunctionalState
+  | 0, state => state
+  | count + 1, state => iterateResetModsBlocks count (resetModsBlock state)
+
+theorem iterateResetModsBlocks_memory (count : Nat) (state : FunctionalState) :
+    (iterateResetModsBlocks count state).memory =
+      fillBytes count state.memory state.registers.hl state.registers.a := by
+  induction count generalizing state with
+  | zero => rfl
+  | succ count induction =>
+      simp only [iterateResetModsBlocks, fillBytes]
+      rw [induction, resetModsBlock_memory, resetModsBlock_hl, resetModsBlock_a]
+
+def ResetModsContracts (count : Nat) (initial : FunctionalState) : Prop :=
+  ∀ index, index < count → ResetModsBlockContract (iterateResetModsBlocks index initial)
+
+/-- Complete eight-iteration stage reset: twenty-four instructions fill all
+modifier bytes with the caller's `A` value. -/
+theorem resetMods_eight_exact (initial : FunctionalState)
+    (contracts : ResetModsContracts 8 initial) :
+    (RoutineSummary.runSteps 24 initial).state = iterateResetModsBlocks 8 initial ∧
+    (RoutineSummary.runSteps 24 initial).state.memory =
+      fillBytes 8 initial.memory initial.registers.hl initial.registers.a := by
+  have blocks : ∀ count initial, ResetModsContracts count initial →
+      (RoutineSummary.runSteps (3 * count) initial).state =
+        iterateResetModsBlocks count initial := by
+    intro count
+    induction count with
+    | zero => intro initial _; rfl
+    | succ count induction =>
+        intro initial allContracts
+        have head := allContracts 0 (by omega)
+        have first := resetMods_block_exact initial head
+        have tailContracts : ResetModsContracts count (resetModsBlock initial) := by
+          intro index bounded
+          simpa [iterateResetModsBlocks] using allContracts (index + 1) (by omega)
+        have tail := induction (resetModsBlock initial) tailContracts
+        have composed := RoutineSummary.runSteps_add 3 (3 * count) initial
+        have stateComposed := congrArg RoutineSummary.Execution.state composed
+        rw [show 3 * (count + 1) = 3 + 3 * count by omega]
+        rw [stateComposed]
+        simp only
+        rw [first, tail]
+        rfl
+  have states := blocks 8 initial contracts
+  constructor
+  · rw [show 24 = 3 * 8 by omega]
+    exact states
+  · rw [show 24 = 3 * 8 by omega, states]
+    exact iterateResetModsBlocks_memory 8 initial
+
 structure RequiredHazeBytes (rom : Array Byte) : Prop where
   gameplayWindow : Tables.tableBytes rom
       (romOffset 0x04 (Word.ofNat hazeEntry.toNat)) hazeBytes.length =
