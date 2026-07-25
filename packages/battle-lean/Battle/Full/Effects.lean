@@ -49,6 +49,7 @@ inductive Signal where
   | charging (invulnerable : Bool)
   | escaped
   | callMove (move : MoveId)
+  | mimicChoice
   | rngStuck
   deriving Repr, DecidableEq, BEq
 
@@ -437,8 +438,21 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
       else ⟨context, .failed, []⟩
   | .substitute => substitute context
   | .mimic =>
-      let move := context.defender.active.moves.getD context.moveSlot.val 0
-      if !hit || move == 0 then ⟨context, .failed, []⟩ else ⟨context, .callMove move, [.signal (.callMove move)]⟩
+      if !hit || bitSet context.defender.volatile.status1 Wram.BattleStatus1.invulnerable then
+        ⟨context, .failed, []⟩
+      else if context.attackerSide == .player && context.mode != .link then
+        ⟨context, .mimicChoice, [.signal .mimicChoice]⟩
+      else
+        match drawAccepted 2305 context.rng (fun raw =>
+          context.defender.active.moves.getD (raw &&& 3).toNat 0 != 0) "mimic-slot" with
+        | none => ⟨context, .rngStuck, [.signal .rngStuck]⟩
+        | some (raw, rng, events) =>
+            let copied := context.defender.active.moves.getD (raw &&& 3).toNat 0
+            let moves := context.attacker.active.moves.modify context.moveSlot.val
+              (fun _ => copied)
+            let mon := { context.attacker.active with moves := moves }
+            let attacker := { context.attacker with active := mon }
+            ⟨withAttacker { context with rng } attacker, .continue, events⟩
   | .metronome =>
       match drawAccepted 2305 context.rng
           (fun raw => raw != 0 && raw < 165 && raw != 118) "metronome" with

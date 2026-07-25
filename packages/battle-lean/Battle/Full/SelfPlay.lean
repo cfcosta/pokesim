@@ -79,6 +79,7 @@ private def handleResult : Nat → Environment.StepResult →
   | remaining + 1, .nestedMove state side move events =>
       let (state, more, reason) := handleResult remaining (Environment.resumeNested state side move)
       (state, events ++ more, reason)
+  | _, .mimicPending state _ _ _ events => (state, events, .nestedOpen)
   | _, .runPending state _ _ events => (state, events, .externalRandomRequired)
   | _, .disobediencePending state _ _ events => (state, events, .externalRandomRequired)
   | _, .inactive state => (state, [], .inactive)

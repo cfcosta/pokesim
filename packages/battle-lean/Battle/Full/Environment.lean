@@ -304,6 +304,8 @@ inductive StepResult where
   | rngStuck (state : State) (events : List Engine.Event)
   | divisionFreeze (state : State) (events : List Engine.Event)
   | nestedMove (state : State) (side : Side) (move : MoveId) (events : List Engine.Event)
+  | mimicPending (state : State) (side : Side) (sourceSlot : Fin 4)
+      (nextAction : Option Full.Action) (events : List Engine.Event)
   | runPending (state : State) (side : Side) (opponentAction : Full.Action)
       (events : List Engine.Event)
   | disobediencePending (state : State) (machine : Disobedience.Machine)
@@ -407,6 +409,8 @@ private def lift (outer : State) : Engine.StepResult → StepResult
   | .rngStuck engine events => .rngStuck { outer with engine } events
   | .divisionFreeze engine events => .divisionFreeze { outer with engine } events
   | .nestedMove engine side move events => .nestedMove { outer with engine } side move events
+  | .mimicPending engine side slot next events =>
+      .mimicPending { outer with engine } side slot next events
   | .runPending engine side action events => .runPending { outer with engine } side action events
   | .disobediencePending engine machine next events =>
       .disobediencePending { outer with engine } machine next events
@@ -439,6 +443,11 @@ def executeTrainerPlan (player : Full.Action) : TrainerPlan → Option StepResul
 
 def resumeNested (state : State) (who : Side) (move : MoveId) : StepResult :=
   lift state (Engine.resumeNested state.engine who move)
+
+/-- Typed ordinary-player Mimic menu response. -/
+def resumeMimic (state : State) (who : Side) (sourceSlot targetSlot : Fin 4)
+    (nextAction : Option Full.Action) : StepResult :=
+  lift state (Engine.resumeMimic state.engine who sourceSlot targetSlot nextAction)
 
 /-- Supply one BattleRandom byte for integrated traded-Pokémon disobedience. -/
 def resolveDisobedience (state : State) (machine : Disobedience.Machine)

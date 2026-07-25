@@ -62,6 +62,8 @@ inductive StepResult where
   | rngStuck (state : State) (events : List Event)
   | divisionFreeze (state : State) (events : List Event)
   | nestedMove (state : State) (side : Side) (move : MoveId) (events : List Event)
+  | mimicPending (state : State) (side : Side) (sourceSlot : Fin 4)
+      (nextAction : Option Full.Action) (events : List Event)
   | runPending (state : State) (side : Side) (opponentAction : Full.Action)
       (events : List Event)
   | disobediencePending (state : State) (machine : Disobedience.Machine)
@@ -438,6 +440,7 @@ match damageResult with
         .transitioned { state with battle := { state.battle with phase := .ending terminal } }
           (before.events.map .effect ++ [.terminal terminal])
     | .callMove nested => .nestedMove state who nested (before.events.map .effect)
+    | .mimicChoice => .mimicPending state who slot none (before.events.map .effect)
     | .failed =>
         let state := setLastMove state who moveId
         let (state, events) := applyResidual state who
@@ -578,6 +581,8 @@ private def prependEvents (prior : List Event) : StepResult → StepResult
   | .rngStuck state events => .rngStuck state (prior ++ events)
   | .divisionFreeze state events => .divisionFreeze state (prior ++ events)
   | .nestedMove state side move events => .nestedMove state side move (prior ++ events)
+  | .mimicPending state side slot next events =>
+      .mimicPending state side slot next (prior ++ events)
   | .runPending state side action events => .runPending state side action (prior ++ events)
   | .disobediencePending state machine next events =>
       .disobediencePending state machine next (prior ++ events)
@@ -608,6 +613,9 @@ private def executePair (state : State) (playerAction enemyAction : Full.Action)
   | .disobediencePending state machine _ events =>
       let next := if first == .player then some enemyAction else none
       .disobediencePending state machine next (prior ++ events)
+  | .mimicPending state side slot _ events =>
+      let next := if first == .player then some enemyAction else some playerAction
+      .mimicPending state side slot next (prior ++ events)
   | result => prependEvents prior result
 
 /-- Resolve one policy turn. Forced replacement is a separate boundary; ordinary
@@ -747,7 +755,32 @@ def resumeFailedRun (state : State) (runner : Side) (opponentAction : Full.Actio
   if isFight opponentAction then attack state runner.other opponentAction
   else .transitioned state []
 
-/-- Continue a Mirror Move, Metronome, or Mimic request in the same action.
+/-- Complete the ordinary-player Mimic menu. The copied move replaces Mimic's
+selected slot without changing that slot's PP byte. Invalid/blank target slots
+remain explicit invalid input rather than silently choosing another move. -/
+def resumeMimic (state : State) (who : Side) (sourceSlot targetSlot : Fin 4)
+    (nextAction : Option Full.Action) : StepResult :=
+  let copied := (side state who.other).active.active.moves.getD targetSlot.val 0
+  if copied == 0 then .invalidAction state who
+  else
+    let actor := side state who
+    let moves := actor.active.active.moves.modify sourceSlot.val (fun _ => copied)
+    let mon := { actor.active.active with moves := moves }
+    let actor := { actor with active := { actor.active with active := mon } }
+    let state := setLastMove (setSide state who actor) who 102
+    let (state, residualEvents) := applyResidual state who
+    if state.battle.phase.isTerminal then .transitioned state residualEvents
+    else match nextAction with
+      | none => .transitioned { state with battle :=
+          { state.battle with turn := state.battle.turn + 1 } } residualEvents
+      | some action =>
+          match executeCommitted state who.other action with
+          | .transitioned state events => .transitioned { state with battle :=
+              { state.battle with turn := state.battle.turn + 1 } }
+              (residualEvents ++ events)
+          | result => prependEvents residualEvents result
+
+/-- Continue a Mirror Move or Metronome request in the same action.
 Status gating and PP decrement are not repeated; another nested signal remains an
 explicit continuation, so recursive Metronome behavior is not fuel-bounded. -/
 def resumeNested (state : State) (who : Side) (move : MoveId) : StepResult :=
