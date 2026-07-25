@@ -741,7 +741,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] capture naming and current-box slot-1 insertion/whole-array shift (`Battle.Full.CaptureProtocol.box_slot_one_exact`)
 - [x] Old Man player-name restoration leaves aliased wild encounter bytes overwritten (`Battle.Full.OldMan.capture_restores_name_but_retains_alias`; canonical trailing opcode bytes are separately certified)
 - [x] layer-2 AI gate carries across voluntary AI switch but resets on forced replacement (`forced_enemy_switch_resets_ai_layer`, `voluntary_enemy_switch_retains_ai_layer`)
-- [ ] enemy switch destination is deterministic lowest-index other living slot, with unbounded raw scan
+- [x] enemy switch destination is deterministic lowest-index other living slot, with an explicit potentially unbounded raw scan step (`Battle.Full.SideState.firstLegalSwitch_exact`, `replacementScanStep`)
 - [x] player faint clears party status but preserves fought flag; Revive can restore gain-EXP eligibility (`player_faint_clears_party_status`, `faint_preserves_fought_flags`, `revive_restores_fought_recipient`)
 - [x] EXP All counts fainted in-party members in the divisor but skips their awards (`exp_all_counts_full_party`, `fainted_recipient_skipped`)
 - [x] wild-faint run prompt uses party slot 1 Speed regardless of active/replacement (`Battle.Full.Environment.wild_faint_speed_uses_slot_one`)

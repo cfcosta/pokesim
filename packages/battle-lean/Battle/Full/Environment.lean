@@ -300,8 +300,14 @@ def prepareTrainer (state : State) (directRandom : UInt8) : TrainerPlan :=
       match decision with
       | .item item => .item state item
       | .switch =>
-          match state.engine.battle.enemy.legalSwitches[0]? with
-          | some target => .switch state target
+          match found : state.engine.battle.enemy.firstLegalSwitch with
+          | some target =>
+              have bounded : target < Wram.partyLength := by
+                have bounds := Full.SideState.firstSwitchFrom_bounds
+                  state.engine.battle.enemy 0 Wram.partyLength target
+                  (by simpa [Full.SideState.firstLegalSwitch] using found)
+                omega
+              .switch state ⟨target, by simpa [Wram.partyLength] using bounded⟩
           | none =>
               let input := { scoreInput with moves := state.engine.battle.enemy.active.active.moves }
               let scores := TrainerController.scoreMoves row input

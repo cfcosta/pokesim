@@ -74,6 +74,87 @@ def SideState.legalSwitches (side : SideState) : Array (Fin Wram.partyLength) :=
       if side.canSwitchTo target then some ⟨target, h⟩ else none
     else none
 
+/-- Deterministic cartridge-order scan for the first switchable slot. `fuel` is
+only the bounded full-party wrapper here; malformed raw-memory scans are modeled
+separately by their one-step relation. -/
+def SideState.firstSwitchFrom (side : SideState) (start : Nat) : Nat → Option Nat
+  | 0 => none
+  | fuel + 1 =>
+      if side.canSwitchTo start then some start
+      else firstSwitchFrom side (start + 1) fuel
+
+def SideState.firstLegalSwitch (side : SideState) : Option Nat :=
+  side.firstSwitchFrom 0 Wram.partyLength
+
+theorem SideState.firstSwitchFrom_sound (side : SideState) (start fuel target : Nat)
+    (found : side.firstSwitchFrom start fuel = some target) :
+    side.canSwitchTo target = true := by
+  induction fuel generalizing start with
+  | zero => simp [SideState.firstSwitchFrom] at found
+  | succ fuel induction =>
+      simp only [SideState.firstSwitchFrom] at found
+      split at found
+      · cases found
+        assumption
+      · exact induction (start + 1) found
+
+theorem SideState.firstSwitchFrom_bounds (side : SideState) (start fuel target : Nat)
+    (found : side.firstSwitchFrom start fuel = some target) :
+    start ≤ target ∧ target < start + fuel := by
+  induction fuel generalizing start with
+  | zero => simp [SideState.firstSwitchFrom] at found
+  | succ fuel induction =>
+      simp only [SideState.firstSwitchFrom] at found
+      split at found
+      · cases found
+        omega
+      · have bounds := induction (start + 1) found
+        omega
+
+theorem SideState.firstSwitchFrom_lowest (side : SideState) (start fuel target : Nat)
+    (found : side.firstSwitchFrom start fuel = some target) :
+    ∀ candidate, start ≤ candidate → candidate < target →
+      side.canSwitchTo candidate = false := by
+  induction fuel generalizing start with
+  | zero => simp [SideState.firstSwitchFrom] at found
+  | succ fuel induction =>
+      simp only [SideState.firstSwitchFrom] at found
+      split at found
+      · cases found
+        intro candidate lower upper
+        omega
+      · rename_i rejected
+        intro candidate lower upper
+        by_cases atStart : candidate = start
+        · subst candidate
+          cases value : side.canSwitchTo start <;> simp_all
+        · exact induction (start + 1) found candidate (by omega) upper
+
+theorem SideState.firstLegalSwitch_exact (side : SideState) (target : Nat)
+    (found : side.firstLegalSwitch = some target) :
+    side.canSwitchTo target = true ∧ target < Wram.partyLength ∧
+      ∀ candidate, candidate < target → side.canSwitchTo candidate = false := by
+  have raw : side.firstSwitchFrom 0 Wram.partyLength = some target := by
+    simpa [SideState.firstLegalSwitch] using found
+  exact ⟨SideState.firstSwitchFrom_sound side 0 Wram.partyLength target raw,
+    (SideState.firstSwitchFrom_bounds side 0 Wram.partyLength target raw).2,
+    fun candidate lower => SideState.firstSwitchFrom_lowest side 0 Wram.partyLength target raw
+      candidate (by omega) lower⟩
+
+/-- One raw scan step. Repeated `.next` steps may diverge; no fuel-exhaustion
+case is introduced as cartridge behavior. -/
+inductive ReplacementScanStep where
+  | found (index : Nat)
+  | next (index : Nat)
+  deriving Repr, DecidableEq
+
+def replacementScanStep (living : Nat → Bool) (index : Nat) : ReplacementScanStep :=
+  if living index then .found index else .next (index + 1)
+
+@[simp] theorem replacement_scan_deterministic (living : Nat → Bool) (index : Nat) :
+    replacementScanStep living index =
+      if living index then .found index else .next (index + 1) := rfl
+
 /-- All persistent members plus the active row are fainted after synchronization. -/
 def SideState.partyExhausted (side : SideState) : Bool :=
   side.syncOutgoing.party.mons.all MonState.fainted
