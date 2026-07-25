@@ -511,8 +511,36 @@ private def lift (outer : State) : Engine.StepResult → StepResult
       .disobediencePending { outer with engine } machine next events
   | .inactive engine => .inactive { outer with engine }
 
+def captureCapacityChecked : BattleMode → Bool
+  | .oldMan => false
+  | _ => true
+
+def captureCapacityRejects (state : State) (action : Full.Action) : Bool :=
+  match action with
+  | .item request =>
+      Items.disposition request.item == .capture &&
+        captureCapacityChecked state.engine.battle.mode &&
+        state.engine.battle.player.syncOutgoing.party.mons.size.toUInt8 == 6 &&
+        state.box.size.toUInt8 == 20
+  | _ => false
+
+/-- The party-six/box-twenty check occurs before ball removal or action commit. -/
 def step (state : State) (player enemy : Full.Action) : StepResult :=
-  lift state (Engine.step state.engine player enemy)
+  if captureCapacityRejects state player then .invalidAction state .player
+  else lift state (Engine.step state.engine player enemy)
+
+@[simp] theorem full_storage_ball_is_precommit_rejection (state : State)
+    (request : Items.Request)
+    (ball : Items.disposition request.item = .capture)
+    (ordinary : state.engine.battle.mode ≠ .oldMan)
+    (partyFull : state.engine.battle.player.syncOutgoing.party.mons.size.toUInt8 = 6)
+    (boxFull : state.box.size.toUInt8 = 20) (enemy : Full.Action) :
+    step state (.item request) enemy = .invalidAction state .player := by
+  have ballBool : (Items.disposition request.item == Items.Disposition.capture) = true := by
+    rw [ball]
+    native_decide
+  cases mode : state.engine.battle.mode <;>
+    simp_all [step, captureCapacityRejects, captureCapacityChecked]
 
 private def trainerItemId : TrainerAI.Item → UInt8
   | .potion => 0x14
@@ -754,6 +782,20 @@ def resolveCaptureName (state : State) (response : CaptureProtocol.NameResponse)
         boxNames := storage.boxNames
         ownedSpecies := storage.owned
         pendingCapture := none }
+
+theorem resolve_capture_name_sets_result (state next : State)
+    (response : CaptureProtocol.NameResponse)
+    (resolved : resolveCaptureName state response = some next) :
+    ∃ terminal, next.engine.battle.phase = .ending terminal ∧
+      terminal.cause = .capture ∧ terminal.rawResult = 2 := by
+  unfold resolveCaptureName at resolved
+  split at resolved
+  · contradiction
+  · rename_i pending available
+    simp only [Option.some.injEq] at resolved
+    subst next
+    refine ⟨Outcome.BattleTerminal.mk' .capture
+      state.engine.battle.mode .player 2, rfl, rfl, rfl⟩
 
 @[simp] theorem player_reset_legal (state : State) :
     teamLegal genDex .canonical state.playerReset.1 = true := state.playerReset.2

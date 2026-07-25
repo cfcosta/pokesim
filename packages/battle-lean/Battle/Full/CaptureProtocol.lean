@@ -19,7 +19,7 @@ namespace Battle.Full.CaptureProtocol
 
 inductive Destination where
   | partyAppend
-  | boxSlotOne
+  | boxSlotOne (wrappedBoxCount : UInt8)
   | malformedNoStorage (wrappedPartyCount : UInt8)
   | tutorialNoStorage
   deriving Repr, DecidableEq, BEq
@@ -85,13 +85,26 @@ theorem construct_preserves_wild_identity (wild : MonState) (species : SpeciesId
   simp [construct, Progression.calculateStats]
 
 /-- Choose destination using equality-only canonical capacity guards. -/
-def begin (partyCount _boxCount : UInt8) (tutorial : Bool)
+def begin (partyCount boxCount : UInt8) (tutorial : Bool)
     (wild : MonState) (species : SpeciesId) (playerId : UInt16) : Pending :=
   let destination := if tutorial then .tutorialNoStorage
     else if partyCount.toNat < 6 then .partyAppend
-    else if partyCount == 6 then .boxSlotOne
+    else if partyCount == 6 then .boxSlotOne (boxCount + 1)
     else .malformedNoStorage (partyCount + 1)
   { mon := construct wild species playerId, destination, species }
+
+@[simp] theorem malformed_party_count_destinations (boxCount : UInt8)
+    (wild : MonState) (species : SpeciesId) (playerId : UInt16) :
+    (begin 7 boxCount false wild species playerId).destination = .malformedNoStorage 8 ∧
+    (begin 254 boxCount false wild species playerId).destination = .malformedNoStorage 255 ∧
+    (begin 255 boxCount false wild species playerId).destination = .malformedNoStorage 0 := by
+  simp [begin]
+
+@[simp] theorem raw_box_count_destinations (wild : MonState) (species : SpeciesId)
+    (playerId : UInt16) :
+    (begin 6 21 false wild species playerId).destination = .boxSlotOne 22 ∧
+    (begin 6 255 false wild species playerId).destination = .boxSlotOne 0 := by
+  simp [begin]
 
 private def resolvedName : NameResponse → StoredName
   | .decline => .speciesDefault
@@ -107,7 +120,7 @@ def preStore (storage : Storage) (pending : Pending) : Storage :=
       let storage := { storage with party := storage.party.push pending.mon }
       let storage := { storage with partyNames := storage.partyNames.push StoredName.speciesDefault }
       { storage with owned := owned }
-  | .boxSlotOne =>
+  | .boxSlotOne _ =>
       let storage := { storage with box := #[pending.mon] ++ storage.box }
       let storage := { storage with boxNames := #[StoredName.speciesDefault] ++ storage.boxNames }
       { storage with owned := owned }
@@ -121,7 +134,7 @@ def finishName (storage : Storage) (pending : Pending) (response : NameResponse)
   | .partyAppend =>
       if storage.partyNames.isEmpty then storage
       else { storage with partyNames := storage.partyNames.modify (storage.partyNames.size - 1) (fun _ => name) }
-  | .boxSlotOne => { storage with boxNames := storage.boxNames.modify 0 (fun _ => name) }
+  | .boxSlotOne _ => { storage with boxNames := storage.boxNames.modify 0 (fun _ => name) }
   | .malformedNoStorage _ | .tutorialNoStorage => storage
 
 /-- Combined convenience transition. -/
@@ -139,8 +152,25 @@ def finish (storage : Storage) (pending : Pending) (response : NameResponse) : S
     finish storage (begin partyCount boxCount true wild species playerId) response = storage := by
   simp [finish, finishName, preStore, begin]
 
+/-- Pre-name storage installs ownership and a placeholder record/name before
+any nickname response. -/
+theorem pre_name_partial_storage_exact (mon : Progression.PersistentMon)
+    (species : SpeciesId) :
+    let storage : Storage :=
+      { party := #[], partyNames := #[], box := #[], boxNames := #[], owned := #[] }
+    let partyPending : Pending := { mon, destination := .partyAppend, species }
+    let boxPending : Pending := { mon, destination := .boxSlotOne 1, species }
+    (preStore storage partyPending).party = #[mon] ∧
+    (preStore storage partyPending).partyNames = #[.speciesDefault] ∧
+    (preStore storage partyPending).owned = #[species] ∧
+    (preStore storage boxPending).box = #[mon] ∧
+    (preStore storage boxPending).boxNames = #[.speciesDefault] ∧
+    (preStore storage boxPending).owned = #[species] := by
+  simp [preStore]
+
 /-- Empty custom names take the default-name path. -/
-example : resolvedName (.custom "") = .speciesDefault := by native_decide
+theorem empty_custom_name_defaults : resolvedName (.custom "") = .speciesDefault := by
+  native_decide
 
 private theorem modify_prepend_zero (head replacement : α) (tail : Array α) :
     (#[head] ++ tail).modify 0 (fun _ => replacement) = #[replacement] ++ tail := by
@@ -152,7 +182,7 @@ private theorem modify_prepend_zero (head replacement : α) (tail : Array α) :
 /-- Box capture inserts the new record and resolved name at physical slot one;
 the complete previous record and name arrays remain the exact suffixes. -/
 theorem box_slot_one_exact (storage : Storage) (pending : Pending) (response : NameResponse)
-    (box : pending.destination = .boxSlotOne) :
+    (count : UInt8) (box : pending.destination = .boxSlotOne count) :
     (finish storage pending response).box = #[pending.mon] ++ storage.box ∧
       (finish storage pending response).boxNames =
         #[resolvedName response] ++ storage.boxNames := by
@@ -161,7 +191,7 @@ theorem box_slot_one_exact (storage : Storage) (pending : Pending) (response : N
 
 /-- Box insertion shifts records and names in the same direction. -/
 theorem box_parallel_sizes (storage : Storage) (pending : Pending) (response : NameResponse)
-    (box : pending.destination = .boxSlotOne)
+    (count : UInt8) (box : pending.destination = .boxSlotOne count)
     (aligned : storage.box.size = storage.boxNames.size) :
     (finish storage pending response).box.size = (finish storage pending response).boxNames.size := by
   cases destination : pending.destination <;> simp_all [finish, preStore, finishName]

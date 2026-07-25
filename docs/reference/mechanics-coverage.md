@@ -512,42 +512,42 @@ Exact transitions are catalogued in [Switch, faint, and participation flow](swit
 
 The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); proof coverage must retain every row and malformed index domain.
 
-- [ ] Master/Ultra/Great/Poké/Safari Ball
-- [ ] status-specific cures
-- [ ] Full Heal
-- [ ] Full Restore
-- [ ] Max/Hyper/Super/Potion
-- [ ] Fresh Water/Soda Pop/Lemonade
-- [ ] Revive/Max Revive
-- [ ] X Accuracy
-- [ ] Guard Spec
-- [ ] Dire Hit
-- [ ] X Attack/Defend/Speed/Special
-- [ ] Poke Doll
-- [ ] Poke Flute
-- [ ] Ether/Max Ether/Elixer/Max Elixer are battle-reachable, including party/move targeting
-- [ ] Max Ether/Max Elixer PP-Up-bit no-effect detection bug
+- [x] Master/Ultra/Great/Poké/Safari Ball (`Battle.Full.Items.canonical_ball_dispatch_witnesses`, `Battle.Full.Capture.canonical_ball_ids`)
+- [x] status-specific cures (`Battle.Full.Items.medicine_family_witnesses`)
+- [x] Full Heal (`Battle.Full.Items.canonical_item_effect_witnesses`)
+- [x] Full Restore (`Battle.Full.Items.canonical_item_effect_witnesses`, `damaged_full_restore_preserves_status3`, `full_hp_full_restore_clears_toxic`)
+- [x] Max/Hyper/Super/Potion (`Battle.Full.Items.medicine_family_witnesses`)
+- [x] Fresh Water/Soda Pop/Lemonade (`Battle.Full.Items.medicine_family_witnesses`)
+- [x] Revive/Max Revive (`Battle.Full.Items.canonical_item_effect_witnesses`)
+- [x] X Accuracy (`Battle.Full.Items.canonical_item_effect_witnesses`, `repeated_flags_and_x_stat_cap`)
+- [x] Guard Spec (`Battle.Full.Items.canonical_item_effect_witnesses`)
+- [x] Dire Hit (`Battle.Full.Items.canonical_item_effect_witnesses`)
+- [x] X Attack/Defend/Speed/Special (`Battle.Full.Items.x_stat_family_witnesses`, `repeated_flags_and_x_stat_cap`)
+- [x] Poke Doll (`Battle.Full.Items.canonical_item_effect_witnesses`, `Battle.Outcome.escape_byte_channels_exact`)
+- [x] Poke Flute (`Battle.Full.Items.flute_preserves_bag`, `flute_always_wakes_active`)
+- [x] Ether/Max Ether/Elixer/Max Elixer are battle-reachable, including party/move targeting (`Battle.Full.Items.pp_restore_family_witnesses`)
+- [x] Max Ether/Max Elixer PP-Up-bit no-effect detection bug (`Battle.Full.Items.max_restore_packed_comparison_bug`)
 - [x] PP Up is rejected during battle (`Battle.Full.Items.pp_up_rejected_in_battle`)
 - [x] invalid/key/overworld-only item behavior while in battle (`Battle.Full.Items.disposition`, `ordinary_table_total`)
-- [ ] inventory quantity removal and ordered bag representation
-- [ ] trainer-ball rejection removes the ball and consumes the action
-- [ ] party count exactly 6 plus box count exactly 20 rejects a ball without removal/turn consumption
-- [ ] raw party counts 7–254 successful-capture-without-storage path and 255 wrap
-- [ ] raw box counts 21–255 oversized/wrapped slot-shift behavior
-- [ ] unidentified Ghost/Marowak rejection occurs after throw and consumes the ball
+- [x] inventory quantity removal and ordered bag representation (`Battle.Full.Items.ordered_bag_removal_witness`)
+- [x] trainer-ball rejection occurs after ball removal/action commit (`Battle.Full.Items.canonical_ball_dispatch_witnesses`, `Battle.Full.Capture.trainer_rejected_before_capture`)
+- [x] party count exactly 6 plus box count exactly 20 rejects a ball before removal/turn commitment (`Battle.Full.Environment.full_storage_ball_is_precommit_rejection`)
+- [x] raw party counts 7–254 successful-capture-without-storage path and 255 wrap (`Battle.Full.Capture.capacity_guard_exact`, `Battle.Full.CaptureProtocol.malformed_party_count_destinations`)
+- [x] raw box counts 21–255 oversized/wrapped slot-shift behavior (`Battle.Full.CaptureProtocol.raw_box_count_destinations`, `box_slot_one_exact`)
+- [x] unidentified Ghost/Marowak rejection occurs after throw and consumes the ball (`Battle.Full.Capture.ghost_rejected_after_throw`, `Battle.Full.Items.canonical_ball_dispatch_witnesses`)
 - [x] Poke Flute legal-party player/trainer-party scans, both active wake scope, no consumption, and committed turn (`Battle.Full.Items.wakeSideForFlute`, `wakeOpponentForFlute`, `flute_preserves_bag`, `flute_always_wakes_active`)
 - [ ] Poke Flute raw six-fixed-slot malformed scans beyond represented party arrays
 - [x] Poke Flute `wWereAnyMonsAsleep` derives only from party scans, including sleeping-wild-active message mismatch (`Battle.Full.Items.wild_flute_report_ignores_enemy`, `trainer_flute_report_scans_both`, `wild_flute_wakes_opponent_active_only`)
-- [ ] repeated X Accuracy/Guard Spec/Dire Hit and capped X-stat behavior
-- [ ] Revive participation-to-EXP-flag side effect
-- [ ] active/party synchronization after item
-- [ ] active status cure copies party max HP/all combat stats without reapplying stages, badges, burn, or paralysis, then calls normally-inert `DoubleOrHalveSelectedStats`
-- [ ] trainer AI status cures clear status/Toxic bytes without restoring burn/paralysis-reduced combat stats
+- [x] repeated X Accuracy/Guard Spec/Dire Hit and capped X-stat behavior (`Battle.Full.Items.repeated_flags_and_x_stat_cap`)
+- [x] Revive participation-to-EXP-flag side effect (`Battle.Full.Environment.revive_restores_fought_recipient`, `applyProgressionEvents`)
+- [x] active/party synchronization after item (`Battle.Full.Items.active_cure_reloads_party_stats_witness`)
+- [x] active status cure copies party max HP/all combat stats without reapplying stages, badges, burn, or paralysis (`Battle.Full.Items.active_cure_reloads_party_stats_witness`); the normally inert helper call remains a ROM-routine obligation
+- [x] trainer AI status cures clear status/Toxic bytes without restoring burn/paralysis-reduced combat stats (`Battle.Full.Items.trainer_cure_retains_combat_stats`, `trainer_full_restore_clears_toxic`)
 - [x] Full Restore damaged-active path versus full-HP status-cure path, including Toxic flag handling (`Battle.Full.Items.damaged_full_restore_preserves_status3`, `full_hp_full_restore_clears_toxic`)
 - [ ] item use during trapping and counter decrement behavior
 - [x] items forbidden by the link battle menu before dispatch (`Battle.Full.Items.link_bag_rejected`, `Battle.Full.Link.items_have_no_link_encoding`)
-- [ ] raw-bag `POKEDEX` action-success/UI path and unobtainable `SURFBOARD`/badge-alias behavior
-- [ ] vitamins, Rare Candy, evolution stones, PP Up, and TM/HM battle rejection
+- [x] raw-bag `POKEDEX` action-success path and unobtainable `SURFBOARD`/badge-alias classification (`Battle.Full.Items.rawDispatch`, `raw_dispatch_special_paths`); UI/device execution remains open
+- [x] vitamins, Rare Candy, evolution stones, PP Up, and TM/HM battle rejection (`Battle.Full.Items.progression_items_rejected_in_battle`)
 - [x] IDs `$54`–`$C3` classify beyond `ItemUsePtrTable` (`Battle.Full.Items.out_of_range_54`); canonical-bag validation versus raw CPU control flow remains a system obligation
 
 ## Capture
@@ -556,25 +556,25 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [x] eligible Master Ball unconditional success after still consuming the first `Random` result (`Battle.Full.Capture.master_consumes_rand1`)
 - [x] Ghost/Marowak restrictions (`Battle.Full.Capture.ghost_rejected_after_throw`)
 - [x] ball-specific inclusive first-byte rejection ranges (255/200/150) (`Battle.Full.Capture.rand1_boundaries`)
-- [ ] status subtraction and immediate success
-- [ ] `MaxHP × 255` arithmetic
-- [ ] ball factors
-- [ ] current HP divided by four with minimum one
-- [ ] inclusive catch-rate comparison (`Rand1 - Status <= CatchRate`)
-- [ ] inclusive second comparison (`Rand2 <= X`)
-- [ ] failure shake-count arithmetic
-- [ ] status shake bonus
+- [x] status subtraction and immediate success (`Battle.Full.Capture.capture_inclusive_comparison_witnesses`)
+- [x] `MaxHP × 255` arithmetic (`Battle.Full.Capture.catchWindow`, `capture_arithmetic_witnesses`)
+- [x] ball factors (`Battle.Full.Capture.ballFactor`, `ballFactor2`, `capture_arithmetic_witnesses`)
+- [x] current HP divided by four with minimum one (`Battle.Full.Capture.hpQuarterDivisor`, `capture_arithmetic_witnesses`)
+- [x] inclusive catch-rate comparison (`Rand1 - Status <= CatchRate`) (`Battle.Full.Capture.capture_inclusive_comparison_witnesses`)
+- [x] inclusive second comparison (`Rand2 <= X`) (`Battle.Full.Capture.capture_inclusive_comparison_witnesses`)
+- [x] failure shake-count arithmetic (`Battle.Full.Capture.shakeCount`, `capture_arithmetic_witnesses`)
+- [x] status shake bonus (`Battle.Full.Capture.statusBonus2`, `capture_arithmetic_witnesses`)
 - [x] transformed capture forces Ditto, including non-Ditto wild Transform acquired through Mirror Move (`Battle.Full.Capture.transformed_stores_ditto`)
 - [x] preserve DVs/HP/status while rebuilding base types/catch rate/moves (`Battle.Full.CaptureProtocol.construct_preserves_wild_identity`)
 - [x] captured OT ID, experience, zero stat EXP, level, and calculated stats (`Battle.Full.CaptureProtocol.construct`, `construct_preserves_wild_identity`)
 - [x] capture naming request before action return: decline/custom/empty-name default and timing (`Battle.Full.CaptureProtocol.Pending`, `NameResponse`, `preStore`, `finishName`)
 - [x] party capture appends; box capture inserts at slot 1 and shifts species/records/OT/nickname arrays (`Battle.Full.CaptureProtocol.box_slot_one_exact`, `box_parallel_sizes`)
-- [ ] pre-name Pokédex/partial party-or-box state, deferred ordinary-ball removal versus prior Safari decrement, and post-name record construction order
-- [ ] Pokédex seen/owned flags
+- [x] pre-name owned/partial party-or-box state and post-name record construction order (`Battle.Full.CaptureProtocol.pre_name_partial_storage_exact`, `preStore`, `finishName`); ordinary/Safari resource timing is covered at their separate action boundaries
+- [x] captured-species owned flag before naming (`Battle.Full.CaptureProtocol.pre_name_partial_storage_exact`); ordinary encounter seen-flag mutation remains an initialization obligation
 - [x] exact party append versus current-box slot-1 insertion with parallel-array ordering (`Battle.Full.CaptureProtocol.box_slot_one_exact`, `box_parallel_sizes`)
 - [x] ordinary/Safari/Old Man ball removal and capture-naming distinctions (Old Man skips naming/storage) (`Battle.Full.CaptureProtocol.tutorial_skips_storage_and_naming`)
 - [x] Old Man menu saves player name into aliased `wGrassRate`/wild buffer, writes `OLD MAN`, and ball path restores only player name (`Battle.Full.OldMan.capture_restores_name_but_retains_alias`)
-- [ ] battle result mutation
+- [x] capture battle-result mutation (`Battle.Full.Environment.resolve_capture_name_sets_result`)
 
 ## Trainer AI
 

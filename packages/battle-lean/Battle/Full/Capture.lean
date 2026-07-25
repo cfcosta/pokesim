@@ -43,21 +43,21 @@ private def rand1Limit : Ball → Nat
 /-- Rand1 acceptance is inclusive at 200/150. -/
 def rand1Accepted (ball : Ball) (raw : UInt8) : Bool := raw.toNat ≤ rand1Limit ball
 
-private def statusBonus1 (status : UInt8) : Nat :=
+def statusBonus1 (status : UInt8) : Nat :=
   if status == 0 then 0
   else if status &&& ((1 <<< Wram.Status.frz).toUInt8 ||| Wram.Status.slpMask) != 0
     then 25 else 12
 
-private def statusBonus2 (status : UInt8) : Nat :=
+def statusBonus2 (status : UInt8) : Nat :=
   if status == 0 then 0
   else if status &&& ((1 <<< Wram.Status.frz).toUInt8 ||| Wram.Status.slpMask) != 0
     then 10 else 5
 
-private def ballFactor : Ball → Nat
+def ballFactor : Ball → Nat
   | .great => 8
   | _ => 12
 
-private def ballFactor2 : Ball → Nat
+def ballFactor2 : Ball → Nat
   | .poke | .master => 255
   | .great => 200
   | .ultra | .safari => 150
@@ -88,10 +88,17 @@ inductive Result where
   | failed (shakes : Nat) (randomDraws : Nat)
   deriving Repr, DecidableEq, BEq
 
-private def shakeCount (x : Nat) (input : Input) : Nat :=
+def shakeCount (x : Nat) (input : Input) : Nat :=
   let y := input.catchRate.toNat * 100 / ballFactor2 input.ball
   let z := x * y / 255 + statusBonus2 input.status
   if z < 10 then 0 else if z < 30 then 1 else if z < 70 then 2 else 3
+
+def hpQuarterDivisor (currentHp : UInt16) : Nat := max 1 (currentHp.toNat / 4)
+
+def catchWindow (input : Input) : Nat × Nat :=
+  let w := (input.maxHp.toNat * 255 / ballFactor input.ball) /
+    hpQuarterDivisor input.currentHp
+  (w, min w 255)
 
 /-- Execute one accepted/rejected Rand1 attempt and optional Rand2. -/
 def attempt (input : Input) : Result :=
@@ -109,14 +116,50 @@ def attempt (input : Input) : Result :=
       if input.rand1.toNat < bonus then .caught stored 1
       else
         let adjusted := input.rand1.toNat - bonus
-        let hpDiv4 := max 1 (input.currentHp.toNat / 4)
-        let w := (input.maxHp.toNat * 255 / ballFactor input.ball) / hpDiv4
-        let x := min w 255
+        let window := catchWindow input
+        let w := window.1
+        let x := window.2
         if adjusted ≤ input.catchRate.toNat && (w > 255 || input.rand2.toNat ≤ x) then
           .caught stored (if w > 255 then 1 else 2)
         else .failed (shakeCount x input) (if adjusted > input.catchRate.toNat || w > 255 then 1 else 2)
 
 /-! ## Capture theorems -/
+
+private def arithmeticInput (status : UInt8 := 0) : Input :=
+  { ball := .poke, currentHp := 100, maxHp := 100, status,
+    catchRate := 100, species := 1, rand1 := 50, rand2 := 85 }
+
+/-- Exact arithmetic witnesses cover both status classes, ball factors, the
+minimum quarter-HP divisor, wide MaxHP multiplication, inclusive comparisons,
+and all four shake-message ranges. -/
+theorem capture_arithmetic_witnesses :
+    statusBonus1 Wram.Status.slpMask = 25 ∧ statusBonus1 0x08 = 12 ∧
+    statusBonus2 Wram.Status.slpMask = 10 ∧ statusBonus2 0x08 = 5 ∧
+    ballFactor .great = 8 ∧ ballFactor .poke = 12 ∧
+    ballFactor2 .great = 200 ∧ ballFactor2 .ultra = 150 ∧
+    hpQuarterDivisor 0 = 1 ∧ hpQuarterDivisor 3 = 1 ∧ hpQuarterDivisor 4 = 1 ∧
+    catchWindow (arithmeticInput 0) = (85, 85) ∧
+    shakeCount 20 { (arithmeticInput 0) with catchRate := 255 } = 0 ∧
+    shakeCount 50 { (arithmeticInput 0) with catchRate := 255 } = 1 ∧
+    shakeCount 100 { (arithmeticInput 0) with catchRate := 255 } = 2 ∧
+    shakeCount 200 { (arithmeticInput 0) with catchRate := 255 } = 3 ∧
+    shakeCount 0 (arithmeticInput Wram.Status.slpMask) = 1 := by
+  native_decide
+
+/-- Status subtraction can produce immediate one-draw success; both catch-rate
+and Rand2 comparisons include equality. -/
+theorem capture_inclusive_comparison_witnesses :
+    attempt { { (arithmeticInput Wram.Status.slpMask) with rand1 := 24 } with rand2 := 255 } =
+      .caught 1 1 ∧
+    attempt { { { { (arithmeticInput 0) with currentHp := 1 } with catchRate := 100 } with
+      rand1 := 100 } with rand2 := 255 } = .caught 1 1 ∧
+    attempt { { (arithmeticInput 0) with rand1 := 50 } with rand2 := 85 } = .caught 1 2 ∧
+    attempt { { (arithmeticInput 0) with rand1 := 50 } with rand2 := 86 } = .failed 1 2 := by
+  native_decide
+
+@[simp] theorem trainer_rejected_before_capture (input : Input)
+    (trainer : input.trainerBattle = true) : attempt input = .rejectedTrainer := by
+  simp [attempt, trainer]
 
 /-- Master Ball still requires one Rand1 observation before success. -/
 theorem master_consumes_rand1 (input : Input)

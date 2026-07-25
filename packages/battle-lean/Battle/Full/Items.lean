@@ -119,6 +119,27 @@ inductive Result where
   | escaped (state : UserState)
   deriving Repr, DecidableEq
 
+/-- Raw pointer-table entries that legal bag validation excludes. These remain
+separate from `Result` so the canonical API cannot silently accept them. -/
+inductive RawDispatch where
+  | pokedexCommitted
+  | surfboardContextual
+  | safariBaitAlias
+  | safariRockAlias
+  | ordinary (disposition : Disposition)
+  | beyondTable
+  deriving Repr, DecidableEq, BEq
+
+/-- Classification after an injected structurally indexed byte reaches
+`ItemUsePtrTable`; no overworld Surfboard effect is invented here. -/
+def rawDispatch (item : UInt8) : RawDispatch :=
+  match item.toNat with
+  | 7 => .surfboardContextual
+  | 9 => .pokedexCommitted
+  | 0x15 => .safariBaitAlias
+  | 0x16 => .safariRockAlias
+  | id => if id < 1 || id > 0x53 then .beyondTable else .ordinary (disposition item)
+
 private def updateMon (side : Full.SideState) (target : Nat)
     (update : MonState → MonState) : Option Full.SideState :=
   let side := side.syncOutgoing
@@ -394,11 +415,168 @@ def aiUse (mode : BattleMode) (state : UserState) (request : Request) : Result :
       else .committed next events
   | result => result
 
+def Result.isCommitted : Result → Bool
+  | .committed _ _ => true
+  | _ => false
+
+def Result.outputBag : Result → Option Bag
+  | .committed state _ | .capturePending state _ | .escaped state => some state.bag
+  | .rejected _ => none
+
+def Result.outputMon (result : Result) (target : Nat := 0) : Option MonState :=
+  match result with
+  | .committed state _ | .capturePending state _ | .escaped state =>
+      state.side.party.mons[target]?
+  | .rejected _ => none
+
+def Result.outputActive : Result → Option Battle.SideState
+  | .committed state _ | .capturePending state _ | .escaped state => some state.side.active
+  | .rejected _ => none
+
+private def itemTestMon : MonState :=
+  { species := 1, hp := 50, boxLevel := 50, status := 0x08,
+    type1 := 0, type2 := 0, catchRate := 45, moves := #[33, 45, 0, 0],
+    dvs := 0, level := 50, maxHp := 100, attack := 80, defense := 70,
+    speed := 60, special := 50, pp := #[10, 20, 0, 0] }
+
+private def itemTestState (item : UInt8) (mon : MonState := itemTestMon) : UserState :=
+  let side : Full.SideState :=
+    { party := { mons := #[mon] }
+      activeIndex := 0
+      active := Battle.SideState.fresh mon }
+  { side, bag := [{ item, count := 1 }] }
+
 /-! ## Item fidelity theorems -/
 
 @[simp] theorem link_bag_rejected (state : UserState) (request : Request) :
     use .link state request = .rejected state := by
   rfl
+
+/-- One stack is removed in place without reordering the remaining bag. -/
+theorem ordered_bag_removal_witness :
+    Bag.removeOne [{ item := 1, count := 2 }, { item := 2, count := 1 }] 1 =
+      [{ item := 1, count := 1 }, { item := 2, count := 1 }] ∧
+    Bag.removeOne [{ item := 1, count := 1 }, { item := 2, count := 1 }] 1 =
+      [{ item := 2, count := 1 }] := by
+  native_decide
+
+/-- Exact representative executions cover each canonical ordinary battle-item
+family, including consumption, target mutation, reusable Flute, and repeated
+bit-setting behavior. -/
+theorem canonical_item_effect_witnesses :
+    let antidote := use .wild (itemTestState 0x0b) { item := 0x0b }
+    let fullHeal := use .wild (itemTestState 0x34) { item := 0x34 }
+    let fullRestore := use .wild (itemTestState 0x10) { item := 0x10 }
+    let potion := use .wild (itemTestState 0x14) { item := 0x14 }
+    let water := use .wild (itemTestState 0x3c) { item := 0x3c }
+    let fainted := { itemTestMon with hp := 0, status := 0 }
+    let revive := use .wild (itemTestState 0x35 fainted) { item := 0x35 }
+    let maxRevive := use .wild (itemTestState 0x36 fainted) { item := 0x36 }
+    let xAccuracy := use .wild (itemTestState 0x2e) { item := 0x2e }
+    let guardSpec := use .wild (itemTestState 0x37) { item := 0x37 }
+    let direHit := use .wild (itemTestState 0x3a) { item := 0x3a }
+    let xAttack := use .wild (itemTestState 0x41) { item := 0x41 }
+    let doll := use .wild (itemTestState 0x33) { item := 0x33 }
+    let flute := use .wild (itemTestState 0x49) { item := 0x49 }
+    let ether := use .wild (itemTestState 0x50) { item := 0x50, moveSlot := 0 }
+    (antidote.outputMon.bind (fun mon => some mon.status)) = some 0 ∧
+    (fullHeal.outputMon.bind (fun mon => some mon.status)) = some 0 ∧
+    (fullRestore.outputMon.bind (fun mon => some (mon.hp, mon.status))) = some (100, 0) ∧
+    (potion.outputMon.bind (fun mon => some mon.hp)) = some 70 ∧
+    (water.outputMon.bind (fun mon => some mon.hp)) = some 100 ∧
+    (revive.outputMon.bind (fun mon => some mon.hp)) = some 50 ∧
+    (maxRevive.outputMon.bind (fun mon => some mon.hp)) = some 100 ∧
+    (xAccuracy.outputActive.bind (fun side => some side.volatile.status2)).getD 0 != 0 ∧
+    (guardSpec.outputActive.bind (fun side => some side.volatile.status2)).getD 0 != 0 ∧
+    (direHit.outputActive.bind (fun side => some side.volatile.status2)).getD 0 != 0 ∧
+    (xAttack.outputActive.bind (fun side => some side.stages.attack)) = some 8 ∧
+    doll = .escaped { (itemTestState 0x33) with bag := [] } ∧
+    flute.outputBag = some (itemTestState 0x49).bag ∧
+    (ether.outputMon.bind (fun mon => some (mon.pp.getD 0 0))) = some 20 := by
+  native_decide
+
+theorem medicine_family_witnesses :
+    let statusResult (item status : UInt8) :=
+      use .wild (itemTestState item { itemTestMon with status := status }) { item }
+    let healResult (item : UInt8) := use .wild (itemTestState item) { item }
+    (statusResult 0x0b 0x08).outputMon.bind (fun mon => some mon.status) = some 0 ∧
+    (statusResult 0x0c 0x10).outputMon.bind (fun mon => some mon.status) = some 0 ∧
+    (statusResult 0x0d 0x20).outputMon.bind (fun mon => some mon.status) = some 0 ∧
+    (statusResult 0x0e 0x07).outputMon.bind (fun mon => some mon.status) = some 0 ∧
+    (statusResult 0x0f 0x40).outputMon.bind (fun mon => some mon.status) = some 0 ∧
+    (healResult 0x11).outputMon.bind (fun mon => some mon.hp) = some 100 ∧
+    (healResult 0x12).outputMon.bind (fun mon => some mon.hp) = some 100 ∧
+    (healResult 0x13).outputMon.bind (fun mon => some mon.hp) = some 100 ∧
+    (healResult 0x14).outputMon.bind (fun mon => some mon.hp) = some 70 ∧
+    (healResult 0x3c).outputMon.bind (fun mon => some mon.hp) = some 100 ∧
+    (healResult 0x3d).outputMon.bind (fun mon => some mon.hp) = some 100 ∧
+    (healResult 0x3e).outputMon.bind (fun mon => some mon.hp) = some 100 := by
+  native_decide
+
+/-- All four X-stat IDs share the capped, action-consuming stage path. -/
+theorem x_stat_family_witnesses :
+    let stage (item : UInt8) (read : StatStages → UInt8) :=
+      (use .wild (itemTestState item) { item }).outputActive.bind
+        (fun side => some (read side.stages))
+    stage 0x41 StatStages.attack = some 8 ∧
+    stage 0x42 StatStages.defense = some 8 ∧
+    stage 0x43 StatStages.speed = some 8 ∧
+    stage 0x44 StatStages.special = some 8 := by
+  native_decide
+
+/-- Each PP-restoration family is battle-reachable with its distinct single/all
+and ten/max behavior. -/
+theorem pp_restore_family_witnesses :
+    let restored (item : UInt8) := use .wild (itemTestState item) { item, moveSlot := 0 }
+    (restored 0x50).outputMon.bind (fun mon => some mon.pp) = some #[20, 20, 0, 0] ∧
+    (restored 0x51).outputMon.bind (fun mon => some mon.pp) = some #[35, 20, 0, 0] ∧
+    (restored 0x52).outputMon.bind (fun mon => some mon.pp) = some #[20, 30, 0, 0] ∧
+    (restored 0x53).outputMon.bind (fun mon => some mon.pp) = some #[35, 40, 0, 0] := by
+  native_decide
+
+/-- Balls are removed before capture resolution; all five canonical IDs route
+to the pending capture protocol. -/
+theorem canonical_ball_dispatch_witnesses :
+    (use .wild (itemTestState 1) { item := 1 }).outputBag = some [] ∧
+    (use .wild (itemTestState 2) { item := 2 }).outputBag = some [] ∧
+    (use .wild (itemTestState 3) { item := 3 }).outputBag = some [] ∧
+    (use .wild (itemTestState 4) { item := 4 }).outputBag = some [] ∧
+    (use .wild (itemTestState 8) { item := 8 }).outputBag = some [] := by
+  native_decide
+
+/-- Reusing permanent battle flags still consumes the item; X stats cap at
+stage thirteen while consuming the action. -/
+theorem repeated_flags_and_x_stat_cap :
+    let volatile := { (itemTestState 0x2e).side.active.volatile with status2 := 0xff }
+    let flagged := { (itemTestState 0x2e) with side :=
+      { (itemTestState 0x2e).side with active :=
+        { (itemTestState 0x2e).side.active with volatile } } }
+    let stages := { (itemTestState 0x41).side.active.stages with attack := 13 }
+    let capped := { (itemTestState 0x41) with side :=
+      { (itemTestState 0x41).side with active :=
+        { (itemTestState 0x41).side.active with stages } } }
+    (use .wild flagged { item := 0x2e }).outputBag = some [] ∧
+    (use .wild capped { item := 0x41 }).outputBag = some [] ∧
+    (use .wild capped { item := 0x41 }).outputActive.bind
+      (fun side => some side.stages.attack) = some 13 := by
+  native_decide
+
+/-- Active cures reload the persistent party combat row while retaining stage
+bytes; active and party identities are synchronized at the item boundary. -/
+theorem active_cure_reloads_party_stats_witness :
+    let base := itemTestState 0x0b
+    let staleMon := { { { { base.side.active.active with attack := 1 } with
+      defense := 2 } with speed := 3 } with special := 4 }
+    let staleActive := { base.side.active with active := staleMon }
+    let staleSide := { base.side with active := staleActive }
+    let stale := { base with side := staleSide }
+    let result := use .wild stale { item := 0x0b }
+    result.outputActive.bind (fun side =>
+      some (side.active.attack, side.active.defense, side.active.speed,
+        side.active.special, side.stages)) =
+      some (80, 70, 60, 50, StatStages.neutral) ∧
+    result.outputActive.map Battle.SideState.active = result.outputMon := by
+  native_decide
 
 @[simp] theorem wild_flute_report_ignores_enemy (player enemy : Full.SideState) :
     fluteReportedEffect .wild player enemy =
@@ -445,10 +623,29 @@ def aiUse (mode : BattleMode) (state : UserState) (request : Request) : Result :
     | _ => False := by
   simp [useFlute]
 
-@[simp] theorem pp_up_rejected_in_battle : disposition 0x32 = .battleReject := by
+@[simp] theorem pp_up_rejected_in_battle : disposition 0x4f = .battleReject := by
+  native_decide
+
+/-- Vitamins, Rare Candy, evolution stones, PP Up, and the TM/HM item range all
+reject through the battle API. -/
+theorem progression_items_rejected_in_battle :
+    disposition 0x0a = .battleReject ∧ disposition 0x20 = .battleReject ∧
+    disposition 0x21 = .battleReject ∧ disposition 0x22 = .battleReject ∧
+    disposition 0x2f = .battleReject ∧ disposition 0x23 = .battleReject ∧
+    disposition 0x24 = .battleReject ∧ disposition 0x25 = .battleReject ∧
+    disposition 0x26 = .battleReject ∧ disposition 0x27 = .battleReject ∧
+    disposition 0x28 = .battleReject ∧ disposition 0x4f = .battleReject ∧
+    (use .wild (itemTestState 0xc4) { item := 0xc4 }) =
+      .rejected (itemTestState 0xc4) := by
   native_decide
 
 @[simp] theorem out_of_range_54 : disposition 0x54 = .outOfRange := by
+  native_decide
+
+theorem raw_dispatch_special_paths :
+    rawDispatch 7 = .surfboardContextual ∧ rawDispatch 9 = .pokedexCommitted ∧
+    rawDispatch 0x15 = .safariBaitAlias ∧ rawDispatch 0x16 = .safariRockAlias ∧
+    rawDispatch 0x54 = .beyondTable := by
   native_decide
 
 /-- Max Ether's no-effect comparison uses the full packed byte. Therefore a
