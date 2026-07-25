@@ -198,11 +198,15 @@ private def useFullRestore (state : UserState) (request : Request) : Result :=
       if mon.hp == 0 || (mon.hp == mon.maxHp && mon.status == 0) then none
       else some { mon with hp := mon.maxHp, status := 0 } with
   | none => .rejected state
-  | some next => .committed (consume next request.item)
-      [.healed request.partyTarget
-        ((next.side.party.mons.getD request.partyTarget next.side.active.active).hp -
-          (state.side.syncOutgoing.party.mons.getD request.partyTarget state.side.active.active).hp),
-       .statusCured request.partyTarget]
+  | some next =>
+      -- The player item path never clears the active Toxic flag/counter.
+      let next := { next with side := { next.side with active :=
+        { next.side.active with volatile := state.side.active.volatile } } }
+      .committed (consume next request.item)
+        [.healed request.partyTarget
+          ((next.side.party.mons.getD request.partyTarget next.side.active.active).hp -
+            (state.side.syncOutgoing.party.mons.getD request.partyTarget state.side.active.active).hp),
+         .statusCured request.partyTarget]
 
 private def useRevive (state : UserState) (request : Request) (maximum : Bool) : Result :=
   match mapTarget state request.partyTarget fun mon =>
@@ -312,6 +316,17 @@ def use (mode : BattleMode) (state : UserState) (request : Request) : Result :=
 
 @[simp] theorem link_bag_rejected (state : UserState) (request : Request) :
     use .link state request = .rejected state := by
+  rfl
+
+/-- Player Full Restore updates HP and major status but never clears the active
+`BADLY_POISONED` volatile bit. -/
+theorem full_restore_preserves_active_status3 (state next : UserState) (request : Request)
+    (events : List Event)
+    (h : useFullRestore state request = .committed next events) :
+    next.side.active.volatile.status3 = state.side.active.volatile.status3 := by
+  simp only [useFullRestore, mapTarget, updateMon, consume] at h
+  split at h <;> simp_all
+  rcases h with ⟨rfl, _⟩
   rfl
 
 /-- Max Ether's no-effect comparison uses the full packed byte. Therefore a
