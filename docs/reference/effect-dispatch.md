@@ -312,6 +312,13 @@ current HP greater than or equal to that byte, and exact payment therefore
 creates the cartridge's zero-HP Substitute. Delay/presentation calls and the
 full routine cycle trace remain separate.
 
+`Battle.Rom.LeechSeedRoutine` starts at the explicit post-`MoveHitTest`
+checkpoint and proves the remaining call-free gameplay prefix. Both sides, both
+Seeded states, and all 65,536 target type pairs follow exact Grass/Seeded
+rejection or single-bit success traces, with continuous fetched-IR lifting to
+the presentation boundary. Reachability from the earlier banked hit-test call is
+still separate.
+
 The remaining animation/text tails still need frame/timing summaries.
 Whole-battle reachability and full Game Boy device lifting remain separate.
 

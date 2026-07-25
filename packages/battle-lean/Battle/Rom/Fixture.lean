@@ -2,7 +2,7 @@
 Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
-import Battle.Rom.SubstituteRoutine
+import Battle.Rom.LeechSeedRoutine
 
 /-!
 # Caller-supplied canonical ROM fixture
@@ -46,7 +46,8 @@ def retainedLayoutMatches (rom : CanonicalRom) : Bool :=
     OhkoRoutine.windowAgrees rom.bytes &&
     ScreenRoutine.windowAgrees rom.bytes &&
     HealRoutine.windowAgrees rom.bytes &&
-    SubstituteRoutine.windowAgrees rom.bytes
+    SubstituteRoutine.windowAgrees rom.bytes &&
+    LeechSeedRoutine.windowAgrees rom.bytes
 
 /-- Load and reject any fixture that does not satisfy the retained Lean-visible
 layout contract. -/
