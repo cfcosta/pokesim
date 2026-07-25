@@ -157,4 +157,18 @@ def respond (machine : Machine) (response : Response) : Option Machine :=
           | _ => some { machine with phase := .learning index learning }
   | _, _ => none
 
+theorem cancellation_advances_to_next_flagged_member :
+    ((respond (start #[aliasedEvolutionWitness, aliasedEvolutionWitness] 3
+      .wild (some 10)) .cancel).map (fun machine => machine.phase)) =
+      some (.offered 1 142) := by
+  native_decide
+
+/-- Accepting an offer commits the target species before any nested exact-level
+learning protocol. -/
+theorem acceptance_commits_target :
+    ((respond (start #[aliasedEvolutionWitness] 1 .wild (some 10)) .accept).map
+      (fun machine => (machine.party[0]?).map (fun mon => mon.battle.species))) =
+      some (some 142) := by
+  native_decide
+
 end Battle.Full.Evolution

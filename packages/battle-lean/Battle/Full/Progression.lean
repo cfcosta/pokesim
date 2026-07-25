@@ -224,6 +224,15 @@ def evolve (mon : PersistentMon) (target : SpeciesId) : PersistentMon :=
   let battle := { battle with hp := mon.battle.hp + (battle.maxHp - oldMax) }
   { mon with battle }
 
+theorem evolve_preserves_identity_and_moves (mon : PersistentMon) (target : SpeciesId) :
+    (evolve mon target).battle.species = target ∧
+    (evolve mon target).battle.moves = mon.battle.moves ∧
+    (evolve mon target).battle.dvs = mon.battle.dvs ∧
+    (evolve mon target).otId = mon.otId ∧
+    (evolve mon target).experience = mon.experience ∧
+    (evolve mon target).statExp = mon.statExp := by
+  simp [evolve, calculateStats]
+
 /-- Medium-fast level 100 is exactly one million EXP. -/
 example : experienceAtLevel .mediumFast 100 = 1000000 := by native_decide
 

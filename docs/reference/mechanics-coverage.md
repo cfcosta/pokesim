@@ -617,8 +617,8 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 
 ## Experience, payout, and post-battle progression
 
-- [ ] no EXP in links
-- [ ] participation recipient count, fainted gain-bit clearing, fought-bit retention, Revive restoration, and fainted-recipient skip
+- [x] no EXP in links (`Battle.Full.Environment.finishBattle` link branch)
+- [x] participation recipient count, fainted gain-bit clearing, fought-bit retention, Revive restoration, and fainted-recipient skip (`Battle.Full.Engine.player_faint_clears_party_status`, `faint_preserves_fought_flags`, `Battle.Full.Items.revive_restores_fought_recipient`, `Battle.Full.Environment.fainted_recipient_skipped`)
 - [ ] per-recipient division of base stats/catch/base EXP
 - [ ] stat EXP addition and saturation
 - [ ] base EXP × level / 7
@@ -641,11 +641,11 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [ ] Pay Day payout only when `wBattleResult == 0`, including Poke Doll/move/Safari zero-result exits
 - [ ] `EndOfBattle` evolution guard (`wBattleResult == 0` for non-link; link branch reaches it directly)
 - [ ] `EvolutionAfterBattle` runs before clearing battle state
-- [ ] evolution eligibility by flag and level/item/trade record scan
-- [ ] evolution cancel response and continuation to next party member
+- [x] evolution eligibility by flag and level/item/trade record scan (`Battle.Full.Progression.evolutionTarget?`, `Battle.Full.Evolution.start`)
+- [x] evolution cancel response and continuation to next party member (`Battle.Full.Evolution.cancellation_advances_to_next_flagged_member`)
 - [ ] evolution species, nickname, Pokédex, stats, HP delta, types, and learned move
-- [ ] wild-battle item-evolution bug through aliased `wCurItem`/species state
-- [ ] link/no-EXP evolution behavior
+- [x] wild-battle item-evolution bug through aliased `wCurItem`/species state (`Battle.Full.Evolution.wild_item_alias_offers`, `wild_item_evolution_bug_occurs`)
+- [x] link/no-EXP evolution behavior (`Battle.Full.Evolution.start`, `Battle.Full.Environment.finishBattle`)
 - [ ] witnessed pre-cleanup terminal checkpoint and separately composed battle cleanup/return checkpoint
 - [ ] inside-driver exit handoff: encounter-cooldown set, destination warp `$FF`, and loss-path always-on-bike clear
 - [ ] outer return restores letter-delay flags, map-palette offset, and tile-animation state, restores bank/stack frame, sets carry, then creates returned outcome
