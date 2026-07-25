@@ -234,10 +234,11 @@ theorem evolve_preserves_identity_and_moves (mon : PersistentMon) (target : Spec
   simp [evolve, calculateStats]
 
 /-- Medium-fast level 100 is exactly one million EXP. -/
-example : experienceAtLevel .mediumFast 100 = 1000000 := by native_decide
+theorem medium_fast_level_100 : experienceAtLevel .mediumFast 100 = 1000000 := by
+  native_decide
 
 /-- Sequential 1.5× boosts floor after each stage (`10 → 15 → 22`). -/
-example :
+theorem sequential_traded_trainer_boosts :
     experienceAward
       ({ baseHp := 1
          baseAttack := 1
@@ -252,6 +253,6 @@ example :
   native_decide
 
 /-- Stat EXP saturates rather than wrapping. -/
-example : saturatingAdd16 0xffff 1 = 0xffff := by native_decide
+theorem stat_exp_saturates : saturatingAdd16 0xffff 1 = 0xffff := by native_decide
 
 end Battle.Full.Progression

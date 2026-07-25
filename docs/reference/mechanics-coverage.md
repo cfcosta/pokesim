@@ -621,10 +621,10 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [x] no EXP in links (`Battle.Full.Environment.finishBattle` link branch)
 - [x] participation recipient count, fainted gain-bit clearing, fought-bit retention, Revive restoration, and fainted-recipient skip (`Battle.Full.Engine.player_faint_clears_party_status`, `faint_preserves_fought_flags`, `Battle.Full.Items.revive_restores_fought_recipient`, `Battle.Full.Environment.fainted_recipient_skipped`)
 - [ ] per-recipient division of base stats/catch/base EXP
-- [ ] stat EXP addition and saturation
+- [x] stat EXP addition and saturation (`Battle.Full.Progression.award`, `stat_exp_saturates`)
 - [ ] base EXP × level / 7
-- [ ] traded 1.5× boost
-- [ ] trainer-battle 1.5× boost and sequential intermediate flooring with traded boost
+- [x] traded 1.5× boost (`Battle.Full.Progression.experienceAward`, `sequential_traded_trainer_boosts`)
+- [x] trainer-battle 1.5× boost and sequential intermediate flooring with traded boost (`Battle.Full.Progression.sequential_traded_trainer_boosts`)
 - [ ] EXP addition and level-100 cap
 - [ ] level calculation from growth formula
 - [ ] multi-level gain behavior and exact-level-only move scan
