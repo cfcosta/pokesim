@@ -611,7 +611,7 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [ ] strict current-HP-below-`floor(maxHP / divisor)` threshold
 - [ ] heal cap and HP-bar scratch writes
 - [x] status/Toxic cleanup without recalculating burn/paralysis-reduced enemy combat stats (`trainer_cure_retains_combat_stats`, `trainer_full_restore_clears_toxic`)
-- [ ] enemy switch living-count rule and deterministic lowest-index other-living send-out scan, with no destination RNG and raw unbounded search
+- [x] enemy switch living-count rule and deterministic lowest-index other-living send-out scan, with no destination RNG and raw unbounded search (`Battle.Full.SideState.firstLegalSwitch_exact`, `replacementScanStep`, `replacement_scan_deterministic`)
 - [ ] all [47 class dispatch rows](trainer-ai-dispatch.md), direct `Random` source, and exact `percent`-macro thresholds
 - [ ] `wAICount = $ff` lazy class-count initialization per send-out
 
@@ -733,7 +733,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] Rest retains Toxic flag/counter and seeded residual can still use it during sleep (`rest_heal_preserves_toxic`, `toxic_leech_seed_ticks_twice`)
 - [x] poison/burn KO does not stop same-pass Leech Seed or its overkill healing (`Battle.Full.Status.leech_seed_runs_after_residual_ko`)
 - [x] drain halves shared damage scratch before Counter/Bide can consume it (`Battle.Full.Effects.drain_halves_shared_damage`)
-- [ ] trainer/wild move slot selection's 63/64/63/66 initial bucket bias
+- [x] trainer/wild move slot selection's 63/64/63/66 initial bucket bias (`Battle.Full.TrainerController.slot_bucket_cardinalities`)
 - [x] final WRAM cannot distinguish all zero-result terminal causes after cleanup (`Battle.Outcome.cleanup_erases_terminal_distinctions`)
 - [ ] simultaneous faint write order can produce trainer lose text and payout with raw result 1
 - [x] simultaneous active faint can be nonterminal when reserves remain (`Battle.Full.Engine.simultaneous_with_reserves_is_nonterminal`)
