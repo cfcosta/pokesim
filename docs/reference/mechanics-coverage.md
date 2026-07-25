@@ -726,7 +726,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] frozen target Fire defrost before side-effect RNG (`Battle.Full.Effects.fire_defrost_precedes_side_rng`)
 - [ ] Hyper Beam/status interactions, including Sleep bypass and freeze asymmetry
 - [x] healing move high-byte comparison overflow cases (`Battle.BugWitnesses.decoded_healing_false_failure_occurs`)
-- [ ] Rest full-HP failure before status cure and fixed two-turn sleep write
+- [x] Rest full-HP failure before status cure and fixed two-turn sleep request (`rest_full_hp_fails`, `rest_success_exact`)
 - [ ] Max Ether/Max Elixer PP-Up-bit comparison
 - [ ] player Full Restore damaged-active Toxic flag persistence
 - [ ] Rest retains Toxic flag/counter and seeded residual can still use it during sleep

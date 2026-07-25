@@ -52,6 +52,19 @@ def use (kind : Kind) (currentHp maxHp : UInt16) : Result :=
 theorem full_hp_fails (hp : UInt16) : checkFails hp hp = true := by
   simp [checkFails, highByte, lowByte]
 
+/-- Rest fails at full HP before its caller can perform the fixed sleep/status
+write. -/
+theorem rest_full_hp_fails (hp : UInt16) : use .rest hp hp = .failed := by
+  simp [use, full_hp_fails]
+
+/-- Every accepted Rest request heals to max HP and requests the cartridge's
+whole-status-byte sleep value of two. -/
+theorem rest_success_exact (currentHp maxHp : UInt16)
+    (accepted : checkFails currentHp maxHp = false) :
+    use .rest currentHp maxHp = .healed maxHp true := by
+  have restSelf : (Kind.rest == Kind.rest) = true := by native_decide
+  simp [use, accepted, healAmount, restSelf]
+
 /-- In the canonical ≤999 HP domain, every false failure has exactly one of the
 three `256k-1` gaps. -/
 theorem false_failure_gaps (currentHp maxHp : UInt16)
