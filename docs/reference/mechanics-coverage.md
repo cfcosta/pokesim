@@ -227,7 +227,7 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 
 The proof must preserve this player/enemy control-flow order, including random consumption and counter updates:
 
-- [ ] sleep decrement, wake, and turn loss
+- [x] sleep decrement, wake, and turn loss (`Battle.Full.Status.waking_consumes_turn`)
 - [ ] freeze
 - [ ] trapped by opponent
 - [ ] flinch and reset, including main-loop reset bypass while Rage/recharge is already set
@@ -722,7 +722,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [ ] Substitute self-damage turn-flip interaction
 - [x] enemy PP not decremented (`Battle.Full.Engine.enemy_pp_not_decremented`)
 - [ ] disabled-move/PP-Up-bit Struggle-selection anomaly
-- [ ] sleep wake consumes turn
+- [x] sleep wake consumes turn (`Battle.Full.Status.waking_consumes_turn`)
 - [x] frozen target Fire defrost before side-effect RNG (`Battle.Full.Effects.fire_defrost_precedes_side_rng`)
 - [ ] Hyper Beam/status interactions, including Sleep bypass and freeze asymmetry
 - [x] healing move high-byte comparison overflow cases (`Battle.BugWitnesses.decoded_healing_false_failure_occurs`)
