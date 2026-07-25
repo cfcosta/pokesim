@@ -118,10 +118,10 @@ private def testMon : Progression.PersistentMon :=
     statExp := { hp := 0, attack := 0, defense := 0, speed := 0, special := 0 } }
 
 /-- Empty slots learn immediately with base PP. -/
-example : (start testMon 33).phase = .completed true := by native_decide
+theorem empty_slot_learns_immediately : (start testMon 33).phase = .completed true := by native_decide
 
 /-- HM rejection stays at the forget prompt. -/
-example :
+theorem hm_rejection_reprompts :
     let full := { testMon with battle := { testMon.battle with
       moves := #[15, 33, 34, 35], pp := #[30, 35, 15, 15] } }
     let machine? := respond (start full 36) .yes
@@ -129,7 +129,7 @@ example :
       some (.awaiting .chooseMoveToForget) := by native_decide
 
 /-- Declining abandonment restarts the original dialogue. -/
-example :
+theorem abandon_decline_restarts :
     let full := { testMon with battle := { testMon.battle with
       moves := #[1, 2, 3, 4], pp := #[1, 1, 1, 1] } }
     let confirm? := respond (start full 36) .no

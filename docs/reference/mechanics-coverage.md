@@ -173,7 +173,7 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [ ] shift-style stay/switch response before trainer send-out
 - [ ] ordinary player Mimic target-move request
 - [ ] item party/move target requests and cancellation
-- [ ] move-learning nested learn/forget/HM rejection/cancel/abandon-confirmation requests
+- [x] move-learning nested learn/forget/HM rejection/cancel/abandon-confirmation requests (`Battle.Full.Learning.Response`, `respond`, `hm_rejection_reprompts`, `abandon_decline_restarts`)
 - [x] capture nickname/default-name request for party and box destinations (`Battle.Full.CaptureProtocol.Pending`, `NameResponse`, `finishName`)
 - [x] post-battle evolution cancel request (`Battle.Full.Evolution.Response.cancel`, `cancellation_advances_to_next_flagged_member`)
 
@@ -631,7 +631,7 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [ ] stat recalculation and current-HP increase
 - [ ] active member update
 - [ ] stage/status/badge reapplication
-- [ ] level-up nested move-learning request, automatic empty slot, HM deletion rejection, and abandon-confirmation loop
+- [x] level-up nested move-learning request, automatic empty slot, HM deletion rejection, and abandon-confirmation loop (`Battle.Full.Learning.empty_slot_learns_immediately`, `hm_rejection_reprompts`, `abandon_decline_restarts`)
 - [ ] only first exact-level learnset row is considered; skipped intermediate levels and raw duplicate-level rows are ignored
 - [ ] active transformed learner receives all party moves/PP while transformed flag/other copied state remain
 - [ ] `wCanEvolveFlags` set for leveled recipients
