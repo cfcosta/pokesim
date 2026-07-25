@@ -255,8 +255,9 @@ private def initialDamage (mechanic : EffectPlan.Mechanic) (moveId : MoveId) (wh
 
 private def effectsContext (state : State) (who : Side) (move : MoveId) (slot : Fin 4)
     (attacker defender : Battle.SideState) (rng : Rng.LinkRng) : Effects.Context :=
-  { attacker, defender, move, moveSlot := slot, mode := state.battle.mode, rng,
-    payDayMoney := state.payDayMoney, defenderLastMove := lastMove state who.other }
+  { attackerSide := who, attacker, defender, move, moveSlot := slot,
+    mode := state.battle.mode, rng, payDayMoney := state.payDayMoney,
+    defenderLastMove := lastMove state who.other, badges := state.badges }
 
 private def installEffectsContext (state : State) (who : Side)
     (context : Effects.Context) : State :=

@@ -191,17 +191,33 @@ def Volatile.badlyPoisoned (v : Volatile) : Bool := bitSet v.status3 Wram.Battle
 
 /-! ## Per-side and whole-battle state -/
 
-/-- One side's live state: its active mon, that mon's stat-mod stages, and its
-    volatile status. -/
+/-- The four unmodified combat stats copied to dedicated battle WRAM. They
+remain distinct from the mutable active stats used by damage calculation. -/
+structure CombatStats where
+  attack : UInt16
+  defense : UInt16
+  speed : UInt16
+  special : UInt16
+  deriving Repr, DecidableEq, BEq
+
+def CombatStats.ofMon (mon : MonState) : CombatStats :=
+  { attack := mon.attack, defense := mon.defense, speed := mon.speed,
+    special := mon.special }
+
+/-- One side's live state: active battle struct, unmodified stat source, stages,
+and volatile status. -/
 structure SideState where
   active : MonState
+  unmodified : CombatStats
   stages : StatStages
   volatile : Volatile
   deriving Repr, DecidableEq, BEq
 
-/-- Fresh switch-in: the given mon with neutral stages and cleared volatiles. -/
+/-- Fresh switch-in: copy the party stats into both mutable and unmodified
+battle rows, then reset stages and volatile state. -/
 def SideState.fresh (m : MonState) : SideState :=
-  { active := m, stages := StatStages.neutral, volatile := Volatile.clear }
+  { active := m, unmodified := CombatStats.ofMon m,
+    stages := StatStages.neutral, volatile := Volatile.clear }
 
 /-- The whole battle: both sides, the RNG cursor, the turn counter, the mode, and
     the episode phase. -/

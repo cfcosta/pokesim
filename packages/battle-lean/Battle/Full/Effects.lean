@@ -8,6 +8,7 @@ import Battle.Full.Money
 import Battle.Effects.Substitute
 import Battle.Effects.Healing
 import Battle.LinkBugs
+import Battle.DamageStats
 
 /-!
 # Executable move-effect families
@@ -26,6 +27,7 @@ private def setBit (byte : UInt8) (index : Nat) : UInt8 := byte ||| mask index
 private def clearBit (byte : UInt8) (index : Nat) : UInt8 := byte &&& ~~~(mask index)
 
 structure Context where
+  attackerSide : Side
   attacker : Battle.SideState
   defender : Battle.SideState
   move : MoveId
@@ -34,6 +36,7 @@ structure Context where
   rng : Rng.LinkRng
   payDayMoney : Money.Bcd3 := Money.Bcd3.ofNat 0
   defenderLastMove : MoveId := 0
+  badges : UInt8 := 0
   deriving Repr, DecidableEq
 
 inductive Signal where
@@ -110,13 +113,65 @@ private def getStage (stages : StatStages) (stat : Nat) : UInt8 :=
   | 4 => stages.accuracy
   | _ => stages.evasion
 
+private def currentStat (side : Battle.SideState) (stat : Nat) : UInt16 :=
+  match stat with
+  | 0 => side.active.attack
+  | 1 => side.active.defense
+  | 2 => side.active.speed
+  | _ => side.active.special
+
+private def originalStat (side : Battle.SideState) (stat : Nat) : UInt16 :=
+  match stat with
+  | 0 => side.unmodified.attack
+  | 1 => side.unmodified.defense
+  | 2 => side.unmodified.speed
+  | _ => side.unmodified.special
+
+private def setCurrentStat (side : Battle.SideState) (stat : Nat) (value : UInt16) :
+    Battle.SideState :=
+  let active := match stat with
+    | 0 => { side.active with attack := value }
+    | 1 => { side.active with defense := value }
+    | 2 => { side.active with speed := value }
+    | _ => { side.active with special := value }
+  { side with active }
+
+private def recalculateStat (side : Battle.SideState) (stat : Nat) (stage : UInt8) :
+    Battle.SideState :=
+  setCurrentStat side stat (DamageStats.applyStage (originalStat side stat) stage)
+
+private def applyBadges (badges : UInt8) (side : Battle.SideState) : Battle.SideState :=
+  let boost (bit stat : Nat) (side : Battle.SideState) :=
+    if bitSet badges bit then setCurrentStat side stat
+      (DamageStats.badgeBoost (currentStat side stat)) else side
+  boost 6 3 (boost 4 2 (boost 2 1 (boost 0 0 side)))
+
+/-- The assembly calls both helpers after every successful stat effect, regardless
+of which stat changed. Reapplication therefore stacks and can affect an unrelated
+opponent after a self stat-up. -/
+private def reapplyStatusPenalties (side : Battle.SideState) : Battle.SideState :=
+  let side := if side.active.paralyzed then
+    setCurrentStat side 2 (UInt16.ofNat (side.active.speed.toNat / 4)) else side
+  if side.active.burned then
+    setCurrentStat side 0 (UInt16.ofNat (side.active.attack.toNat / 2)) else side
+
 private def raiseStage (context : Context) (stat amount : Nat) : Outcome :=
   let old := getStage context.attacker.stages stat
   if old.toNat ≥ 13 then ⟨context, .failed, []⟩
   else
     let value := (min 13 (old.toNat + amount)).toUInt8
-    let attacker := { context.attacker with stages := setStage context.attacker.stages stat value }
-    ⟨withAttacker context attacker, .continue, [.stageChanged .player stat amount]⟩
+    let stages := setStage context.attacker.stages stat value
+    let attacker := { context.attacker with stages }
+    if stat < 4 && currentStat attacker stat == 999 then
+      let stages := setStage attacker.stages stat (value - 1)
+      ⟨withAttacker context { attacker with stages }, .failed, []⟩
+    else
+      let attacker := if stat < 4 then recalculateStat attacker stat value else attacker
+      let attacker := if context.attackerSide == .player && context.mode != .link then
+        applyBadges context.badges attacker else attacker
+      let defender := reapplyStatusPenalties context.defender
+      let context := withDefender (withAttacker context attacker) defender
+      ⟨context, .continue, [.stageChanged context.attackerSide stat amount]⟩
 
 private def lowerStage (context : Context) (stat amount : Nat) : Outcome :=
   if context.defender.volatile.hasSubstitute ||
@@ -127,8 +182,18 @@ private def lowerStage (context : Context) (stat amount : Nat) : Outcome :=
     if old.toNat ≤ 1 then ⟨context, .failed, []⟩
     else
       let value := (max 1 (old.toNat - amount)).toUInt8
-      let defender := { context.defender with stages := setStage context.defender.stages stat value }
-      ⟨withDefender context defender, .continue, [.stageChanged .enemy stat amount]⟩
+      let stages := setStage context.defender.stages stat value
+      let defender := { context.defender with stages }
+      if stat < 4 && currentStat defender stat == 1 then
+        let stages := setStage defender.stages stat (value + 1)
+        ⟨withDefender context { defender with stages }, .failed, []⟩
+      else
+        let defender := if stat < 4 then recalculateStat defender stat value else defender
+        let defender := if context.attackerSide == .enemy && context.mode != .link then
+          applyBadges context.badges defender else defender
+        let defender := reapplyStatusPenalties defender
+        let context := withDefender context defender
+        ⟨context, .continue, [.stageChanged context.attackerSide.other stat amount]⟩
 
 private def sideChance (threshold : UInt8) (context : Context) : Bool × Context × Event :=
   let (raw, rng) := context.rng.next
@@ -270,13 +335,17 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
   | .haze =>
       let clearSide := fun (side : Battle.SideState) =>
         let active := { side.active with status := 0 }
+        let active := { active with attack := side.unmodified.attack }
+        let active := { active with defense := side.unmodified.defense }
+        let active := { active with speed := side.unmodified.speed }
+        let active := { active with special := side.unmodified.special }
         let volatile := { side.volatile with
           status1 := clearBit side.volatile.status1 Wram.BattleStatus1.confused }
         let volatile := { volatile with status2 := side.volatile.status2 &&& 0x78 }
         let volatile := { volatile with status3 := side.volatile.status3 &&& 0xF8 }
         let volatile := { volatile with disabledMove := 0 }
         let volatile := { volatile with disabledMoveNumber := 0 }
-        { active, stages := StatStages.neutral, volatile }
+        { active, unmodified := side.unmodified, stages := StatStages.neutral, volatile }
       let context := withAttacker context (clearSide context.attacker)
       { context := withDefender context (clearSide context.defender) }
   | .bide =>
@@ -354,7 +423,8 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
       let volatile := { context.attacker.volatile with
         status3 := setBit context.attacker.volatile.status3 Wram.BattleStatus3.transformed }
       let attacker : Battle.SideState :=
-        { active := mon, stages := context.defender.stages, volatile }
+        { active := mon, unmodified := context.defender.unmodified,
+          stages := context.defender.stages, volatile }
       ⟨withAttacker context attacker, .continue, [.transformed]⟩
   | .lightScreen => screen context true
   | .reflect => screen context false
@@ -500,6 +570,27 @@ theorem applyBefore_total (effect : UInt8) (_bounded : effect.toNat ≤ 0x56)
     (hit : Bool) (context : Context) :
     ∃ outcome, applyBefore effect hit context = outcome := by
   exact ⟨_, rfl⟩
+
+/-- A +2 effect at current stat 999 rolls back only the final increment, leaving
+the silent one-stage residue exactly as `RestoreOriginalStatModifier`. -/
+theorem raise_attack_999_two_stage_residue (context : Context)
+    (stage : context.attacker.stages.attack = 12)
+    (current : context.attacker.active.attack = 999) :
+    (raiseStage context 0 2).signal = .failed ∧
+      (raiseStage context 0 2).context.attacker.stages.attack = 12 := by
+  simp [raiseStage, getStage, setStage, currentStat, withAttacker, stage, current]
+
+/-- The symmetric -2 boundary also restores only one stage increment. -/
+theorem lower_attack_1_two_stage_residue (context : Context)
+    (noSubstitute : context.defender.volatile.hasSubstitute = false)
+    (noMist : bitSet context.defender.volatile.status2
+      Wram.BattleStatus2.protectedByMist = false)
+    (stage : context.defender.stages.attack = 2)
+    (current : context.defender.active.attack = 1) :
+    (lowerStage context 0 2).signal = .failed ∧
+      (lowerStage context 0 2).context.defender.stages.attack = 2 := by
+  simp [lowerStage, getStage, setStage, currentStat, withDefender,
+    noSubstitute, noMist, stage, current]
 
 /-- Hyper Beam recharge is skipped when its hit faints the target. -/
 theorem hyperBeam_faint_skips_recharge (context : Context) (damage : UInt16) :
