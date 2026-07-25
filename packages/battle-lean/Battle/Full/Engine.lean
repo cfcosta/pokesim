@@ -5,6 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License").
 import Battle.Full.Action
 import Battle.Full.Effects
 import Battle.Full.Escape
+import Battle.Full.Disobedience
 import Battle.Ordinary
 
 /-!
@@ -46,6 +47,7 @@ inductive Event where
   | switched (side : Side) (target : Nat)
   | item (side : Side) (events : List Items.Event)
   | terminal (terminal : Outcome.BattleTerminal)
+  | disobedience (result : Disobedience.Result)
   deriving Repr, DecidableEq
 
 inductive StepResult where
@@ -57,6 +59,8 @@ inductive StepResult where
   | nestedMove (state : State) (side : Side) (move : MoveId) (events : List Event)
   | runPending (state : State) (side : Side) (opponentAction : Full.Action)
       (events : List Event)
+  | disobediencePending (state : State) (machine : Disobedience.Machine)
+      (nextEnemyAction : Option Full.Action) (events : List Event)
   | inactive (state : State)
   deriving Repr
 
@@ -312,6 +316,81 @@ private def advanceMoveLock (state : State) (who : Side) : State × List Event :
       else
         (setSide state who { current with active := { current.active with volatile } }, [])
 
+private def executeMove (state : State) (who : Side) (action : Full.Action)
+    (moveId : MoveId) (slot : Fin 4) (attacker : Battle.SideState)
+    (attackerFull defenderFull : Full.SideState) (rng : Rng.LinkRng)
+    (generated : Bool := false) : StepResult :=
+let state := setSide { state with battle := { state.battle with rng } } who
+  { attackerFull with active := attacker }
+let state := decrementMovePp state who slot
+  (action == .struggle || generated || action == .noAction)
+let move := resolveMove moveId
+let effect := (Data.moveData moveId).effect
+let mechanic := (EffectPlan.plan effect).mechanic
+let (rng, critical, critEvents) :=
+  if move.power == 0 then (state.battle.rng, false, [])
+  else
+    let (raw, rng) := state.battle.rng.next
+    let focus := bitSet attacker.volatile.status2 Wram.BattleStatus2.gettingPumped
+    let critical := Critical.occurs (Critical.threshold attacker.active.species moveId focus) raw
+    (rng, critical, [.rng "critical" raw])
+let continuedBide := action == .noAction && mechanic == .bide
+let damageResult := if continuedBide then
+    .ok (UInt16.ofNat (min 0xffff (attacker.volatile.bideAccumulated.toNat * 2)), rng, [])
+  else if moveId == 68 then
+    let previous := Data.moveData (lastMove state who.other)
+    let validType := previous.type == TypeChart.normal || previous.type == TypeChart.fighting
+    let counter := if previous.power != 0 && validType then
+      UInt16.ofNat (min 0xffff (state.sharedDamage.toNat * 2)) else 0
+    .ok (counter, rng, [])
+  else initialDamage mechanic moveId who move attacker defenderFull.active critical rng
+match damageResult with
+| .error _ => .divisionFreeze state critEvents
+| .ok (damage, rng, damageEvents) =>
+    let (hit, rng, accuracyEvents) :=
+      if requiresAccuracy mechanic move.power then
+        resolveAccuracy mechanic move attacker defenderFull.active rng
+      else (true, rng, [])
+    let context := effectsContext state who moveId slot attacker defenderFull.active rng
+    let before := if action == .noAction then
+      match mechanic with
+      | .bide | .thrash | .charge _ | .trapping => { context := context }
+      | _ => Effects.applyBefore effect hit context
+      else Effects.applyBefore effect hit context
+    let state := installEffectsContext state who before.context
+    match before.signal with
+    | .rngStuck => .rngStuck state (critEvents ++ damageEvents ++ accuracyEvents ++
+        before.events.map .effect)
+    | .charging _ => .transitioned (setLastMove state who moveId)
+        (critEvents ++ before.events.map .effect)
+    | .escaped =>
+        let terminal := Outcome.BattleTerminal.mk' (.moveEscape who moveId)
+          state.battle.mode .player (if who == .player then 0 else 1) 1
+        .transitioned { state with battle := { state.battle with phase := .ending terminal } }
+          (before.events.map .effect ++ [.terminal terminal])
+    | .callMove nested => .nestedMove state who nested (before.events.map .effect)
+    | .failed =>
+        let state := setLastMove state who moveId
+        let (state, events) := applyResidual state who
+        .transitioned state (critEvents ++ accuracyEvents ++ before.events.map .effect ++ events)
+    | _ =>
+        let damage := if hit then damage else 0
+        let applied := applyDamage state who damage
+        let context := effectsContext applied.state who moveId slot
+          (side applied.state who).active (side applied.state who.other).active applied.state.battle.rng
+        let after := Effects.applyAfter effect move.type hit applied.targetFainted
+          applied.actualDamage context
+        let state := setLastMove (installEffectsContext applied.state who after.context) who moveId
+        let (state, lockEvents) := advanceMoveLock state who
+        let events := critEvents ++ damageEvents ++ accuracyEvents ++ before.events.map .effect ++
+          applied.events ++ after.events.map .effect ++ lockEvents
+        if applied.targetFainted then
+          let (state, faintEvents) := recordFaint state who.other
+          .transitioned state (events ++ faintEvents)
+        else
+          let (state, residualEvents) := applyResidual state who
+          .transitioned state (events ++ residualEvents)
+
 private def attack (state : State) (who : Side) (action : Full.Action)
     (overrideMove : Option MoveId := none) (skipStatus : Bool := false) : StepResult :=
   let selected := match overrideMove with
@@ -350,76 +429,28 @@ private def attack (state : State) (who : Side) (action : Full.Action)
                 let (state, events) := applyResidual state who
                 .transitioned state (.rng "confusion" raw :: events)
       | .canAct attacker rng =>
-          let state := setSide { state with battle := { state.battle with rng } } who
+          let installed := setSide { state with battle := { state.battle with rng } } who
             { attackerFull with active := attacker }
-          let state := decrementMovePp state who slot
-            (action == .struggle || overrideMove.isSome || action == .noAction)
-          let move := resolveMove moveId
-          let effect := (Data.moveData moveId).effect
-          let mechanic := (EffectPlan.plan effect).mechanic
-          let (rng, critical, critEvents) :=
-            if move.power == 0 then (state.battle.rng, false, [])
-            else
-              let (raw, rng) := state.battle.rng.next
-              let focus := bitSet attacker.volatile.status2 Wram.BattleStatus2.gettingPumped
-              let critical := Critical.occurs (Critical.threshold attacker.active.species moveId focus) raw
-              (rng, critical, [.rng "critical" raw])
-          let continuedBide := action == .noAction && mechanic == .bide
-          let damageResult := if continuedBide then
-              .ok (UInt16.ofNat (min 0xffff (attacker.volatile.bideAccumulated.toNat * 2)), rng, [])
-            else if moveId == 68 then
-              let previous := Data.moveData (lastMove state who.other)
-              let validType := previous.type == TypeChart.normal || previous.type == TypeChart.fighting
-              let counter := if previous.power != 0 && validType then
-                UInt16.ofNat (min 0xffff (state.sharedDamage.toNat * 2)) else 0
-              .ok (counter, rng, [])
-            else initialDamage mechanic moveId who move attacker defenderFull.active critical rng
-          match damageResult with
-          | .error _ => .divisionFreeze state critEvents
-          | .ok (damage, rng, damageEvents) =>
-              let (hit, rng, accuracyEvents) :=
-                if requiresAccuracy mechanic move.power then
-                  resolveAccuracy mechanic move attacker defenderFull.active rng
-                else (true, rng, [])
-              let context := effectsContext state who moveId slot attacker defenderFull.active rng
-              let before := if action == .noAction then
-                match mechanic with
-                | .bide | .thrash | .charge _ | .trapping => { context := context }
-                | _ => Effects.applyBefore effect hit context
-                else Effects.applyBefore effect hit context
-              let state := installEffectsContext state who before.context
-              match before.signal with
-              | .rngStuck => .rngStuck state (critEvents ++ damageEvents ++ accuracyEvents ++
-                  before.events.map .effect)
-              | .charging _ => .transitioned (setLastMove state who moveId)
-                  (critEvents ++ before.events.map .effect)
-              | .escaped =>
-                  let terminal := Outcome.BattleTerminal.mk' (.moveEscape who moveId)
-                    state.battle.mode .player (if who == .player then 0 else 1) 1
-                  .transitioned { state with battle := { state.battle with phase := .ending terminal } }
-                    (before.events.map .effect ++ [.terminal terminal])
-              | .callMove nested => .nestedMove state who nested (before.events.map .effect)
-              | .failed =>
-                  let state := setLastMove state who moveId
-                  let (state, events) := applyResidual state who
-                  .transitioned state (critEvents ++ accuracyEvents ++ before.events.map .effect ++ events)
-              | _ =>
-                  let damage := if hit then damage else 0
-                  let applied := applyDamage state who damage
-                  let context := effectsContext applied.state who moveId slot
-                    (side applied.state who).active (side applied.state who.other).active applied.state.battle.rng
-                  let after := Effects.applyAfter effect move.type hit applied.targetFainted
-                    applied.actualDamage context
-                  let state := setLastMove (installEffectsContext applied.state who after.context) who moveId
-                  let (state, lockEvents) := advanceMoveLock state who
-                  let events := critEvents ++ damageEvents ++ accuracyEvents ++ before.events.map .effect ++
-                    applied.events ++ after.events.map .effect ++ lockEvents
-                  if applied.targetFainted then
-                    let (state, faintEvents) := recordFaint state who.other
-                    .transitioned state (events ++ faintEvents)
-                  else
-                    let (state, residualEvents) := applyResidual state who
-                    .transitioned state (events ++ residualEvents)
+          if who == .player && !overrideMove.isSome && !attackerFull.active.volatile.chargingUp then
+            let input : Disobedience.Input :=
+              { mode := state.battle.mode
+                monOtId := state.playerOtIds.getD state.battle.player.activeIndex state.playerId
+                playerId := state.playerId
+                badges := state.badges
+                level := attacker.active.level
+                moves := attacker.active.moves
+                pp := attacker.active.pp
+                selectedSlot := slot.val.toUInt8
+                selectedMove := moveId
+                moveCount := 4
+                disabledMoveNumber := attacker.volatile.disabledMoveNumber }
+            let machine := Disobedience.start input
+            match machine.phase with
+            | .done _ => executeMove state who action moveId slot attacker attackerFull defenderFull rng false
+            | _ => .disobediencePending installed machine none []
+          else executeMove state who action moveId slot attacker attackerFull defenderFull rng
+            overrideMove.isSome
+
 
 private def applySwitch (state : State) (who : Side) (target : Fin 6) : Option State :=
   match state.battle.switchTo who target.val with
@@ -456,6 +487,8 @@ private def prependEvents (prior : List Event) : StepResult → StepResult
   | .divisionFreeze state events => .divisionFreeze state (prior ++ events)
   | .nestedMove state side move events => .nestedMove state side move (prior ++ events)
   | .runPending state side action events => .runPending state side action (prior ++ events)
+  | .disobediencePending state machine next events =>
+      .disobediencePending state machine next (prior ++ events)
   | .invalidAction state side => .invalidAction state side
   | .inactive state => .inactive state
 
@@ -551,8 +584,72 @@ def step (state : State) (playerAction enemyAction : Full.Action) : StepResult :
                               .transitioned { state with battle :=
                                 { state.battle with turn := state.battle.turn + 1 } } (events ++ more)
                           | result => result
+                    | .disobediencePending state machine _ events =>
+                        let next := if first == .player then some enemyAction else none
+                        .disobediencePending state machine next events
                     | result => result
   | _ => .inactive state
+
+private def selectedFin (slot : UInt8) : Fin 4 :=
+  ⟨slot.toNat % 4, Nat.mod_lt _ (by omega)⟩
+
+private def afterDisobedience (result : StepResult) (nextEnemyAction : Option Full.Action)
+    (prior : List Event) : StepResult :=
+  match prependEvents prior result with
+  | .transitioned state events =>
+      if state.forcedReplacement.isSome || state.battle.phase.isTerminal then
+        .transitioned state events
+      else match nextEnemyAction with
+        | none => .transitioned state events
+        | some action => prependEvents events (attack state .enemy action)
+  | result => result
+
+/-- Supply one `BattleRandom` byte to a pending disobedience routine. Rejection
+phases remain pending; terminal branches resume the already ordered enemy action. -/
+def resumeDisobedience (state : State) (machine : Disobedience.Machine)
+    (nextEnemyAction : Option Full.Action) (raw : UInt8) : StepResult :=
+  let machine := Disobedience.feed machine raw
+  let drawEvent := Event.rng "disobedience" raw
+  match machine.phase with
+  | .done result =>
+      let resultEvent := Event.disobedience result
+      let player := side state .player
+      let defender := side state .enemy
+      let slot := selectedFin machine.input.selectedSlot
+      let action := if machine.input.selectedMove == 165 then Full.Action.struggle
+        else .fight slot
+      let completed := match result with
+        | .obeyed _ move =>
+            executeMove state .player action move slot player.active player defender
+              state.battle.rng false
+        | .alternate _ move =>
+            executeMove state .player action move slot player.active player defender
+              state.battle.rng false
+        | .nap status =>
+            let mon := { player.active.active with status }
+            let state := setSide state .player { player with active := { player.active with active := mon } }
+            let (state, residual) := applyResidual state .player
+            .transitioned state residual
+        | .idle _ =>
+            let (state, residual) := applyResidual state .player
+            .transitioned state residual
+        | .selfDamage =>
+            match DamageStats.resolve player.active.active.attack player.active.active.defense false with
+            | .divisionFreeze _ => .divisionFreeze state []
+            | .ready stats =>
+                let damage := Damage.calcBaseDamage player.active.active.level false 40
+                  (UInt16.ofNat stats.attack.toNat) (UInt16.ofNat stats.defense.toNat)
+                let hp := Step.saturatingSub player.active.active.hp damage
+                let mon := { player.active.active with hp }
+                let state := setSide state .player { player with active := { player.active with active := mon } }
+                if hp == 0 then
+                  let (state, events) := recordFaint state .player
+                  .transitioned state events
+                else
+                  let (state, events) := applyResidual state .player
+                  .transitioned state events
+      afterDisobedience completed nextEnemyAction [drawEvent, resultEvent]
+  | _ => .disobediencePending state machine nextEnemyAction [drawEvent]
 
 /-- Continue after a failed wild run; the opponent executes the action already
 selected for that turn. -/

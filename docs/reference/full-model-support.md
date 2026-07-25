@@ -49,7 +49,6 @@ canonical dispatch domains. They do **not** establish full cartridge-equivalence
 The following remain outside `ModelCoverage`:
 
 - decoded-ROM refinement for battle routines and effect handlers;
-- integration of the modeled traded-Pokémon disobedience state machine into turn composition;
 - EXP All's destructive second division and malformed eight-bit gain-flag edge
   cases beyond the ordinary integrated participation award path;
 - exact presentation/menu traces and selection-scratch behavior;

@@ -80,6 +80,7 @@ private def handleResult : Nat → Environment.StepResult →
       let (state, more, reason) := handleResult remaining (Environment.resumeNested state side move)
       (state, events ++ more, reason)
   | _, .runPending state _ _ events => (state, events, .externalRandomRequired)
+  | _, .disobediencePending state _ _ events => (state, events, .externalRandomRequired)
   | _, .inactive state => (state, [], .inactive)
 
 /-- Run at most `decisions` policy turns and `nestedBudget` same-action nested

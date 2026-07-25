@@ -227,6 +227,8 @@ inductive StepResult where
   | nestedMove (state : State) (side : Side) (move : MoveId) (events : List Engine.Event)
   | runPending (state : State) (side : Side) (opponentAction : Full.Action)
       (events : List Engine.Event)
+  | disobediencePending (state : State) (machine : Disobedience.Machine)
+      (nextEnemyAction : Option Full.Action) (events : List Engine.Event)
   | inactive (state : State)
 
 private def countFlags (flags : UInt8) : UInt8 :=
@@ -302,6 +304,8 @@ private def lift (outer : State) : Engine.StepResult → StepResult
   | .divisionFreeze engine events => .divisionFreeze { outer with engine } events
   | .nestedMove engine side move events => .nestedMove { outer with engine } side move events
   | .runPending engine side action events => .runPending { outer with engine } side action events
+  | .disobediencePending engine machine next events =>
+      .disobediencePending { outer with engine } machine next events
   | .inactive engine => .inactive { outer with engine }
 
 def step (state : State) (player enemy : Full.Action) : StepResult :=
@@ -309,6 +313,11 @@ def step (state : State) (player enemy : Full.Action) : StepResult :=
 
 def resumeNested (state : State) (who : Side) (move : MoveId) : StepResult :=
   lift state (Engine.resumeNested state.engine who move)
+
+/-- Supply one BattleRandom byte for integrated traded-Pokémon disobedience. -/
+def resolveDisobedience (state : State) (machine : Disobedience.Machine)
+    (nextEnemyAction : Option Full.Action) (raw : UInt8) : StepResult :=
+  lift state (Engine.resumeDisobedience state.engine machine nextEnemyAction raw)
 
 /-- Supply the non-link BattleRandom byte for a pending run attempt. A failed
 attempt consumes the turn and resumes the opponent's already selected action. -/
