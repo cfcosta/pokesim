@@ -737,7 +737,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [ ] simultaneous faint write order can produce trainer lose text and payout with raw result 1
 - [ ] simultaneous active faint can be nonterminal when reserves remain
 - [x] two-stage stat effect at current stat 999/1 silently retains one stage despite failure text (`raise_attack_999_two_stage_residue`, `lower_attack_1_two_stage_residue`)
-- [ ] capture naming and current-box slot-1 insertion/whole-array shift
+- [x] capture naming and current-box slot-1 insertion/whole-array shift (`Battle.Full.CaptureProtocol.box_slot_one_exact`)
 - [ ] Old Man player-name restoration leaves aliased wild encounter bytes overwritten
 - [ ] layer-2 AI gate carries across voluntary AI switch but resets on forced replacement
 - [ ] enemy switch destination is deterministic lowest-index other living slot, with unbounded raw scan

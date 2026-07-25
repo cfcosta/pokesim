@@ -122,6 +122,23 @@ def finish (storage : Storage) (pending : Pending) (response : NameResponse) : S
 /-- Empty custom names take the default-name path. -/
 example : resolvedName (.custom "") = .speciesDefault := by native_decide
 
+private theorem modify_prepend_zero (head replacement : α) (tail : Array α) :
+    (#[head] ++ tail).modify 0 (fun _ => replacement) = #[replacement] ++ tail := by
+  apply Array.ext
+  · simp
+  · intro index leftBound rightBound
+    cases index <;> simp [Array.getElem_modify]
+
+/-- Box capture inserts the new record and resolved name at physical slot one;
+the complete previous record and name arrays remain the exact suffixes. -/
+theorem box_slot_one_exact (storage : Storage) (pending : Pending) (response : NameResponse)
+    (box : pending.destination = .boxSlotOne) :
+    (finish storage pending response).box = #[pending.mon] ++ storage.box ∧
+      (finish storage pending response).boxNames =
+        #[resolvedName response] ++ storage.boxNames := by
+  cases destination : pending.destination <;>
+    simp_all [finish, preStore, finishName, modify_prepend_zero]
+
 /-- Box insertion shifts records and names in the same direction. -/
 theorem box_parallel_sizes (storage : Storage) (pending : Pending) (response : NameResponse)
     (box : pending.destination = .boxSlotOne)
