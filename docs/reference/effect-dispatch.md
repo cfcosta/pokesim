@@ -281,6 +281,12 @@ Both sides and all status-2 bytes follow exact functional and continuous
 fetched-IR traces, zero only the acting HP/status row, clear only its Seeded bit,
 restore the caller stack, and retain the other side.
 
+`Battle.Rom.ConversionRoutine` proves `ConversionEffect_` through its presentation
+boundary for both sides, both invulnerability outcomes, and all 65,536 target
+type-byte pairs. The success path copies exactly two target type bytes to the
+user; the Fly/Dig path reaches the failure tail without either write. Both paths
+have exact functional bus traces and continuous fetched-IR lifts.
+
 The remaining animation/text tails still need frame/timing summaries.
 Whole-battle reachability and full Game Boy device lifting remain separate.
 

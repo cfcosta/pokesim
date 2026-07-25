@@ -171,6 +171,11 @@ Its complete functional and continuous fetched-IR summaries prove acting-side
 HP/status zeroing, Seeded-bit clearing, caller return, and other-side framing for
 all status-2 byte pairs.
 
+`Battle.Rom.ConversionRoutine` retains the `ConversionEffect_` mechanics window
+at `04:79a3`. Its exact summaries cover both acting sides, both normalized
+invulnerability outcomes, and every target type-byte pair through either the
+animation-call or failure-presentation boundary.
+
 `Battle.Rom.CombatTables` closes three more mechanics-critical data seams: the
 four high-critical move IDs and terminator, all 82 ordered type-effect triples
 and terminator, and all 13 numerator/denominator stat-stage ratios. These are
