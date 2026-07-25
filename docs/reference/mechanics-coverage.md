@@ -589,7 +589,7 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [ ] minimum-score filtering algorithm and malformed leading-zero divergence
 - [ ] exact 63/64/63/66 byte slot buckets and rejection among nonzero candidate slots
 - [ ] blank and disabled retry
-- [ ] unlimited enemy PP behavior
+- [x] unlimited enemy PP behavior (`Battle.Full.Engine.enemy_pp_not_decremented`)
 
 ### Action AI
 
@@ -720,7 +720,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [ ] stale Quick Attack/Counter ordering for non-move player actions and across player send-out's partial loaded-record clear
 - [x] Jump Kick miss recoil based on zeroed damage (`Battle.Full.Engine.jumpKick_zeroed_damage_recoil`)
 - [ ] Substitute self-damage turn-flip interaction
-- [ ] enemy PP not decremented
+- [x] enemy PP not decremented (`Battle.Full.Engine.enemy_pp_not_decremented`)
 - [ ] disabled-move/PP-Up-bit Struggle-selection anomaly
 - [ ] sleep wake consumes turn
 - [x] frozen target Fire defrost before side-effect RNG (`Battle.Full.Effects.fire_defrost_precedes_side_rng`)

@@ -150,14 +150,20 @@ private def moveOfAction (state : State) (who : Side) : Full.Action → Option (
       else none
   | _ => none
 
-private def decrementMovePp (state : State) (who : Side) (slot : Fin 4)
+def decrementMovePp (state : State) (who : Side) (slot : Fin 4)
     (isStruggle : Bool) : State :=
-  if isStruggle then state
+  if isStruggle || who == .enemy then state
   else
     let current := side state who
     let mon := current.active.active
     let mon := { mon with pp := mon.pp.modify slot.val decrementPp }
     setSide state who { current with active := { current.active with active := mon } }
+
+@[simp] theorem enemy_pp_not_decremented (state : State) (slot : Fin 4)
+    (isStruggle : Bool) :
+    decrementMovePp state .enemy slot isStruggle = state := by
+  have enemySelf : (Side.enemy == Side.enemy) = true := by native_decide
+  simp [decrementMovePp, enemySelf]
 
 private def effectiveSpeed (fullSide : Full.SideState) : UInt16 :=
   fullSide.active.active.speed
