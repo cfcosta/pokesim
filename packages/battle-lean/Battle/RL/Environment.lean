@@ -119,6 +119,18 @@ structure Observation where
   done : Bool
   deriving Repr, DecidableEq, BEq
 
+structure PlayerObservation where
+  ownSpecies : SpeciesId
+  opponentSpecies : SpeciesId
+  ownHp : UInt16
+  opponentHp : UInt16
+  ownMoves : Array MoveId
+  ownPp : Array UInt8
+  turn : Nat
+  terminalWitnessed : Bool
+  done : Bool
+  deriving Repr, DecidableEq, BEq
+
 /-- A policy action remains the shared battle action type. This profile's
 `legalActions` returns only `.fight` constructors. -/
 abbrev PolicyAction := Battle.Action
@@ -161,6 +173,33 @@ def observe (state : State) : Observation :=
     turn := state.battle.turn
     terminalWitnessed := state.battle.phase.isTerminal
     done := done state }
+
+/-- Player-view projection omits the opponent's moves and PP while retaining
+information visible on the battle screen. -/
+def observePlayer (state : State) (viewer : Side) : PlayerObservation :=
+  let opponent := viewer.other
+  { ownSpecies := (state.battle.active viewer).species
+    opponentSpecies := (state.battle.active opponent).species
+    ownHp := (state.battle.active viewer).hp
+    opponentHp := (state.battle.active opponent).hp
+    ownMoves := (state.battle.active viewer).moves
+    ownPp := (state.battle.active viewer).pp
+    turn := state.battle.turn
+    terminalWitnessed := state.battle.phase.isTerminal
+    done := done state }
+
+@[simp] theorem perfect_observation_exact (state : State) :
+    (observe state).playerMoves = state.battle.player.active.moves ∧
+      (observe state).enemyMoves = state.battle.enemy.active.moves ∧
+      (observe state).playerPp = state.battle.player.active.pp ∧
+      (observe state).enemyPp = state.battle.enemy.active.pp := by
+  exact ⟨rfl, rfl, rfl, rfl⟩
+
+@[simp] theorem player_observation_exact (state : State) (viewer : Side) :
+    let observed := observePlayer state viewer
+    observed.ownMoves = (state.battle.active viewer).moves ∧
+      observed.ownPp = (state.battle.active viewer).pp := by
+  cases viewer <;> exact ⟨rfl, rfl⟩
 
 /-- Enumerate exactly the currently legal actions for one side. -/
 def legalActions (state : State) (side : Side) : Array PolicyAction :=

@@ -762,8 +762,8 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] protocol-invalid action no-op/error behavior (`Battle.RL.Environment.nonfight_invalid`)
 - [ ] cartridge-ineffective attempt behavior
 - [ ] canonical action-commit and full-selection modes
-- [ ] perfect-information observation
-- [ ] player-view observation
+- [x] perfect-information observation (`Battle.RL.Environment.perfect_observation_exact`)
+- [x] player-view observation (`Battle.RL.Environment.player_observation_exact`)
 - [ ] canonical ordinary snapshot and paired-perspective link snapshot codecs/theorems
 - [ ] deterministic transcript replay including capture naming and nested move-learning traces
 - [ ] ordinary seeded provider disclaimer/contract
