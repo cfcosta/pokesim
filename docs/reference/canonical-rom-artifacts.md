@@ -119,6 +119,9 @@ not fetch invalid opcodes or STOP.
 | `AlwaysHappenSideEffects` | `0f:4030` |
 | `SpecialEffects` / `SpecialEffectsCont` | `0f:403b` / `0f:4049` |
 | `MoveEffectPointerTable` | `0f:7150` |
+| `HighCriticalMoves` | `0f:608e` |
+| `TypeEffects` | `0f:6474` |
+| `StatModifierRatios` | `0f:76cb` |
 
 `Rom.Closure.TableLayout` proves the fixed ranges: 165 six-byte move rows,
 150 28-byte ordinary base-stat rows plus Mew's detached row, 190 two-byte
@@ -148,3 +151,9 @@ headline theorem decodes those supplied ROM bytes and proves the complete
 18/20-M-cycle player/enemy bus traces and status-bit summaries universally over
 all incoming status-byte pairs. These are de-overlapped functional CPU traces;
 continuous fetched-IR/system lifting remains separate.
+
+`Battle.Rom.CombatTables` closes three more mechanics-critical data seams: the
+four high-critical move IDs and terminator, all 82 ordered type-effect triples
+and terminator, and all 13 numerator/denominator stat-stage ratios. These are
+included in `CanonicalMechanicsBytes` and the canonical fixture rather than
+remaining source transcriptions.

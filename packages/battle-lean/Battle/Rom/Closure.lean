@@ -117,6 +117,9 @@ def alwaysHappenSideEffects : Symbol := ⟨0x0F, 0x4030⟩
 def specialEffects : Symbol := ⟨0x0F, 0x403B⟩
 def specialEffectsCont : Symbol := ⟨0x0F, 0x4049⟩
 def moveEffectPointerTable : Symbol := ⟨0x0F, 0x7150⟩
+def highCriticalMoves : Symbol := ⟨0x0F, 0x608E⟩
+def typeEffects : Symbol := ⟨0x0F, 0x6474⟩
+def statModifierRatios : Symbol := ⟨0x0F, 0x76CB⟩
 
 end Symbols
 

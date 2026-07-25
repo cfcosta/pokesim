@@ -2,7 +2,7 @@
 Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
-import Battle.Rom.Effects
+import Battle.Rom.CombatTables
 
 /-!
 # Hash-identified canonical battle mechanics certificate
@@ -23,6 +23,7 @@ structure CanonicalMechanicsBytes (sha256 : Sha256) (rom : CanonicalRom) : Prop 
   identity : rom.Valid sha256
   tables : Tables.RequiredTableBytes rom.bytes
   effects : Effects.RequiredEffectBytes rom.bytes
+  combat : CombatTables.RequiredCombatBytes rom.bytes
 
 /-- Exact decoded battle-relevant Pokémon, move, learnset, and progression data
 for a hash-identified canonical ROM. -/
@@ -79,6 +80,17 @@ theorem move_effects_indexed {sha256 : Sha256} {rom : CanonicalRom}
   rw [certificate.tables.moves]
   native_decide
 
+/-- Critical-move, type-effect, and stat-stage data are also exact ROM bytes. -/
+theorem combat_tables_exact {sha256 : Sha256} {rom : CanonicalRom}
+    (certificate : CanonicalMechanicsBytes sha256 rom) :
+    CombatTables.decodeHighCritical rom.bytes =
+        some CombatTables.expectedHighCritical ∧
+      CombatTables.decodeTypeEffectBytes rom.bytes =
+        CombatTables.expectedTypeEffectBytes ∧
+      CombatTables.decodeStatRatioBytes rom.bytes =
+        CombatTables.expectedStatRatioBytes :=
+  CombatTables.certified_combat_tables certificate.combat
+
 /-- Compact conjunction used by downstream battle-routine refinement. -/
 theorem canonical_mechanics_exact {sha256 : Sha256} {rom : CanonicalRom}
     (certificate : CanonicalMechanicsBytes sha256 rom) :
@@ -87,8 +99,13 @@ theorem canonical_mechanics_exact {sha256 : Sha256} {rom : CanonicalRom}
       (Effects.decodePointers rom.bytes).map Effects.handlerAt =
         Effects.expectedHandlers.map some ∧
       (Tables.decodeMoves rom.bytes).all (fun move =>
-        1 ≤ move.effect.toNat && move.effect.toNat ≤ 0x56 || move.effect == 0) = true := by
+        1 ≤ move.effect.toNat && move.effect.toNat ≤ 0x56 || move.effect == 0) = true ∧
+      CombatTables.decodeTypeEffectBytes rom.bytes =
+        CombatTables.expectedTypeEffectBytes ∧
+      CombatTables.decodeStatRatioBytes rom.bytes =
+        CombatTables.expectedStatRatioBytes := by
   exact ⟨certificate.tables.moves, certificate.tables.baseStats,
-    handler_table_exact certificate, move_effects_indexed certificate⟩
+    handler_table_exact certificate, move_effects_indexed certificate,
+    certificate.combat.typeEffects, certificate.combat.statRatios⟩
 
 end Battle.Rom.Mechanics

@@ -55,6 +55,7 @@ import Battle.Refinement.Trace
 import Battle.Refinement.Simulation
 import Battle.Rom.Tables
 import Battle.Rom.Effects
+import Battle.Rom.CombatTables
 import Battle.Rom.Mechanics
 import Battle.Rom.EffectRoutines
 import Battle.Diff

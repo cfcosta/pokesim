@@ -26,10 +26,10 @@ not type1-then-type2 order. This module therefore preserves the ASM row order
 exactly; `Damage.lean` folds the whole list (see Task #13). `matchup` below is
 the per-pair view used for `#guard`s and by that fold.
 
-**Provenance.** These bytes are hand-transcribed from the named ASM. GPT owns the
-single source of truth: when `Battle/Rom/Tables` decodes `TypeEffects` straight
-from the ROM image, replace this transcription with a byte-equality certificate
-against it (see `COORDINATION.md`, seam 3). Until then this is the reference copy.
+**Provenance.** The model remains independently stated here.
+`Battle.Rom.CombatTables.RequiredCombatBytes` now decodes `TypeEffects` from a
+caller-supplied canonical ROM and certifies all 82 ordered triples plus the
+terminating `$FF` against this list.
 -/
 
 namespace Battle.TypeChart

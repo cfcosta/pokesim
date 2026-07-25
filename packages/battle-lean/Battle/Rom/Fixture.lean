@@ -38,6 +38,7 @@ def retainedLayoutMatches (rom : CanonicalRom) : Bool :=
     decide (bytesAt rom.bytes Symbols.startBattle.offset 16 = startBattlePrefix) &&
     Tables.agreesWithAuthored rom.bytes &&
     Effects.agreesWithPlan rom.bytes &&
+    CombatTables.agreesWithModel rom.bytes &&
     EffectRoutines.leafWindowsAgree rom.bytes
 
 /-- Load and reject any fixture that does not satisfy the retained Lean-visible
