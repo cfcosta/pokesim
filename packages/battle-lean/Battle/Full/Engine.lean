@@ -94,6 +94,16 @@ private def setLastMove (state : State) : Side → MoveId → State
   | .player, move => { state with playerLastMove := move }
   | .enemy, move => { state with enemyLastMove := move }
 
+def generatedMoveIdentity (wrapper executed : MoveId) (generated : Bool) : MoveId :=
+  if generated then wrapper else executed
+
+@[simp] theorem generated_charge_reloads_wrapper (wrapper executed : MoveId) :
+    generatedMoveIdentity wrapper executed true = wrapper := rfl
+
+private def recordExecutedMove (state : State) (who : Side) (move : MoveId)
+    (generated : Bool) : State :=
+  setLastMove state who (generatedMoveIdentity (lastMove state who) move generated)
+
 private def selection (state : State) : Side → Selection.MoveScratch
   | .player => state.playerSelection
   | .enemy => state.enemySelection
@@ -560,24 +570,25 @@ match damageResult with
     match before.signal with
     | .rngStuck => .rngStuck state (critEvents ++ damageEvents ++ handlerGateEvents ++
         accuracyEvents ++ before.events.map .effect)
-    | .charging _ => .transitioned (setLastMove state who moveId)
+    | .charging _ => .transitioned (recordExecutedMove state who moveId generated)
         (critEvents ++ before.events.map .effect)
     | .escaped =>
         let terminal := Outcome.BattleTerminal.mk' (.moveEscape who moveId)
           state.battle.mode .player (if who == .player then 0 else 1) 1
         .transitioned { state with battle := { state.battle with phase := .ending terminal } }
           (before.events.map .effect ++ [.terminal terminal])
-    | .callMove nested => .nestedMove state who nested (before.events.map .effect)
+    | .callMove nested => .nestedMove (recordExecutedMove state who moveId generated) who nested
+        (before.events.map .effect)
     | .mimicChoice => .mimicPending state who slot none (before.events.map .effect)
     | .failed =>
-        let state := setLastMove state who moveId
+        let state := recordExecutedMove state who moveId generated
         let (state, events) := applyResidual state who
         .transitioned state (critEvents ++ damageEvents ++ handlerGateEvents ++
           accuracyEvents ++ before.events.map .effect ++ events)
     | _ =>
         if mechanic == .jumpKick && !hit then
           let crash := applyJumpKickCrash state who
-          let state := setLastMove crash.state who moveId
+          let state := recordExecutedMove crash.state who moveId generated
           let events := critEvents ++ damageEvents ++ handlerGateEvents ++ accuracyEvents ++
             before.events.map .effect ++ crash.events
           if crash.userFainted then
@@ -612,7 +623,7 @@ match damageResult with
               (mechanic == .drain || mechanic == .dreamEater) then
             { state with sharedDamage := Effects.drainDamageWord state.sharedDamage }
             else state
-          let state := setLastMove state who moveId
+          let state := recordExecutedMove state who moveId generated
           let (state, lockEvents) := advanceMoveLock state who
           let events := critEvents ++ damageEvents ++ handlerGateEvents ++ accuracyEvents ++
             before.events.map .effect ++
