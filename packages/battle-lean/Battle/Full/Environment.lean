@@ -4,6 +4,7 @@ Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.Full.Engine
 import Battle.Full.Capture
+import Battle.Full.CaptureProtocol
 import Battle.Full.Evolution
 import Battle.Full.TrainerController
 import Battle.RL.DynamicGenerator
@@ -25,6 +26,10 @@ structure State where
   enemyReset : RL.DynamicGenerator.CanonicalTeam
   repairedReset : Bool
   box : Array MonState := #[]
+  partyNames : Array CaptureProtocol.StoredName := #[]
+  boxNames : Array CaptureProtocol.StoredName := #[]
+  ownedSpecies : Array SpeciesId := #[]
+  pendingCapture : Option CaptureProtocol.Pending := none
   playerProgression : Array Progression.PersistentMon := #[]
   enemyProgression : Array Progression.PersistentMon := #[]
   canEvolveFlags : UInt8 := 0
@@ -81,6 +86,7 @@ def reset (generatorRng battleRng : Rng.LinkRng)
     enemyReset := enemy.team
     repairedReset := player.repaired || enemy.repaired
     box := #[]
+    partyNames := player.team.1.map (fun _ => .speciesDefault)
     playerProgression := player.team.1.map (persistent 0)
     enemyProgression := enemy.team.1.map (persistent 0xffff)
     hasExpAll := playerBag.contains 0x4b
@@ -477,20 +483,69 @@ def resolveCapture (state : State) (ball : Capture.Ball) (rand1 rand2 : UInt8)
   let result := Capture.attempt input
   match result with
   | .caught stored _ =>
-      let captured := { enemy with species := stored }
-      let (engine, box) :=
-        if state.engine.battle.mode == .oldMan then (state.engine, state.box)
-        else if playerParty.size < Wram.partyLength then
-          let player := state.engine.battle.player.syncOutgoing
-          let player := { player with party := { mons := player.party.mons.push captured } }
-          ({ state.engine with battle := state.engine.battle.setSide .player player }, state.box)
-        else (state.engine, state.box.push captured)
-      let cause := if state.engine.battle.mode == .oldMan then
-        Outcome.TerminalCause.tutorialCapture else .capture
-      let terminal := Outcome.BattleTerminal.mk' cause engine.battle.mode .player 2
-      let engine := { engine with battle := { engine.battle with phase := .ending terminal } }
-      (result, { state with engine, box })
+      let pending := CaptureProtocol.begin playerParty.size.toUInt8 state.box.size.toUInt8
+        (state.engine.battle.mode == .oldMan) enemy stored state.engine.playerId
+      let state := { state with pendingCapture := some pending }
+      if state.engine.battle.mode == .oldMan then
+        let storage : CaptureProtocol.Storage :=
+          { party := state.playerProgression
+            partyNames := state.partyNames
+            box := state.box.map (persistent state.engine.playerId)
+            boxNames := state.boxNames
+            owned := state.ownedSpecies }
+        let storage := CaptureProtocol.finish storage pending .decline
+        let terminal := Outcome.BattleTerminal.mk' .tutorialCapture state.engine.battle.mode .player 2
+        let engine := { state.engine with battle := { state.engine.battle with phase := .ending terminal } }
+        (result, { state with engine, pendingCapture := none, ownedSpecies := storage.owned })
+      else
+        let storage : CaptureProtocol.Storage :=
+          { party := state.playerProgression
+            partyNames := state.partyNames
+            box := state.box.map (persistent state.engine.playerId)
+            boxNames := state.boxNames
+            owned := state.ownedSpecies }
+        let storage := CaptureProtocol.preStore storage pending
+        let mons := storage.party.map Progression.PersistentMon.battle
+        let player := state.engine.battle.player
+        let activeMon := mons.getD player.activeIndex player.active.active
+        let player := { player with party := { mons }, active := { player.active with active := activeMon } }
+        let engine := { state.engine with battle := state.engine.battle.setSide .player player }
+        let state := { state with engine := engine }
+        let state := { state with playerProgression := storage.party }
+        let state := { state with partyNames := storage.partyNames }
+        let state := { state with box := storage.box.map Progression.PersistentMon.battle }
+        let state := { state with boxNames := storage.boxNames }
+        (result, { state with ownedSpecies := storage.owned })
   | _ => (result, state)
+
+/-- Resolve the mandatory ordinary-capture naming response, then atomically
+install all party/box parallel arrays and witness the capture terminal. -/
+def resolveCaptureName (state : State) (response : CaptureProtocol.NameResponse) : Option State :=
+  match state.pendingCapture with
+  | none => none
+  | some pending =>
+      let storage : CaptureProtocol.Storage :=
+        { party := state.playerProgression
+          partyNames := state.partyNames
+          box := state.box.map (persistent state.engine.playerId)
+          boxNames := state.boxNames
+          owned := state.ownedSpecies }
+      let storage := CaptureProtocol.finishName storage pending response
+      let mons := storage.party.map Progression.PersistentMon.battle
+      let player := state.engine.battle.player
+      let activeMon := mons.getD player.activeIndex player.active.active
+      let player := { player with party := { mons }, active := { player.active with active := activeMon } }
+      let battle := state.engine.battle.setSide .player player
+      let terminal := Outcome.BattleTerminal.mk' .capture battle.mode .player 2
+      let engine := { state.engine with battle := { battle with phase := .ending terminal } }
+      some { state with
+        engine
+        playerProgression := storage.party
+        partyNames := storage.partyNames
+        box := storage.box.map Progression.PersistentMon.battle
+        boxNames := storage.boxNames
+        ownedSpecies := storage.owned
+        pendingCapture := none }
 
 @[simp] theorem player_reset_legal (state : State) :
     teamLegal genDex .canonical state.playerReset.1 = true := state.playerReset.2
