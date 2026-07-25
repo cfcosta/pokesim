@@ -139,6 +139,26 @@ def runEpisode (budget : Nat) (playerPolicy enemyPolicy : Policy)
   runFor budget playerPolicy enemyPolicy
     (Environment.reset generatorRng battleRng) playerPolicyRng enemyPolicyRng
 
+structure EpisodeConfig where
+  budget : Nat
+  generatorRng : Rng.LinkRng
+  battleRng : Rng.LinkRng
+  playerPolicyRng : Rng.LinkRng
+  enemyPolicyRng : Rng.LinkRng
+
+def runConfigured (playerPolicy enemyPolicy : Policy) (config : EpisodeConfig) : Run :=
+  runEpisode config.budget playerPolicy enemyPolicy config.generatorRng config.battleRng
+    config.playerPolicyRng config.enemyPolicyRng
+
+/-- Batch execution is exactly ordered mapping of the single-episode function. -/
+def runBatch (playerPolicy enemyPolicy : Policy) (configs : List EpisodeConfig) : List Run :=
+  configs.map (runConfigured playerPolicy enemyPolicy)
+
+@[simp] theorem single_batch_result_equality (playerPolicy enemyPolicy : Policy)
+    (config : EpisodeConfig) :
+    runBatch playerPolicy enemyPolicy [config] =
+      [runConfigured playerPolicy enemyPolicy config] := rfl
+
 /-- A deterministic ten-byte seed constructor for independent episode streams. -/
 def seedFrom (seed : Nat) : Rng.LinkRng :=
   { list := (List.range Wram.serialRnsLength).map

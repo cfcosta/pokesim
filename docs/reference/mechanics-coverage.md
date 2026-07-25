@@ -774,7 +774,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [ ] progression-witnessed history relative to supplied roster/resource ledger
 - [ ] no unconditional new-save reachability claim without overworld proof
 - [ ] trainer-defined generator equivalence
-- [ ] single/batch result equality
+- [x] single/batch result equality (`Battle.RL.SelfPlay.single_batch_result_equality`)
 - [ ] semantic events including payout/Pokédex/evolution
 - [ ] reward wrappers outside mechanics
 - [ ] native throughput and memory benchmarks
