@@ -229,6 +229,25 @@ theorem toxic_leech_seed_ticks_twice (actor opponent : Battle.SideState)
   simp [applyResiduals, poisonOrBurn, seededAfterFirst]
   exact toxic_two_calls_tick actor toxic
 
+/-- Even if the poison/burn subtraction has already produced zero HP, the
+same residual pass still calls the seeded subtraction and heals from its
+requested (not capped actual) damage word. -/
+theorem leech_seed_runs_after_residual_ko (actor opponent : Battle.SideState)
+    (poisonOrBurn : (actor.active.poisoned || actor.active.burned) = true)
+    (seeded : actor.volatile.seeded = true)
+    (ko : (decreaseResidualHp actor).side.active.hp = 0) :
+    (applyResiduals actor opponent).leechSeedHealing =
+        (decreaseResidualHp (decreaseResidualHp actor).side).requestedDamage ∧
+      (decreaseResidualHp actor).side.active.hp = 0 := by
+  have seededAfterFirst : (decreaseResidualHp actor).side.volatile.seeded = true := by
+    simp only [decreaseResidualHp]
+    split
+    · simpa [Volatile.seeded] using seeded
+    · simpa [Volatile.seeded] using seeded
+  constructor
+  · simp [applyResiduals, poisonOrBurn, seededAfterFirst]
+  · exact ko
+
 #guard baseResidualDamage 1 == 1
 #guard baseResidualDamage 160 == 10
 
