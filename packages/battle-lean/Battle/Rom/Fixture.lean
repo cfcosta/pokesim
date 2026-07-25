@@ -3,6 +3,7 @@ Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.Rom.HazeDispatchRoutine
+import Battle.Full.OldMan
 
 /-!
 # Caller-supplied canonical ROM fixture
@@ -50,7 +51,8 @@ def retainedLayoutMatches (rom : CanonicalRom) : Bool :=
     LeechSeedRoutine.windowAgrees rom.bytes &&
     TransformRoutine.windowAgrees rom.bytes &&
     HazeRoutine.windowAgrees rom.bytes &&
-    HazeDispatchRoutine.windowAgrees rom.bytes
+    HazeDispatchRoutine.windowAgrees rom.bytes &&
+    Battle.Full.OldMan.windowAgrees rom.bytes
 
 /-- Load and reject any fixture that does not satisfy the retained Lean-visible
 layout contract. -/

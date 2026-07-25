@@ -119,6 +119,17 @@ def finishName (storage : Storage) (pending : Pending) (response : NameResponse)
 def finish (storage : Storage) (pending : Pending) (response : NameResponse) : Storage :=
   finishName (preStore storage pending) pending response
 
+@[simp] theorem tutorial_destination (partyCount boxCount : UInt8) (wild : MonState)
+    (species : SpeciesId) (playerId : UInt16) :
+    (begin partyCount boxCount true wild species playerId).destination = .tutorialNoStorage := by
+  simp [begin]
+
+@[simp] theorem tutorial_skips_storage_and_naming (storage : Storage)
+    (partyCount boxCount : UInt8) (wild : MonState) (species : SpeciesId)
+    (playerId : UInt16) (response : NameResponse) :
+    finish storage (begin partyCount boxCount true wild species playerId) response = storage := by
+  simp [finish, finishName, preStore, begin]
+
 /-- Empty custom names take the default-name path. -/
 example : resolvedName (.custom "") = .speciesDefault := by native_decide
 

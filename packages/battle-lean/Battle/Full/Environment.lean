@@ -8,6 +8,7 @@ import Battle.Full.CaptureProtocol
 import Battle.Full.Evolution
 import Battle.Full.TrainerController
 import Battle.Full.Safari
+import Battle.Full.OldMan
 import Battle.RL.DynamicGenerator
 
 /-!
@@ -40,6 +41,7 @@ structure State where
   ownedSpecies : Array SpeciesId := #[]
   pendingCapture : Option CaptureProtocol.Pending := none
   safari : Option Safari.State := none
+  oldManScratch : Option OldMan.State := none
   playerProgression : Array Progression.PersistentMon := #[]
   enemyProgression : Array Progression.PersistentMon := #[]
   canEvolveFlags : UInt8 := 0
@@ -80,6 +82,9 @@ private def persistent (owner : UInt16) (mon : MonState) : Progression.Persisten
     otId := owner
     experience := Progression.experienceAtLevel rate mon.level
     statExp := { hp := 0, attack := 0, defense := 0, speed := 0, special := 0 } }
+
+def beginOldManTutorial (state : State) (playerName grassAlias : List UInt8) : State :=
+  { state with oldManScratch := some (OldMan.beginTutorial { playerName, grassAlias }) }
 
 /-- Reset from independent generator and battle streams. -/
 def reset (generatorRng battleRng : Rng.LinkRng)
@@ -656,6 +661,7 @@ def resolveCapture (state : State) (ball : Capture.Ball) (rand1 rand2 : UInt8)
         (state.engine.battle.mode == .oldMan) enemy stored state.engine.playerId
       let state := { state with pendingCapture := some pending }
       if state.engine.battle.mode == .oldMan then
+        let oldManScratch := state.oldManScratch.map OldMan.captureRestore
         let storage : CaptureProtocol.Storage :=
           { party := state.playerProgression
             partyNames := state.partyNames
@@ -665,7 +671,10 @@ def resolveCapture (state : State) (ball : Capture.Ball) (rand1 rand2 : UInt8)
         let storage := CaptureProtocol.finish storage pending .decline
         let terminal := Outcome.BattleTerminal.mk' .tutorialCapture state.engine.battle.mode .player 2
         let engine := { state.engine with battle := { state.engine.battle with phase := .ending terminal } }
-        (result, { state with engine, pendingCapture := none, ownedSpecies := storage.owned })
+        let state := { state with engine }
+        let state := { state with pendingCapture := none }
+        let state := { state with ownedSpecies := storage.owned }
+        (result, { state with oldManScratch })
       else
         let storage : CaptureProtocol.Storage :=
           { party := state.playerProgression

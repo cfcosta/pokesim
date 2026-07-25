@@ -176,6 +176,11 @@ offset `$30`, and wrapper target `$7B1E` in 14/15 instructions. Proving the
 external `Bankswitch` and presentation contracts remains a separate system-level
 obligation.
 
+`Battle.Full.OldMan.RequiredOldManBytes` retains the eleven-byte source copied
+from `DisplayBattleMenu.oldManName`. The eight-byte terminated `OLD MAN@` text
+is followed by opcode bytes `$FA,$2D,$CC`; the model restores the saved player
+name while deliberately retaining those encounter-alias bytes.
+
 `Battle.Rom.EffectRoutines.CanonicalLeafEffectsBytes` adds exact code-window
 witnesses for `HyperBeamEffect` (`0f:79c1`), shared `ClearHyperBeam`
 (`0f:79cf`), and `RageEffect` (`0f:79df`). Its headline theorem decodes those

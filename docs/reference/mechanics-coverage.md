@@ -571,8 +571,8 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [ ] pre-name Pokédex/partial party-or-box state, deferred ordinary-ball removal versus prior Safari decrement, and post-name record construction order
 - [ ] Pokédex seen/owned flags
 - [ ] exact party append versus current-box slot-1 insertion with parallel-array ordering
-- [ ] ordinary/Safari/Old Man ball removal and capture-naming distinctions (Old Man skips naming/storage)
-- [ ] Old Man menu saves player name into aliased `wGrassRate`/wild buffer, writes `OLD MAN`, and ball path restores only player name
+- [x] ordinary/Safari/Old Man ball removal and capture-naming distinctions (Old Man skips naming/storage) (`Battle.Full.CaptureProtocol.tutorial_skips_storage_and_naming`)
+- [x] Old Man menu saves player name into aliased `wGrassRate`/wild buffer, writes `OLD MAN`, and ball path restores only player name (`Battle.Full.OldMan.capture_restores_name_but_retains_alias`)
 - [ ] battle result mutation
 
 ## Trainer AI
@@ -739,7 +739,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] simultaneous active faint can be nonterminal when reserves remain (`Battle.Full.Engine.simultaneous_with_reserves_is_nonterminal`)
 - [x] two-stage stat effect at current stat 999/1 silently retains one stage despite failure text (`raise_attack_999_two_stage_residue`, `lower_attack_1_two_stage_residue`)
 - [x] capture naming and current-box slot-1 insertion/whole-array shift (`Battle.Full.CaptureProtocol.box_slot_one_exact`)
-- [ ] Old Man player-name restoration leaves aliased wild encounter bytes overwritten
+- [x] Old Man player-name restoration leaves aliased wild encounter bytes overwritten (`Battle.Full.OldMan.capture_restores_name_but_retains_alias`; canonical trailing opcode bytes are separately certified)
 - [x] layer-2 AI gate carries across voluntary AI switch but resets on forced replacement (`forced_enemy_switch_resets_ai_layer`, `voluntary_enemy_switch_retains_ai_layer`)
 - [ ] enemy switch destination is deterministic lowest-index other living slot, with unbounded raw scan
 - [x] player faint clears party status but preserves fought flag; Revive can restore gain-EXP eligibility (`player_faint_clears_party_status`, `faint_preserves_fought_flags`, `revive_restores_fought_recipient`)
