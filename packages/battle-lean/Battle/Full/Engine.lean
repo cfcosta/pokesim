@@ -367,38 +367,47 @@ def jumpKickCrashDamage (damage : UInt16) : UInt16 :=
 @[simp] theorem jumpKick_zeroed_damage_recoil : jumpKickCrashDamage 0 = 1 := by
   native_decide
 
+def turnFlippedSubstituteOwner (who : Side) : Side := who.other
+
+@[simp] theorem turn_flipped_self_damage_selects_opponent (who : Side) :
+    turnFlippedSubstituteOwner who = who.other := rfl
+
 private structure CrashApplied where
   state : State
   userFainted : Bool
   events : List Event
 
-/-- Missed Jump Kick/Hi Jump Kick uses already-zeroed `wDamage`, so three shifts
-still produce the minimum crash damage one. If the user has a Substitute, the
-turn-sensitive shared routine applies that point to the opponent's Substitute
-scratch instead. -/
-def applyJumpKickCrash (state : State) (who : Side) : CrashApplied :=
-  let crashDamage := jumpKickCrashDamage 0
+/-- Shared self-damage enters an apply-damage routine after a temporary turn
+flip. Its Substitute test observes the user, while `AttackSubstitute` selects
+the opponent's scratch from the restored turn byte. -/
+private def applyTurnFlippedSelfDamage (state : State) (who : Side)
+    (damage : UInt16) : CrashApplied :=
   let user := side state who
   if user.active.volatile.hasSubstitute then
-    let targetWho := who.other
+    let targetWho := turnFlippedSubstituteOwner who
     let target := side state targetWho
     let old := target.active.volatile.substituteHp
-    let breaks := substituteBreaks old crashDamage
-    let remaining := if breaks then 0 else old - crashDamage.toUInt8
+    let breaks := substituteBreaks old damage
+    let remaining := if breaks then 0 else old - damage.toUInt8
     let volatile := { target.active.volatile with substituteHp := remaining }
     let volatile := { volatile with status2 := if breaks then volatile.status2 &&&
       ~~~((1 <<< Wram.BattleStatus2.hasSubstituteUp).toUInt8) else volatile.status2 }
-    let state := setSide { state with sharedDamage := crashDamage } targetWho
+    let state := setSide { state with sharedDamage := damage } targetWho
       { target with active := { target.active with volatile } }
     { state, userFainted := false,
-      events := [.substituteDamage targetWho crashDamage.toUInt8 remaining] }
+      events := [.substituteDamage targetWho damage.toUInt8 remaining] }
   else
-    let hp := Step.saturatingSub user.active.active.hp crashDamage
+    let hp := Step.saturatingSub user.active.active.hp damage
     let actual := user.active.active.hp - hp
     let active := { user.active with active := { user.active.active with hp } }
     { state := setSide { state with sharedDamage := actual } who { user with active }
       userFainted := hp == 0
       events := [.damage who actual hp] }
+
+/-- Missed Jump Kick/Hi Jump Kick feeds minimum-one zeroed damage into the
+turn-flipped self-damage path. -/
+def applyJumpKickCrash (state : State) (who : Side) : CrashApplied :=
+  applyTurnFlippedSelfDamage state who (jumpKickCrashDamage 0)
 
 private structure RepeatedDamage where
   state : State
@@ -636,16 +645,15 @@ private def attack (state : State) (who : Side) (action : Full.Action)
           | .ready stats =>
               let damage := Damage.calcBaseDamage attacker.active.level false 40
                 (UInt16.ofNat stats.attack.toNat) (UInt16.ofNat stats.defense.toNat)
-              let hp := Step.saturatingSub attacker.active.hp damage
-              let attacker := { attacker with active := { attacker.active with hp } }
               let state := setSide { state with battle := { state.battle with rng } } who
                 { attackerFull with active := attacker }
-              if hp == 0 then
-                let (state, events) := recordFaint state who
-                .transitioned state (.rng "confusion" raw :: events)
+              let applied := applyTurnFlippedSelfDamage state who damage
+              if applied.userFainted then
+                let (state, events) := recordFaint applied.state who
+                .transitioned state (.rng "confusion" raw :: applied.events ++ events)
               else
-                let (state, events) := applyResidual state who
-                .transitioned state (.rng "confusion" raw :: events)
+                let (state, events) := applyResidual applied.state who
+                .transitioned state (.rng "confusion" raw :: applied.events ++ events)
       | .canAct attacker rng =>
           let installed := setSide { state with battle := { state.battle with rng } } who
             { attackerFull with active := attacker }

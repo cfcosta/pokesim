@@ -719,7 +719,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [ ] Counter shared/stale state behavior, including highlighted-then-cancelled move
 - [ ] stale Quick Attack/Counter ordering for non-move player actions and across player send-out's partial loaded-record clear
 - [x] Jump Kick miss recoil based on zeroed damage (`Battle.Full.Engine.jumpKick_zeroed_damage_recoil`)
-- [ ] Substitute self-damage turn-flip interaction
+- [x] Substitute self-damage turn-flip interaction (`Battle.Full.Engine.turn_flipped_self_damage_selects_opponent`)
 - [x] enemy PP not decremented (`Battle.Full.Engine.enemy_pp_not_decremented`)
 - [ ] disabled-move/PP-Up-bit Struggle-selection anomaly
 - [x] sleep wake consumes turn (`Battle.Full.Status.waking_consumes_turn`)
