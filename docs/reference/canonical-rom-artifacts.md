@@ -141,3 +141,10 @@ proof-facing `CanonicalMechanicsBytes` certificate. Its
 `canonical_mechanics_exact` theorem establishes exact battle-relevant species
 headers, all 165 move rows, bounded effect IDs, and all handler selections for
 any caller-supplied ROM satisfying that certificate.
+
+`Battle.Rom.EffectRoutines.CanonicalLeafEffectsBytes` adds exact code-window
+witnesses for `HyperBeamEffect` (`0f:79c1`) and `RageEffect` (`0f:79df`). Its
+headline theorem decodes those supplied ROM bytes and proves the complete
+18/20-M-cycle player/enemy bus traces and status-bit summaries universally over
+all incoming status-byte pairs. These are de-overlapped functional CPU traces;
+continuous fetched-IR/system lifting remains separate.

@@ -252,6 +252,21 @@ Two handlers mutate the loaded effect byte:
 
 Hyper Beam is not in `AlwaysHappenSideEffects`. Because target HP is checked before the remaining-effect call, a Hyper Beam that faints its target does not set recharge. This must emerge from the phase proof rather than be encoded as an unrelated exception.
 
+## Decoded leaf-routine proofs
+
+`Battle.Rom.EffectRoutines` now proves the call-free tails of `HyperBeamEffect`
+and `RageEffect` from hash-certified ROM windows. For both player and enemy paths
+and all 65,536 pairs of incoming status bytes, the functional SM83 execution:
+
+- returns to the staged caller with the stack restored;
+- sets bit 5 (recharge) or bit 6 (Rage) only on the acting side;
+- follows the exact ordered opcode/immediate/HRAM/WRAM/write/stack/idle bus trace;
+- takes 18 M-cycles on the player path and 20 M-cycles on the enemy path.
+
+This closes those leaf bodies at the de-overlapped M-cycle layer. It does not yet
+prove that whole-battle control flow reaches them under exactly the model's
+conditions, nor lift their traces through the physical fetched-IR adapter.
+
 ## Proof obligations
 
 - [x] Decode all 87 effect IDs and all 86 pointer words from canonical ROM bytes (`Battle.Rom.Effects`).

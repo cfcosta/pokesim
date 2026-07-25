@@ -7,4 +7,5 @@ import Battle.Rom.Closure
 import Battle.Rom.Tables
 import Battle.Rom.Effects
 import Battle.Rom.Mechanics
+import Battle.Rom.EffectRoutines
 import Battle.Rom.Fixture

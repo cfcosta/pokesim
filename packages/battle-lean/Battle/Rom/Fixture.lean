@@ -2,7 +2,7 @@
 Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
-import Battle.Rom.Effects
+import Battle.Rom.EffectRoutines
 
 /-!
 # Caller-supplied canonical ROM fixture
@@ -37,7 +37,8 @@ def retainedLayoutMatches (rom : CanonicalRom) : Bool :=
     decide (bytesAt rom.bytes Symbols.initBattleCommon.offset 16 = initBattleCommonPrefix) &&
     decide (bytesAt rom.bytes Symbols.startBattle.offset 16 = startBattlePrefix) &&
     Tables.agreesWithAuthored rom.bytes &&
-    Effects.agreesWithPlan rom.bytes
+    Effects.agreesWithPlan rom.bytes &&
+    EffectRoutines.leafWindowsAgree rom.bytes
 
 /-- Load and reject any fixture that does not satisfy the retained Lean-visible
 layout contract. -/
