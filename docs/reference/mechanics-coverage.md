@@ -334,7 +334,7 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [ ] flinch rates and recharge clearing
 - [ ] Mist/Guard Spec
 - [ ] Focus Energy/Dire Hit
-- [ ] Substitute HP and zero-HP-user behavior
+- [x] Substitute HP and zero-HP-user behavior (`Battle.Rom.SubstituteRoutine.decoded_affordability_exact`)
 - [ ] Hyper Beam recharge and target-faint skip because effect is not always-happen
 - [ ] Leech Seed and Toxic-counter interaction
 - [x] Reflect (`Battle.Rom.ScreenRoutine.screens_exact`)

@@ -305,6 +305,13 @@ failure predicate for all current/max HP words. The proof therefore derives the
 reachable 255/511/767-point false failures from decoded arithmetic. Healing,
 Rest status writes, presentation calls, and HP-bar timing remain separate.
 
+`Battle.Rom.SubstituteRoutine` retains the `SubstituteEffect_` mechanics window
+and proves its paired shift cost and two-byte subtraction universally. The
+retained cost is exactly `floor(maxHP/4) mod 256`, affordability is exactly
+current HP greater than or equal to that byte, and exact payment therefore
+creates the cartridge's zero-HP Substitute. Delay/presentation calls and the
+full routine cycle trace remain separate.
+
 The remaining animation/text tails still need frame/timing summaries.
 Whole-battle reachability and full Game Boy device lifting remain separate.
 

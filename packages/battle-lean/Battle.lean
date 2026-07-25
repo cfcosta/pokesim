@@ -64,6 +64,7 @@ import Battle.Rom.ConversionRoutine
 import Battle.Rom.OhkoRoutine
 import Battle.Rom.ScreenRoutine
 import Battle.Rom.HealRoutine
+import Battle.Rom.SubstituteRoutine
 import Battle.Diff
 import Battle.Driver
 import Battle.DriverInvariant

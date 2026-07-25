@@ -192,6 +192,12 @@ window at `0e:79ec`. Its universal arithmetic theorem equates the decoded high
 canonical 255/511/767-point false-failure gaps. It is not yet a full healing
 handler cycle proof.
 
+`Battle.Rom.SubstituteRoutine` retains the gameplay arithmetic window at
+`05:7dad`. Universal theorems connect its two 16-bit right shifts and low-byte
+retention to the model cost, then connect `SUB`/`SBC 0` carry to exact
+`currentHP ≥ cost` affordability. This derives zero-HP and zero-cost malformed
+Substitutes from canonical bytes without claiming the surrounding call timing.
+
 `Battle.Rom.CombatTables` closes three more mechanics-critical data seams: the
 four high-critical move IDs and terminator, all 82 ordered type-effect triples
 and terminator, and all 13 numerator/denominator stat-stage ratios. These are
