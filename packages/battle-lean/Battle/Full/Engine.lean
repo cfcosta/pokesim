@@ -536,7 +536,7 @@ private def executeMove (state : State) (who : Side) (action : Full.Action)
 let state := setSide { state with battle := { state.battle with rng } } who
   { attackerFull with active := attacker }
 let state := decrementMovePp state who slot
-  (action == .struggle || generated || action == .noAction)
+  (action == .struggle || action == .noAction)
 let move := resolveMove moveId
 let effect := (Data.moveData moveId).effect
 let mechanic := (EffectPlan.plan effect).mechanic
@@ -659,8 +659,10 @@ match damageResult with
 
 private def attack (state : State) (who : Side) (action : Full.Action)
     (overrideMove : Option MoveId := none) (skipStatus : Bool := false) : StepResult :=
-  let selected := match overrideMove with
-    | some move => some (move, (0 : Fin 4))
+  let selected : Option (MoveId × Fin 4) := match overrideMove with
+    | some move =>
+        let slot := (selection state who).highlightedSlot.toNat % 4
+        some (move, ⟨slot, Nat.mod_lt _ (by omega)⟩)
     | none => moveOfAction state who action
   match selected with
   | none => .transitioned state []
@@ -999,11 +1001,30 @@ def resumeMimic (state : State) (who : Side) (sourceSlot targetSlot : Fin 4)
               (residualEvents ++ events)
           | result => prependEvents residualEvents result
 
-/-- Continue a Mirror Move or Metronome request in the same action.
-Status gating and PP decrement are not repeated; another nested signal remains an
-explicit continuation, so recursive Metronome behavior is not fuel-bounded. -/
+def nestedPartyPp (packed : UInt8) : UInt8 := packed + 1
+
+/-- `IncrementMovePP` offsets the wrapper's first decrement in loaded state
+and increments the original party slot unconditionally, even while transformed. -/
+def incrementNestedPp (state : State) (who : Side) : State :=
+  let current := side state who
+  let slot := (selection state who).highlightedSlot.toNat % 4
+  let activePp := current.active.active.pp.modify slot fun packed => packed + 1
+  let activeMon := { current.active.active with pp := activePp }
+  let party := { mons := current.party.mons.modify current.activeIndex fun mon =>
+    { mon with pp := mon.pp.modify slot nestedPartyPp } }
+  setSide state who { current with party, active := { current.active with active := activeMon } }
+
+/-- A transformed nested wrapper increments its untouched original-party byte;
+the generated move's later decrement applies only to loaded copied PP. -/
+theorem transformed_nested_party_pp_increment (packed : UInt8) :
+    nestedPartyPp packed = packed + 1 := rfl
+
+/-- Continue a Mirror Move or Metronome request in the same action. Status gating
+is not repeated. The wrapper increment and generated decrement remain separate;
+another nested signal is an explicit continuation, so recursive Metronome is not
+fuel-bounded. -/
 def resumeNested (state : State) (who : Side) (move : MoveId) : StepResult :=
-  attack state who (.fight 0) (some move) true
+  attack (incrementNestedPp state who) who (.fight 0) (some move) true
 
 /-- Legal actions are exposed directly from the engine state. -/
 def legalActions (state : State) (who : Side) : Array Full.Action :=

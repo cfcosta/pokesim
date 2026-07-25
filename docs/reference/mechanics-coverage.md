@@ -748,7 +748,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] transformed non-Ditto capture becomes Ditto (`Battle.Full.Capture.transformed_stores_ditto`)
 - [x] active status-cure whole-stat reset versus AI cure's retained penalized stats (`Battle.Full.Items.trainer_cure_retains_combat_stats`)
 - [x] disobedient replacement move charging the originally selected PP slot (`Battle.Full.Engine.disobedience_charges_original_slot`)
-- [ ] transformed Mirror Move/Metronome original-party PP increment
+- [x] transformed Mirror Move/Metronome original-party PP increment (`transformed_nested_party_pp_increment`, `syncOutgoing_reads_active`)
 - [x] EXP All destructive double-division path (`Battle.Full.Environment.exp_all_destructive_double_division`)
 - [ ] link setup leading-zero list mismatch
 - [x] Safari bait expiry catch-rate persistence (`Battle.Full.Safari.bait_expiry_retains_catch_rate`)

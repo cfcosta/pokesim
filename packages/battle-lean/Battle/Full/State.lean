@@ -40,12 +40,13 @@ Transformed species/types/DVs and mutable combat stats never leak into party
 storage. -/
 def SideState.syncOutgoing (side : SideState) : SideState :=
   let live := side.active.active
+  let transformed := bitSet side.active.volatile.status3 Wram.BattleStatus3.transformed
   { side with party :=
       { mons := side.party.mons.modify side.activeIndex fun stored =>
           let stored := { stored with hp := live.hp }
           let stored := { stored with status := live.status }
-          let stored := { stored with moves := live.moves }
-          { stored with pp := live.pp } } }
+          let stored := { stored with moves := if transformed then stored.moves else live.moves }
+          { stored with pp := if transformed then stored.pp else live.pp } } }
 
 /-- Switch legality after outgoing synchronization. -/
 def SideState.canSwitchTo (side : SideState) (target : Nat) : Bool :=
@@ -125,12 +126,16 @@ theorem switch_success_shape (side : SideState) (target : Nat)
           (side.syncOutgoing.party.mons.getD target side.syncOutgoing.active.active) } := by
   simp [SideState.switchTo, legal]
 
-/-- Synchronization copies exactly the four outgoing mutable fields. -/
+/-- Synchronization always copies HP/status. Move/PP copies are suppressed
+while transformed, retaining the original party row. -/
 theorem syncOutgoing_reads_active (side : SideState)
     (oldInBounds : side.activeIndex < side.party.mons.size) :
+    let before := side.party.mons.getD side.activeIndex side.active.active
     let stored := side.syncOutgoing.party.mons.getD side.activeIndex side.active.active
+    let transformed := bitSet side.active.volatile.status3 Wram.BattleStatus3.transformed
     stored.hp = side.active.active.hp ∧ stored.status = side.active.active.status ∧
-      stored.moves = side.active.active.moves ∧ stored.pp = side.active.active.pp := by
+      stored.moves = (if transformed then before.moves else side.active.active.moves) ∧
+      stored.pp = (if transformed then before.pp else side.active.active.pp) := by
   simp only [SideState.syncOutgoing, Array.getD, Array.size_modify, oldInBounds,
     ↓reduceDIte]
   simp [Array.getElem_modify_self]
