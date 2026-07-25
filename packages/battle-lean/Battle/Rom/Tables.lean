@@ -438,6 +438,15 @@ def decodeGrowthRates (rom : Array Sm83.Byte) : Array UInt8 :=
     | none => 0
     | some row => row.growthRate).toArray
 
+/-- Seven TM/HM compatibility bytes re-keyed to internal species IDs. -/
+def decodeTmhmFlags (rom : Array Sm83.Byte) : Array (Array UInt8) :=
+  let rows := decodeBaseStatsRows rom
+  let order := decodePokedexOrder rom
+  ((List.range (TableLayout.speciesIndexCount + 1)).map fun internal =>
+    match rowForInternal rows order internal with
+    | none => #[]
+    | some row => row.tmhmBytes).toArray
+
 /-- Nonblank initial moves re-keyed to internal species IDs. -/
 def decodeInitialMoves (rom : Array Sm83.Byte) : Array (Array UInt8) :=
   let rows := decodeBaseStatsRows rom
@@ -492,6 +501,7 @@ structure RequiredTableBytes (rom : Array Sm83.Byte) : Prop where
   evosMovesPointers : evosMovesPointersInRange rom = true
   learnPools : decodeLearnPools rom = Data.learnPools
   growthRates : decodeGrowthRates rom = Data.Progression.growthRates
+  tmhmFlags : decodeTmhmFlags rom = Data.Progression.tmhmFlags
   initialMoves : decodeInitialMoves rom = Data.Progression.initialMoves
   progressionRows : decodeProgressionRows rom = Data.Progression.rows
 
@@ -502,11 +512,12 @@ theorem certified_tables {rom : Array Sm83.Byte} (certificate : RequiredTableByt
       decodePokedexOrder rom = Data.pokedexOrder ∧
       decodeLearnPools rom = Data.learnPools ∧
       decodeGrowthRates rom = Data.Progression.growthRates ∧
+      decodeTmhmFlags rom = Data.Progression.tmhmFlags ∧
       decodeInitialMoves rom = Data.Progression.initialMoves ∧
       decodeProgressionRows rom = Data.Progression.rows :=
   ⟨certificate.moves, certificate.baseStats, certificate.pokedexOrder,
-    certificate.learnPools, certificate.growthRates, certificate.initialMoves,
-    certificate.progressionRows⟩
+    certificate.learnPools, certificate.growthRates, certificate.tmhmFlags,
+    certificate.initialMoves, certificate.progressionRows⟩
 
 /-- Runtime version used only by the temporary-ROM integration fixture. -/
 def agreesWithAuthored (rom : Array Sm83.Byte) : Bool :=
@@ -517,6 +528,7 @@ def agreesWithAuthored (rom : Array Sm83.Byte) : Bool :=
     evosMovesPointersInRange rom &&
     decodeLearnPools rom == Data.learnPools &&
     decodeGrowthRates rom == Data.Progression.growthRates &&
+    decodeTmhmFlags rom == Data.Progression.tmhmFlags &&
     decodeInitialMoves rom == Data.Progression.initialMoves &&
     decodeProgressionRows rom == Data.Progression.rows
 

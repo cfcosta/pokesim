@@ -34,6 +34,7 @@ theorem data_exact {sha256 : Sha256} {rom : CanonicalRom}
       Tables.decodePokedexOrder rom.bytes = Data.pokedexOrder ∧
       Tables.decodeLearnPools rom.bytes = Data.learnPools ∧
       Tables.decodeGrowthRates rom.bytes = Data.Progression.growthRates ∧
+      Tables.decodeTmhmFlags rom.bytes = Data.Progression.tmhmFlags ∧
       Tables.decodeInitialMoves rom.bytes = Data.Progression.initialMoves ∧
       Tables.decodeProgressionRows rom.bytes = Data.Progression.rows :=
   Tables.certified_tables certificate.tables

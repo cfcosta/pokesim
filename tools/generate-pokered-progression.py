@@ -12,6 +12,16 @@ from pathlib import Path
 
 EXPECTED_SHA256 = "5ca7ba01642a3b27b0cc0b5349b52792795b62d3ed977e98a09390659af96b7b"
 
+# TM01..TM50 followed by HM01..HM05, in the cartridge bitfield order.
+TMHM_MOVES = [
+    5, 13, 14, 18, 25, 92, 32, 34, 36, 38,
+    61, 55, 58, 59, 63, 6, 66, 68, 69, 99,
+    72, 76, 82, 85, 87, 89, 90, 91, 94, 100,
+    102, 104, 115, 117, 118, 120, 121, 126, 129, 130,
+    135, 138, 143, 156, 86, 149, 153, 157, 161, 164,
+    15, 19, 57, 70, 148,
+]
+
 
 def offset(bank: int, address: int) -> int:
     return address if bank == 0 else bank * 0x4000 + address - 0x4000
@@ -42,15 +52,18 @@ def main() -> None:
     order = [0] + list(rom[order_at : order_at + 190])
     growth = [0]
     initial: list[list[int]] = [[]]
+    tmhm_flags: list[list[int]] = [[]]
     for internal in range(1, 191):
         dex = order[internal]
         if dex == 0:
             growth.append(0)
             initial.append([])
+            tmhm_flags.append([])
         else:
             row = rows[dex - 1]
             growth.append(row[19])
             initial.append([move for move in row[15:19] if move])
+            tmhm_flags.append(list(row[20:27]))
 
     pointers_at = offset(0x0E, 0x705C)
     progression: list[tuple[list[tuple[int, ...]], list[tuple[int, int]]]] = [([], [])]
@@ -121,7 +134,30 @@ def main() -> None:
     ]
     for internal, moves in enumerate(initial):
         lines.append(f"  {arr(moves)}, -- ${internal:02X}")
-    lines += ["]", "", "/-- Evolution methods and exact level-up rows. -/", "def rows : Array Row := #["]
+    lines += [
+        "]",
+        "",
+        "/-- `TM01..TM50`, then `HM01..HM05`, in base-stat flag order. -/",
+        f"def tmhmMoves : Array MoveId := {arr(TMHM_MOVES)}",
+        "",
+        "/-- Seven compatibility bytes from every base-stat row, by internal species ID. -/",
+        "def tmhmFlags : Array (Array UInt8) := #[",
+    ]
+    for internal, flags in enumerate(tmhm_flags):
+        lines.append(f"  {arr(flags)}, -- ${internal:02X}")
+    lines += [
+        "]",
+        "",
+        "/-- Whether an internal species accepts a machine index (`0..49` TM, `50..54` HM). -/",
+        "def machineCompatible (species : SpeciesId) (index : Nat) : Bool :=",
+        "  if index < tmhmMoves.size then",
+        "    let flags := tmhmFlags.getD species.toNat #[]",
+        "    (flags.getD (index / 8) 0).toNat.testBit (index % 8)",
+        "  else false",
+        "",
+        "/-- Evolution methods and exact level-up rows. -/",
+        "def rows : Array Row := #[",
+    ]
     for internal, (evolutions, moves) in enumerate(progression):
         evo_terms = []
         for evo in evolutions:
@@ -143,6 +179,8 @@ def main() -> None:
         "",
         "@[simp] theorem growthRates_size : growthRates.size = 191 := by native_decide",
         "@[simp] theorem initialMoves_size : initialMoves.size = 191 := by native_decide",
+        "@[simp] theorem tmhmMoves_size : tmhmMoves.size = 55 := by native_decide",
+        "@[simp] theorem tmhmFlags_size : tmhmFlags.size = 191 := by native_decide",
         "@[simp] theorem rows_size : rows.size = 191 := by native_decide",
         "",
         "end Battle.Data.Progression",
