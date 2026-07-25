@@ -486,18 +486,18 @@ Exact transitions are catalogued in [Switch, faint, and participation flow](swit
 
 ## Run and escape
 
-- [ ] Ghost and Safari unconditional escape cases
+- [x] Ghost and Safari unconditional escape cases (`Battle.Full.Escape.ghost_escapes`, `safari_escapes`)
 - [ ] link run exchange
-- [ ] trainer “no running” behavior
-- [ ] player Speed greater than or equal to enemy Speed succeeds
-- [ ] speed formula and enemy-speed division/truncation
-- [ ] attempt count and byte-loop `30 × (attempts - 1)` increments, including raw counter wrap
-- [ ] Fight selection resets attempt count, including canceled Fight
-- [ ] inclusive escape comparison (`random <= quotientWithBonuses`)
-- [ ] failed wild attempt consumes turn
-- [ ] prohibited trainer attempt returns to selection without consuming turn
-- [ ] divisor is `(enemySpeed / 4) mod 256`; zero succeeds immediately
-- [ ] quotient high byte/carry success paths
+- [x] trainer “no running” behavior (`Battle.Full.Escape.trainer_prohibited`)
+- [x] player Speed greater than or equal to enemy Speed succeeds (`Battle.Full.Escape.player_not_slower_escapes`)
+- [x] speed formula and enemy-speed division/truncation (`Battle.Full.Escape.attempt`)
+- [x] attempt count and byte-loop `30 × (attempts - 1)` increments, including raw counter wrap (`Battle.Full.Escape.attempt_counter_wrap_witness`)
+- [x] Fight selection resets attempt count, including canceled Fight (`Battle.Full.Selection.openFight_resets_attempts`, `cancel_preserves`)
+- [x] inclusive escape comparison (`random <= quotientWithBonuses`) (`Battle.Full.Escape.inclusive_witness`)
+- [x] failed wild attempt consumes turn (`Battle.Full.Escape.failed_attempt_witness`, `Battle.Full.Environment.resolveRun`)
+- [x] prohibited trainer attempt returns to selection without consuming turn (`Battle.Full.Environment.resolveRun`)
+- [x] divisor is `(enemySpeed / 4) mod 256`; zero succeeds immediately (`Battle.Full.Escape.zero_divisor_witness`)
+- [x] quotient high byte/carry success paths (`Battle.Full.Escape.attempt`)
 - [ ] move-based wild escape by Teleport/Roar/Whirlwind
 - [ ] automatic success at user level ≥ target level; otherwise level-sum rejection loop and target-level/4 comparison
 - [ ] trainer-battle Teleport failure versus Roar/Whirlwind unaffected text/control paths
@@ -506,7 +506,7 @@ Exact transitions are catalogued in [Switch, faint, and participation flow](swit
 - [ ] successful move escape synchronizes active player HP/status to party before setting escape
 - [ ] Poke Doll/move escape leave result zero and reach non-link Pay Day/evolution, unlike ordinary Run
 - [ ] level-based rejection sampling
-- [ ] post-faint run response always uses stored party slot 1 Speed, excluding active paralysis/stage/badge changes
+- [x] post-faint run response always uses stored party slot 1 Speed, excluding active paralysis/stage/badge changes (`Battle.Full.Environment.wildFaintRunSpeed`)
 
 ## Battle items
 
