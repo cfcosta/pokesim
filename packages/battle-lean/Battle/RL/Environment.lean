@@ -193,6 +193,34 @@ def step (state : State) (player enemy : PolicyAction) : StepResult :=
       | _, _ => .invalidAction state
   | _ => .inactive state
 
+/-- Every exposed restricted-profile action is a typed fight slot accepted by
+the ordinary legality predicate. -/
+theorem legalActions_sound (state : State) (side : Side) (action : PolicyAction)
+    (member : action ∈ legalActions state side) :
+    ∃ slot : Fin 4, action = .fight slot ∧
+      Ordinary.legalFightSlot state.battle side slot = true := by
+  unfold legalActions at member
+  split at member <;> rename_i hPhase
+  · simp only [Array.mem_filterMap] at member
+    obtain ⟨index, indexMember, mapped⟩ := member
+    simp only [Array.mem_range] at indexMember
+    split at mapped <;> rename_i hIndex
+    · split at mapped <;> rename_i hLegal
+      · refine ⟨⟨index, hIndex⟩, ?_, ?_⟩
+        · symm
+          exact Option.some.inj mapped
+        · simpa only using hLegal
+      · simp_all
+    · simp_all
+  · simp at member
+
+/-- Any typed non-fight request is rejected without mutating RL state. -/
+theorem nonfight_invalid (state : State) (enemy action : PolicyAction)
+    (phase : state.battle.phase = .battling)
+    (nonfight : fightSlot? action = none) :
+    step state action enemy = .invalidAction state := by
+  simp [step, phase, nonfight]
+
 /-- Complete the profile's no-op epilogue/cleanup after a terminal witness. This
 is separate from `step`, preserving the `ending ≠ returned` distinction. -/
 def settle (state : State) : State :=

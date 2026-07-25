@@ -757,9 +757,9 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 
 ## RL adapter
 
-- [ ] typed action protocol
-- [ ] legal action theorem
-- [ ] protocol-invalid action no-op/error behavior
+- [x] typed action protocol (`Battle.RL.Environment.PolicyAction`)
+- [x] legal action theorem (`Battle.RL.Environment.legalActions_sound`)
+- [x] protocol-invalid action no-op/error behavior (`Battle.RL.Environment.nonfight_invalid`)
 - [ ] cartridge-ineffective attempt behavior
 - [ ] canonical action-commit and full-selection modes
 - [ ] perfect-information observation
