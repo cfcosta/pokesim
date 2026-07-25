@@ -139,6 +139,14 @@ theorem bait_rock_catch_witness :
     applyBaitRock rockStart .rock 0 = .continue rockEnd := by
   native_decide
 
+/-- Bait expiry decrements the factor to zero but does not restore the base
+catch rate; only escape-factor expiry takes that restoration branch. -/
+theorem bait_expiry_retains_catch_rate (state : State)
+    (lastBaitTurn : state.baitFactor = 1) :
+    (tickFactors state).baitFactor = 0 ∧
+      (tickFactors state).catchRate = state.catchRate := by
+  simp [tickFactors, lastBaitTurn]
+
 /-- Factor rejection is exact at masked values 5,6,7. -/
 theorem factor_acceptance_exact (raw : UInt8) :
     (factorAmount raw).isSome = true ↔ (raw &&& 7).toNat < 5 := by

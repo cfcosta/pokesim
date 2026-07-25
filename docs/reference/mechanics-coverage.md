@@ -751,7 +751,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [ ] transformed Mirror Move/Metronome original-party PP increment
 - [ ] EXP All destructive double-division path
 - [ ] link setup leading-zero list mismatch
-- [ ] Safari bait expiry catch-rate persistence
+- [x] Safari bait expiry catch-rate persistence (`Battle.Full.Safari.bait_expiry_retains_catch_rate`)
 - [ ] wild-battle post-victory item-evolution bug
 - [ ] simultaneous faint victory-sound/control behavior, with sound itself excluded
 
