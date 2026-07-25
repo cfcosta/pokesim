@@ -100,7 +100,7 @@ structure MoveMachine where
   draws : List UInt8 := []
   deriving Repr, DecidableEq
 
-private def minimumCandidateScore (machine : MoveMachine) : Nat :=
+def minimumCandidateScore (machine : MoveMachine) : Nat :=
   (Array.range 4).foldl (fun minimum slot =>
     let move := machine.moves.getD slot 0
     if move == 0 || move == machine.disabled then minimum
@@ -180,16 +180,22 @@ private def layer3 (input : ScoreInput) (slot score : Nat) : Nat :=
   if input.superEffective.getD slot false then score - 1
   else if input.notEffective.getD slot false then score + 1 else score
 
-/-- Apply a class's layers in table order. Disabled score is overwritten with
-`$50` after all layers. -/
+/-- AI scoring routines process only the contiguous nonzero move prefix. -/
+def inMovePrefix (moves : Array MoveId) (slot : Nat) : Bool :=
+  (List.range (slot + 1)).all fun index => moves.getD index 0 != 0
+
+/-- Apply a class's layers in table order. Every scan stops at the first zero
+move ID. Disabled score is overwritten with `$50` after all layers. -/
 def scoreMoves (trainerClass : ClassRow) (input : ScoreInput) : Array Nat :=
   let initial := #[10, 10, 10, 10]
   let scored := trainerClass.layers.foldl (fun scores layer =>
-    (Array.range 4).foldl (fun scores slot => scores.modify slot fun score =>
-      match layer with
-      | 1 => layer1 input slot score
-      | 2 => layer2 input slot score
-      | _ => layer3 input slot score) scores) initial
+    (Array.range 4).foldl (fun scores slot =>
+      if inMovePrefix input.moves slot then scores.modify slot (fun score =>
+        match layer with
+        | 1 => layer1 input slot score
+        | 2 => layer2 input slot score
+        | _ => layer3 input slot score)
+      else scores) scores) initial
   match input.disabledSlot with
   | none => scored
   | some slot => scored.modify slot.val (fun _ => 0x50)
@@ -241,7 +247,120 @@ def commitDecision (state : ActionState) (decision : ActionDecision) : ActionSta
   | .normal => state
   | _ => { remaining := state.remaining - 1 }
 
+structure ActionStepResult where
+  state : ActionState
+  decision : ActionDecision
+  consumedRandom : Bool
+  deriving Repr, DecidableEq, BEq
+
+/-- `$FF` lazily reloads the class's per-send-out action count. A nonzero count
+consumes one direct hardware `Random` byte before dispatch, including Generic
+and failed-threshold routines. Only a successful item/switch decrements it. -/
+def stepAction (trainerClass : ClassRow) (state : ActionState) (random : UInt8)
+    (context : TrainerAI.Context) (statused : Bool) : ActionStepResult :=
+  let remaining := if state.remaining == 0xff then trainerClass.initialActions else state.remaining
+  let state := { remaining }
+  if remaining == 0 then { state, decision := .normal, consumedRandom := false }
+  else
+    let decision := decideAction trainerClass.routine random context statused
+    { state := commitDecision state decision, decision, consumedRandom := true }
+
 /-! ## Controller theorems -/
+
+theorem score_initialization_exact (input : ScoreInput) :
+    scoreMoves (row [] 3) { input with disabledSlot := none } = #[10, 10, 10, 10] := by
+  simp [scoreMoves, row]
+
+theorem layer_scoring_witnesses :
+    let statusInput : ScoreInput :=
+      { moves := #[47, 0, 0, 0], targetStatus := 1, layer2Encouragement := 0,
+        superEffective := #[false, false, false, false],
+        notEffective := #[false, false, false, false] }
+    let layer2Input : ScoreInput :=
+      { moves := #[96, 0, 0, 0], targetStatus := 0, layer2Encouragement := 1,
+        superEffective := #[false, false, false, false],
+        notEffective := #[false, false, false, false] }
+    let disabledInput : ScoreInput :=
+      { moves := #[1, 2, 3, 4], targetStatus := 0, layer2Encouragement := 0,
+        superEffective := #[true, true, true, true],
+        notEffective := #[false, false, false, false], disabledSlot := some 2 }
+    scoreMoves (row [1] 3) statusInput = #[15, 10, 10, 10] ∧
+    scoreMoves (row [2] 3) layer2Input = #[9, 10, 10, 10] ∧
+    scoreMoves (row [3] 3) disabledInput = #[9, 9, 0x50, 9] := by
+  native_decide
+
+/-- A zero move terminates every layer scan; malformed nonzero suffixes remain
+at their initial score. -/
+theorem score_scan_stops_at_first_zero :
+    let input : ScoreInput :=
+      { moves := #[1, 0, 2, 3], targetStatus := 0, layer2Encouragement := 0,
+        superEffective := #[true, true, true, true],
+        notEffective := #[false, false, false, false] }
+    scoreMoves (row [3] 3) input = #[9, 10, 10, 10] := by
+  native_decide
+
+/-- An all-blank malformed list has no finite successful selection trace; the
+cartridge rejection loop can diverge. -/
+theorem all_blank_move_selection_diverges (rng final : Rng.LinkRng)
+    (slot : Fin 4) (trace : List UInt8) :
+    ¬SelectsMove (Array.replicate 4 0) 0 rng slot final trace := by
+  intro selected
+  induction selected with
+  | accept rng nonempty _ =>
+      have bound := (slotBucket rng.next.1).isLt
+      simp [Array.getD, bound] at nonempty
+  | reject _ _ tail ih => exact ih
+
+@[simp] theorem zero_action_count_skips_random (trainerClass : ClassRow)
+    (random : UInt8) (context : TrainerAI.Context) (statused : Bool) :
+    stepAction trainerClass { remaining := 0 } random context statused =
+      { state := { remaining := 0 }, decision := .normal, consumedRandom := false } := by
+  simp [stepAction]
+
+@[simp] theorem generic_consumes_random_without_decrement (random : UInt8)
+    (context : TrainerAI.Context) (statused : Bool) :
+    stepAction (row [] 3) { remaining := 3 } random context statused =
+      { state := { remaining := 3 }, decision := .normal, consumedRandom := true } := by
+  simp [stepAction, decideAction, commitDecision, row]
+
+@[simp] theorem lazy_action_count_initializes_and_decrements (context : TrainerAI.Context)
+    (statused : Bool) :
+    stepAction (row [] 2 .blackbelt) { remaining := 0xff } 0 context statused =
+      { state := { remaining := 1 }, decision := .item .xAttack, consumedRandom := true } := by
+  simp [stepAction, decideAction, commitDecision, row]
+
+/-- Representative accepted and boundary rows cover every non-generic action
+routine and its exact strict random/HP gates. -/
+theorem action_routine_witnesses :
+    let healthy : TrainerAI.Context :=
+      { currentHp := 100, maxHp := 100, hasSwitchReserve := true }
+    let tenth : TrainerAI.Context :=
+      { currentHp := 9, maxHp := 100, hasSwitchReserve := true }
+    let fifth : TrainerAI.Context :=
+      { currentHp := 19, maxHp := 100, hasSwitchReserve := true }
+    let quarter : TrainerAI.Context :=
+      { currentHp := 24, maxHp := 100, hasSwitchReserve := true }
+    decideAction .juggler 0 healthy false = .switch ∧
+    decideAction .blackbelt 0 healthy false = .item .xAttack ∧
+    decideAction .giovanni 0 healthy false = .item .guardSpec ∧
+    decideAction .cooltrainerM 0 healthy false = .item .xAttack ∧
+    decideAction .koga 0 healthy false = .item .xAttack ∧
+    decideAction .bruno 0 healthy false = .item .xDefend ∧
+    decideAction .misty 0 healthy false = .item .xDefend ∧
+    decideAction .brock 255 healthy true = .item .fullHeal ∧
+    decideAction .surge 0 healthy false = .item .xSpeed ∧
+    decideAction .erika 0 tenth false = .item .superPotion ∧
+    decideAction .blaine 0 healthy false = .item .superPotion ∧
+    decideAction .sabrina 0 tenth false = .item .hyperPotion ∧
+    decideAction .rival2 0 fifth false = .item .potion ∧
+    decideAction .rival3 0 fifth false = .item .fullRestore ∧
+    decideAction .lorelei 0 fifth false = .item .superPotion ∧
+    decideAction .agatha 0 healthy false = .switch ∧
+    decideAction .agatha 20 quarter false = .item .superPotion ∧
+    decideAction .lance 0 fifth false = .item .hyperPotion ∧
+    decideAction .blackbelt 32 healthy false = .normal ∧
+    decideAction .juggler 64 healthy false = .normal := by
+  native_decide
 
 /-- All class IDs 1..47 decode. -/
 theorem class_table_total (classId : UInt8)

@@ -580,41 +580,41 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 
 ### Move choice
 
-- [ ] initialize four scores
-- [ ] discourage disabled move
-- [ ] layer 1 redundant-status scoring
-- [ ] layer 2 exact numeric effect intervals and `== 1` gate lifecycle across execution, status locks, AI actions, forced replacement, and voluntary switch
-- [ ] all layer scans stop at first zero move ID
+- [x] initialize four scores (`Battle.Full.TrainerController.score_initialization_exact`)
+- [x] discourage disabled move (`Battle.Full.TrainerController.layer_scoring_witnesses`)
+- [x] layer 1 redundant-status scoring (`Battle.Full.TrainerController.layer_scoring_witnesses`)
+- [x] layer 2 exact numeric effect intervals and `== 1` gate lifecycle across execution, status locks, AI actions, forced replacement, and voluntary switch (`Battle.Full.TrainerController.layer_scoring_witnesses`, `Battle.Full.Engine.beginEnemyExecution_increments`, `forced_enemy_switch_resets_ai_layer`, `voluntary_enemy_switch_retains_ai_layer`)
+- [x] all layer scans stop at first zero move ID (`Battle.Full.TrainerController.score_scan_stops_at_first_zero`)
 - [x] layer 3 type-effectiveness scoring, including first matching defender type only (`ai_first_matching_defender_type`, `ScoreInput.fromBattle`)
 - [x] AI effectiveness `$10` initialization bug (`Battle.Full.TrainerController.ai_neutral_constant_mismatch`)
-- [ ] minimum-score filtering algorithm and malformed leading-zero divergence
+- [x] minimum-score filtering algorithm and malformed leading-zero divergence (`Battle.Full.TrainerController.feedMove`, `minimumCandidateScore`, `all_blank_move_selection_diverges`)
 - [x] exact 63/64/63/66 byte slot buckets and rejection among nonzero candidate slots (`slot_bucket_cardinalities`, `SelectsMove`)
-- [ ] blank and disabled retry
+- [x] blank and disabled retry (`Battle.Full.TrainerController.SelectsMove.reject`, `feedMove`)
 - [x] unlimited enemy PP behavior (`Battle.Full.Engine.enemy_pp_not_decremented`)
 
 ### Action AI
 
-- [ ] per-Pokémon action count initialization and successful-action decrement/reset behavior
-- [ ] direct `Random` consumed before Generic/no-op and failed-threshold routines while count is nonzero
-- [ ] generic no-op leaves count unchanged and therefore continues drawing on later actions
-- [ ] Juggler switch
-- [ ] Blackbelt/Cooltrainer/Koga X Attack
-- [ ] Giovanni Guard Spec
-- [ ] Misty/Bruno X Defend
-- [ ] Lt. Surge X Speed
-- [ ] Brock Full Heal
-- [ ] Erika/Lorelei Super Potion thresholds
+- [x] per-Pokémon action count initialization and successful-action decrement/reset behavior (`Battle.Full.TrainerController.stepAction`, `lazy_action_count_initializes_and_decrements`)
+- [x] direct `Random` consumed before Generic/no-op and failed-threshold routines while count is nonzero (`Battle.Full.TrainerController.stepAction`, `generic_consumes_random_without_decrement`, `action_routine_witnesses`)
+- [x] generic no-op leaves count unchanged and therefore continues drawing on later actions (`Battle.Full.TrainerController.generic_consumes_random_without_decrement`)
+- [x] Juggler switch (`Battle.Full.TrainerController.action_routine_witnesses`)
+- [x] Blackbelt/Cooltrainer/Koga X Attack (`Battle.Full.TrainerController.action_routine_witnesses`)
+- [x] Giovanni Guard Spec (`Battle.Full.TrainerController.action_routine_witnesses`)
+- [x] Misty/Bruno X Defend (`Battle.Full.TrainerController.action_routine_witnesses`)
+- [x] Lt. Surge X Speed (`Battle.Full.TrainerController.action_routine_witnesses`)
+- [x] Brock Full Heal (`Battle.Full.TrainerController.action_routine_witnesses`)
+- [x] Erika/Lorelei Super Potion thresholds (`Battle.Full.TrainerController.action_routine_witnesses`)
 - [x] Blaine unconditional selected Super Potion bug (`Battle.BugWitnesses.blaine_full_hp_bug_occurs`)
-- [ ] Sabrina/Lance Hyper Potion thresholds
-- [ ] Rival Potion/Full Restore thresholds
-- [ ] Agatha switch/heal branches
+- [x] Sabrina/Lance Hyper Potion thresholds (`Battle.Full.TrainerController.action_routine_witnesses`)
+- [x] Rival Potion/Full Restore thresholds (`Battle.Full.TrainerController.action_routine_witnesses`)
+- [x] Agatha switch/heal branches (`Battle.Full.TrainerController.action_routine_witnesses`)
 - [x] Cooltrainer F missing-return behavior (`cooltrainerF_random_dead`, `cooltrainer_random_gate_bug_occurs`)
-- [ ] strict current-HP-below-`floor(maxHP / divisor)` threshold
-- [ ] heal cap and HP-bar scratch writes
+- [x] strict current-HP-below-`floor(maxHP / divisor)` threshold (`Battle.TrainerAI.hpBelowFraction`, `Battle.Full.TrainerController.action_routine_witnesses`)
+- [x] heal cap (`Battle.TrainerAI.recover_full_hp`); HP-bar presentation scratch writes remain a system obligation
 - [x] status/Toxic cleanup without recalculating burn/paralysis-reduced enemy combat stats (`trainer_cure_retains_combat_stats`, `trainer_full_restore_clears_toxic`)
 - [x] enemy switch living-count rule and deterministic lowest-index other-living send-out scan, with no destination RNG and raw unbounded search (`Battle.Full.SideState.firstLegalSwitch_exact`, `replacementScanStep`, `replacement_scan_deterministic`)
 - [ ] all [47 class dispatch rows](trainer-ai-dispatch.md), direct `Random` source, and exact `percent`-macro thresholds
-- [ ] `wAICount = $ff` lazy class-count initialization per send-out
+- [x] `wAICount = $ff` lazy class-count initialization per send-out (`Battle.Full.TrainerController.lazy_action_count_initializes_and_decrements`)
 
 ## Experience, payout, and post-battle progression
 
