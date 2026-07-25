@@ -186,6 +186,12 @@ window at `0e:7b97`. Functional and continuous fetched-IR summaries cover every
 status-3 byte pair, both acting sides, both screen IDs, and both success/failure
 presentation boundaries.
 
+`Battle.Rom.HealRoutine` retains the healing side-selection and HP-comparison
+window at `0e:79ec`. Its universal arithmetic theorem equates the decoded high
+`CP`/low `SBC` zero flag with `Battle.Effects.Healing.checkFails`, including the
+canonical 255/511/767-point false-failure gaps. It is not yet a full healing
+handler cycle proof.
+
 `Battle.Rom.CombatTables` closes three more mechanics-critical data seams: the
 four high-critical move IDs and terminator, all 82 ordered type-effect triples
 and terminator, and all 13 numerator/denominator stat-stage ratios. These are

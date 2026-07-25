@@ -2,7 +2,7 @@
 Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
-import Battle.Rom.ScreenRoutine
+import Battle.Rom.HealRoutine
 
 /-!
 # Caller-supplied canonical ROM fixture
@@ -44,7 +44,8 @@ def retainedLayoutMatches (rom : CanonicalRom) : Bool :=
     ExplodeRoutine.windowAgrees rom.bytes &&
     ConversionRoutine.windowAgrees rom.bytes &&
     OhkoRoutine.windowAgrees rom.bytes &&
-    ScreenRoutine.windowAgrees rom.bytes
+    ScreenRoutine.windowAgrees rom.bytes &&
+    HealRoutine.windowAgrees rom.bytes
 
 /-- Load and reject any fixture that does not satisfy the retained Lean-visible
 layout contract. -/

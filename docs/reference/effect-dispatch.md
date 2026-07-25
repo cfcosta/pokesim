@@ -299,6 +299,12 @@ bytes. Exact traces distinguish the already-active failure path from the single
 bit-setting success path and continue through one overlapped fetch at the common
 presentation boundaries.
 
+`Battle.Rom.HealRoutine` retains the `HealEffect_` side-selection and HP-compare
+window and proves its `CP`/`SBC` zero flag equal to the independent healing
+failure predicate for all current/max HP words. The proof therefore derives the
+reachable 255/511/767-point false failures from decoded arithmetic. Healing,
+Rest status writes, presentation calls, and HP-bar timing remain separate.
+
 The remaining animation/text tails still need frame/timing summaries.
 Whole-battle reachability and full Game Boy device lifting remain separate.
 
