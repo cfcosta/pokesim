@@ -90,6 +90,21 @@ theorem neutral_stages_exact (moveAccuracy : UInt8) :
     simp
   simpa only [round] using of_decide_eq_true atAccuracy
 
+/-- Neutral raw accuracy zero is raised to one by the two minimum-one passes,
+so exactly random byte zero hits. -/
+theorem zero_accuracy_hits_only_zero (random : UInt8) :
+    hits (calcHitChance 0 7 7) random = (random == 0) := by
+  have exhaustive : (List.range 256).all (fun value =>
+      hits (calcHitChance 0 7 7) value.toUInt8 == (value.toUInt8 == 0)) = true := by
+    native_decide
+  have item := (List.all_eq_true.mp exhaustive) random.toNat
+    (List.mem_range.mpr (UInt8.toNat_lt random))
+  have round : random.toNat.toUInt8 = random := by
+    apply UInt8.toNat.inj
+    simp
+  apply LawfulBEq.eq_of_beq
+  simpa only [round] using item
+
 /-- `$ff` effective accuracy still misses on raw `$ff`. -/
 theorem one_in_256_witness :
     hits 255 255 = false ∧ hitsInclusive 255 255 = true := by

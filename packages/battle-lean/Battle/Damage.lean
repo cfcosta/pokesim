@@ -173,6 +173,43 @@ def computeDamage (a : Attack) (rand : UInt8) : UInt16 :=
     let typed := adjustDamageForType a.moveType a.atkType1 a.atkType2 a.defType1 a.defType2 base
     randomizeDamage rand typed
 
+@[simp] theorem zero_power_base_damage (level : UInt8) (crit : Bool)
+    (attack defense : UInt16) :
+    calcBaseDamage level crit 0 attack defense = 0 := by
+  simp [calcBaseDamage]
+
+@[simp] theorem zero_power_compute_damage (a : Attack) (zero : a.power = 0)
+    (rand : UInt8) : computeDamage a rand = 0 := by
+  simp [computeDamage, zero]
+
+@[simp] theorem zero_divisor_iff (defense : UInt16) :
+    divisorFreezes defense = true ↔ defense = 0 := by
+  simp [divisorFreezes]
+
+@[simp] theorem randomize_zero (rand : UInt8) : randomizeDamage rand 0 = 0 := by
+  simp [randomizeDamage]
+
+@[simp] theorem randomize_one (rand : UInt8) : randomizeDamage rand 1 = 1 := rfl
+
+/-- Named exact examples exercise each arithmetic stage, STAB, effectiveness,
+immunity, dual-type stacking, and the accepted random-roll endpoints. -/
+theorem canonical_damage_witnesses :
+    calcBaseDamage 50 false 40 100 100 = 19 ∧
+    calcBaseDamage 50 true 40 100 100 = 35 ∧
+    calcBaseDamage 100 false 80 200 150 = 91 ∧
+    adjustDamageForType TypeChart.normal TypeChart.normal TypeChart.normal
+      TypeChart.water TypeChart.water 19 = 28 ∧
+    adjustDamageForType TypeChart.water TypeChart.water TypeChart.water
+      TypeChart.fire TypeChart.fire 19 = 56 ∧
+    adjustDamageForType TypeChart.fire TypeChart.fire TypeChart.fire
+      TypeChart.water TypeChart.water 100 = 75 ∧
+    adjustDamageForType TypeChart.normal TypeChart.fighting TypeChart.fighting
+      TypeChart.ghost TypeChart.ghost 50 = 0 ∧
+    adjustDamageForType TypeChart.rock TypeChart.rock TypeChart.rock
+      TypeChart.fire TypeChart.flying 20 = 120 ∧
+    randomizeDamage 255 100 = 100 ∧ randomizeDamage 217 100 = 85 := by
+  native_decide
+
 /-! ## Fidelity guards
 
 Base-formula spot checks (all hand-derived; `rand = 255` and neutral, no-STAB

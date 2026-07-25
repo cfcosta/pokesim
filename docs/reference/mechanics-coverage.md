@@ -261,25 +261,25 @@ The proof must preserve this player/enemy control-flow order, including random c
 
 ## Damage and hit system
 
-- [ ] physical/special selection by type index `$14`
-- [ ] current Attack/Defense/Special selection
-- [ ] Reflect and Light Screen doubling
+- [x] physical/special selection by type index `$14` (`Battle.TypeChart.isSpecial`, `Battle.Full.Engine.initialDamage`)
+- [x] current Attack/Defense/Special selection (`Battle.Full.Engine.offensiveStat`, `defensiveStat`)
+- [x] Reflect and Light Screen doubling (`Battle.DamageStats.resolve`, `screen_512_freezes`, `screen_hurts_696`)
 - [ ] critical hit unmodified-calculated-stat substitution (player party stats versus enemy recalculation/link party stats)
-- [ ] critical level doubling
-- [ ] stat scaling by division by four
-- [ ] low-byte truncation/wrap behavior
-- [ ] zero-defense divergence
-- [ ] Explosion defense halving with minimum divisor one
-- [ ] neutral damage integer pipeline
-- [ ] neutral minimum and 999 cap
-- [ ] STAB `1.5×` with floor
-- [ ] ordered dual-type application
-- [ ] immunity and low-damage-to-zero miss behavior
+- [x] critical level doubling (`Battle.Damage.calcBaseDamage`, `canonical_damage_witnesses`)
+- [x] stat scaling by division by four (`Battle.DamageStats.scaleToByte_exact`)
+- [x] low-byte truncation/wrap behavior (`Battle.DamageStats.scaleToByte_exact`)
+- [x] zero-defense divergence (`Battle.DamageStats.low_defense_freezes`, `Battle.Damage.zero_divisor_iff`)
+- [x] Explosion defense halving with minimum divisor one (`Battle.Full.Engine.initialDamage`)
+- [x] neutral damage integer pipeline (`Battle.Damage.calcBaseDamage`, `canonical_damage_witnesses`)
+- [x] neutral minimum and 999 cap (`Battle.Damage.calcBaseDamage`)
+- [x] STAB `1.5×` with floor (`Battle.Damage.adjustDamageForType`, `canonical_damage_witnesses`)
+- [x] ordered dual-type application (`Battle.Damage.adjustDamageForType`, `canonical_damage_witnesses`)
+- [x] immunity and low-damage-to-zero miss behavior (`Battle.Damage.missesByType`, `canonical_damage_witnesses`)
 - [ ] STAB/type arithmetic wrap and last-match `wDamageMultipliers` rather than net dual-type encoding
-- [ ] `rrca` of each damage-random byte before rejection
-- [ ] random factor rejection and accepted `217..255` multiplier
+- [x] `rrca` of each damage-random byte before rejection (`Battle.Ordinary.rotateRight`, `damageFactorAccepted`)
+- [x] random factor rejection and accepted `217..255` multiplier (`Battle.Ordinary.regen_accepts_within`, `drawDamageFactor`, `Battle.Damage.randomizeDamage`)
 - [ ] accuracy/evasion two-pass flooring, per-pass minimum 1, final cap 255, and destructive loaded-accuracy write
-- [ ] raw accuracy 0 hits on byte 0; threshold 255 misses on byte 255
+- [x] raw accuracy 0 hits on byte 0; threshold 255 misses on byte 255 (`Battle.Accuracy.zero_accuracy_hits_only_zero`, `one_in_256_witness`)
 - [ ] stage intermediate truncation
 - [ ] Mist checks
 - [ ] X Accuracy bypasses stage/final accuracy only after Dream Eater/Substitute/Fly-Dig/Mist gates
@@ -287,11 +287,11 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [ ] Fly/Dig invulnerability ordering
 - [ ] Dream Eater sleep check
 - [ ] Substitute interaction
-- [ ] final `random < accuracy` comparison
-- [ ] critical threshold from base Speed
-- [ ] high-critical move list: Karate Chop, Razor Leaf, Crabhammer, Slash
-- [ ] Focus Energy right-shift bug
-- [ ] critical random-byte rotations
+- [x] final `random < accuracy` comparison (`Battle.Accuracy.strict_boundary_iff`)
+- [x] critical threshold from base Speed (`Battle.Critical.thresholdFromSpeed`)
+- [x] high-critical move list: Karate Chop, Razor Leaf, Crabhammer, Slash (`Battle.Critical.highCriticalMove`, `Battle.Rom.CombatTables.RequiredCombatBytes.highCriticalExact`)
+- [x] Focus Energy right-shift bug (`Battle.Critical.focus_branch_is_second_right_shift`, `focus_never_improves`, `focus_energy_witness`)
+- [x] critical random-byte rotations (`Battle.Critical.rotateRandom_inverse`, `strict_boundary_iff`)
 - [ ] HP subtraction, overkill cap, and `wDamage` update
 - [ ] Substitute damage path, damage-greater-than-255 break, and exact-damage zero-HP survival
 - [ ] substitute break zeroes the attacker's loaded effect while nonbreaking hits retain it
