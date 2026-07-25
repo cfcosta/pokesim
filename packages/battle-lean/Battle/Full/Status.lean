@@ -79,6 +79,24 @@ private def clearSuccessfulCharge (side : Battle.SideState) : Battle.SideState :
     replaceVolatile side { side.volatile with status1 := side.volatile.status1 &&& ~~~mask }
   else side
 
+def tickDisable (volatile : Volatile) : Volatile :=
+  if volatile.disabledMove == 0 then volatile
+  else
+    let decremented := volatile.disabledMove - 1
+    if (decremented &&& 0x0F) == 0 then
+      { volatile with disabledMove := 0, disabledMoveNumber := 0 }
+    else { volatile with disabledMove := decremented }
+
+@[simp] theorem disable_low_nibble_one_expires (volatile : Volatile)
+    (active : volatile.disabledMove != 0)
+    (last : ((volatile.disabledMove - 1) &&& 0x0F) = 0) :
+    (tickDisable volatile).disabledMove = 0 ∧
+      (tickDisable volatile).disabledMoveNumber = 0 := by
+  have ne : volatile.disabledMove ≠ 0 := by
+    intro equal
+    simp [equal] at active
+  simp [tickDisable, ne, last]
+
 /-- Exact pre-move status machine. `targetTrapping` is the opponent's trapping
 bit, which prevents this side from moving. -/
 def checkCanAct (side : Battle.SideState) (targetTrapping : Bool)
@@ -103,15 +121,7 @@ def checkCanAct (side : Battle.SideState) (targetTrapping : Bool)
       status2 := clearBit side.volatile.status2 Wram.BattleStatus2.needsToRecharge }
     .cannotAct .recharge (replaceVolatile side volatile) rng
   else
-    let disabled := side.volatile.disabledMove
-    let volatile :=
-      if disabled == 0 then side.volatile
-      else
-        let decremented := disabled - 1
-        if (decremented &&& 0x0F) == 0 then
-          { side.volatile with disabledMove := 0, disabledMoveNumber := 0 }
-        else { side.volatile with disabledMove := decremented }
-    let side := replaceVolatile side volatile
+    let side := replaceVolatile side (tickDisable side.volatile)
     if side.volatile.confused then
       let remaining := side.volatile.confusedCounter - 1
       if remaining == 0 then
@@ -203,6 +213,20 @@ def applyResiduals (actor opponent : Battle.SideState) : ResidualResult :=
       leechSeedDamage := 0, leechSeedHealing := 0 }
 
 /-! ## Status compatibility theorems -/
+
+theorem frozen_blocks_turn (side : Battle.SideState) (trapped : Bool)
+    (selected : MoveId) (rng : Rng.LinkRng)
+    (awake : side.active.status &&& Wram.Status.slpMask = 0)
+    (frozen : side.active.frozen = true) :
+    checkCanAct side trapped selected rng = .cannotAct .frozen side rng := by
+  simp [checkCanAct, awake, frozen]
+
+theorem opposing_trap_blocks_turn (side : Battle.SideState) (selected : MoveId)
+    (rng : Rng.LinkRng)
+    (awake : side.active.status &&& Wram.Status.slpMask = 0)
+    (notFrozen : side.active.frozen = false) :
+    checkCanAct side true selected rng = .cannotAct .trapped side rng := by
+  simp [checkCanAct, awake, notFrozen]
 
 /-- A sleep counter of one wakes but still cannot act this turn. -/
 theorem waking_consumes_turn (side : Battle.SideState) (selected : MoveId) (rng : Rng.LinkRng)

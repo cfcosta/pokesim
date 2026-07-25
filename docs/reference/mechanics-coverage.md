@@ -211,12 +211,12 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [ ] stale priority orders the switch no-op; incoming poison/burn residual can run and KO before enemy action or after it
 - [ ] escape checks after move execution
 - [ ] faint check before residual/other actor where source does so
-- [ ] acting-side poison/burn/Leech Seed
+- [x] acting-side poison/burn/Leech Seed (`Battle.Full.Status.applyResiduals`)
 - [ ] second actor execution
 - [ ] second residual
-- [ ] poison/burn can reduce the actor to zero before Leech Seed still runs and heals
-- [ ] Leech Seed overkill heals nominal computed damage rather than capped HP loss
-- [ ] Toxic counter increments once for poison and again for Leech Seed on the same residual pass
+- [x] poison/burn can reduce the actor to zero before Leech Seed still runs and heals (`Battle.Full.Status.leech_seed_runs_after_residual_ko`)
+- [x] Leech Seed overkill heals nominal computed damage rather than capped HP loss (`leech_seed_runs_after_residual_ko`)
+- [x] Toxic counter increments once for poison and again for Leech Seed on the same residual pass (`Battle.Full.Status.toxic_leech_seed_ticks_twice`)
 - [ ] trapping counter cleanup
 - [ ] loop back to selection
 - [x] simultaneous-active-faint paths as event/order metadata, including nonterminal reserve continuation (`Battle.Full.Engine.recordSimultaneousFaint`, `simultaneous_with_reserves_is_nonterminal`)
@@ -228,11 +228,11 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 The proof must preserve this player/enemy control-flow order, including random consumption and counter updates:
 
 - [x] sleep decrement, wake, and turn loss (`Battle.Full.Status.waking_consumes_turn`)
-- [ ] freeze
-- [ ] trapped by opponent
+- [x] freeze (`Battle.Full.Status.frozen_blocks_turn`)
+- [x] trapped by opponent (`Battle.Full.Status.opposing_trap_blocks_turn`)
 - [ ] flinch and reset, including main-loop reset bypass while Rage/recharge is already set
 - [ ] Hyper Beam recharge and reset
-- [ ] Disable counter decrement/expiration
+- [x] Disable counter decrement/expiration (`Battle.Full.Status.tickDisable`, `disable_low_nibble_one_expires`)
 - [ ] confusion counter, animation, and self-hit roll
 - [ ] selected move disabled after selection
 - [ ] paralysis roll
@@ -304,7 +304,7 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [x] Counter's selected-move/type/power and shared-`wDamage` dependencies (`Battle.Full.Engine.counterEligible`, `counterDamage`)
 - [x] Counter doubles/caps shared damage, rejects before its own hit test when ineligible, and skips ordinary damage/type/randomization (`counter_valid_exact`, `counter_caps_shared_damage`, `counter_rejection_skips_accuracy`, `counter_protocol_gates`)
 - [ ] Counter still performs the preceding critical test and can retain critical event/text state
-- [ ] drain effects overwrite shared `wDamage` with `max(floor(damage/2), 1)`, affecting later Counter/Bide
+- [x] drain effects overwrite shared `wDamage` with `max(floor(damage/2), 1)`, affecting later Counter/Bide (`Battle.Full.Effects.drain_halves_shared_damage`, `Battle.Full.Engine.counterDamage`)
 
 ## Nonvolatile status mechanics
 
@@ -335,7 +335,7 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [ ] Mist/Guard Spec
 - [ ] Focus Energy/Dire Hit
 - [x] Substitute HP and zero-HP-user behavior (`Battle.Rom.SubstituteRoutine.decoded_affordability_exact`)
-- [ ] Hyper Beam recharge and target-faint skip because effect is not always-happen
+- [x] Hyper Beam recharge and target-faint skip because effect is not always-happen (`Battle.Full.Effects.hyperBeam_faint_skips_recharge`)
 - [x] Leech Seed and Toxic-counter interaction (`Battle.Full.Status.toxic_leech_seed_ticks_twice`)
 - [x] Reflect (`Battle.Rom.ScreenRoutine.screens_exact`)
 - [x] Light Screen (`Battle.Rom.ScreenRoutine.screens_exact`)
@@ -349,7 +349,7 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [x] player freeze side effect clears enemy recharge; enemy freeze does not mirror it (`Battle.Full.Effects.freeze_recharge_asymmetry`)
 - [x] Haze preserves Transform and raw status-3 high bits while clearing Toxic/screens and selected volatile flags (`Battle.Rom.HazeRoutine.cureVolatile_block_effect`, `Battle.Full.Effects.haze_status_target_only`)
 - [x] Haze copies unmodified stats without reapplying retained burn/paralysis or badge modifiers (`Battle.Rom.HazeRoutine.resetStats_eight_exact`, `Battle.Rom.HazeRoutine.haze_reset_prefix_exact`)
-- [ ] Rest leaves `BADLY_POISONED` and Toxic counter state intact while writing fixed sleep 2
+- [x] Rest leaves `BADLY_POISONED` and Toxic counter state intact while writing fixed sleep 2 (`Battle.Full.Effects.rest_heal_preserves_toxic`)
 - [ ] stale Toxic after Rest/damaged Full Restore can affect later normal poison and seeded sleep
 - [ ] Conversion copies active target types through Substitute, skips ordinary hit testing, and fails on target invulnerability
 - [ ] Explosion/Selfdestruct zero user HP/status and clear seeded state before later miss handling
