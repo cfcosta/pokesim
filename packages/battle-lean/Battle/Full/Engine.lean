@@ -904,6 +904,10 @@ private def applyItem (state : State) (who : Side) (request : Items.Request) : S
         [.item who [.escapedByDoll], .terminal terminal]
   | .committed user itemEvents =>
       let state := setBag (setSide state who user.side) who user.bag
+      let state := if request.item == 0x49 then
+        let opponent := Items.wakeOpponentForFlute state.battle.mode (side state who.other)
+        setSide state who.other opponent
+        else state
       .transitioned state [.item who itemEvents]
 
 private def isFight : Full.Action → Bool

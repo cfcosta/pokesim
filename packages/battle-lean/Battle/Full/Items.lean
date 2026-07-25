@@ -294,14 +294,27 @@ private def usePpRestore (state : UserState) (request : Request) (all maximum : 
   | some next => .committed (consume next request.item)
       [.ppRestored request.partyTarget request.moveSlot]
 
-private def wakeMon (mon : MonState) : MonState :=
+def wakeMon (mon : MonState) : MonState :=
   { mon with status := mon.status &&& ~~~Wram.Status.slpMask }
 
-private def useFlute (state : UserState) (_request : Request) : Result :=
-  let side := state.side.syncOutgoing
-  let party := { mons := side.party.mons.map wakeMon }
+def wakeSideForFlute (side : Full.SideState) (scanParty : Bool) : Full.SideState :=
+  let side := side.syncOutgoing
+  let party := if scanParty then { mons := side.party.mons.map wakeMon } else side.party
   let active := { side.active with active := wakeMon side.active.active }
-  let next := { state with side := { side with party, active } }
+  { side with party, active }
+
+def wakeOpponentForFlute (mode : BattleMode) (side : Full.SideState) : Full.SideState :=
+  wakeSideForFlute side (mode == .trainer)
+
+/-- `wWereAnyMonsAsleep` is set only by the fixed party scans, not by the later
+active-row clears. Wild battles skip the enemy-party scan. -/
+def fluteReportedEffect (mode : BattleMode) (player enemy : Full.SideState) : Bool :=
+  let sleeping (mon : MonState) := mon.status &&& Wram.Status.slpMask != 0
+  player.party.mons.any sleeping ||
+    (mode == .trainer && enemy.party.mons.any sleeping)
+
+private def useFlute (state : UserState) (_request : Request) : Result :=
+  let next := { state with side := wakeSideForFlute state.side true }
   -- The Poké Flute is a reusable key item.
   .committed next [.flute]
 
@@ -386,6 +399,45 @@ def aiUse (mode : BattleMode) (state : UserState) (request : Request) : Result :
 @[simp] theorem link_bag_rejected (state : UserState) (request : Request) :
     use .link state request = .rejected state := by
   rfl
+
+@[simp] theorem wild_flute_report_ignores_enemy (player enemy : Full.SideState) :
+    fluteReportedEffect .wild player enemy =
+      player.party.mons.any (fun mon => mon.status &&& Wram.Status.slpMask != 0) := by
+  have distinct : (BattleMode.wild == BattleMode.trainer) = false := by native_decide
+  simp [fluteReportedEffect, distinct]
+
+@[simp] theorem trainer_flute_report_scans_both (player enemy : Full.SideState) :
+    fluteReportedEffect .trainer player enemy =
+      (player.party.mons.any (fun mon => mon.status &&& Wram.Status.slpMask != 0) ||
+       enemy.party.mons.any (fun mon => mon.status &&& Wram.Status.slpMask != 0)) := by
+  have same : (BattleMode.trainer == BattleMode.trainer) = true := by native_decide
+  simp [fluteReportedEffect, same]
+
+@[simp] theorem wake_mon_clears_sleep (mon : MonState) :
+    (wakeMon mon).status &&& Wram.Status.slpMask = 0 := by
+  have exhaustive : (List.range 256).all (fun raw =>
+      ((raw.toUInt8 &&& ~~~Wram.Status.slpMask) &&& Wram.Status.slpMask) == 0) = true := by
+    native_decide
+  have item := (List.all_eq_true.mp exhaustive) mon.status.toNat
+    (List.mem_range.mpr (UInt8.toNat_lt mon.status))
+  have round : mon.status.toNat.toUInt8 = mon.status := by
+    apply UInt8.toNat.inj
+    simp
+  simpa [wakeMon, round] using item
+
+@[simp] theorem wild_flute_wakes_opponent_active_only (side : Full.SideState) :
+    (wakeOpponentForFlute .wild side).party = side.syncOutgoing.party ∧
+    (wakeOpponentForFlute .wild side).active.active.status &&& Wram.Status.slpMask = 0 := by
+  have distinct : (BattleMode.wild == BattleMode.trainer) = false := by native_decide
+  simp [wakeOpponentForFlute, wakeSideForFlute, distinct]
+
+@[simp] theorem flute_wild_opponent_party_not_scanned (side : Full.SideState) :
+    (wakeSideForFlute side false).party = side.syncOutgoing.party := by
+  simp [wakeSideForFlute]
+
+@[simp] theorem flute_always_wakes_active (side : Full.SideState) (scanParty : Bool) :
+    (wakeSideForFlute side scanParty).active.active.status &&& Wram.Status.slpMask = 0 := by
+  simp [wakeSideForFlute]
 
 @[simp] theorem flute_preserves_bag (state : UserState) (request : Request) :
     match useFlute state request with

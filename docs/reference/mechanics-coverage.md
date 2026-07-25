@@ -535,8 +535,9 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [ ] raw party counts 7–254 successful-capture-without-storage path and 255 wrap
 - [ ] raw box counts 21–255 oversized/wrapped slot-shift behavior
 - [ ] unidentified Ghost/Marowak rejection occurs after throw and consumes the ball
-- [ ] Poke Flute six-fixed-slot player/enemy scans, active wake scope, and no-effect turn consumption
-- [ ] Poke Flute `wWereAnyMonsAsleep` derives from party scans, including sleeping-wild-active message mismatch
+- [x] Poke Flute legal-party player/trainer-party scans, both active wake scope, no consumption, and committed turn (`Battle.Full.Items.wakeSideForFlute`, `wakeOpponentForFlute`, `flute_preserves_bag`, `flute_always_wakes_active`)
+- [ ] Poke Flute raw six-fixed-slot malformed scans beyond represented party arrays
+- [x] Poke Flute `wWereAnyMonsAsleep` derives only from party scans, including sleeping-wild-active message mismatch (`Battle.Full.Items.wild_flute_report_ignores_enemy`, `trainer_flute_report_scans_both`, `wild_flute_wakes_opponent_active_only`)
 - [ ] repeated X Accuracy/Guard Spec/Dire Hit and capped X-stat behavior
 - [ ] Revive participation-to-EXP-flag side effect
 - [ ] active/party synchronization after item
