@@ -112,7 +112,7 @@ private def setSelection (state : State) : Side → Selection.MoveScratch → St
   | .player, scratch => { state with playerSelection := scratch }
   | .enemy, scratch => { state with enemySelection := scratch }
 
-private def commitSelection (state : State) (who : Side) (action : Full.Action) : State :=
+def commitSelection (state : State) (who : Side) (action : Full.Action) : State :=
   match action with
   | .fight slot =>
       let selectionState : Selection.State :=
@@ -193,7 +193,7 @@ private def defensiveStat (defender : Battle.SideState) (special critical : Bool
     if special then defender.unmodified.special else defender.unmodified.defense
   else if special then defender.active.special else defender.active.defense
 
-private def requiresAccuracy (mechanic : EffectPlan.Mechanic) (power : UInt8) : Bool :=
+def requiresAccuracy (mechanic : EffectPlan.Mechanic) (power : UInt8) : Bool :=
   if power != 0 then true else
     match mechanic with
     | .sleep | .confusion | .poison | .paralyze | .statDown _ _
@@ -529,6 +529,70 @@ private def advanceMoveLock (state : State) (who : Side) : State × List Event :
       else
         (setSide state who { current with active := { current.active with volatile } }, [])
 
+/-- Gen-I Counter reads the opponent's retained selected-move/record scratch
+and the single shared `wDamage` word. Rejections return before `MoveHitTest`. -/
+def counterEligible (previous : Selection.MoveScratch) (sharedDamage : UInt16) : Bool :=
+  previous.selectedMove != 68 && previous.power != 0 &&
+    (previous.type == TypeChart.normal || previous.type == TypeChart.fighting) &&
+    sharedDamage != 0
+
+def counterRejected (moveId : MoveId) (previous : Selection.MoveScratch)
+    (sharedDamage : UInt16) : Bool :=
+  moveId == 68 && !counterEligible previous sharedDamage
+
+/-- Eligible Counter doubles the shared word and caps carry at `$FFFF`. -/
+def counterDamage (previous : Selection.MoveScratch) (sharedDamage : UInt16) : UInt16 :=
+  if counterEligible previous sharedDamage then
+    UInt16.ofNat (min 0xffff (sharedDamage.toNat * 2))
+  else 0
+
+@[simp] theorem counter_rejects_previous_counter (previous : Selection.MoveScratch)
+    (wasCounter : previous.selectedMove = 68) (sharedDamage : UInt16) :
+    counterEligible previous sharedDamage = false := by
+  simp [counterEligible, wasCounter]
+
+@[simp] theorem counter_rejects_zero_damage (previous : Selection.MoveScratch) :
+    counterEligible previous 0 = false := by
+  simp [counterEligible]
+
+@[simp] theorem counter_rejection_skips_accuracy (previous : Selection.MoveScratch)
+    (sharedDamage : UInt16) (rejected : counterEligible previous sharedDamage = false) :
+    counterRejected 68 previous sharedDamage = true := by
+  simp [counterRejected, rejected]
+
+@[simp] theorem counter_zero_power_fails (previous : Selection.MoveScratch)
+    (zeroPower : previous.power = 0) (sharedDamage : UInt16) :
+    counterDamage previous sharedDamage = 0 := by
+  simp [counterDamage, counterEligible, zeroPower]
+
+theorem counter_valid_exact (previous : Selection.MoveScratch) (sharedDamage : UInt16)
+    (notCounter : previous.selectedMove != 68) (power : previous.power != 0)
+    (validType : previous.type == TypeChart.normal || previous.type == TypeChart.fighting)
+    (damaged : sharedDamage != 0) :
+    counterDamage previous sharedDamage =
+      UInt16.ofNat (min 0xffff (sharedDamage.toNat * 2)) := by
+  simp [counterDamage, counterEligible, notCounter, power, validType, damaged]
+
+/-- A canceled menu leaves enough stale loaded data for enemy Counter to
+return damage even when the committed player action is a switch/item/run. -/
+theorem stale_tackle_record_enables_counter :
+    counterDamage { selectedMove := 33, power := 35, type := TypeChart.normal } 20 = 40 := by
+  native_decide
+
+@[simp] theorem counter_caps_shared_damage :
+    counterDamage { selectedMove := 33, power := 1, type := TypeChart.normal }
+      0xffff = 0xffff := by
+  native_decide
+
+/-- The canonical Counter record still runs the preceding critical test and its
+own accuracy test even though the damage branch bypasses ordinary calculation,
+type adjustment, and randomization. -/
+@[simp] theorem counter_protocol_gates :
+    (resolveMove 68).power != 0 ∧
+    requiresAccuracy (EffectPlan.plan (Data.moveData 68).effect).mechanic
+      (resolveMove 68).power = true := by
+  native_decide
+
 private def executeMove (state : State) (who : Side) (action : Full.Action)
     (moveId : MoveId) (slot : Fin 4) (attacker : Battle.SideState)
     (attackerFull defenderFull : Full.SideState) (rng : Rng.LinkRng)
@@ -549,16 +613,13 @@ let (rng, critical, critEvents) :=
     let critical := Critical.occurs (Critical.threshold attacker.active.species moveId focus) raw
     (rng, critical, [.rng "critical" raw])
 let continuedBide := action == .noAction && mechanic == .bide
+let counterRejected := counterRejected moveId (selection state who.other) state.sharedDamage
 let damageResult := if continuedBide then
     .ok (UInt16.ofNat (min 0xffff (attacker.volatile.bideAccumulated.toNat * 2)),
       rng, [], false)
   else if continuedTrap then .ok (lockedDamage state who, rng, [], false)
   else if moveId == 68 then
-    let previous := selection state who.other
-    let validType := previous.type == TypeChart.normal || previous.type == TypeChart.fighting
-    let counter := if previous.power != 0 && validType then
-      UInt16.ofNat (min 0xffff (state.sharedDamage.toNat * 2)) else 0
-    .ok (counter, rng, [], false)
+    .ok (counterDamage (selection state who.other) state.sharedDamage, rng, [], false)
   else initialDamage mechanic moveId who move attacker defenderFull.active critical rng
 match damageResult with
 | .error _ => .divisionFreeze state critEvents
@@ -572,7 +633,8 @@ match damageResult with
         | _ => (true, rng, [])
       else (true, rng, [])
     let (accuracyHit, rng, accuracyEvents) :=
-      if !handlerGateHit || rejectsBeforeAccuracy mechanic move defenderFull.active then
+      if counterRejected || !handlerGateHit ||
+          rejectsBeforeAccuracy mechanic move defenderFull.active then
         (false, rng, [])
       else if continuedTrap || (mechanic == .sleep && defenderFull.active.volatile.recharging) then
         (true, rng, [])
@@ -766,10 +828,40 @@ private def isFight : Full.Action → Bool
   | .fight _ | .struggle => true
   | _ => false
 
-private def orderingMove (state : State) (who : Side) (action : Full.Action) : Step.ResolvedMove :=
+def orderingMove (state : State) (who : Side) (action : Full.Action) : Step.ResolvedMove :=
   if isFight action then
     (moveOfAction state who action).map (fun pair => resolveMove pair.1) |>.getD (resolveMove 165)
   else resolveMove (selection state who).selectedMove
+
+@[simp] theorem commitSelection_switch (state : State) (who : Side) (target : Fin 6) :
+    commitSelection state who (.switch target) = state := rfl
+
+@[simp] theorem commitSelection_item (state : State) (who : Side) (request : Items.Request) :
+    commitSelection state who (.item request) = state := rfl
+
+@[simp] theorem commitSelection_run (state : State) (who : Side) :
+    commitSelection state who .run = state := rfl
+
+@[simp] theorem orderingMove_player_switch (state : State) (target : Fin 6) :
+    orderingMove state .player (.switch target) =
+      resolveMove state.playerSelection.selectedMove := rfl
+
+@[simp] theorem orderingMove_player_item (state : State) (request : Items.Request) :
+    orderingMove state .player (.item request) =
+      resolveMove state.playerSelection.selectedMove := rfl
+
+@[simp] theorem orderingMove_player_run (state : State) :
+    orderingMove state .player .run = resolveMove state.playerSelection.selectedMove := rfl
+
+/-- A stale Counter selection therefore keeps its last-place priority while a
+switch, item, or run action is already committed. -/
+theorem stale_counter_nonfight_priority (state : State)
+    (stale : state.playerSelection.selectedMove = 68) (target : Fin 6)
+    (request : Items.Request) :
+    (orderingMove state .player (.switch target)).priority = .counter ∧
+    (orderingMove state .player (.item request)).priority = .counter ∧
+    (orderingMove state .player .run).priority = .counter := by
+  simp [stale, resolveMove, movePriority]
 
 /-- `ExecuteEnemyMove` increments layer-2 encouragement before status gates. -/
 def beginEnemyExecution (state : State) : State :=

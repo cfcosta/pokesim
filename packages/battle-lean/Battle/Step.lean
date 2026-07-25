@@ -150,6 +150,36 @@ def turnOrder (pPrio ePrio : Priority) (pSpeed eSpeed : UInt16) (rng : Rng.LinkR
   | _, .counter                => (.player, false, rng)          -- enemy Counter → player first
   | _, _                       => speedFirst pSpeed eSpeed rng   -- two normal moves → speed
 
+@[simp] theorem quickAttack_precedes_normal (pSpeed eSpeed : UInt16)
+    (rng : Rng.LinkRng) :
+    (turnOrder .quickAttack .normal pSpeed eSpeed rng).1 = .player ∧
+    (turnOrder .normal .quickAttack pSpeed eSpeed rng).1 = .enemy := by
+  simp [turnOrder]
+
+@[simp] theorem counter_follows_normal (pSpeed eSpeed : UInt16)
+    (rng : Rng.LinkRng) :
+    (turnOrder .counter .normal pSpeed eSpeed rng).1 = .enemy ∧
+    (turnOrder .normal .counter pSpeed eSpeed rng).1 = .player := by
+  simp [turnOrder]
+
+theorem faster_side_first_player (pSpeed eSpeed : UInt16) (rng : Rng.LinkRng)
+    (faster : pSpeed > eSpeed) : speedFirst pSpeed eSpeed rng = (.player, false, rng) := by
+  simp [speedFirst, faster]
+
+theorem faster_side_first_enemy (pSpeed eSpeed : UInt16) (rng : Rng.LinkRng)
+    (faster : eSpeed > pSpeed) : speedFirst pSpeed eSpeed rng = (.enemy, false, rng) := by
+  have fasterNat := UInt16.lt_iff_toNat_lt.mp faster
+  have notOther : ¬pSpeed > eSpeed := by
+    intro other
+    have otherNat := UInt16.lt_iff_toNat_lt.mp other
+    omega
+  simp [speedFirst, faster, notOther]
+
+theorem equal_speed_consumes_one (speed : UInt16) (rng : Rng.LinkRng) :
+    (speedFirst speed speed rng).2.2 = rng.next.2 ∧
+    (speedFirst speed speed rng).2.1 = true := by
+  simp [speedFirst]
+
 /-! ## One attack -/
 
 /-- Resolve `attacker`'s move against the defender: draw crit, compute base+type

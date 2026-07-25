@@ -99,10 +99,38 @@ def swapBag (state : State) (first second : Nat) : State × Event :=
   ({ state with bag := swapArray state.bag.toArray first second |>.toList },
     .bagSwapped first second)
 
+@[simp] theorem openFight_resets_attempts (state : State) :
+    (openFight state).1.runAttempts = 0 := rfl
+
+/-- A non-disabled highlight writes the selected move and all cartridge-loaded
+move-record fields. -/
+theorem enabled_highlight_loads (state : State) (slot : Fin 4)
+    (enabled : disabledSlot state.side != some slot.val) :
+    let after := (highlight state slot).1
+    let move := state.side.active.active.moves.getD slot.val 0
+    after.scratch.selectedMove = move ∧
+    after.scratch.power = (Data.moveData move).power ∧
+    after.scratch.type = (Data.moveData move).type ∧
+    after.scratch.accuracy = (Data.moveData move).accuracy ∧
+    after.scratch.pp = state.side.active.active.pp.getD slot.val 0 := by
+  have ne : disabledSlot state.side ≠ some slot.val := by
+    intro equal
+    simp [equal] at enabled
+  simp [highlight, ne]
+
 /-- Disabled highlighting retains every stale loaded field except the cursor. -/
 theorem disabled_highlight_preserves_selected (state : State) (slot : Fin 4)
     (disabled : disabledSlot state.side = some slot.val) :
     (highlight state slot).1.scratch.selectedMove = state.scratch.selectedMove := by
+  simp [highlight, disabled]
+
+/-- Power/type/accuracy/PP are stale on the disabled browse path as well. -/
+theorem disabled_highlight_preserves_record (state : State) (slot : Fin 4)
+    (disabled : disabledSlot state.side = some slot.val) :
+    let after := (highlight state slot).1.scratch
+    after.selectedMove = state.scratch.selectedMove ∧
+    after.power = state.scratch.power ∧ after.type = state.scratch.type ∧
+    after.accuracy = state.scratch.accuracy ∧ after.pp = state.scratch.pp := by
   simp [highlight, disabled]
 
 @[simp] theorem cancel_preserves (state : State) : (cancelFight state).1 = state := rfl

@@ -179,12 +179,12 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 
 ## Mechanics-visible selection layer
 
-- [ ] choosing Fight resets `wNumRunAttempts`
-- [ ] non-disabled highlighted move writes `wPlayerSelectedMove`
-- [ ] non-disabled highlight reloads power/type/accuracy/PP scratch; disabled highlight does not
-- [ ] canceling Fight preserves stale selected move/record and highlighted `wPlayerMoveListIndex`
-- [ ] stale selected move influences Quick Attack/Counter order for item/switch turns
-- [ ] stale loaded power/type influences enemy Counter
+- [x] choosing Fight resets `wNumRunAttempts` (`Battle.Full.Selection.openFight_resets_attempts`)
+- [x] non-disabled highlighted move writes `wPlayerSelectedMove` (`Battle.Full.Selection.enabled_highlight_loads`)
+- [x] non-disabled highlight reloads power/type/accuracy/PP scratch; disabled highlight does not (`enabled_highlight_loads`, `disabled_highlight_preserves_record`)
+- [x] canceling Fight preserves stale selected move/record and highlighted `wPlayerMoveListIndex` (`Battle.Full.Selection.cancel_preserves`)
+- [x] stale selected move influences Quick Attack/Counter order for item/switch turns (`Battle.Full.Engine.stale_counter_nonfight_priority`)
+- [x] stale loaded power/type influences enemy Counter (`Battle.Full.Engine.stale_tackle_record_enables_counter`)
 - [ ] player send-out clears selected-slot index/move number but retains selected move, shared damage, and adjacent loaded-record scratch
 - [ ] ordinary move-menu SELECT swaps active move IDs and PP
 - [ ] move swap updates party move IDs and PP, including transformed active/party mismatch
@@ -197,17 +197,17 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 
 ## Order and phase flow
 
-- [ ] Quick Attack ordering
-- [ ] Counter ordering
+- [x] Quick Attack ordering (`Battle.Step.quickAttack_precedes_normal`)
+- [x] Counter ordering (`Battle.Step.counter_follows_normal`)
 - [ ] stale selected moves retained by locked/forced player and enemy selection paths
-- [ ] Speed comparison
-- [ ] equal-Speed random comparison
+- [x] Speed comparison (`Battle.Step.faster_side_first_player`, `faster_side_first_enemy`)
+- [x] equal-Speed random comparison (`Battle.Step.equal_speed_consumes_one`)
 - [ ] link clock-role inversion
 - [ ] trainer AI action immediately before enemy execution
 - [ ] trainer shift-style prompt conditions in `EnemySendOut`
 - [ ] `wFirstMonsNotOutYet` suppression during first send-out and AI switch
 - [ ] item/switch already committed before move-order resolution
-- [ ] stale player move still participates in Quick Attack/Counter ordering
+- [x] stale player move still participates in Quick Attack/Counter ordering (`Battle.Full.Engine.stale_counter_nonfight_priority`)
 - [ ] stale priority orders the switch no-op; incoming poison/burn residual can run and KO before enemy action or after it
 - [ ] escape checks after move execution
 - [ ] faint check before residual/other actor where source does so
@@ -301,8 +301,8 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [ ] Super Fang one-half current HP with minimum one
 - [ ] fixed-damage/Super Fang bypass of ordinary STAB/type adjustment
 - [ ] player/enemy fixed-damage and Psywave range asymmetry
-- [ ] Counter's selected-move/type/power and shared-`wDamage` dependencies
-- [ ] Counter doubles/caps shared damage, runs its own hit test, and skips ordinary damage/type/randomization
+- [x] Counter's selected-move/type/power and shared-`wDamage` dependencies (`Battle.Full.Engine.counterEligible`, `counterDamage`)
+- [x] Counter doubles/caps shared damage, rejects before its own hit test when ineligible, and skips ordinary damage/type/randomization (`counter_valid_exact`, `counter_caps_shared_damage`, `counter_rejection_skips_accuracy`, `counter_protocol_gates`)
 - [ ] Counter still performs the preceding critical test and can retain critical event/text state
 - [ ] drain effects overwrite shared `wDamage` with `max(floor(damage/2), 1)`, affecting later Counter/Bide
 
@@ -716,8 +716,9 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] AI effectiveness neutral constant mismatch (`Battle.Full.TrainerController.ai_neutral_constant_mismatch`)
 - [x] Reflect/Light Screen overflow and zero divisor (`Battle.BugWitnesses.screen_overflow_occurs`)
 - [x] badge boost stacking with screen catastrophe (`Battle.BugWitnesses.badge_screen_catastrophe_occurs`)
-- [ ] Counter shared/stale state behavior, including highlighted-then-cancelled move
-- [ ] stale Quick Attack/Counter ordering for non-move player actions and across player send-out's partial loaded-record clear
+- [x] Counter shared/stale state behavior, including highlighted-then-cancelled move (`Battle.Full.Selection.cancel_preserves`, `Battle.Full.Engine.stale_tackle_record_enables_counter`)
+- [x] stale Quick Attack/Counter ordering for non-move player actions (`Battle.Full.Engine.stale_counter_nonfight_priority`)
+- [ ] stale Quick Attack/Counter ordering across player send-out's partial loaded-record clear
 - [x] Jump Kick miss recoil based on zeroed damage (`Battle.Full.Engine.jumpKick_zeroed_damage_recoil`)
 - [x] Substitute self-damage turn-flip interaction (`Battle.Full.Engine.turn_flipped_self_damage_selects_opponent`)
 - [x] enemy PP not decremented (`Battle.Full.Engine.enemy_pp_not_decremented`)
