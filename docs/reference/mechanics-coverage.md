@@ -750,7 +750,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] disobedient replacement move charging the originally selected PP slot (`Battle.Full.Engine.disobedience_charges_original_slot`)
 - [x] transformed Mirror Move/Metronome original-party PP increment (`transformed_nested_party_pp_increment`, `syncOutgoing_reads_active`)
 - [x] EXP All destructive double-division path (`Battle.Full.Environment.exp_all_destructive_double_division`)
-- [ ] link setup leading-zero list mismatch
+- [x] link setup leading-zero list mismatch (`Battle.Full.Link.leading_zero_setup_mismatch`)
 - [x] Safari bait expiry catch-rate persistence (`Battle.Full.Safari.bait_expiry_retains_catch_rate`)
 - [x] wild-battle post-victory item-evolution bug (`Battle.Full.Evolution.wild_item_evolution_bug_occurs`)
 - [ ] simultaneous faint victory-sound/control behavior, with sound itself excluded
