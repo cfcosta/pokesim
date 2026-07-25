@@ -683,13 +683,28 @@ private def attack (state : State) (who : Side) (action : Full.Action)
             overrideMove.isSome
 
 
-private def applySwitch (state : State) (who : Side) (target : Fin 6) : Option State :=
+def switchAiLayer (current : UInt8) (who : Side) (forced : Bool) : UInt8 :=
+  if who == .enemy && forced then 0 else current
+
+@[simp] theorem forced_enemy_switch_resets_ai_layer (current : UInt8) :
+    switchAiLayer current .enemy true = 0 := by
+  have enemySelf : (Side.enemy == Side.enemy) = true := by native_decide
+  simp [switchAiLayer, enemySelf]
+
+@[simp] theorem voluntary_enemy_switch_retains_ai_layer (current : UInt8) :
+    switchAiLayer current .enemy false = current := by
+  simp [switchAiLayer]
+
+private def applySwitch (state : State) (who : Side) (target : Fin 6)
+    (forced : Bool := false) : Option State :=
   match state.battle.switchTo who target.val with
   | none => none
   | some battle =>
       let state := { state with battle := battle }
-      some { state with forcedReplacement :=
-        if state.forcedReplacement == some who then none else state.forcedReplacement }
+      some { state with
+        forcedReplacement := if state.forcedReplacement == some who then none
+          else state.forcedReplacement
+        aiLayer2Encouragement := switchAiLayer state.aiLayer2Encouragement who forced }
 
 private def applyItem (state : State) (who : Side) (request : Items.Request) : StepResult :=
   let user : Items.UserState := { side := side state who, bag := bag state who }
@@ -790,9 +805,8 @@ def step (state : State) (playerAction enemyAction : Full.Action) : StepResult :
           let action := if forced == .player then playerAction else enemyAction
           match action with
           | .switch target =>
-              match applySwitch state forced target with
-              | some state => .transitioned { state with aiLayer2Encouragement := 0 }
-                  [.switched forced target.val]
+              match applySwitch state forced target true with
+              | some state => .transitioned state [.switched forced target.val]
               | none => .invalidAction state forced
           | .run =>
               let terminal := Outcome.BattleTerminal.mk' (.linkRun forced) state.battle.mode .player
