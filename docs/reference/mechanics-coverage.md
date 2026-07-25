@@ -654,21 +654,21 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 
 ## Safari
 
-- [ ] Safari Ball count and out-of-balls check before duration text/escape roll after each successful action
-- [ ] bait halves catch rate
-- [ ] rock doubles catch rate/caps as implemented
-- [ ] bait/rock rejection-sampled 1–5 factor increments with saturation
-- [ ] each action zeros the opposite factor
-- [ ] duration decrement order
-- [ ] bait expiry does not restore catch rate
-- [ ] rock/escape-factor expiry restores species base catch rate
-- [ ] repeated bait/rock compounding of current actual catch rate
-- [ ] speed-low-byte doubling and pre-factor carry escape
-- [ ] speed-derived escape threshold
-- [ ] bait divides threshold by four
-- [ ] rock doubles threshold and caps
-- [ ] direct ordinary random comparison with strict boundary
-- [ ] out-of-balls result
+- [x] Safari Ball count and out-of-balls check before duration text/escape roll after each successful action (`Battle.Full.Safari.last_ball_reaches_capture`, `failed_last_ball_exhausts`)
+- [x] bait halves catch rate (`Battle.Full.Safari.bait_rock_catch_witness`)
+- [x] rock doubles catch rate/caps as implemented (`Battle.Full.Safari.bait_rock_catch_witness`)
+- [x] bait/rock rejection-sampled 1–5 factor increments with saturation (`Battle.Full.Safari.factor_acceptance_exact`, `applyBaitRock`)
+- [x] each action zeros the opposite factor (`Battle.Full.Safari.applyBaitRock`)
+- [x] duration decrement order (`Battle.Full.Safari.tickFactors`)
+- [x] bait expiry does not restore catch rate (`Battle.Full.Safari.bait_expiry_retains_catch_rate`)
+- [x] rock/escape-factor expiry restores species base catch rate (`Battle.Full.Safari.rock_expiry_restores_catch_rate`)
+- [x] repeated bait/rock compounding of current actual catch rate (`Battle.Full.Safari.applyBaitRock`)
+- [x] speed-low-byte doubling and pre-factor carry escape (`Battle.Full.Safari.escapeThreshold`, `high_speed_runs`)
+- [x] speed-derived escape threshold (`Battle.Full.Safari.escape_threshold_witnesses`)
+- [x] bait divides threshold by four (`Battle.Full.Safari.escape_threshold_witnesses`)
+- [x] rock doubles threshold and caps (`Battle.Full.Safari.escape_threshold_witnesses`)
+- [x] direct ordinary random comparison with strict boundary (`Battle.Full.Safari.escape_threshold_witnesses`)
+- [x] out-of-balls result (`Battle.Full.Safari.failed_last_ball_exhausts`)
 
 ## Link battle
 

@@ -147,6 +147,43 @@ theorem bait_expiry_retains_catch_rate (state : State)
       (tickFactors state).catchRate = state.catchRate := by
   simp [tickFactors, lastBaitTurn]
 
+/-- The last ball is thrown and reaches capture before exhaustion is reported. -/
+theorem last_ball_reaches_capture (state : State) (last : state.balls = 1)
+    (factorRaw escapeRaw : UInt8) (speed : UInt16) :
+    act state .ball factorRaw escapeRaw speed =
+      .capturePending { state with balls := 0 } := by
+  simp [act, last]
+
+/-- A failed throw with no remaining balls reports exhaustion before duration or
+escape processing. -/
+theorem failed_last_ball_exhausts (state : State) (empty : state.balls = 0)
+    (escapeRaw : UInt8) (speed : UInt16) :
+    afterCapture state false escapeRaw speed = .ballsExhausted state := by
+  simp [afterCapture, empty]
+
+/-- Escape-factor expiry restores the species base catch rate. -/
+theorem rock_expiry_restores_catch_rate (state : State)
+    (noBait : state.baitFactor = 0) (lastRockTurn : state.escapeFactor = 1) :
+    (tickFactors state).escapeFactor = 0 ∧
+      (tickFactors state).catchRate = state.baseCatchRate := by
+  simp [tickFactors, noBait, lastRockTurn]
+
+private def thresholdBase : State :=
+  { balls := 1, baseCatchRate := 100, catchRate := 100 }
+private def thresholdBait : State := { thresholdBase with baitFactor := 1 }
+private def thresholdRock : State := { thresholdBase with escapeFactor := 1 }
+
+/-- Representative thresholds expose low-byte speed use, bait quartering, rock
+doubling, saturation, and the strict final comparison. -/
+theorem escape_threshold_witnesses :
+    escapeThreshold 50 thresholdBase = some 100 ∧
+    escapeThreshold 50 thresholdBait = some 25 ∧
+    escapeThreshold 50 thresholdRock = some 200 ∧
+    escapeThreshold 100 thresholdRock = some 255 ∧
+    afterCapture thresholdBase false 99 50 = .enemyRan thresholdBase ∧
+    afterCapture thresholdBase false 100 50 = .continue thresholdBase := by
+  native_decide
+
 /-- Factor rejection is exact at masked values 5,6,7. -/
 theorem factor_acceptance_exact (raw : UInt8) :
     (factorAmount raw).isSome = true ↔ (raw &&& 7).toNat < 5 := by
