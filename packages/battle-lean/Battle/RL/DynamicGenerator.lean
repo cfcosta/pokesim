@@ -2,112 +2,209 @@
 Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
-import Battle.RL.GeneratorSafe
+import Battle.RL.MoveHistory
 
 /-!
-# Total dynamic legal-team generator
+# Total progression-witnessed legal-team generator
 
-`Battle.RL.Generator` is the deterministic constructor: it turns explicit
-species/level/DV/move-count choices into model state. This module supplies the
-sampling layer used by self-play. It consumes the same total link-RNG machine as
-the battle model and returns a subtype whose payload is *proved* to satisfy
-`teamLegal Dex.gen1 .canonical`.
+The sampler no longer chooses an unordered subset of a species' unioned learn
+pool. Each mon starts with the exact moves `WriteMonMoves` gives it at level 100,
+then replays compatible machine teachings and PP Ups. One shared caller-supplied
+ledger enforces one-use TM copies across the party, reusable owned HMs, and a
+finite PP Up budget.
 
-The candidate path samples party size (1–6), species, four DVs, move count, and
-a cyclic starting point in the ROM-certified learn pool. Generated mons are
-level 100: the current data seam records the level-agnostic set of moves a
-species can ever know, so level 100 is the constructive point at which every
-level-up member of that set is available. The final
-legality decision is not merely a test: its successful branch carries the proof.
-The defensive branch returns a fixed proved-legal team and records `repaired :=
-true`; malformed external RNG states or future generator regressions therefore
-cannot leak an invalid team into an RL episode.
+Every `Sample` carries two independent proofs:
+
+* `team` proves the resulting battle rows satisfy canonical learnset legality;
+* `historyReplays` proves the ordered origins/events reconstruct exactly that
+  team and final resource ledger.
+
+The defensive repair branch remains fail-closed. It now returns a replayable
+natural Rhydon rather than an arbitrary learn-pool prefix.
 -/
 
 namespace Battle.RL.DynamicGenerator
 
 open Battle.RL
+open Battle.RL.MoveHistory
 
-/-- A team accepted by the canonical Gen-1 legality predicate. -/
+/-- A team accepted by the canonical Gen-1 learnset predicate. Stronger ordered
+reachability is carried separately by `Sample.historyReplays`. -/
 abbrev CanonicalTeam := { team : Team // teamLegal genDex .canonical team = true }
 
-/-- Sampling output, including the advanced entropy state and whether the
-fail-closed repair branch was needed. -/
 structure Sample where
   team : CanonicalTeam
   rng : Rng.LinkRng
   repaired : Bool
+  history : TeamHistory
+  remainingLedger : ResourceLedger
+  historyReplays : replayTeam history = some (team.1, remainingLedger)
 
-/-- Rotate a nonempty pool by `start`; modulo indexing preserves every entry and
-lets `genMon` choose a dynamic packed prefix without introducing illegal moves. -/
-def rotatePool (pool : Array MoveId) (start : Nat) : Array MoveId :=
+/-- Rotate a nonempty array by `start`. Retained as a distribution helper for
+the restricted ordinary profile; legality must come from a replayed history. -/
+def rotatePool {α : Type} [Inhabited α] (pool : Array α) (start : Nat) : Array α :=
   if pool.isEmpty then pool
-  else
-    (Array.range pool.size).map fun index => pool.getD ((start + index) % pool.size) 0
+  else (Array.range pool.size).map fun index =>
+    pool.getD ((start + index) % pool.size) default
 
 /-- Draw one byte and thread the link RNG. -/
 @[inline] def draw (rng : Rng.LinkRng) : UInt8 × Rng.LinkRng := rng.next
 
-/-- Sample one canonical candidate. Eight draws choose species, four DVs, move
-count, and learn-pool rotation. One reserved draw keeps the transcript shape
-stable for a future level-aware learnset table; the current constructive sampler
-uses level 100 so every level-up move in the certified pool is available. -/
-def sampleMon (rng : Rng.LinkRng) : MonState × Rng.LinkRng :=
+private def machineCandidates (species : SpeciesId) (ledger : ResourceLedger) :
+    Array MachineIndex :=
+  (Array.range 55).filterMap fun index =>
+    if bounded : index < 55 then
+      let machine : MachineIndex := ⟨index, bounded⟩
+      if Data.Progression.machineCompatible species index &&
+          machineAvailable ledger machine then some machine else none
+    else none
+
+private def rotatedCandidates (species : SpeciesId) (ledger : ResourceLedger)
+    (start : Nat) : Array MachineIndex :=
+  let candidates := machineCandidates species ledger
+  if candidates.isEmpty then #[]
+  else (Array.range candidates.size).map fun index =>
+    candidates.getD ((start + index) % candidates.size) ⟨0, by omega⟩
+
+private def applyMachineCandidates (remaining : Nat) (replacementBits : UInt8)
+    (candidates : List MachineIndex) (state : MonState × ResourceLedger × List Event) :
+    MonState × ResourceLedger × List Event :=
+  match remaining, candidates with
+  | 0, _ | _, [] => state
+  | count + 1, machine :: tail =>
+      let used := state.2.2.length
+      let slotValue := (replacementBits.toNat >>> (2 * (used % 4))) % 4
+      let slot : Fin 4 := ⟨slotValue, by omega⟩
+      match teach state.1 state.2.1 machine slot with
+      | none => applyMachineCandidates (count + 1) replacementBits tail state
+      | some (mon, ledger) =>
+          applyMachineCandidates count replacementBits tail
+            (mon, ledger, state.2.2 ++ [.teach machine slot])
+
+private def applyPpUps : Nat → Fin 4 →
+    MonState × ResourceLedger × List Event → MonState × ResourceLedger × List Event
+  | 0, _, state => state
+  | count + 1, slot, state =>
+      match usePpUp state.1 state.2.1 slot with
+      | none => state
+      | some (mon, ledger) =>
+          applyPpUps count slot (mon, ledger, state.2.2 ++ [.ppUp slot])
+
+private def applyPpPattern (pattern : UInt8)
+    (state : MonState × ResourceLedger × List Event) :
+    MonState × ResourceLedger × List Event :=
+  (List.range 4).foldl (fun state index =>
+    if bounded : index < 4 then
+      let slot : Fin 4 := ⟨index, bounded⟩
+      let count := (pattern.toNat >>> (2 * index)) &&& 3
+      applyPpUps count slot state
+    else state) state
+
+/-- Ten draws select species, four DVs, machine count/order/replacement slots,
+and per-slot PP Up counts. Level is constructively fixed at 100 so all ordered
+level-up offers have occurred; unlike the old sampler, declining/replacement is
+represented by the actual final history rather than an unordered pool slice. -/
+def sampleMon (ledger : ResourceLedger) (rng : Rng.LinkRng) :
+    MonPlan × MonState × ResourceLedger × Rng.LinkRng :=
   let (speciesByte, rng) := draw rng
   let (_, rng) := draw rng
   let (atkByte, rng) := draw rng
   let (defByte, rng) := draw rng
   let (spdByte, rng) := draw rng
   let (spcByte, rng) := draw rng
-  let (countByte, rng) := draw rng
-  let (startByte, rng) := draw rng
+  let (machineCountByte, rng) := draw rng
+  let (machineStartByte, rng) := draw rng
+  let (replacementBits, rng) := draw rng
+  let (ppPattern, rng) := draw rng
   let entry := entryOf speciesByte.toNat
-  let rotated := { entry with movePool := rotatePool entry.movePool startByte.toNat }
-  let moveCount := countByte.toNat % Wram.numMoves + 1
-  (genMon rotated 100 atkByte defByte spdByte spcByte moveCount, rng)
+  let origin : Origin :=
+    { species := entry.speciesId, level := 100
+      atkDv := atkByte, defDv := defByte, spdDv := spdByte, spcDv := spcByte }
+  let mon := acquire origin
+  let candidates := rotatedCandidates origin.species ledger machineStartByte.toNat
+  let machineCount := machineCountByte.toNat % (Wram.numMoves + 1)
+  let state := applyMachineCandidates machineCount replacementBits candidates.toList
+    (mon, ledger, [])
+  let state := applyPpPattern ppPattern state
+  ({ origin, events := state.2.2 }, state.1, state.2.1, rng)
 
-private def sampleMons : Nat → Rng.LinkRng → Team × Rng.LinkRng
-  | 0, rng => (#[], rng)
-  | count + 1, rng =>
-      let (mon, rng) := sampleMon rng
-      let (tail, rng) := sampleMons count rng
-      (#[mon] ++ tail, rng)
+private def sampleMons : Nat → ResourceLedger → Rng.LinkRng →
+    Array MonPlan × Team × ResourceLedger × Rng.LinkRng
+  | 0, ledger, rng => (#[], #[], ledger, rng)
+  | count + 1, ledger, rng =>
+      let (plan, mon, ledger, rng) := sampleMon ledger rng
+      let (plans, mons, ledger, rng) := sampleMons count ledger rng
+      (#[plan] ++ plans, #[mon] ++ mons, ledger, rng)
 
-/-- A fixed proof-carrying recovery value. It is used only if the sampled
-candidate fails canonical legality, making invalid output unrepresentable. -/
-private def fallbackMon : MonState :=
-  genMon (entryOf 0) 50 15 15 15 15 4
+private def fallbackOrigin : Origin :=
+  { species := (entryOf 0).speciesId, level := 100
+    atkDv := 15, defDv := 15, spdDv := 15, spcDv := 15 }
+
+private def fallbackPlan : MonPlan := { origin := fallbackOrigin, events := [] }
+private def fallbackTeam : Team := #[acquire fallbackOrigin]
 
 private theorem fallbackTeam_legal :
-    teamLegal genDex .canonical #[fallbackMon] = true := by
+    teamLegal genDex .canonical fallbackTeam = true := by
   native_decide
 
-/-- Sample a party of caller-requested size, clamped into the cartridge range
-`1..PARTY_LENGTH`, and return a proof that it is canonical. -/
-def sampleSized (requested : Nat) (rng : Rng.LinkRng) : Sample :=
+private theorem fallback_replays (ledger : ResourceLedger) :
+    replayTeam { initialLedger := ledger, plans := #[fallbackPlan] } =
+      some (fallbackTeam, ledger) := by
+  rfl
+
+private def fallbackSample (ledger : ResourceLedger) (rng : Rng.LinkRng) : Sample :=
+  { team := ⟨fallbackTeam, fallbackTeam_legal⟩
+    rng
+    repaired := true
+    history := { initialLedger := ledger, plans := #[fallbackPlan] }
+    remainingLedger := ledger
+    historyReplays := fallback_replays ledger }
+
+/-- Generate a requested-size party under an explicit shared resource budget.
+The size is clamped to `1..PARTY_LENGTH`. -/
+def sampleSizedWithLedger (requested : Nat) (ledger : ResourceLedger)
+    (rng : Rng.LinkRng) : Sample :=
   let count := max 1 (min maxPartySize requested)
-  let (candidate, rng) := sampleMons count rng
-  if legal : teamLegal genDex .canonical candidate = true then
-    { team := ⟨candidate, legal⟩, rng, repaired := false }
-  else
-    { team := ⟨#[fallbackMon], fallbackTeam_legal⟩, rng, repaired := true }
+  let (plans, candidate, remaining, rng) := sampleMons count ledger rng
+  let history : TeamHistory := { initialLedger := ledger, plans }
+  if replayed : replayTeam history = some (candidate, remaining) then
+    if legal : teamLegal genDex .canonical candidate = true then
+      { team := ⟨candidate, legal⟩, rng, repaired := false, history
+        remainingLedger := remaining, historyReplays := replayed }
+    else fallbackSample ledger rng
+  else fallbackSample ledger rng
+
+/-- Default RL budget: one copy of each TM, all five HMs, and eighteen PP Ups.
+This is explicit distribution policy, not a new-game inventory claim. -/
+def defaultLedger : ResourceLedger := ResourceLedger.oneEach 18
+
+def sampleSized (requested : Nat) (rng : Rng.LinkRng) : Sample :=
+  sampleSizedWithLedger requested defaultLedger rng
 
 /-- Fully dynamic party generation: the first byte chooses size 1–6 and the
-remaining draws choose every mon. -/
+remaining cursor chooses the progression-witnessed team. -/
 def sample (rng : Rng.LinkRng) : Sample :=
   let (sizeByte, rng) := draw rng
   sampleSized (sizeByte.toNat % maxPartySize + 1) rng
 
-/-- Soundness is structural: every returned value carries the canonical legality
-proof, independently of entropy and independently of whether repair occurred. -/
+/-- Every result remains learnset-legal, independently of entropy and repair. -/
 theorem sample_sound (rng : Rng.LinkRng) :
     teamLegal genDex .canonical (sample rng).team.1 = true :=
   (sample rng).team.2
 
-/-- Requested-size generation has the same unconditional guarantee. -/
 theorem sampleSized_sound (requested : Nat) (rng : Rng.LinkRng) :
     teamLegal genDex .canonical (sampleSized requested rng).team.1 = true :=
   (sampleSized requested rng).team.2
+
+/-- Stronger constructive certificate: replaying all origins and ordered events
+under the supplied party-wide ledger yields exactly the sampled team and final
+resource state. -/
+theorem sampleSized_progression_witnessed (requested : Nat) (ledger : ResourceLedger)
+    (rng : Rng.LinkRng) :
+    replayTeam (sampleSizedWithLedger requested ledger rng).history =
+      some ((sampleSizedWithLedger requested ledger rng).team.1,
+        (sampleSizedWithLedger requested ledger rng).remainingLedger) :=
+  (sampleSizedWithLedger requested ledger rng).historyReplays
 
 /-! ## Deterministic sampling guards -/
 
@@ -120,5 +217,6 @@ private def sample0 : Sample := sample Rng.seed0
 #guard (sampleSized 99 Rng.seed0).team.1.size == maxPartySize
 #guard !(sampleSized 6 Rng.seed0).repaired
 #guard (sampleSized 6 Rng.seed0).team.1.all (monLegal genDex .canonical)
+#guard (sampleSized 6 Rng.seed0).history.plans.size == 6
 
 end Battle.RL.DynamicGenerator

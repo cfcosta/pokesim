@@ -8,7 +8,10 @@ import Battle.Data.Moves
 /-!
 # Team generator — byte-faithful `CalcStat` and legal mon/team synthesis
 
-Builds the random-but-game-legal parties the RL loop fights. A generated mon is
+Builds deterministic learnset-admissible battle rows. `genMon` is a low-level
+constructor retained for stat synthesis and loose exploration; the default RL
+loop now uses `Battle.RL.DynamicGenerator`, whose ordered histories are stronger
+than this module's unioned-pool predicate. A generated mon is
 `Battle.RL.monLegal` **by construction**; the safety proof
 (`Battle/RL/GeneratorSafe.lean`, task #21) discharges that as a theorem. This
 module is deterministic-from-parameters — every random choice (species, level,
@@ -52,10 +55,11 @@ tables are independently authored from the disassembly and certified against
 the canonical ROM by `Battle.Rom.Tables`; this hot-path generator inherits that
 certificate without executing the ROM decoder.
 
-Move *identity* selection is still the sorted-pool prefix (a `moveCount`-length
-slice of `learnset`); which specific moves — beyond count — is a future entropy
-knob. Every drawn move is in the species' learnset, so a generated mon is
-`monLegal Dex.gen1 .canonical` by construction.
+Move *identity* selection here is the sorted-pool prefix (a `moveCount`-length
+slice of `learnset`). Every drawn move is in the species' learnset, so a generated
+mon is `monLegal Dex.gen1 .canonical` by construction, but that predicate alone
+does not witness acquisition order, one-use machines, or no-unlearning. Do not
+use `genMon` directly for progression-witnessed resets.
 -/
 
 namespace Battle.RL

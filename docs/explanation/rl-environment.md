@@ -292,14 +292,18 @@ Generator.generate :
 
 The theorem states generated teams are legal. It does not claim uniformity unless a separate probability proof is supplied.
 
-The first implemented sampler is `Battle.RL.DynamicGenerator.sample`. It consumes
-the deterministic link RNG, samples party size, species, DVs, move count, and a
-cyclic move-pool offset, and returns the subtype
-`{team // teamLegal Dex.gen1 .canonical team = true}`. It currently fixes level
-at 100 because the certified hot-path pool is level-agnostic; that supplies a
-constructive level at which every retained level-up move is available. A
-fail-closed, explicitly flagged recovery team prevents malformed entropy or a
-future generator regression from emitting an invalid episode reset.
+The default sampler is `Battle.RL.DynamicGenerator.sample`. It consumes the
+deterministic link RNG and samples party size, species, DVs, ordered machine
+teachings, replacement slots, and PP Up counts. Each level-100 origin starts with
+the exact ordered result of `WriteMonMoves`; later moves can arise only from a
+compatible TM/HM event. One caller-supplied party-wide ledger consumes TMs once,
+requires but does not consume HMs, and bounds PP Ups. `sampleSizedWithLedger`
+returns both `{team // teamLegal Dex.gen1 .canonical team = true}` and a
+`historyReplays` proof that the complete history reconstructs exactly that team
+and its remaining ledger. Level 100 ensures every ordered level-up offer has
+occurred; it no longer licenses arbitrary subsets of an unordered move pool. A
+fail-closed, explicitly flagged recovery history prevents malformed entropy or a
+future generator regression from emitting an unwitnessed episode reset.
 
 Useful distributions include:
 

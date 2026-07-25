@@ -129,7 +129,7 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [ ] 999 stat cap
 - [ ] default/base moves
 - [ ] level-up move derivation and four-slot shifting
-- [ ] move PP and PP Up encoding
+- [x] move PP and PP Up encoding (`Battle.RL.MoveHistory.first_pp_up_exact`)
 - [ ] `wBattleMonSpecies2`/`wEnemyMonSpecies2` identity versus Transform-mutable species
 - [ ] active party-position byte versus authoritative player/enemy indexes
 - [ ] active copied catch rate versus separate `wEnemyMonActualCatchRate`
@@ -771,7 +771,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] battle-valid generator theorem (`Battle.RL.DynamicGenerator.sample_sound`)
 - [x] canonical-species generator theorem (`Battle.RL.DynamicGenerator.sample_sound` via canonical `teamLegal`)
 - [x] learnset-legal generator theorem (`Battle.RL.DynamicGenerator.sample_sound` via canonical `teamLegal`)
-- [ ] progression-witnessed history relative to supplied roster/resource ledger
+- [x] progression-witnessed history relative to supplied roster/resource ledger (`Battle.RL.DynamicGenerator.sampleSized_progression_witnessed`)
 - [ ] no unconditional new-save reachability claim without overworld proof
 - [ ] trainer-defined generator equivalence
 - [x] single/batch result equality (`Battle.RL.SelfPlay.single_batch_result_equality`)

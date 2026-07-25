@@ -25,7 +25,8 @@ how much *cartridge obtainability* to also demand:
 * `rangeOnly` — just `battleValid`. Every glitchy-but-representable mon (a raw
   `battle_struct` the engine won't choke on) counts. Widest RL exploration space.
 * `movesetOpen` — also a real (non-glitch) species, but any move on any mon.
-* `canonical` — also every move learnable by that species. Cartridge-legal.
+* `canonical` — also every move appears in that species' unioned learn pool.
+  This is learnset-admissible, not an ordered progression/reachability claim.
 
 ## Data is a seam, not a second copy of the ROM
 
@@ -64,7 +65,7 @@ inductive Legality where
   | rangeOnly
   /-- Real species, but any moveset. -/
   | movesetOpen
-  /-- Fully cartridge-obtainable: real species and every move learnable by it. -/
+  /-- Learnset-admissible: real species and every move in its unioned pool. -/
   | canonical
   deriving Repr, DecidableEq, BEq
 

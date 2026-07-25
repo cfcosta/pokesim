@@ -38,12 +38,12 @@ The certificate is independent of the external source tree.
 ## Native smoke matrix
 
 ```text
-episodes=100 finished=88 truncated=12 nested_open=0
+episodes=100 finished=94 truncated=6 nested_open=0
 blocked=0 invalid=0 rng_stuck=0 division_freeze=0 other=0
-repaired=0 transitions=50831
+repaired=0 transitions=26697
 ```
 
-The 12 horizon-open runs are not terminal outcomes; status-heavy generated
+The 6 horizon-open runs are not terminal outcomes; status-heavy generated
 parties can produce legitimate long-running or nonterminating battles.
 
 ## Claim boundary

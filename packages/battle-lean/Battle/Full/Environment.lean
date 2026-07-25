@@ -26,6 +26,14 @@ structure State where
   playerReset : RL.DynamicGenerator.CanonicalTeam
   enemyReset : RL.DynamicGenerator.CanonicalTeam
   repairedReset : Bool
+  playerHistory : RL.MoveHistory.TeamHistory
+  enemyHistory : RL.MoveHistory.TeamHistory
+  playerRemainingLedger : RL.MoveHistory.ResourceLedger
+  enemyRemainingLedger : RL.MoveHistory.ResourceLedger
+  playerHistoryReplays : RL.MoveHistory.replayTeam playerHistory =
+    some (playerReset.1, playerRemainingLedger)
+  enemyHistoryReplays : RL.MoveHistory.replayTeam enemyHistory =
+    some (enemyReset.1, enemyRemainingLedger)
   box : Array MonState := #[]
   partyNames : Array CaptureProtocol.StoredName := #[]
   boxNames : Array CaptureProtocol.StoredName := #[]
@@ -60,7 +68,10 @@ structure Observation where
   done : Bool
   deriving Repr, DecidableEq, BEq
 
-private def fallbackMon : MonState := (RL.DynamicGenerator.sampleMon Rng.seed0).1
+private def fallbackMon : MonState :=
+  RL.MoveHistory.acquire
+    { species := (entryOf 0).speciesId, level := 100
+      atkDv := 15, defDv := 15, spdDv := 15, spcDv := 15 }
 
 private def persistent (owner : UInt16) (mon : MonState) : Progression.PersistentMon :=
   let rate := Progression.GrowthRate.ofId
@@ -91,6 +102,12 @@ def reset (generatorRng battleRng : Rng.LinkRng)
     playerReset := player.team
     enemyReset := enemy.team
     repairedReset := player.repaired || enemy.repaired
+    playerHistory := player.history
+    enemyHistory := enemy.history
+    playerRemainingLedger := player.remainingLedger
+    enemyRemainingLedger := enemy.remainingLedger
+    playerHistoryReplays := player.historyReplays
+    enemyHistoryReplays := enemy.historyReplays
     box := #[]
     partyNames := player.team.1.map (fun _ => .speciesDefault)
     playerProgression := player.team.1.map (persistent 0)
