@@ -339,6 +339,7 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [ ] Leech Seed and Toxic-counter interaction
 - [x] Reflect (`Battle.Rom.ScreenRoutine.screens_exact`)
 - [x] Light Screen (`Battle.Rom.ScreenRoutine.screens_exact`)
+- [x] Transform player/enemy invulnerability-check asymmetry (`Battle.Rom.TransformRoutine.transform_invulnerability_exact`)
 - [ ] Transform species/types/catch/moves/DVs/current combat stats copy boundaries
 - [ ] Transform preserves user HP/level/max HP and sets nonblank copied PP to 5
 - [ ] Transform copies unmodified stats/stat stages and stores enemy original DVs

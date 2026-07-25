@@ -66,6 +66,7 @@ import Battle.Rom.ScreenRoutine
 import Battle.Rom.HealRoutine
 import Battle.Rom.SubstituteRoutine
 import Battle.Rom.LeechSeedRoutine
+import Battle.Rom.TransformRoutine
 import Battle.Diff
 import Battle.Driver
 import Battle.DriverInvariant

@@ -319,6 +319,12 @@ rejection or single-bit success traces, with continuous fetched-IR lifting to
 the presentation boundary. Reachability from the earlier banked hit-test call is
 still separate.
 
+`Battle.Rom.TransformRoutine` proves the decoded invulnerability-control prefix.
+Enemy Transform tests bit 6 of the overwritten turn byte one and always reaches
+the copy path; player Transform reloads and tests the player's own status-1 byte,
+reaching failure only for self-invulnerability. Exact functional and continuous
+fetched-IR traces end at the copy/failure boundaries.
+
 The remaining animation/text tails still need frame/timing summaries.
 Whole-battle reachability and full Game Boy device lifting remain separate.
 

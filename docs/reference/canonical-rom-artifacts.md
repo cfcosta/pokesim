@@ -204,6 +204,12 @@ continuous fetched-IR summaries cover both sides, both Seeded states, and every
 target type pair through the success/failure presentation boundary. The prior
 banked `MoveHitTest` call remains a reachability obligation.
 
+`Battle.Rom.TransformRoutine` retains the invulnerability-control window at
+`0e:7ab1`. Exact functional and continuous fetched-IR summaries prove the enemy
+turn-byte overwrite and the player path's wrong self-status check through the
+copy/failure boundary. The subsequent presentation and large copy body remain
+separate.
+
 `Battle.Rom.CombatTables` closes three more mechanics-critical data seams: the
 four high-critical move IDs and terminator, all 82 ordered type-effect triples
 and terminator, and all 13 numerator/denominator stat-stage ratios. These are
