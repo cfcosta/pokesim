@@ -733,7 +733,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] poison/burn KO does not stop same-pass Leech Seed or its overkill healing (`Battle.Full.Status.leech_seed_runs_after_residual_ko`)
 - [x] drain halves shared damage scratch before Counter/Bide can consume it (`Battle.Full.Effects.drain_halves_shared_damage`)
 - [ ] trainer/wild move slot selection's 63/64/63/66 initial bucket bias
-- [ ] final WRAM cannot distinguish all zero-result terminal causes after cleanup
+- [x] final WRAM cannot distinguish all zero-result terminal causes after cleanup (`Battle.Outcome.cleanup_erases_terminal_distinctions`)
 - [ ] simultaneous faint write order can produce trainer lose text and payout with raw result 1
 - [ ] simultaneous active faint can be nonterminal when reserves remain
 - [x] two-stage stat effect at current stat 999/1 silently retains one stage despite failure text (`raise_attack_999_two_stage_residue`, `lower_attack_1_two_stage_residue`)

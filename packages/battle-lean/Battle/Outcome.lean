@@ -118,6 +118,26 @@ def BattleTerminal.mk' (cause : TerminalCause) (mode : BattleMode)
   { cause, mode, perspective, rawResult, preCleanupEscaped,
     verdict := verdictOfRaw rawResult, simultaneousDetectedFirst }
 
+/-! ## Post-cleanup byte projection -/
+
+structure CleanedOutcomeBytes where
+  battleResult : UInt8
+  escapedFromBattle : UInt8
+  deriving Repr, DecidableEq, BEq
+
+/-- `EndOfBattle.resetVariables` erases both raw outcome bytes. Rich terminal
+provenance must therefore be captured before this projection. -/
+def cleanupOutcomeBytes (_terminal : BattleTerminal) : CleanedOutcomeBytes :=
+  { battleResult := 0, escapedFromBattle := 0 }
+
+/-- Distinct defeat and escape causes become byte-identical after cleanup. -/
+theorem cleanup_erases_terminal_distinctions :
+    let defeat := BattleTerminal.mk' (.partyExhausted .player) .wild .player 1
+    let escape := BattleTerminal.mk' .ordinaryRun .wild .player 0 1
+    defeat.cause ≠ escape.cause ∧
+      cleanupOutcomeBytes defeat = cleanupOutcomeBytes escape := by
+  native_decide
+
 /-! ## Episode result and phase -/
 
 /-- What the outer episode returns: the terminal record (a nominal wrapper, kept
