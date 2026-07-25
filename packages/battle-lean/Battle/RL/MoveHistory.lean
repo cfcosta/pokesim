@@ -59,10 +59,20 @@ def machineAvailable (ledger : ResourceLedger) (machine : MachineIndex) : Bool :
   if machine.val < 50 then ledger.tmCopies.getD machine.val 0 > 0
   else ledger.hmOwned.getD (machine.val - 50) false
 
-private def consumeMachine (ledger : ResourceLedger) (machine : MachineIndex) : ResourceLedger :=
+def consumeMachine (ledger : ResourceLedger) (machine : MachineIndex) : ResourceLedger :=
   if machine.val < 50 then
     { ledger with tmCopies := ledger.tmCopies.modify machine.val (fun copies => copies - 1) }
   else ledger
+
+@[simp] theorem hm_is_reusable (ledger : ResourceLedger) (machine : MachineIndex)
+    (hm : machine.val ≥ 50) : consumeMachine ledger machine = ledger := by
+  simp [consumeMachine, show ¬machine.val < 50 by omega]
+
+@[simp] theorem tm_consumes_one (ledger : ResourceLedger) (machine : MachineIndex)
+    (tm : machine.val < 50) :
+    consumeMachine ledger machine =
+      { ledger with tmCopies := ledger.tmCopies.modify machine.val (fun copies => copies - 1) } := by
+  simp [consumeMachine, tm]
 
 /-- `WriteMonMoves` insertion: duplicates do nothing, an empty slot is filled,
 and a full set shifts left before appending the newly available move. -/
@@ -188,7 +198,8 @@ theorem teach_success_shape (mon next : MonState) (ledger nextLedger : ResourceL
     (success : teach mon ledger machine requested = some (next, nextLedger)) :
     ∃ slot : Fin 4,
       machineMove machine ≠ 0 ∧
-      next.moves = mon.moves.modify slot.val (fun _ => machineMove machine) := by
+      next.moves = mon.moves.modify slot.val (fun _ => machineMove machine) ∧
+      nextLedger = consumeMachine ledger machine := by
   simp only [teach] at success
   split at success
   · contradiction
@@ -199,7 +210,8 @@ theorem teach_success_shape (mon next : MonState) (ledger nextLedger : ResourceL
       injection success with pairEq
       injection pairEq with monEq ledgerEq
       subst next
-      exact ⟨slot, nonzero, rfl⟩
+      subst nextLedger
+      exact ⟨slot, nonzero, rfl, rfl⟩
 
 /-! ## Exact local regression witnesses -/
 
@@ -222,5 +234,11 @@ theorem first_pp_up_exact (mon : MonState) (ledger : ResourceLedger) (slot : Fin
             ppUpBonus (mon.moves.getD slot.val 0))) },
        { ledger with ppUps := ledger.ppUps - 1 }) := by
   simp [usePpUp, Nat.ne_of_gt available, movePresent, fresh]
+
+/-- A fourth PP Up is rejected and therefore cannot consume the party ledger. -/
+theorem fourth_pp_up_rejected (mon : MonState) (ledger : ResourceLedger) (slot : Fin 4)
+    (maxed : ((mon.pp[slot.val]?.getD 0 &&& Wram.ppUpMask) >>> 6) = 3) :
+    usePpUp mon ledger slot = none := by
+  simp [usePpUp, maxed]
 
 end Battle.RL.MoveHistory
