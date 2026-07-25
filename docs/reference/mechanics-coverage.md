@@ -347,8 +347,8 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [ ] elemental side-effect immunity when move type equals either target type, including Body Slam versus Normal
 - [x] SleepEffect clears target recharge before accuracy/existing-status checks (`Battle.Full.Effects.sleep_always_clears_recharge`)
 - [x] player freeze side effect clears enemy recharge; enemy freeze does not mirror it (`Battle.Full.Effects.freeze_recharge_asymmetry`)
-- [ ] Haze preserves Transform and raw status-3 high bits while clearing Toxic/screens and selected volatile flags
-- [ ] Haze copies unmodified stats without reapplying retained burn/paralysis or badge modifiers
+- [x] Haze preserves Transform and raw status-3 high bits while clearing Toxic/screens and selected volatile flags (`Battle.Rom.HazeRoutine.cureVolatile_block_effect`, `Battle.Full.Effects.haze_status_target_only`)
+- [x] Haze copies unmodified stats without reapplying retained burn/paralysis or badge modifiers (`Battle.Rom.HazeRoutine.resetStats_eight_exact`, `Battle.Rom.HazeRoutine.haze_reset_prefix_exact`)
 - [ ] Rest leaves `BADLY_POISONED` and Toxic counter state intact while writing fixed sleep 2
 - [ ] stale Toxic after Rest/damaged Full Restore can affect later normal poison and seeded sleep
 - [ ] Conversion copies active target types through Substitute, skips ordinary hit testing, and fails on target invulnerability

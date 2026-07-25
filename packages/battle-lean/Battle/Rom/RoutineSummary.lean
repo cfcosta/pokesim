@@ -168,6 +168,16 @@ theorem next_ne_next_two (address : Word) :
     Word.ofNat (address.toNat + 1) ≠ Word.ofNat (address.toNat + 2) :=
   (first_three_distinct address).2.2
 
+@[simp] theorem relative_four : ∀ address : Word,
+    (Word.ofNat (address.toNat + 2)).addSignedByte 0x04 =
+      Word.ofNat (address.toNat + 6) := by
+  native_decide
+
+@[simp] theorem relative_three : ∀ address : Word,
+    (Word.ofNat (address.toNat + 2)).addSignedByte 0x03 =
+      Word.ofNat (address.toNat + 5) := by
+  native_decide
+
 def advancePc (state : FunctionalState) : Registers :=
   { state.registers with pc := Word.ofNat (state.registers.pc.toNat + 1) }
 

@@ -166,8 +166,12 @@ confusion-bit removal and the exact `$78`/`$F8` masks on arbitrary status bytes.
 returns, rather than stopping at call-free bodies. `haze_reset_prefix_exact`
 then composes 147 decoded instructions from `HazeEffect_` entry through both
 modifier fills and both stat-copy helper calls/returns under explicit dynamic
-code, stack, and per-loop contracts. Whole-handler call reachability
-and presentation-tail composition remain separate obligations.
+code, stack, and per-loop contracts. The four `haze_*_exact` path theorems
+continue through turn-dependent target selection, nonvolatile-status handling,
+and both volatile-status helper returns. `haze_core_to_print_exact` reaches the
+canonical `PrintText` entry once its named exact `CallBankF`/animation execution
+contract is supplied; proving that external presentation contract remains a
+separate obligation.
 
 `Battle.Rom.EffectRoutines.CanonicalLeafEffectsBytes` adds exact code-window
 witnesses for `HyperBeamEffect` (`0f:79c1`), shared `ClearHyperBeam`

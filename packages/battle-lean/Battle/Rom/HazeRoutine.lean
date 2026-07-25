@@ -9,15 +9,17 @@ import Battle.Rom.RoutineSummary
 # Compositional decoded Haze helpers
 
 The eight-byte `ResetStats` loop defeated monolithic symbolic
-`Driver.runToReturn` unfolding. This module instead proves one arbitrary symbolic
-iteration from five decoded instruction equations. The result preserves the
-source byte, destination write, both pointer increments, exact counter decrement,
-and taken/fallthrough PC. Repeated applications therefore scale without
-enumerating the 2^64 possible stat-byte vectors.
+`Driver.runToReturn` unfolding. This module replaces that approach with decoded
+instruction contracts, exact-count block composition, and explicit call/return
+summaries. It proves all three helpers, the 147-instruction common reset prefix,
+all four turn/status gameplay paths through cleanup, and dispatch into the
+presentation tail without enumerating symbolic stat or status vectors.
 
-The complete Haze gameplay and helper windows are retained as explicit canonical
-ROM obligations. Presentation calls after the gameplay prefix remain a separate
-reachability/composition boundary.
+The complete gameplay and helper windows remain explicit canonical-ROM
+obligations. `CallBankF` and the move animation are represented by a named exact
+execution contract; once supplied, `haze_core_to_print_exact` composes the whole
+handler to the canonical `PrintText` entry. This does not claim that the external
+presentation routine has already been refined.
 -/
 
 namespace Battle.Rom.HazeRoutine
@@ -1000,6 +1002,435 @@ theorem haze_reset_prefix_exact (state : FunctionalState)
   have fourth := RoutineSummary.runSteps_state_add 102 45 state (hazeP11 state)
     (hazeResetPrefix state) (by simpa using third) (by simpa using part4)
   simpa using fourth
+
+/-! ## Turn-dependent target selection -/
+
+def hazeT1 (s : FunctionalState) := RoutineSummary.ldHlImmediate s
+def hazeT2 (s : FunctionalState) := RoutineSummary.ldDeImmediate (hazeT1 s)
+def hazeT3 (s : FunctionalState) := RoutineSummary.ldhAImmediate (hazeT2 s)
+def hazeT4 (s : FunctionalState) := RoutineSummary.andA (hazeT3 s)
+def hazeT5 (s : FunctionalState) := RoutineSummary.jrZ (hazeT4 s)
+def hazeT6 (s : FunctionalState) := RoutineSummary.ldHlImmediate (hazeT5 s)
+def hazePlayerTarget (s : FunctionalState) := RoutineSummary.decDe (hazeT6 s)
+
+structure HazeTargetCommonContract (state : FunctionalState) : Prop where
+  q0 : RoutineSummary.Quiet state
+  op21 : state.memory.read state.registers.pc = 0x21
+  q1 : RoutineSummary.Quiet (hazeT1 state)
+  op11 : (hazeT1 state).memory.read (hazeT1 state).registers.pc = 0x11
+  q2 : RoutineSummary.Quiet (hazeT2 state)
+  opF0 : (hazeT2 state).memory.read (hazeT2 state).registers.pc = 0xF0
+  turnOffset : (hazeT2 state).memory.read
+    (Word.ofNat ((hazeT2 state).registers.pc.toNat + 1)) = 0xF3
+  q3 : RoutineSummary.Quiet (hazeT3 state)
+  opA7 : (hazeT3 state).memory.read (hazeT3 state).registers.pc = 0xA7
+  q4 : RoutineSummary.Quiet (hazeT4 state)
+  op28 : (hazeT4 state).memory.read (hazeT4 state).registers.pc = 0x28
+  jumpOffset : (hazeT4 state).memory.read
+    (Word.ofNat ((hazeT4 state).registers.pc.toNat + 1)) = 0x04
+
+private theorem haze_target_common_exact (state : FunctionalState)
+    (contract : HazeTargetCommonContract state) :
+    (RoutineSummary.runSteps 5 state).state = hazeT5 state := by
+  have a := oneStep (RoutineSummary.step_ldHlImmediate state contract.q0.1
+    contract.q0.2.2 contract.q0.2.1 contract.op21)
+  have b := oneStep (RoutineSummary.step_ldDeImmediate (hazeT1 state) contract.q1.1
+    contract.q1.2.2 contract.q1.2.1 contract.op11)
+  have c := oneStep (RoutineSummary.step_ldhAImmediate (hazeT2 state) contract.q2.1
+    contract.q2.2.2 contract.q2.2.1 contract.opF0)
+  have d := oneStep (RoutineSummary.step_andA (hazeT3 state) contract.q3.1
+    contract.q3.2.2 contract.q3.2.1 contract.opA7)
+  have e := oneStep (RoutineSummary.step_jrZ (hazeT4 state) contract.q4.1
+    contract.q4.2.2 contract.q4.2.1 contract.op28)
+  have ab := RoutineSummary.runSteps_state_add 1 1 state (hazeT1 state) (hazeT2 state) a b
+  have abc := RoutineSummary.runSteps_state_add 2 1 state (hazeT2 state) (hazeT3 state)
+    (by simpa using ab) c
+  have abcd := RoutineSummary.runSteps_state_add 3 1 state (hazeT3 state) (hazeT4 state)
+    (by simpa using abc) d
+  exact RoutineSummary.runSteps_state_add 4 1 state (hazeT4 state) (hazeT5 state)
+    (by simpa using abcd) e
+
+structure HazeEnemyTargetContract (state : FunctionalState) extends
+    HazeTargetCommonContract state where
+  zero : Alu.conditionHolds .z (hazeT4 state).registers.flags = true
+
+/-- `hWhoseTurn = 0` takes the four-byte jump directly to enemy status. -/
+theorem haze_enemy_target_exact (state : FunctionalState)
+    (contract : HazeEnemyTargetContract state) :
+    (RoutineSummary.runSteps 5 state).state = hazeT5 state ∧
+    (hazeT5 state).registers.pc = Word.ofNat ((hazeT4 state).registers.pc.toNat + 6) := by
+  constructor
+  · exact haze_target_common_exact state contract.toHazeTargetCommonContract
+  · simp [hazeT5, RoutineSummary.jrZ, contract.zero, contract.jumpOffset]
+    exact RoutineSummary.relative_four (hazeT4 state).registers.pc
+
+structure HazePlayerTargetContract (state : FunctionalState) extends
+    HazeTargetCommonContract state where
+  nonzero : Alu.conditionHolds .z (hazeT4 state).registers.flags = false
+  q5 : RoutineSummary.Quiet (hazeT5 state)
+  op21Player : (hazeT5 state).memory.read (hazeT5 state).registers.pc = 0x21
+  q6 : RoutineSummary.Quiet (hazeT6 state)
+  op1b : (hazeT6 state).memory.read (hazeT6 state).registers.pc = 0x1B
+
+/-- Nonzero `hWhoseTurn` executes the player-target pointer adjustment. -/
+theorem haze_player_target_exact (state : FunctionalState)
+    (contract : HazePlayerTargetContract state) :
+    (RoutineSummary.runSteps 7 state).state = hazePlayerTarget state := by
+  have common := haze_target_common_exact state contract.toHazeTargetCommonContract
+  have f := oneStep (RoutineSummary.step_ldHlImmediate (hazeT5 state) contract.q5.1
+    contract.q5.2.2 contract.q5.2.1 contract.op21Player)
+  have g := oneStep (RoutineSummary.step_decDe (hazeT6 state) contract.q6.1
+    contract.q6.2.2 contract.q6.2.1 contract.op1b)
+  have tail := RoutineSummary.runSteps_state_add 1 1 (hazeT5 state) (hazeT6 state)
+    (hazePlayerTarget state) f g
+  exact RoutineSummary.runSteps_state_add 5 2 state (hazeT5 state)
+    (hazePlayerTarget state) common (by simpa using tail)
+
+/-! ## Nonvolatile-status branch -/
+
+def hazeU1 (s : FunctionalState) := RoutineSummary.ldAAtHl s
+def hazeU2 (s : FunctionalState) := RoutineSummary.ldAtHlImmediate (hazeU1 s)
+def hazeU3 (s : FunctionalState) := RoutineSummary.andImmediate (hazeU2 s)
+def hazeU4 (s : FunctionalState) := RoutineSummary.jrZ (hazeU3 s)
+def hazeU5 (s : FunctionalState) := RoutineSummary.ldAImmediate (hazeU4 s)
+def hazeStatusBlocked (s : FunctionalState) := RoutineSummary.ldAtDeA (hazeU5 s)
+
+structure HazeStatusCommonContract (state : FunctionalState) : Prop where
+  q0 : RoutineSummary.Quiet state
+  op7e : state.memory.read state.registers.pc = 0x7E
+  q1 : RoutineSummary.Quiet (hazeU1 state)
+  op36 : (hazeU1 state).memory.read (hazeU1 state).registers.pc = 0x36
+  clearValue : (hazeU1 state).memory.read
+    (Word.ofNat ((hazeU1 state).registers.pc.toNat + 1)) = 0x00
+  q2 : RoutineSummary.Quiet (hazeU2 state)
+  opE6 : (hazeU2 state).memory.read (hazeU2 state).registers.pc = 0xE6
+  statusMask : (hazeU2 state).memory.read
+    (Word.ofNat ((hazeU2 state).registers.pc.toNat + 1)) = 0x27
+  q3 : RoutineSummary.Quiet (hazeU3 state)
+  op28 : (hazeU3 state).memory.read (hazeU3 state).registers.pc = 0x28
+  jumpOffset : (hazeU3 state).memory.read
+    (Word.ofNat ((hazeU3 state).registers.pc.toNat + 1)) = 0x03
+
+private theorem haze_status_common_exact (state : FunctionalState)
+    (contract : HazeStatusCommonContract state) :
+    (RoutineSummary.runSteps 4 state).state = hazeU4 state := by
+  have a := oneStep (RoutineSummary.step_ldAAtHl state contract.q0.1
+    contract.q0.2.2 contract.q0.2.1 contract.op7e)
+  have b := oneStep (RoutineSummary.step_ldAtHlImmediate (hazeU1 state) contract.q1.1
+    contract.q1.2.2 contract.q1.2.1 contract.op36)
+  have c := oneStep (RoutineSummary.step_andImmediate (hazeU2 state) contract.q2.1
+    contract.q2.2.2 contract.q2.2.1 contract.opE6)
+  have d := oneStep (RoutineSummary.step_jrZ (hazeU3 state) contract.q3.1
+    contract.q3.2.2 contract.q3.2.1 contract.op28)
+  have ab := RoutineSummary.runSteps_state_add 1 1 state (hazeU1 state) (hazeU2 state) a b
+  have abc := RoutineSummary.runSteps_state_add 2 1 state (hazeU2 state) (hazeU3 state)
+    (by simpa using ab) c
+  exact RoutineSummary.runSteps_state_add 3 1 state (hazeU3 state) (hazeU4 state)
+    (by simpa using abc) d
+
+structure HazeStatusClearContract (state : FunctionalState) extends
+    HazeStatusCommonContract state where
+  noSleepOrFreeze : Alu.conditionHolds .z (hazeU3 state).registers.flags = true
+
+/-- A target without sleep/freeze skips the selected-move blocking store. -/
+theorem haze_status_clear_exact (state : FunctionalState)
+    (contract : HazeStatusClearContract state) :
+    (RoutineSummary.runSteps 4 state).state = hazeU4 state ∧
+    (hazeU4 state).registers.pc = Word.ofNat ((hazeU3 state).registers.pc.toNat + 5) := by
+  constructor
+  · exact haze_status_common_exact state contract.toHazeStatusCommonContract
+  · simp [hazeU4, RoutineSummary.jrZ, contract.noSleepOrFreeze, contract.jumpOffset]
+    exact RoutineSummary.relative_three (hazeU3 state).registers.pc
+
+structure HazeStatusBlockedContract (state : FunctionalState) extends
+    HazeStatusCommonContract state where
+  sleepOrFreeze : Alu.conditionHolds .z (hazeU3 state).registers.flags = false
+  q4 : RoutineSummary.Quiet (hazeU4 state)
+  op3e : (hazeU4 state).memory.read (hazeU4 state).registers.pc = 0x3E
+  blockedValue : (hazeU4 state).memory.read
+    (Word.ofNat ((hazeU4 state).registers.pc.toNat + 1)) = 0xFF
+  q5 : RoutineSummary.Quiet (hazeU5 state)
+  op12 : (hazeU5 state).memory.read (hazeU5 state).registers.pc = 0x12
+
+/-- Sleep or freeze clears status and writes `$FF` to the target selected-move
+slot, preserving the cartridge's move-prevention behavior. -/
+theorem haze_status_blocked_exact (state : FunctionalState)
+    (contract : HazeStatusBlockedContract state) :
+    (RoutineSummary.runSteps 6 state).state = hazeStatusBlocked state := by
+  have common := haze_status_common_exact state contract.toHazeStatusCommonContract
+  have e := oneStep (RoutineSummary.step_ldAImmediate (hazeU4 state) contract.q4.1
+    contract.q4.2.2 contract.q4.2.1 contract.op3e)
+  have f := oneStep (RoutineSummary.step_ldAtDeA (hazeU5 state) contract.q5.1
+    contract.q5.2.2 contract.q5.2.1 contract.op12)
+  have tail := RoutineSummary.runSteps_state_add 1 1 (hazeU4 state) (hazeU5 state)
+    (hazeStatusBlocked state) e f
+  exact RoutineSummary.runSteps_state_add 4 2 state (hazeU4 state)
+    (hazeStatusBlocked state) common (by simpa using tail)
+
+/-! ## Common cleanup through both volatile-status helper returns -/
+
+def hazeV1 (s : FunctionalState) := RoutineSummary.xorA s
+def hazeV2 (s : FunctionalState) := RoutineSummary.ldAbsoluteA (hazeV1 s)
+def hazeV3 (s : FunctionalState) := RoutineSummary.ldAbsoluteA (hazeV2 s)
+def hazeV4 (s : FunctionalState) := RoutineSummary.ldHlImmediate (hazeV3 s)
+def hazeV5 (s : FunctionalState) := RoutineSummary.ldAtHlIncA (hazeV4 s)
+def hazeV6 (s : FunctionalState) := RoutineSummary.ldAtHlA (hazeV5 s)
+def hazeV7 (s : FunctionalState) := RoutineSummary.ldHlImmediate (hazeV6 s)
+def hazeV8 (s : FunctionalState) := RoutineSummary.callAbsolute (hazeV7 s)
+def hazeV9 (s : FunctionalState) := RoutineSummary.ret (cureVolatileBlock (hazeV8 s))
+def hazeV10 (s : FunctionalState) := RoutineSummary.ldHlImmediate (hazeV9 s)
+def hazeV11 (s : FunctionalState) := RoutineSummary.callAbsolute (hazeV10 s)
+def hazeCleanup (s : FunctionalState) := RoutineSummary.ret (cureVolatileBlock (hazeV11 s))
+
+structure HazeCleanupContract (state : FunctionalState) : Prop where
+  q0 : RoutineSummary.Quiet state
+  opAf : state.memory.read state.registers.pc = 0xAF
+  q1 : RoutineSummary.Quiet (hazeV1 state)
+  opEa1 : (hazeV1 state).memory.read (hazeV1 state).registers.pc = 0xEA
+  q2 : RoutineSummary.Quiet (hazeV2 state)
+  opEa2 : (hazeV2 state).memory.read (hazeV2 state).registers.pc = 0xEA
+  q3 : RoutineSummary.Quiet (hazeV3 state)
+  op21a : (hazeV3 state).memory.read (hazeV3 state).registers.pc = 0x21
+  q4 : RoutineSummary.Quiet (hazeV4 state)
+  op22 : (hazeV4 state).memory.read (hazeV4 state).registers.pc = 0x22
+  q5 : RoutineSummary.Quiet (hazeV5 state)
+  op77 : (hazeV5 state).memory.read (hazeV5 state).registers.pc = 0x77
+  q6 : RoutineSummary.Quiet (hazeV6 state)
+  op21b : (hazeV6 state).memory.read (hazeV6 state).registers.pc = 0x21
+  q7 : RoutineSummary.Quiet (hazeV7 state)
+  call1 : (hazeV7 state).memory.read (hazeV7 state).registers.pc = 0xCD
+  cure1 : CureVolatileRoutineContract (hazeV8 state)
+  q9 : RoutineSummary.Quiet (hazeV9 state)
+  op21c : (hazeV9 state).memory.read (hazeV9 state).registers.pc = 0x21
+  q10 : RoutineSummary.Quiet (hazeV10 state)
+  call2 : (hazeV10 state).memory.read (hazeV10 state).registers.pc = 0xCD
+  cure2 : CureVolatileRoutineContract (hazeV11 state)
+
+/-- Twenty-eight decoded instructions perform common Haze cleanup and return
+from both player and enemy `CureVolatileStatuses` calls. -/
+theorem haze_cleanup_exact (state : FunctionalState)
+    (contract : HazeCleanupContract state) :
+    (RoutineSummary.runSteps 28 state).state = hazeCleanup state := by
+  have a := oneStep (RoutineSummary.step_xorA state contract.q0.1
+    contract.q0.2.2 contract.q0.2.1 contract.opAf)
+  have b := oneStep (RoutineSummary.step_ldAbsoluteA (hazeV1 state) contract.q1.1
+    contract.q1.2.2 contract.q1.2.1 contract.opEa1)
+  have c := oneStep (RoutineSummary.step_ldAbsoluteA (hazeV2 state) contract.q2.1
+    contract.q2.2.2 contract.q2.2.1 contract.opEa2)
+  have d := oneStep (RoutineSummary.step_ldHlImmediate (hazeV3 state) contract.q3.1
+    contract.q3.2.2 contract.q3.2.1 contract.op21a)
+  have e := oneStep (RoutineSummary.step_ldAtHlIncA (hazeV4 state) contract.q4.1
+    contract.q4.2.2 contract.q4.2.1 contract.op22)
+  have f := oneStep (RoutineSummary.step_ldAtHlA (hazeV5 state) contract.q5.1
+    contract.q5.2.2 contract.q5.2.1 contract.op77)
+  have g := oneStep (RoutineSummary.step_ldHlImmediate (hazeV6 state) contract.q6.1
+    contract.q6.2.2 contract.q6.2.1 contract.op21b)
+  have ab := RoutineSummary.runSteps_state_add 1 1 state (hazeV1 state) (hazeV2 state) a b
+  have abc := RoutineSummary.runSteps_state_add 2 1 state (hazeV2 state) (hazeV3 state)
+    (by simpa using ab) c
+  have abcd := RoutineSummary.runSteps_state_add 3 1 state (hazeV3 state) (hazeV4 state)
+    (by simpa using abc) d
+  have abcde := RoutineSummary.runSteps_state_add 4 1 state (hazeV4 state) (hazeV5 state)
+    (by simpa using abcd) e
+  have abcdef := RoutineSummary.runSteps_state_add 5 1 state (hazeV5 state) (hazeV6 state)
+    (by simpa using abcde) f
+  have firstSeven := RoutineSummary.runSteps_state_add 6 1 state (hazeV6 state)
+    (hazeV7 state) (by simpa using abcdef) g
+
+  have call1Step := RoutineSummary.step_callAbsolute (hazeV7 state) contract.q7.1
+    contract.q7.2.2 contract.q7.2.1 contract.call1
+  have call1Head := RoutineSummary.runSteps_after_first 9 (hazeV7 state) (hazeV8 state)
+    call1Step
+  have cure1 := cureVolatile_routine_exact (hazeV8 state) contract.cure1
+  have call1Body : (RoutineSummary.runSteps 10 (hazeV7 state)).state = hazeV9 state := by
+    rw [call1Head]
+    simpa [hazeV9] using cure1
+  have throughFirst := RoutineSummary.runSteps_state_add 7 10 state (hazeV7 state)
+    (hazeV9 state) (by simpa using firstSeven) call1Body
+
+  have h := oneStep (RoutineSummary.step_ldHlImmediate (hazeV9 state) contract.q9.1
+    contract.q9.2.2 contract.q9.2.1 contract.op21c)
+  have call2Step := RoutineSummary.step_callAbsolute (hazeV10 state) contract.q10.1
+    contract.q10.2.2 contract.q10.2.1 contract.call2
+  have call2Head := RoutineSummary.runSteps_after_first 9 (hazeV10 state) (hazeV11 state)
+    call2Step
+  have cure2 := cureVolatile_routine_exact (hazeV11 state) contract.cure2
+  have call2Body : (RoutineSummary.runSteps 10 (hazeV10 state)).state = hazeCleanup state := by
+    rw [call2Head]
+    simpa [hazeCleanup] using cure2
+  have second := RoutineSummary.runSteps_state_add 1 10 (hazeV9 state) (hazeV10 state)
+    (hazeCleanup state) h call2Body
+  exact RoutineSummary.runSteps_state_add 17 11 state (hazeV9 state) (hazeCleanup state)
+    (by simpa using throughFirst) (by simpa using second)
+
+/-! ## Complete gameplay-state paths through cleanup -/
+
+structure HazeEnemyClearContract (state : FunctionalState) : Prop where
+  reset : HazeResetPrefixContract state
+  target : HazeEnemyTargetContract (hazeResetPrefix state)
+  status : HazeStatusClearContract (hazeT5 (hazeResetPrefix state))
+  cleanup : HazeCleanupContract (hazeU4 (hazeT5 (hazeResetPrefix state)))
+
+structure HazeEnemyBlockedContract (state : FunctionalState) : Prop where
+  reset : HazeResetPrefixContract state
+  target : HazeEnemyTargetContract (hazeResetPrefix state)
+  status : HazeStatusBlockedContract (hazeT5 (hazeResetPrefix state))
+  cleanup : HazeCleanupContract (hazeStatusBlocked (hazeT5 (hazeResetPrefix state)))
+
+structure HazePlayerClearContract (state : FunctionalState) : Prop where
+  reset : HazeResetPrefixContract state
+  target : HazePlayerTargetContract (hazeResetPrefix state)
+  status : HazeStatusClearContract (hazePlayerTarget (hazeResetPrefix state))
+  cleanup : HazeCleanupContract (hazeU4 (hazePlayerTarget (hazeResetPrefix state)))
+
+structure HazePlayerBlockedContract (state : FunctionalState) : Prop where
+  reset : HazeResetPrefixContract state
+  target : HazePlayerTargetContract (hazeResetPrefix state)
+  status : HazeStatusBlockedContract (hazePlayerTarget (hazeResetPrefix state))
+  cleanup : HazeCleanupContract (hazeStatusBlocked (hazePlayerTarget (hazeResetPrefix state)))
+
+/-- Enemy target, with no sleep/freeze selected-move block. -/
+theorem haze_enemy_clear_exact (state : FunctionalState)
+    (contract : HazeEnemyClearContract state) :
+    (RoutineSummary.runSteps 184 state).state =
+      hazeCleanup (hazeU4 (hazeT5 (hazeResetPrefix state))) := by
+  have reset := haze_reset_prefix_exact state contract.reset
+  have target := (haze_enemy_target_exact (hazeResetPrefix state) contract.target).1
+  have status := (haze_status_clear_exact (hazeT5 (hazeResetPrefix state)) contract.status).1
+  have cleanup := haze_cleanup_exact (hazeU4 (hazeT5 (hazeResetPrefix state))) contract.cleanup
+  have a := RoutineSummary.runSteps_state_add 147 5 state (hazeResetPrefix state)
+    (hazeT5 (hazeResetPrefix state)) reset target
+  have b := RoutineSummary.runSteps_state_add 152 4 state
+    (hazeT5 (hazeResetPrefix state)) (hazeU4 (hazeT5 (hazeResetPrefix state)))
+    (by simpa using a) status
+  exact RoutineSummary.runSteps_state_add 156 28 state
+    (hazeU4 (hazeT5 (hazeResetPrefix state)))
+    (hazeCleanup (hazeU4 (hazeT5 (hazeResetPrefix state)))) (by simpa using b) cleanup
+
+/-- Enemy target, with sleep/freeze selected-move blocking. -/
+theorem haze_enemy_blocked_exact (state : FunctionalState)
+    (contract : HazeEnemyBlockedContract state) :
+    (RoutineSummary.runSteps 186 state).state =
+      hazeCleanup (hazeStatusBlocked (hazeT5 (hazeResetPrefix state))) := by
+  have reset := haze_reset_prefix_exact state contract.reset
+  have target := (haze_enemy_target_exact (hazeResetPrefix state) contract.target).1
+  have status := haze_status_blocked_exact (hazeT5 (hazeResetPrefix state)) contract.status
+  have cleanup := haze_cleanup_exact
+    (hazeStatusBlocked (hazeT5 (hazeResetPrefix state))) contract.cleanup
+  have a := RoutineSummary.runSteps_state_add 147 5 state (hazeResetPrefix state)
+    (hazeT5 (hazeResetPrefix state)) reset target
+  have b := RoutineSummary.runSteps_state_add 152 6 state
+    (hazeT5 (hazeResetPrefix state)) (hazeStatusBlocked (hazeT5 (hazeResetPrefix state)))
+    (by simpa using a) status
+  exact RoutineSummary.runSteps_state_add 158 28 state
+    (hazeStatusBlocked (hazeT5 (hazeResetPrefix state)))
+    (hazeCleanup (hazeStatusBlocked (hazeT5 (hazeResetPrefix state)))) (by simpa using b) cleanup
+
+/-- Player target, with no sleep/freeze selected-move block. -/
+theorem haze_player_clear_exact (state : FunctionalState)
+    (contract : HazePlayerClearContract state) :
+    (RoutineSummary.runSteps 186 state).state =
+      hazeCleanup (hazeU4 (hazePlayerTarget (hazeResetPrefix state))) := by
+  have reset := haze_reset_prefix_exact state contract.reset
+  have target := haze_player_target_exact (hazeResetPrefix state) contract.target
+  have status := (haze_status_clear_exact
+    (hazePlayerTarget (hazeResetPrefix state)) contract.status).1
+  have cleanup := haze_cleanup_exact
+    (hazeU4 (hazePlayerTarget (hazeResetPrefix state))) contract.cleanup
+  have a := RoutineSummary.runSteps_state_add 147 7 state (hazeResetPrefix state)
+    (hazePlayerTarget (hazeResetPrefix state)) reset target
+  have b := RoutineSummary.runSteps_state_add 154 4 state
+    (hazePlayerTarget (hazeResetPrefix state))
+    (hazeU4 (hazePlayerTarget (hazeResetPrefix state))) (by simpa using a) status
+  exact RoutineSummary.runSteps_state_add 158 28 state
+    (hazeU4 (hazePlayerTarget (hazeResetPrefix state)))
+    (hazeCleanup (hazeU4 (hazePlayerTarget (hazeResetPrefix state)))) (by simpa using b) cleanup
+
+/-- Player target, with sleep/freeze selected-move blocking. -/
+theorem haze_player_blocked_exact (state : FunctionalState)
+    (contract : HazePlayerBlockedContract state) :
+    (RoutineSummary.runSteps 188 state).state =
+      hazeCleanup (hazeStatusBlocked (hazePlayerTarget (hazeResetPrefix state))) := by
+  have reset := haze_reset_prefix_exact state contract.reset
+  have target := haze_player_target_exact (hazeResetPrefix state) contract.target
+  have status := haze_status_blocked_exact
+    (hazePlayerTarget (hazeResetPrefix state)) contract.status
+  have cleanup := haze_cleanup_exact
+    (hazeStatusBlocked (hazePlayerTarget (hazeResetPrefix state))) contract.cleanup
+  have a := RoutineSummary.runSteps_state_add 147 7 state (hazeResetPrefix state)
+    (hazePlayerTarget (hazeResetPrefix state)) reset target
+  have b := RoutineSummary.runSteps_state_add 154 6 state
+    (hazePlayerTarget (hazeResetPrefix state))
+    (hazeStatusBlocked (hazePlayerTarget (hazeResetPrefix state))) (by simpa using a) status
+  exact RoutineSummary.runSteps_state_add 160 28 state
+    (hazeStatusBlocked (hazePlayerTarget (hazeResetPrefix state)))
+    (hazeCleanup (hazeStatusBlocked (hazePlayerTarget (hazeResetPrefix state))))
+    (by simpa using b) cleanup
+
+/-! ## Presentation tail and external continuation boundary -/
+
+def hazeAnimationPointer (s : FunctionalState) := RoutineSummary.ldHlImmediate s
+def hazeCallBankF (s : FunctionalState) := RoutineSummary.callAbsolute (hazeAnimationPointer s)
+def hazeTextPointer (s : FunctionalState) := RoutineSummary.ldHlImmediate s
+def hazePrintText (s : FunctionalState) := RoutineSummary.jpAbsolute (hazeTextPointer s)
+
+/-- The remaining nonlocal obligation is isolated to `CallBankF` and the move
+animation it invokes. The contract records an exact architectural count rather
+than treating fuel exhaustion or an oracle result as semantics. -/
+structure HazePresentationContract (state returned : FunctionalState) (count : Nat) : Prop where
+  q0 : RoutineSummary.Quiet state
+  op21Animation : state.memory.read state.registers.pc = 0x21
+  q1 : RoutineSummary.Quiet (hazeAnimationPointer state)
+  opCallBankF : (hazeAnimationPointer state).memory.read
+    (hazeAnimationPointer state).registers.pc = 0xCD
+  callTarget : (hazeCallBankF state).registers.pc = 0x79D5
+  externalExecution : (RoutineSummary.runSteps count (hazeCallBankF state)).state = returned
+  returnedQuiet : RoutineSummary.Quiet returned
+  op21Text : returned.memory.read returned.registers.pc = 0x21
+  textQuiet : RoutineSummary.Quiet (hazeTextPointer returned)
+  opPrintText : (hazeTextPointer returned).memory.read
+    (hazeTextPointer returned).registers.pc = 0xC3
+  printTarget : (hazePrintText returned).registers.pc = 0x3C49
+
+/-- Conditional full tail refinement: enter canonical `CallBankF`, compose its
+explicit execution summary, and decode the final tail jump to `PrintText`. -/
+theorem haze_presentation_tail_exact (state returned : FunctionalState) (count : Nat)
+    (contract : HazePresentationContract state returned count) :
+    (RoutineSummary.runSteps (count + 4) state).state = hazePrintText returned ∧
+    (hazePrintText returned).registers.pc = 0x3C49 := by
+  have a := oneStep (RoutineSummary.step_ldHlImmediate state contract.q0.1
+    contract.q0.2.2 contract.q0.2.1 contract.op21Animation)
+  have b := oneStep (RoutineSummary.step_callAbsolute (hazeAnimationPointer state)
+    contract.q1.1 contract.q1.2.2 contract.q1.2.1 contract.opCallBankF)
+  have setup := RoutineSummary.runSteps_state_add 1 1 state (hazeAnimationPointer state)
+    (hazeCallBankF state) a b
+  have throughExternal := RoutineSummary.runSteps_state_add 2 count state
+    (hazeCallBankF state) returned (by simpa using setup) contract.externalExecution
+  have c := oneStep (RoutineSummary.step_ldHlImmediate returned contract.returnedQuiet.1
+    contract.returnedQuiet.2.2 contract.returnedQuiet.2.1 contract.op21Text)
+  have d := oneStep (RoutineSummary.step_jpAbsolute (hazeTextPointer returned)
+    contract.textQuiet.1 contract.textQuiet.2.2 contract.textQuiet.2.1 contract.opPrintText)
+  have finish := RoutineSummary.runSteps_state_add 1 1 returned (hazeTextPointer returned)
+    (hazePrintText returned) c d
+  constructor
+  · have all := RoutineSummary.runSteps_state_add (2 + count) 2 state returned
+      (hazePrintText returned) throughExternal (by simpa using finish)
+    simpa [Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using all
+  · exact contract.printTarget
+
+/-- Generic composition of any proved gameplay core with the presentation
+continuation. Instantiating `coreSteps` with 184, 186, or 188 yields the four
+turn/status paths above. -/
+theorem haze_core_to_print_exact (initial core returned : FunctionalState)
+    (coreSteps externalSteps : Nat)
+    (coreExecution : (RoutineSummary.runSteps coreSteps initial).state = core)
+    (presentation : HazePresentationContract core returned externalSteps) :
+    (RoutineSummary.runSteps (coreSteps + externalSteps + 4) initial).state =
+      hazePrintText returned := by
+  have tail := (haze_presentation_tail_exact core returned externalSteps presentation).1
+  have composed := RoutineSummary.runSteps_state_add coreSteps (externalSteps + 4)
+    initial core (hazePrintText returned) coreExecution tail
+  simpa [Nat.add_assoc] using composed
 
 structure RequiredHazeBytes (rom : Array Byte) : Prop where
   gameplayWindow : Tables.tableBytes rom
