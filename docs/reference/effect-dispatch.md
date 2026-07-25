@@ -276,7 +276,12 @@ and every pair of incoming status bytes reach the exact success-presentation or
 already-active-failure PC; successful paths set only the acting side's bit and
 failed paths preserve both bytes. Both complete prefixes also run continuously
 through fetched IR with exactly one successor overlap and equal projected state.
-The following animation/text tails still need frame/timing summaries.
+`Battle.Rom.ExplodeRoutine` proves the complete call-free `ExplodeEffect` body.
+Both sides and all status-2 bytes follow exact functional and continuous
+fetched-IR traces, zero only the acting HP/status row, clear only its Seeded bit,
+restore the caller stack, and retain the other side.
+
+The remaining animation/text tails still need frame/timing summaries.
 Whole-battle reachability and full Game Boy device lifting remain separate.
 
 ## Proof obligations

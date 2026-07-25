@@ -162,6 +162,11 @@ boundary and proves acting-side-only status writes before presentation code.
 Both prefixes additionally compose through continuous flat fetched-IR execution
 with one successor-fetch overlap.
 
+`Battle.Rom.ExplodeRoutine` adds the exact `ExplodeEffect` window at `0f:72f1`.
+Its complete functional and continuous fetched-IR summaries prove acting-side
+HP/status zeroing, Seeded-bit clearing, caller return, and other-side framing for
+all status-2 byte pairs.
+
 `Battle.Rom.CombatTables` closes three more mechanics-critical data seams: the
 four high-critical move IDs and terminator, all 82 ordered type-effect triples
 and terminator, and all 13 numerator/denominator stat-stage ratios. These are

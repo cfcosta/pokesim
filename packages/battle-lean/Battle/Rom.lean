@@ -10,4 +10,5 @@ import Battle.Rom.CombatTables
 import Battle.Rom.Mechanics
 import Battle.Rom.EffectRoutines
 import Battle.Rom.EffectPrefixes
+import Battle.Rom.ExplodeRoutine
 import Battle.Rom.Fixture
