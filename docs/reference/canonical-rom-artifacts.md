@@ -150,8 +150,10 @@ witnesses for `HyperBeamEffect` (`0f:79c1`), shared `ClearHyperBeam`
 (`0f:79cf`), and `RageEffect` (`0f:79df`). Its headline theorem decodes those
 supplied ROM bytes and proves the complete 18/20-M-cycle set-bit and 25/27-M-cycle
 clear-bit player/enemy bus traces and status summaries universally over all
-incoming status-byte pairs. These are de-overlapped functional CPU traces;
-continuous fetched-IR/system lifting remains separate.
+incoming status-byte pairs. The same routines are composed continuously through
+the flat fetched-IR adapter: each physical trace equals the functional trace
+plus one successor-fetch overlap and projects to the same registers/WRAM. Full
+Game Boy device-adapter reachability remains separate.
 
 `Battle.Rom.CombatTables` closes three more mechanics-critical data seams: the
 four high-critical move IDs and terminator, all 82 ordered type-effect triples

@@ -266,9 +266,11 @@ functional SM83 execution:
   Hyper Beam/Rage; `ClearHyperBeam` takes 25/27 M-cycles and also proves HL
   restoration.
 
-This closes those leaf bodies at the de-overlapped M-cycle layer. It does not yet
+These bodies are also run continuously through the flat fetched-IR adapter. The
+physical traces equal the functional traces plus exactly one overlapped successor
+fetch, with equal projected registers and affected WRAM. This still does not
 prove that whole-battle control flow reaches them under exactly the model's
-conditions, nor lift their traces through the physical fetched-IR adapter.
+conditions or lift the flat bus through the full Game Boy device adapter.
 
 ## Proof obligations
 

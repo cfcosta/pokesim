@@ -4,6 +4,7 @@ Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.Rom.Mechanics
 import Battle.Driver
+import Sm83.FlatAdapter
 
 /-!
 # Decoded leaf effect-routine executions
@@ -147,6 +148,35 @@ def decodedSummaryHolds (rom : Array Byte) (leaf : Leaf) (enemyTurn : Bool)
     (playerStatus enemyStatus : UInt8) : Bool :=
   summaryHoldsWith leaf (decodedBytes rom leaf) enemyTurn playerStatus enemyStatus
 
+/-! ## Continuous flat fetched-IR lifting -/
+
+private def physicalInitial (state : FunctionalState) : FlatCoreState :=
+  { core := {
+      Pipeline.bootstrap state.registers with
+      ime := state.ime
+      scheduledImeEnable := state.scheduledImeEnable
+      haltBug := state.haltBug }
+    memory := state.memory }
+
+private def physicalLeafSummaryHolds (leaf : Leaf) (enemyTurn : Bool)
+    (playerStatus enemyStatus : UInt8) : Bool :=
+  let functional := runWith leaf leaf.bytes enemyTurn playerStatus enemyStatus
+  let before := Driver.setupCall
+    (initialMemoryWith leaf leaf.bytes enemyTurn playerStatus enemyStatus)
+    leaf.entry sentinel.toNat.toUInt16 stackTop
+  let cycles := if enemyTurn then 21 else 19
+  let physical := FlatAdapter.run cycles (physicalInitial before) (fun _ _ => 0)
+  let projected := FlatAdapter.project physical
+  let expected := expectedTrace leaf enemyTurn playerStatus enemyStatus
+  Driver.reachedReturn functional &&
+    physical.trace == expected ++ [.read .opcode sentinel 0] &&
+    projected.registers == (Driver.finalState functional).registers &&
+    projected.mode == .running && physical.core.boundaryPC.isSome &&
+    Driver.toByte (physical.memory.read wPlayerBattleStatus2) ==
+      Driver.toByte ((Driver.finalState functional).memory.read wPlayerBattleStatus2) &&
+    Driver.toByte (physical.memory.read wEnemyBattleStatus2) ==
+      Driver.toByte ((Driver.finalState functional).memory.read wEnemyBattleStatus2)
+
 private def exhaustive (leaf : Leaf) : Bool :=
   (List.range 256).all fun player =>
     (List.range 256).all fun enemy =>
@@ -159,9 +189,40 @@ private theorem exhaustive_hyperBeam : exhaustive hyperBeam = true := by
 private theorem exhaustive_rage : exhaustive rage = true := by
   native_decide
 
+private def physicalExhaustive (leaf : Leaf) : Bool :=
+  (List.range 256).all fun player =>
+    (List.range 256).all fun enemy =>
+      physicalLeafSummaryHolds leaf false player.toUInt8 enemy.toUInt8 &&
+        physicalLeafSummaryHolds leaf true player.toUInt8 enemy.toUInt8
+
+private theorem physical_exhaustive_hyperBeam : physicalExhaustive hyperBeam = true := by
+  native_decide
+
+private theorem physical_exhaustive_rage : physicalExhaustive rage = true := by
+  native_decide
+
 private theorem of_exhaustive {leaf : Leaf} (checked : exhaustive leaf = true)
     (enemyTurn : Bool) (playerStatus enemyStatus : UInt8) :
     summaryHolds leaf enemyTurn playerStatus enemyStatus = true := by
+  have players := List.all_eq_true.mp checked
+  have player := players playerStatus.toNat
+    (List.mem_range.mpr (UInt8.toNat_lt playerStatus))
+  have enemies := List.all_eq_true.mp player
+  have both := enemies enemyStatus.toNat
+    (List.mem_range.mpr (UInt8.toNat_lt enemyStatus))
+  have playerRound : playerStatus.toNat.toUInt8 = playerStatus := by
+    apply UInt8.toNat.inj
+    simp
+  have enemyRound : enemyStatus.toNat.toUInt8 = enemyStatus := by
+    apply UInt8.toNat.inj
+    simp
+  simp only [playerRound, enemyRound] at both
+  cases enemyTurn <;> simp_all
+
+private theorem physical_of_exhaustive {leaf : Leaf}
+    (checked : physicalExhaustive leaf = true) (enemyTurn : Bool)
+    (playerStatus enemyStatus : UInt8) :
+    physicalLeafSummaryHolds leaf enemyTurn playerStatus enemyStatus = true := by
   have players := List.all_eq_true.mp checked
   have player := players playerStatus.toNat
     (List.mem_range.mpr (UInt8.toNat_lt playerStatus))
@@ -188,6 +249,19 @@ theorem hyperBeam_exact (enemyTurn : Bool) (playerStatus enemyStatus : UInt8) :
 theorem rage_exact (enemyTurn : Bool) (playerStatus enemyStatus : UInt8) :
     summaryHolds rage enemyTurn playerStatus enemyStatus = true :=
   of_exhaustive exhaustive_rage enemyTurn playerStatus enemyStatus
+
+/-- Continuous fetched-IR execution of the whole Hyper Beam tail matches the
+functional trace with exactly one overlapped successor fetch. -/
+theorem hyperBeam_physical_exact (enemyTurn : Bool)
+    (playerStatus enemyStatus : UInt8) :
+    physicalLeafSummaryHolds hyperBeam enemyTurn playerStatus enemyStatus = true :=
+  physical_of_exhaustive physical_exhaustive_hyperBeam enemyTurn playerStatus enemyStatus
+
+/-- Continuous fetched-IR execution of the whole Rage tail has the same lifting. -/
+theorem rage_physical_exact (enemyTurn : Bool)
+    (playerStatus enemyStatus : UInt8) :
+    physicalLeafSummaryHolds rage enemyTurn playerStatus enemyStatus = true :=
+  physical_of_exhaustive physical_exhaustive_rage enemyTurn playerStatus enemyStatus
 
 /-! ## Shared recharge-clearing leaf -/
 
@@ -258,6 +332,25 @@ private def clearSummaryHolds (enemyTurn : Bool)
     Driver.toByte (final.memory.read wPlayerBattleStatus2) == expectedPlayer &&
     Driver.toByte (final.memory.read wEnemyBattleStatus2) == expectedEnemy
 
+private def physicalClearSummaryHolds (enemyTurn : Bool)
+    (playerStatus enemyStatus : UInt8) : Bool :=
+  let functional := clearRun enemyTurn playerStatus enemyStatus
+  let before := Driver.setupCall
+    (clearInitialMemory enemyTurn playerStatus enemyStatus)
+    clearHyperBeamEntry sentinel.toNat.toUInt16 stackTop
+  let cycles := if enemyTurn then 28 else 26
+  let physical := FlatAdapter.run cycles (physicalInitial before) (fun _ _ => 0)
+  let projected := FlatAdapter.project physical
+  Driver.reachedReturn functional &&
+    physical.trace == clearExpectedTrace enemyTurn playerStatus enemyStatus ++
+      [.read .opcode sentinel 0] &&
+    projected.registers == (Driver.finalState functional).registers &&
+    projected.mode == .running && physical.core.boundaryPC.isSome &&
+    Driver.toByte (physical.memory.read wPlayerBattleStatus2) ==
+      Driver.toByte ((Driver.finalState functional).memory.read wPlayerBattleStatus2) &&
+    Driver.toByte (physical.memory.read wEnemyBattleStatus2) ==
+      Driver.toByte ((Driver.finalState functional).memory.read wEnemyBattleStatus2)
+
 private def clearExhaustive : Bool :=
   (List.range 256).all fun player =>
     (List.range 256).all fun enemy =>
@@ -267,12 +360,41 @@ private def clearExhaustive : Bool :=
 private theorem clear_exhaustive : clearExhaustive = true := by
   native_decide
 
+private def physicalClearExhaustive : Bool :=
+  (List.range 256).all fun player =>
+    (List.range 256).all fun enemy =>
+      physicalClearSummaryHolds false player.toUInt8 enemy.toUInt8 &&
+        physicalClearSummaryHolds true player.toUInt8 enemy.toUInt8
+
+private theorem physical_clear_exhaustive : physicalClearExhaustive = true := by
+  native_decide
+
 /-- `ClearHyperBeam` universally clears recharge on the target side, restores
 HL/SP, and follows the exact 25/27-M-cycle player/enemy trace. -/
 theorem clearHyperBeam_exact (enemyTurn : Bool)
     (playerStatus enemyStatus : UInt8) :
     clearSummaryHolds enemyTurn playerStatus enemyStatus = true := by
   have players := List.all_eq_true.mp clear_exhaustive
+  have player := players playerStatus.toNat
+    (List.mem_range.mpr (UInt8.toNat_lt playerStatus))
+  have enemies := List.all_eq_true.mp player
+  have both := enemies enemyStatus.toNat
+    (List.mem_range.mpr (UInt8.toNat_lt enemyStatus))
+  have playerRound : playerStatus.toNat.toUInt8 = playerStatus := by
+    apply UInt8.toNat.inj
+    simp
+  have enemyRound : enemyStatus.toNat.toUInt8 = enemyStatus := by
+    apply UInt8.toNat.inj
+    simp
+  simp only [playerRound, enemyRound] at both
+  cases enemyTurn <;> simp_all
+
+/-- The shared clear routine also composes continuously through fetched-IR
+execution with one successor-fetch overlap. -/
+theorem clearHyperBeam_physical_exact (enemyTurn : Bool)
+    (playerStatus enemyStatus : UInt8) :
+    physicalClearSummaryHolds enemyTurn playerStatus enemyStatus = true := by
+  have players := List.all_eq_true.mp physical_clear_exhaustive
   have player := players playerStatus.toNat
     (List.mem_range.mpr (UInt8.toNat_lt playerStatus))
   have enemies := List.all_eq_true.mp player
@@ -321,8 +443,14 @@ theorem canonical_leaf_effects_exact {sha256 : Sha256} {rom : CanonicalRom}
         decodedSummaryHolds rom.bytes hyperBeam enemyTurn playerStatus enemyStatus = true) ∧
       (∀ enemyTurn playerStatus enemyStatus,
         decodedSummaryHolds rom.bytes rage enemyTurn playerStatus enemyStatus = true) ∧
+      (∀ enemyTurn playerStatus enemyStatus,
+        clearSummaryHolds enemyTurn playerStatus enemyStatus = true) ∧
+      (∀ enemyTurn playerStatus enemyStatus,
+        physicalLeafSummaryHolds hyperBeam enemyTurn playerStatus enemyStatus = true) ∧
+      (∀ enemyTurn playerStatus enemyStatus,
+        physicalLeafSummaryHolds rage enemyTurn playerStatus enemyStatus = true) ∧
       ∀ enemyTurn playerStatus enemyStatus,
-        clearSummaryHolds enemyTurn playerStatus enemyStatus = true := by
+        physicalClearSummaryHolds enemyTurn playerStatus enemyStatus = true := by
   have hyperBytes : decodedBytes rom.bytes hyperBeam = hyperBeam.bytes := by
     simp only [decodedBytes, certificate.leaves.hyperBeamWindow, List.map_map]
     native_decide
@@ -330,7 +458,8 @@ theorem canonical_leaf_effects_exact {sha256 : Sha256} {rom : CanonicalRom}
     simp only [decodedBytes, certificate.leaves.rageWindow, List.map_map]
     native_decide
   refine ⟨certificate.leaves.hyperBeamWindow, certificate.leaves.rageWindow,
-    certificate.leaves.clearHyperBeamWindow, ?_, ?_, clearHyperBeam_exact⟩
+    certificate.leaves.clearHyperBeamWindow, ?_, ?_, clearHyperBeam_exact,
+    hyperBeam_physical_exact, rage_physical_exact, clearHyperBeam_physical_exact⟩
   · intro enemyTurn playerStatus enemyStatus
     simpa [decodedSummaryHolds, hyperBytes, summaryHolds] using
       hyperBeam_exact enemyTurn playerStatus enemyStatus
