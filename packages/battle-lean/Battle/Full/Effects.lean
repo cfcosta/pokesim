@@ -734,6 +734,19 @@ theorem ohko_accuracy_miss_fails (context : Context) :
     ⟨context, .failed, []⟩ : Outcome).signal = .failed
   rfl
 
+/-- A burn-capable Fire move defrosts an already frozen, unsubstituted target
+before consuming the side-effect probability byte. -/
+theorem fire_defrost_precedes_side_rng (context : Context) (damage : UInt16)
+    (noSubstitute : context.defender.volatile.hasSubstitute = false)
+    (statused : context.defender.active.status != 0)
+    (frozen : context.defender.active.frozen = true) :
+    let outcome := applyAfter Data.Effect.burnSide1 TypeChart.fire true false damage context
+    outcome.context.defender.active.status = 0 ∧ outcome.context.rng = context.rng := by
+  unfold applyAfter
+  rw [show (EffectPlan.plan Data.Effect.burnSide1).mechanic = .burnSide 26 by
+    native_decide]
+  simp [noSubstitute, statused, frozen, withDefender]
+
 /-- The drain handler does not inspect Substitute. Whenever the surrounding
 attack path permits the effect (including a surviving Substitute), healing is
 still half damage with minimum one and the max-HP cap. -/

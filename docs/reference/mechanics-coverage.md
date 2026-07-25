@@ -723,7 +723,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [ ] enemy PP not decremented
 - [ ] disabled-move/PP-Up-bit Struggle-selection anomaly
 - [ ] sleep wake consumes turn
-- [ ] frozen target Fire defrost asymmetry
+- [x] frozen target Fire defrost before side-effect RNG (`Battle.Full.Effects.fire_defrost_precedes_side_rng`)
 - [ ] Hyper Beam/status interactions, including Sleep bypass and freeze asymmetry
 - [x] healing move high-byte comparison overflow cases (`Battle.BugWitnesses.decoded_healing_false_failure_occurs`)
 - [ ] Rest full-HP failure before status cure and fixed two-turn sleep write
