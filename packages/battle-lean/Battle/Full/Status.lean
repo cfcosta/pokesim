@@ -56,6 +56,19 @@ def clearInterruptedLocks (volatile : Volatile) : Volatile :=
     bitMask Wram.BattleStatus1.usingTrappingMove
   { volatile with status1 := volatile.status1 &&& ~~~mask }
 
+/-- Every possible status-1 byte loses charging when an interrupted move is
+cleared, while its Fly/Dig invulnerability bit is preserved exactly. -/
+def interruptedChargeExhaustive : Bool :=
+  (List.range 256).all fun value =>
+    let volatile := { Volatile.clear with status1 := value.toUInt8 }
+    (clearInterruptedLocks volatile).chargingUp == false &&
+      (bitSet (clearInterruptedLocks volatile).status1 Wram.BattleStatus1.invulnerable ==
+        bitSet volatile.status1 Wram.BattleStatus1.invulnerable)
+
+theorem interrupted_charge_leaves_invulnerability :
+    interruptedChargeExhaustive = true := by
+  native_decide
+
 /-- A successful second charge turn clears both charging and invulnerability.
 Interrupted charge turns use `clearInterruptedLocks` and deliberately leave the
 invulnerability bit behind. -/

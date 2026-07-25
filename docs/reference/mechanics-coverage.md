@@ -701,7 +701,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 
 - [x] Focus Energy right shift (`Battle.BugWitnesses.focus_energy_occurs`)
 - [x] [exact percent-macro thresholds](probability-thresholds.md), comparison polarities, and boundary bytes
-- [ ] Fly/Dig attack-turn self-confusion/full paralysis/Disable clears charging but leaves invulnerability
+- [x] Fly/Dig attack-turn self-confusion/full paralysis/Disable clears charging but leaves invulnerability (`Battle.Full.Status.interrupted_charge_leaves_invulnerability`)
 - [ ] generated charge reloads selected wrapper/original move rather than retaining generated move identity
 - [x] threshold equality failure in accuracy/critical checks (`accuracy_boundary_occurs`, `critical_boundary_occurs`)
 - [x] Toxic + Leech Seed counter interaction (`Battle.Full.Status.toxic_leech_seed_ticks_twice`)
