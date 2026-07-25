@@ -199,6 +199,7 @@ private def rejectsBeforeAccuracy (mechanic : EffectPlan.Mechanic)
         (defender.active.type1 == TypeChart.ground ||
           defender.active.type2 == TypeChart.ground))
   | .confusion => defender.volatile.hasSubstitute
+  | .dreamEater => !defender.active.asleep
   | .statDown _ _ => defender.volatile.hasSubstitute ||
       bitSet defender.volatile.status2 Wram.BattleStatus2.protectedByMist
   | _ => false
