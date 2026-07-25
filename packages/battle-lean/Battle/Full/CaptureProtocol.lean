@@ -75,6 +75,15 @@ def construct (wild : MonState) (species : SpeciesId) (playerId : UInt16) :
     experience := Progression.experienceAtLevel rate wild.level
     statExp }
 
+theorem construct_preserves_wild_identity (wild : MonState) (species : SpeciesId)
+    (playerId : UInt16) :
+    let stored := construct wild species playerId
+    stored.battle.species = species ∧ stored.battle.hp = wild.hp ∧
+      stored.battle.status = wild.status ∧ stored.battle.dvs = wild.dvs ∧
+      stored.battle.level = wild.level ∧ stored.otId = playerId ∧
+      stored.statExp = { hp := 0, attack := 0, defense := 0, speed := 0, special := 0 } := by
+  simp [construct, Progression.calculateStats]
+
 /-- Choose destination using equality-only canonical capacity guards. -/
 def begin (partyCount _boxCount : UInt8) (tutorial : Bool)
     (wild : MonState) (species : SpeciesId) (playerId : UInt16) : Pending :=

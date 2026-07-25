@@ -551,10 +551,10 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 
 ## Capture
 
-- [ ] battle/trainer/box-capacity preconditions
-- [ ] eligible Master Ball unconditional success after still consuming the first `Random` result
-- [ ] Ghost/Marowak restrictions
-- [ ] ball-specific inclusive first-byte rejection ranges (255/200/150)
+- [x] battle/trainer/box-capacity preconditions (`Battle.Full.Capture.attempt`, `capacity_guard_exact`)
+- [x] eligible Master Ball unconditional success after still consuming the first `Random` result (`Battle.Full.Capture.master_consumes_rand1`)
+- [x] Ghost/Marowak restrictions (`Battle.Full.Capture.ghost_rejected_after_throw`)
+- [x] ball-specific inclusive first-byte rejection ranges (255/200/150) (`Battle.Full.Capture.rand1_boundaries`)
 - [ ] status subtraction and immediate success
 - [ ] `MaxHP × 255` arithmetic
 - [ ] ball factors
@@ -563,14 +563,14 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [ ] inclusive second comparison (`Rand2 <= X`)
 - [ ] failure shake-count arithmetic
 - [ ] status shake bonus
-- [ ] transformed capture forces Ditto, including non-Ditto wild Transform acquired through Mirror Move
-- [ ] preserve DVs/HP/status while rebuilding base types/catch rate/moves
-- [ ] captured OT ID, experience, zero stat EXP, level, and calculated stats
-- [ ] capture naming request before action return: decline/custom/empty-name default and timing
-- [ ] party capture appends; box capture inserts at slot 1 and shifts species/records/OT/nickname arrays
+- [x] transformed capture forces Ditto, including non-Ditto wild Transform acquired through Mirror Move (`Battle.Full.Capture.transformed_stores_ditto`)
+- [x] preserve DVs/HP/status while rebuilding base types/catch rate/moves (`Battle.Full.CaptureProtocol.construct_preserves_wild_identity`)
+- [x] captured OT ID, experience, zero stat EXP, level, and calculated stats (`Battle.Full.CaptureProtocol.construct`, `construct_preserves_wild_identity`)
+- [x] capture naming request before action return: decline/custom/empty-name default and timing (`Battle.Full.CaptureProtocol.Pending`, `NameResponse`, `preStore`, `finishName`)
+- [x] party capture appends; box capture inserts at slot 1 and shifts species/records/OT/nickname arrays (`Battle.Full.CaptureProtocol.box_slot_one_exact`, `box_parallel_sizes`)
 - [ ] pre-name Pokédex/partial party-or-box state, deferred ordinary-ball removal versus prior Safari decrement, and post-name record construction order
 - [ ] Pokédex seen/owned flags
-- [ ] exact party append versus current-box slot-1 insertion with parallel-array ordering
+- [x] exact party append versus current-box slot-1 insertion with parallel-array ordering (`Battle.Full.CaptureProtocol.box_slot_one_exact`, `box_parallel_sizes`)
 - [x] ordinary/Safari/Old Man ball removal and capture-naming distinctions (Old Man skips naming/storage) (`Battle.Full.CaptureProtocol.tutorial_skips_storage_and_naming`)
 - [x] Old Man menu saves player name into aliased `wGrassRate`/wild buffer, writes `OLD MAN`, and ball path restores only player name (`Battle.Full.OldMan.capture_restores_name_but_retains_alias`)
 - [ ] battle result mutation

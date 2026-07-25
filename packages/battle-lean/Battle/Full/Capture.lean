@@ -29,6 +29,12 @@ def Ball.ofItem (item : UInt8) : Option Ball :=
   | 8 => some .safari
   | _ => none
 
+theorem canonical_ball_ids :
+    Ball.ofItem 1 = some .master ∧ Ball.ofItem 2 = some .ultra ∧
+    Ball.ofItem 3 = some .great ∧ Ball.ofItem 4 = some .poke ∧
+    Ball.ofItem 8 = some .safari := by
+  native_decide
+
 private def rand1Limit : Ball → Nat
   | .master | .poke => 255
   | .great => 200
@@ -136,6 +142,22 @@ theorem capacity_guard_exact (input : Input)
     (notTutorial : input.oldManTutorial = false) :
     attempt input = .rejectedCapacity := by
   simp [attempt, trainer, partyFull, boxFull, notTutorial]
+
+theorem ghost_rejected_after_throw (input : Input)
+    (trainer : input.trainerBattle = false)
+    (capacity : ¬(input.partyCount = 6 ∧ input.boxCount = 20 ∧ input.oldManTutorial = false))
+    (ghost : input.ghostBattle = true) :
+    attempt input = .rejectedGhost := by
+  simp [attempt, trainer, ghost]
+  cases tutorial : input.oldManTutorial <;> simp_all
+
+/-- Inclusive cartridge boundaries for each first-byte rejection class. -/
+theorem rand1_boundaries :
+    rand1Accepted .poke 255 = true ∧ rand1Accepted .master 255 = true ∧
+    rand1Accepted .great 200 = true ∧ rand1Accepted .great 201 = false ∧
+    rand1Accepted .ultra 150 = true ∧ rand1Accepted .ultra 151 = false ∧
+    rand1Accepted .safari 150 = true := by
+  native_decide
 
 /-- Capturing a transformed wild target stores Ditto. -/
 private def transformedWitness : Input :=
