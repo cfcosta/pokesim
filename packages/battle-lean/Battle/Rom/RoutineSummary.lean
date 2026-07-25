@@ -97,6 +97,113 @@ theorem step_legal_trace (state : FunctionalState) (opcode : Byte)
     (Functional.step state).trace = (legalResult state opcode shape).trace := by
   rw [step_legal state opcode shape running opcodeAtPc decoded]
 
+private def advancePc (state : FunctionalState) : Registers :=
+  { state.registers with pc := Word.ofNat (state.registers.pc.toNat + 1) }
+
+/-- State transformer for `LD A,[HL+]`. -/
+def ldAFromHlInc (s : FunctionalState) : FunctionalState :=
+  let registers := (advancePc s).setHL (Word.ofNat (s.registers.hl.toNat + 1))
+  let registers := { registers with a := s.memory.read s.registers.hl }
+  let s := { s with registers }
+  { s with haltBug := false }
+
+/-- State transformer for `LD [DE],A`. -/
+def ldAtDeA (s : FunctionalState) : FunctionalState :=
+  let memory := s.memory.write s.registers.de s.registers.a
+  let s := { s with registers := advancePc s }
+  let s := { s with memory }
+  { s with haltBug := false }
+
+/-- State transformer for `INC DE`. -/
+def incDe (s : FunctionalState) : FunctionalState :=
+  let registers := (advancePc s).setDE (Word.ofNat (s.registers.de.toNat + 1))
+  let s := { s with registers }
+  { s with haltBug := false }
+
+/-- State transformer for `DEC B`, including exact flags. -/
+def decB (s : FunctionalState) : FunctionalState :=
+  let registers := advancePc s
+  let result := Alu.dec8 registers.b registers.flags
+  let registers := registers.set8 .b result.value
+  let registers := { registers with flags := result.flags }
+  let s := { s with registers }
+  { s with haltBug := false }
+
+/-- State transformer for `JR NZ,e8`. -/
+def jrNz (state : FunctionalState) : FunctionalState :=
+  let afterOpcode := Word.ofNat (state.registers.pc.toNat + 1)
+  let afterImmediate := Word.ofNat (afterOpcode.toNat + 1)
+  let registers := { state.registers with pc := afterImmediate }
+  let registers := if Alu.conditionHolds .nz registers.flags then
+    { registers with pc := (registers.pc.addSignedByte
+      (state.memory.read (Word.ofNat (state.registers.pc.toNat + 1)))) }
+    else registers
+  { state with registers, haltBug := false }
+
+macro "routine_instruction_simp" : tactic => `(tactic|
+  simp [legalResult, InstructionShape.immediateBytes, Functional.fetchImmediate,
+    Functional.executeShape, Functional.readMem16, Functional.writeMem16,
+    Functional.read, Functional.write, Functional.idle, Functional.withRegisters,
+    Functional.updateMemoryPointer, Functional.memoryAddress, Functional.readTarget,
+    Functional.writeTarget, Functional.matureIme, Functional.setFlags,
+    Registers.setHL, Registers.setDE, Registers.hl, Registers.de, Registers.set8,
+    Registers.set16, Registers.get16, Registers.get8, Functional.immediate8,
+    Word.highByte, Word.lowByte, advancePc, ldAFromHlInc, ldAtDeA, incDe, decB,
+    jrNz, *])
+
+/-- Exact decoded `LD A,[HL+]` state equation. -/
+theorem step_ldAFromHlInc (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0x2A) :
+    (Functional.step state).state = ldAFromHlInc state := by
+  have decoded : Decode.base (0x2A : Byte) = .legal (.ldAFromMem16 .atHLInc) := by
+    native_decide
+  rw [step_legal_state state 0x2A _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `LD [DE],A` state equation. -/
+theorem step_ldAtDeA (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0x12) :
+    (Functional.step state).state = ldAtDeA state := by
+  have decoded : Decode.base (0x12 : Byte) = .legal (.ldMem16A .atDE) := by
+    native_decide
+  rw [step_legal_state state 0x12 _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `INC DE` state equation. -/
+theorem step_incDe (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0x13) :
+    (Functional.step state).state = incDe state := by
+  have decoded : Decode.base (0x13 : Byte) = .legal (.inc16 .de) := by native_decide
+  rw [step_legal_state state 0x13 _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `DEC B` state equation. -/
+theorem step_decB (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0x05) :
+    (Functional.step state).state = decB state := by
+  have decoded : Decode.base (0x05 : Byte) = .legal (.dec8 (.reg .b)) := by native_decide
+  rw [step_legal_state state 0x05 _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `JR NZ,e8` state equation. -/
+theorem step_jrNz (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0x20) :
+    (Functional.step state).state = jrNz state := by
+  have decoded : Decode.base (0x20 : Byte) = .legal (.jrCond .nz) := by native_decide
+  rw [step_legal_state state 0x20 _ running opcode decoded]
+  routine_instruction_simp
+  split <;> rfl
+
 /-- A write-set frame composes through an explicit intermediate state. -/
 theorem frames_trans {first middle last : FunctionalState}
     {leftWrites rightWrites : Word → Prop}
