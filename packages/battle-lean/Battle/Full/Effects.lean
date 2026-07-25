@@ -307,23 +307,41 @@ private def multiHitCount (context : Context) : UInt8 × Context × List Event :
 private def disable (context : Context) : Outcome :=
   if context.defender.volatile.disabledMove != 0 then ⟨context, .failed, []⟩
   else
-    let eligible := (Array.range Wram.numMoves).filter fun slot =>
-      context.defender.active.moves.getD slot 0 != 0 &&
-        (context.mode != .link ||
-          (context.defender.active.pp.getD slot 0 &&& Wram.ppMask) != 0)
-    if eligible.isEmpty then ⟨context, .failed, []⟩
-    else
-      let (slotRaw, rng) := context.rng.next
-      let slot := eligible.getD (slotRaw.toNat % eligible.size) 0
-      let (turnRaw, rng) := rng.next
-      let turns := (turnRaw &&& 7) + 1
-      let move := context.defender.active.moves.getD slot 0
-      let packed := ((slot + 1) * 16).toUInt8 + turns
-      let volatile := { context.defender.volatile with
-        disabledMove := packed, disabledMoveNumber := move }
-      ⟨setDefenderVolatile { context with rng } volatile, .continue,
-        [.rawRng "disable-slot" slotRaw, .rawRng "disable-turns" turnRaw,
-         .disabled move turns]⟩
+    let nonblank := fun raw =>
+      context.defender.active.moves.getD (raw &&& 3).toNat 0 != 0
+    match drawAccepted 2305 context.rng nonblank "disable-slot" with
+    | none => ⟨context, .rngStuck, [.signal .rngStuck]⟩
+    | some (firstRaw, firstRng, firstEvents) =>
+        let firstSlot := (firstRaw &&& 3).toNat
+        let limitedPp := !(context.attackerSide == .player && context.mode != .link)
+        let anyPp := (Array.range Wram.numMoves).any fun slot =>
+          (context.defender.active.pp.getD slot 0 &&& Wram.ppMask) != 0
+        if limitedPp && !anyPp then
+          ⟨{ context with rng := firstRng }, .failed, firstEvents⟩
+        else
+          let selectedHasPp :=
+            (context.defender.active.pp.getD firstSlot 0 &&& Wram.ppMask) != 0
+          let picked := if limitedPp && !selectedHasPp then
+            drawAccepted 2305 firstRng (fun raw =>
+              let slot := (raw &&& 3).toNat
+              context.defender.active.moves.getD slot 0 != 0 &&
+                (context.defender.active.pp.getD slot 0 &&& Wram.ppMask) != 0)
+              "disable-slot"
+            else some (firstRaw, firstRng, [])
+          match picked with
+          | none => ⟨{ context with rng := firstRng }, .rngStuck,
+              firstEvents ++ [.signal .rngStuck]⟩
+          | some (slotRaw, rng, laterEvents) =>
+              let slot := (slotRaw &&& 3).toNat
+              let (turnRaw, rng) := rng.next
+              let turns := (turnRaw &&& 7) + 1
+              let move := context.defender.active.moves.getD slot 0
+              let packed := ((slot + 1) * 16).toUInt8 + turns
+              let volatile := { context.defender.volatile with
+                disabledMove := packed, disabledMoveNumber := move }
+              ⟨setDefenderVolatile { context with rng } volatile, .continue,
+                firstEvents ++ laterEvents ++ [.rawRng "disable-turns" turnRaw,
+                  .disabled move turns]⟩
 
 private def hazeOutcome (context : Context) : Outcome :=
   let targetWasIncapacitated := context.defender.active.asleep ||

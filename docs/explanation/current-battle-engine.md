@@ -229,7 +229,7 @@ Nonvolatile status is one byte:
 - bit 5: freeze;
 - bit 6: paralysis.
 
-Volatile state uses three additional flag bytes per side plus dedicated counters. Status gates are checked in an explicit order: sleep, freeze, trapping, flinch, recharge, Disable expiration, confusion, selected-disabled-move, paralysis, Bide, Thrash, trapping continuation, and Rage. This order determines which counters decrement and which random calls occur.
+Volatile state uses three additional flag bytes per side plus dedicated counters. Status gates are checked in an explicit order: sleep, freeze, trapping, flinch, recharge, Disable expiration, confusion, selected-disabled-move, paralysis, Bide, Thrash, trapping continuation, and Rage. This order determines which counters decrement and which random calls occur. Disable first rejects an occupied Disable slot, then repeatedly samples `raw & 3` until the selected move is nonblank. Player targets and link-battle enemy targets additionally test PP: the first accepted nonblank draw occurs before the all-zero-PP failure, while a zero-PP selected slot restarts the raw-slot loop. Ordinary enemy targets skip PP checks entirely. Only an accepted slot is followed by the independent 1–8 turn draw.
 
 For example, waking from sleep consumes the turn in Red/Blue. Confusion is checked before paralysis. Self-confusion first reduces battle-status byte 1 to the `CONFUSED` bit alone, and self-confusion/full paralysis then clear selected multi-turn states. Freeze has no natural thaw roll; qualifying Fire-type side-effect moves can defrost a target through `CheckDefrost`.
 
