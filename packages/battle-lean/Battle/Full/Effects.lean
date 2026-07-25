@@ -175,9 +175,11 @@ private def raiseStage (context : Context) (stat amount : Nat) : Outcome :=
       let context := withDefender (withAttacker context attacker) defender
       ⟨context, .continue, [.stageChanged context.attackerSide stat amount]⟩
 
-private def lowerStage (context : Context) (stat amount : Nat) : Outcome :=
+private def lowerStage (context : Context) (stat amount : Nat)
+    (respectMist : Bool := true) : Outcome :=
   if context.defender.volatile.hasSubstitute ||
-      bitSet context.defender.volatile.status2 Wram.BattleStatus2.protectedByMist then
+      (respectMist && bitSet context.defender.volatile.status2
+        Wram.BattleStatus2.protectedByMist) then
     ⟨context, .failed, []⟩
   else
     let old := getStage context.defender.stages stat
@@ -595,11 +597,19 @@ def applyAfter (effect moveType : UInt8) (hit targetFainted : Bool)
   | .statDownSide stat =>
       if !hit then { context := context }
       else
-        let (success, context, event) := sideChance 85 context
-        if success then
-          let out := lowerStage context stat 1
-          { out with events := event :: out.events }
-        else ⟨context, .continue, [event]⟩
+        let (gatePass, context, gateEvents) :=
+          if context.attackerSide == .enemy && context.mode != .link then
+            let (raw, rng) := context.rng.next
+            (raw ≥ 64, { context with rng }, [.rawRng "enemy-stat-down-gate" raw])
+          else (true, context, [])
+        if !gatePass || context.defender.volatile.hasSubstitute then
+          ⟨context, .continue, gateEvents⟩
+        else
+          let (success, context, event) := sideChance 85 context
+          if success then
+            let out := lowerStage context stat 1 false
+            { out with events := gateEvents ++ (event :: out.events) }
+          else ⟨context, .continue, gateEvents ++ [event]⟩
   | .hyperBeam =>
       if hit && !targetFainted then
         let volatile := { context.attacker.volatile with

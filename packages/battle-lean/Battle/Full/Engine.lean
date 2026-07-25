@@ -199,6 +199,8 @@ private def rejectsBeforeAccuracy (mechanic : EffectPlan.Mechanic)
         (defender.active.type1 == TypeChart.ground ||
           defender.active.type2 == TypeChart.ground))
   | .confusion => defender.volatile.hasSubstitute
+  | .statDown _ _ => defender.volatile.hasSubstitute ||
+      bitSet defender.volatile.status2 Wram.BattleStatus2.protectedByMist
   | _ => false
 
 private def resolveAccuracy (mechanic : EffectPlan.Mechanic) (move : Step.ResolvedMove)
@@ -447,8 +449,17 @@ let damageResult := if continuedBide then
 match damageResult with
 | .error _ => .divisionFreeze state critEvents
 | .ok (damage, rng, damageEvents, typeMiss) =>
+    let (handlerGateHit, rng, handlerGateEvents) :=
+      if who == .enemy && state.battle.mode != .link then
+        match mechanic with
+        | .statDown _ _ =>
+            let (raw, rng) := rng.next
+            (raw ≥ 64, rng, [.rng "enemy-stat-down-gate" raw])
+        | _ => (true, rng, [])
+      else (true, rng, [])
     let (accuracyHit, rng, accuracyEvents) :=
-      if rejectsBeforeAccuracy mechanic move defenderFull.active then (false, rng, [])
+      if !handlerGateHit || rejectsBeforeAccuracy mechanic move defenderFull.active then
+        (false, rng, [])
       else if continuedTrap || (mechanic == .sleep && defenderFull.active.volatile.recharging) then
         (true, rng, [])
       else if requiresAccuracy mechanic move.power then
@@ -465,8 +476,8 @@ match damageResult with
     let state := if before.signal == .cancelTargetMove then
       { state with canceledAction := some who.other } else state
     match before.signal with
-    | .rngStuck => .rngStuck state (critEvents ++ damageEvents ++ accuracyEvents ++
-        before.events.map .effect)
+    | .rngStuck => .rngStuck state (critEvents ++ damageEvents ++ handlerGateEvents ++
+        accuracyEvents ++ before.events.map .effect)
     | .charging _ => .transitioned (setLastMove state who moveId)
         (critEvents ++ before.events.map .effect)
     | .escaped =>
@@ -479,7 +490,8 @@ match damageResult with
     | .failed =>
         let state := setLastMove state who moveId
         let (state, events) := applyResidual state who
-        .transitioned state (critEvents ++ accuracyEvents ++ before.events.map .effect ++ events)
+        .transitioned state (critEvents ++ damageEvents ++ handlerGateEvents ++
+          accuracyEvents ++ before.events.map .effect ++ events)
     | _ =>
         let damage := if hit then damage else 0
         let totalHits := if !hit then 1 else match before.signal with
@@ -501,7 +513,8 @@ match damageResult with
         let after := Effects.applyAfter effect move.type hit targetFainted lastActual context
         let state := setLastMove (installEffectsContext finalState who after.context) who moveId
         let (state, lockEvents) := advanceMoveLock state who
-        let events := critEvents ++ damageEvents ++ accuracyEvents ++ before.events.map .effect ++
+        let events := critEvents ++ damageEvents ++ handlerGateEvents ++ accuracyEvents ++
+          before.events.map .effect ++
           applied.events ++ extra.events ++ after.events.map .effect ++ lockEvents
         if targetFainted then
           let (state, faintEvents) := recordFaint state who.other
