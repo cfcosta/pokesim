@@ -170,8 +170,11 @@ code, stack, and per-loop contracts. The four `haze_*_exact` path theorems
 continue through turn-dependent target selection, nonvolatile-status handling,
 and both volatile-status helper returns. `haze_core_to_print_exact` reaches the
 canonical `PrintText` entry once its named exact `CallBankF`/animation execution
-contract is supplied; proving that external presentation contract remains a
-separate obligation.
+contract is supplied. `Battle.Rom.HazeDispatchRoutine` additionally decodes
+`_JumpMoveEffect` for both acting sides: effect `$19` becomes slot `$18`, byte
+offset `$30`, and wrapper target `$7B1E` in 14/15 instructions. Proving the
+external `Bankswitch` and presentation contracts remains a separate system-level
+obligation.
 
 `Battle.Rom.EffectRoutines.CanonicalLeafEffectsBytes` adds exact code-window
 witnesses for `HyperBeamEffect` (`0f:79c1`), shared `ClearHyperBeam`

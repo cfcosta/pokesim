@@ -328,11 +328,12 @@ fetched-IR traces end at the copy/failure boundaries.
 `Battle.Rom.HazeRoutine` compositionally proves the three helper routines and
 all four turn/status gameplay paths through both volatile-status returns. The
 paths take 184, 186, 186, or 188 architectural instructions from `HazeEffect_`
-entry. Its canonical certificate also fixes effect `$19` pointer slot `$18` to
-wrapper `$7B1E`; the wrapper's three decoded instructions load target `$79DA`,
-bank `$04`, and tail-jump to `Bankswitch`. The latter routine and `CallBankF`
-animation remain named external execution contracts rather than assumed local
-steps.
+entry. `Battle.Rom.HazeDispatchRoutine` proves player and enemy effect `$19`
+selection reach wrapper `$7B1E` in 14 and 15 decoded instructions respectively;
+the pointer tail derives zero-based slot `$18` and byte offset `$30`. The
+wrapper's three decoded instructions load target `$79DA`, bank `$04`, and
+jump to `Bankswitch`. That MBC transition and the later `CallBankF` animation
+remain named external execution contracts rather than assumed flat-memory steps.
 
 The remaining animation/text tails still need frame/timing summaries.
 Whole-battle reachability and full Game Boy device lifting remain separate.
