@@ -346,7 +346,7 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [ ] Minimize state where it affects mechanics/presentation branch only
 - [ ] elemental side-effect immunity when move type equals either target type, including Body Slam versus Normal
 - [x] SleepEffect clears target recharge before accuracy/existing-status checks (`Battle.Full.Effects.sleep_always_clears_recharge`)
-- [ ] player freeze side effect clears enemy recharge; enemy freeze does not mirror it
+- [x] player freeze side effect clears enemy recharge; enemy freeze does not mirror it (`Battle.Full.Effects.freeze_recharge_asymmetry`)
 - [ ] Haze preserves Transform and raw status-3 high bits while clearing Toxic/screens and selected volatile flags
 - [ ] Haze copies unmodified stats without reapplying retained burn/paralysis or badge modifiers
 - [ ] Rest leaves `BADLY_POISONED` and Toxic counter state intact while writing fixed sleep 2

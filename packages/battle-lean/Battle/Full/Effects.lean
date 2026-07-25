@@ -758,6 +758,43 @@ theorem ohko_accuracy_miss_fails (context : Context) :
     ⟨context, .failed, []⟩ : Outcome).signal = .failed
   rfl
 
+/-- Successful freeze clears target recharge only for a player attacker. The
+enemy-attacker branch retains the target's incoming recharge bit. -/
+theorem freeze_recharge_asymmetry (context : Context) (damage : UInt16)
+    (noSubstitute : context.defender.volatile.hasSubstitute = false)
+    (healthy : context.defender.active.status = 0)
+    (type1 : context.defender.active.type1 != TypeChart.ice)
+    (type2 : context.defender.active.type2 != TypeChart.ice)
+    (success : context.rng.next.1 < (26 : UInt8)) :
+    let outcome := applyAfter Data.Effect.freezeSide1 TypeChart.ice true false damage context
+    (context.attackerSide = .player →
+      outcome.context.defender.volatile.recharging = false) ∧
+    (context.attackerSide = .enemy → outcome.context.defender.volatile.recharging =
+      context.defender.volatile.recharging) := by
+  have type1Ne : context.defender.active.type1 ≠ TypeChart.ice := by
+    intro equal
+    simp [equal] at type1
+  have type2Ne : context.defender.active.type2 ≠ TypeChart.ice := by
+    intro equal
+    simp [equal] at type2
+  have playerSelf : (Side.player == Side.player) = true := by native_decide
+  have enemyPlayer : (Side.enemy == Side.player) = false := by native_decide
+  have freezeNotBurn : mask Wram.Status.frz ≠ mask Wram.Status.brn := by native_decide
+  have freezeNotParalyze : mask Wram.Status.frz ≠ mask Wram.Status.par := by native_decide
+  constructor <;> intro side
+  · unfold applyAfter
+    rw [show (EffectPlan.plan Data.Effect.freezeSide1).mechanic = .freezeSide 26 by
+      native_decide]
+    simp [side, playerSelf, freezeNotBurn, freezeNotParalyze, noSubstitute,
+      healthy, type1Ne, type2Ne, sideChance, success, applyMajorStatus,
+      withDefender, setDefenderVolatile, Volatile.recharging, recharge_clear_bit]
+  · unfold applyAfter
+    rw [show (EffectPlan.plan Data.Effect.freezeSide1).mechanic = .freezeSide 26 by
+      native_decide]
+    simp [side, enemyPlayer, freezeNotBurn, freezeNotParalyze, noSubstitute,
+      healthy, type1Ne, type2Ne, sideChance, success, applyMajorStatus,
+      withDefender, Volatile.recharging]
+
 /-- A burn-capable Fire move defrosts an already frozen, unsubstituted target
 before consuming the side-effect probability byte. -/
 theorem fire_defrost_precedes_side_rng (context : Context) (damage : UInt16)
