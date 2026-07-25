@@ -49,6 +49,7 @@ structure AwardSource where
   baseDefense : UInt8
   baseSpeed : UInt8
   baseSpecial : UInt8
+  catchRate : UInt8
   baseExp : UInt8
   level : UInt8
   deriving Repr, DecidableEq, BEq
@@ -98,7 +99,7 @@ def levelFromExperience (rate : GrowthRate) (experience : UInt32) : UInt8 :=
 private def saturatingAdd16 (a : UInt16) (b : UInt8) : UInt16 :=
   UInt16.ofNat (min 0xFFFF (a.toNat + b.toNat))
 
-private def divideByte (value recipients : UInt8) : UInt8 :=
+def divideByte (value recipients : UInt8) : UInt8 :=
   if recipients < 2 then value else UInt8.ofNat (value.toNat / recipients.toNat)
 
 /-- `DivideExpDataByNumMonsGainingExp` destructively divides all five base stats
@@ -110,9 +111,10 @@ def divideSource (source : AwardSource) (recipients : UInt8) : AwardSource :=
     baseDefense := divideByte source.baseDefense recipients
     baseSpeed := divideByte source.baseSpeed recipients
     baseSpecial := divideByte source.baseSpecial recipients
+    catchRate := divideByte source.catchRate recipients
     baseExp := divideByte source.baseExp recipients }
 
-private def boost (experience : Nat) : Nat := experience + experience / 2
+def boost (experience : Nat) : Nat := experience + experience / 2
 
 /-- Per-recipient experience amount with traded and trainer boosts applied in
 source order, preserving intermediate flooring. -/
@@ -156,6 +158,10 @@ def calculateStats (data : Data.SpeciesData) (mon : MonState) (statExp : StatExp
     speed := statFormula data.baseSpd.toNat (spdDv mon.dvs) statExp.speed level false
     special := statFormula data.baseSpc.toNat (spcDv mon.dvs) statExp.special level false }
 
+def firstExactLevelMove (moves : Array Data.Progression.LevelMove) (level : UInt8) :
+    Option Data.Progression.LevelMove :=
+  moves.find? fun entry => entry.level == level
+
 /-- Award one living flagged recipient. Callers perform gain-flag/fainted
 filtering and supply the species growth row. -/
 def award (rate : GrowthRate) (species : Data.SpeciesData) (source : AwardSource)
@@ -176,13 +182,68 @@ def award (rate : GrowthRate) (species : Data.SpeciesData) (source : AwardSource
   let hpDelta := recalculated.maxHp - mon.battle.maxHp
   let battle := { recalculated with hp := mon.battle.hp + hpDelta }
   let row := Data.Progression.rows.getD mon.battle.species.toNat { evolutions := #[], levelMoves := #[] }
-  let learned := row.levelMoves.find? (fun entry => entry.level == newLevel)
+  let learned := firstExactLevelMove row.levelMoves newLevel
   { mon := { mon with battle, experience, statExp }
     expGained := gained
     levelsGained := newLevel - oldLevel
     requests := if newLevel != oldLevel then
       learned.map (fun entry => [.learnMove partyIndex entry.move]) |>.getD []
       else [] }
+
+theorem divide_source_all_fields (source : AwardSource) (recipients : UInt8) :
+    divideSource source recipients =
+      { source with
+        baseHp := divideByte source.baseHp recipients
+        baseAttack := divideByte source.baseAttack recipients
+        baseDefense := divideByte source.baseDefense recipients
+        baseSpeed := divideByte source.baseSpeed recipients
+        baseSpecial := divideByte source.baseSpecial recipients
+        catchRate := divideByte source.catchRate recipients
+        baseExp := divideByte source.baseExp recipients } := by
+  rfl
+
+/-- Experience is capped at the exact level-100 threshold. -/
+theorem award_experience_capped (rate : GrowthRate) (species : Data.SpeciesData)
+    (source : AwardSource) (context : AwardContext) (mon : PersistentMon)
+    (partyIndex : Nat) :
+    (award rate species source context mon partyIndex).mon.experience ≤
+      experienceAtLevel rate 100 := by
+  simp only [award]
+  unfold Min.min instMinUInt32 minOfLe
+  change (if experienceAtLevel rate 100 ≤
+      mon.experience + UInt32.ofNat (experienceAward source context mon.otId).toNat then
+    experienceAtLevel rate 100
+  else mon.experience + UInt32.ofNat (experienceAward source context mon.otId).toNat) ≤
+    experienceAtLevel rate 100
+  split
+  · rw [UInt32.le_iff_toNat_le]
+    omega
+  · rename_i notLe
+    rw [UInt32.le_iff_toNat_le] at notLe ⊢
+    omega
+
+/-- Current HP receives exactly the recalculated Max-HP delta. -/
+theorem award_hp_delta (rate : GrowthRate) (species : Data.SpeciesData)
+    (source : AwardSource) (context : AwardContext) (mon : PersistentMon)
+    (partyIndex : Nat) :
+    let result := award rate species source context mon partyIndex
+    result.mon.battle.hp = mon.battle.hp +
+      (result.mon.battle.maxHp - mon.battle.maxHp) := by
+  rfl
+
+/-- Exact-level lookup takes the first physical row and never scans skipped
+levels as substitute offers. -/
+theorem first_exact_level_move_witness :
+    let rows : Array Data.Progression.LevelMove :=
+      #[{ level := 5, move := 1 }, { level := 5, move := 2 }, { level := 7, move := 3 }]
+    firstExactLevelMove rows 5 = some { level := 5, move := 1 } ∧
+    firstExactLevelMove rows 6 = none := by
+  native_decide
+
+/-- Each growth curve decodes its own level-100 threshold back to level 100. -/
+theorem growth_level_100_roundtrip (rate : GrowthRate) :
+    levelFromExperience rate (experienceAtLevel rate 100) = 100 := by
+  cases rate <;> native_decide
 
 inductive EvolutionTrigger where
   | afterBattle (aliasedItem : Option UInt8 := none)
@@ -245,6 +306,7 @@ theorem sequential_traded_trainer_boosts :
          baseDefense := 1
          baseSpeed := 1
          baseSpecial := 1
+         catchRate := 45
          baseExp := 70
          level := 1 } : AwardSource)
       ({ playerId := 1

@@ -82,11 +82,35 @@ def epilogue (input : EpilogueInput) : EpilogueResult :=
       runEvolution := true
       pickedUpPayDay := input.payDayMoney.toNat != 0 }
 
+@[simp] theorem link_epilogue_runs_evolution (input : EpilogueInput)
+    (link : input.linkBattle = true) :
+    (epilogue input).runEvolution = true ∧
+      (epilogue input).pickedUpPayDay = false ∧
+      (epilogue input).playerMoney = input.playerMoney := by
+  simp [epilogue, link]
+
+@[simp] theorem nonzero_result_skips_payday_and_evolution (input : EpilogueInput)
+    (nonlink : input.linkBattle = false) (nonzero : input.rawBattleResult != 0) :
+    epilogue input =
+      { playerMoney := input.playerMoney, runEvolution := false,
+        pickedUpPayDay := false } := by
+  simp [epilogue, nonlink, nonzero]
+
+@[simp] theorem zero_result_adds_payday_and_runs_evolution (input : EpilogueInput)
+    (nonlink : input.linkBattle = false) (zero : input.rawBattleResult = 0) :
+    (epilogue input).playerMoney = input.playerMoney.add input.payDayMoney ∧
+      (epilogue input).runEvolution = true := by
+  simp [epilogue, nonlink, zero]
+
+/-- Trainer prize multiplies class base money once by the final enemy level. -/
+theorem trainer_prize_witness : (trainerPrize 100 50).toNat = 5000 := by
+  native_decide
+
 /-- AddBCD overflow saturates all three bytes to `$99`. -/
-example : Bcd3.add (Bcd3.ofNat 999990) (Bcd3.ofNat 20) =
+theorem add_bcd_saturates : Bcd3.add (Bcd3.ofNat 999990) (Bcd3.ofNat 20) =
     { high := 0x99, middle := 0x99, low := 0x99 } := by native_decide
 
 /-- Pay Day accumulation remains decimal, not binary packed-byte arithmetic. -/
-example : (addPayDay (Bcd3.ofNat 98) 1).toNat = 100 := by native_decide
+theorem payday_accumulates_twice_level : (addPayDay (Bcd3.ofNat 98) 1).toNat = 100 := by native_decide
 
 end Battle.Full.Money

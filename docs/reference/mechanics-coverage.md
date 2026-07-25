@@ -620,31 +620,31 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 
 - [x] no EXP in links (`Battle.Full.Environment.finishBattle` link branch)
 - [x] participation recipient count, fainted gain-bit clearing, fought-bit retention, Revive restoration, and fainted-recipient skip (`Battle.Full.Engine.player_faint_clears_party_status`, `faint_preserves_fought_flags`, `Battle.Full.Items.revive_restores_fought_recipient`, `Battle.Full.Environment.fainted_recipient_skipped`)
-- [ ] per-recipient division of base stats/catch/base EXP
+- [x] per-recipient division of base stats/catch/base EXP (`Battle.Full.Progression.divide_source_all_fields`)
 - [x] stat EXP addition and saturation (`Battle.Full.Progression.award`, `stat_exp_saturates`)
-- [ ] base EXP × level / 7
+- [x] base EXP × level / 7 (`Battle.Full.Progression.experienceAward`)
 - [x] traded 1.5× boost (`Battle.Full.Progression.experienceAward`, `sequential_traded_trainer_boosts`)
 - [x] trainer-battle 1.5× boost and sequential intermediate flooring with traded boost (`Battle.Full.Progression.sequential_traded_trainer_boosts`)
-- [ ] EXP addition and level-100 cap
-- [ ] level calculation from growth formula
-- [ ] multi-level gain behavior and exact-level-only move scan
-- [ ] stat recalculation and current-HP increase
-- [ ] active member update
-- [ ] stage/status/badge reapplication
+- [x] EXP addition and level-100 cap (`Battle.Full.Progression.award_experience_capped`)
+- [x] level calculation from growth formula (`Battle.Full.Progression.levelFromExperience`, `growth_level_100_roundtrip`)
+- [x] multi-level gain behavior and exact-level-only move scan (`Battle.Full.Progression.award`, `first_exact_level_move_witness`)
+- [x] stat recalculation and current-HP increase (`Battle.Full.Progression.calculateStats`, `award_hp_delta`)
+- [x] active member update (`Battle.Full.Environment.reapplyLevelUpActive`, `level_up_preserves_copied_identity`)
+- [x] stage/status/badge reapplication in source order with link bypass (`Battle.Full.Environment.level_up_reapplication_order_witness`)
 - [x] level-up nested move-learning request, automatic empty slot, HM deletion rejection, and abandon-confirmation loop (`Battle.Full.Learning.empty_slot_learns_immediately`, `hm_rejection_reprompts`, `abandon_decline_restarts`)
-- [ ] only first exact-level learnset row is considered; skipped intermediate levels and raw duplicate-level rows are ignored
-- [ ] active transformed learner receives all party moves/PP while transformed flag/other copied state remain
-- [ ] `wCanEvolveFlags` set for leveled recipients
-- [ ] EXP All halves source data; participant award may divide it in place before all-party award divides the already-mutated bytes again
-- [ ] EXP divisor counts all eight gain-flag bits while recipient iteration uses party count and skips fainted members; EXP All in-count fainted bits reduce living shares
-- [ ] trainer prize is base-money BCD added once per final enemy level
-- [ ] Pay Day per-use `2 × userLevel` BCD accumulation
-- [ ] Pay Day payout only when `wBattleResult == 0`, including Poke Doll/move/Safari zero-result exits
-- [ ] `EndOfBattle` evolution guard (`wBattleResult == 0` for non-link; link branch reaches it directly)
-- [ ] `EvolutionAfterBattle` runs before clearing battle state
+- [x] only first exact-level learnset row is considered; skipped intermediate levels and raw duplicate-level rows are ignored (`Battle.Full.Progression.first_exact_level_move_witness`)
+- [x] active transformed learner receives party moves/PP while transformed identity/volatile state remain (`Battle.Full.Environment.transformed_learning_preserves_active_identity`)
+- [x] `wCanEvolveFlags` set for leveled recipients (`Battle.Full.Environment.gained_level_sets_evolution_flag`)
+- [x] EXP All halves all seven source bytes; participant award may divide it in place before all-party award divides the already-mutated bytes again (`Battle.Full.Environment.exp_all_destructive_double_division`)
+- [x] EXP divisor counts all eight gain-flag bits while recipient iteration uses party count and skips fainted members; EXP All in-count fainted bits reduce living shares (`Battle.Full.Environment.all_eight_gain_bits_count`, `exp_all_counts_full_party`, `fainted_recipient_skipped`)
+- [x] trainer prize is base-money BCD multiplied once by final enemy level (`Battle.Full.Money.trainerPrize`, `trainer_prize_witness`)
+- [x] Pay Day per-use `2 × userLevel` BCD accumulation (`Battle.Full.Money.payday_accumulates_twice_level`)
+- [x] Pay Day payout only when `wBattleResult == 0`, including Poke Doll/move/Safari zero-result exits (`Battle.Full.Money.zero_result_adds_payday_and_runs_evolution`, `nonzero_result_skips_payday_and_evolution`, `Battle.Outcome.escape_byte_channels_exact`)
+- [x] `EndOfBattle` evolution guard (`wBattleResult == 0` for non-link; link branch reaches it directly) (`Battle.Full.Money.link_epilogue_runs_evolution`, `zero_result_adds_payday_and_runs_evolution`, `nonzero_result_skips_payday_and_evolution`)
+- [x] `EvolutionAfterBattle` is constructed before `settle` clears battle state (`Battle.Full.Environment.evolution?`, `settle`)
 - [x] evolution eligibility by flag and level/item/trade record scan (`Battle.Full.Progression.evolutionTarget?`, `Battle.Full.Evolution.start`)
 - [x] evolution cancel response and continuation to next party member (`Battle.Full.Evolution.cancellation_advances_to_next_flagged_member`)
-- [ ] evolution species, nickname, Pokédex, stats, HP delta, types, and learned move
+- [x] evolution species, retained nickname, owned flag, stats, HP delta, types, and exact-level learned move (`Battle.Full.Progression.evolve`, `evolve_preserves_identity_and_moves`, `Battle.Full.Evolution.acceptance_commits_target`, `Battle.Full.Environment.evolution_install_preserves_names`, `evolution_owned_witness`)
 - [x] wild-battle item-evolution bug through aliased `wCurItem`/species state (`Battle.Full.Evolution.wild_item_alias_offers`, `wild_item_evolution_bug_occurs`)
 - [x] link/no-EXP evolution behavior (`Battle.Full.Evolution.start`, `Battle.Full.Environment.finishBattle`)
 - [ ] witnessed pre-cleanup terminal checkpoint and separately composed battle cleanup/return checkpoint

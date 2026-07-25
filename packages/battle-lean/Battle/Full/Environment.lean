@@ -184,12 +184,27 @@ def learning? (state : State) : Option (Nat × Learning.Machine) :=
   | (index, move) :: _ =>
       (state.playerProgression[index]?).map fun mon => (index, Learning.start mon move)
 
+def installLearnedMoves (active : Battle.SideState) (partyMon : MonState) : Battle.SideState :=
+  let mon := { active.active with moves := partyMon.moves }
+  let mon := { mon with pp := partyMon.pp }
+  { active with active := mon }
+
+@[simp] theorem transformed_learning_preserves_active_identity
+    (active : Battle.SideState) (partyMon : MonState) :
+    let installed := installLearnedMoves active partyMon
+    installed.active.moves = partyMon.moves ∧ installed.active.pp = partyMon.pp ∧
+    installed.active.species = active.active.species ∧
+    installed.active.type1 = active.active.type1 ∧ installed.active.type2 = active.active.type2 ∧
+    installed.active.status = active.active.status ∧ installed.volatile = active.volatile := by
+  simp [installLearnedMoves]
+
 private def installLearning (state : State) (index : Nat) (machine : Learning.Machine) : State :=
   let rows := state.playerProgression.modify index (fun _ => machine.mon)
   let mons := rows.map Progression.PersistentMon.battle
   let player := state.engine.battle.player
   let activeMon := mons.getD player.activeIndex player.active.active
-  let player := { player with party := { mons }, active := { player.active with active := activeMon } }
+  let player := { player with party := { mons } }
+  let player := { player with active := installLearnedMoves player.active activeMon }
   let battle := state.engine.battle.setSide .player player
   { state with
     engine := { state.engine with battle }
@@ -214,7 +229,13 @@ inductive EvolutionResult where
   | completed (state : State)
   | invalid (state : State) (machine : Evolution.Machine)
 
-private def installEvolution (state : State) (machine : Evolution.Machine) : State :=
+def installEvolutionOwned (owned : Array SpeciesId) (events : List Evolution.Event) :
+    Array SpeciesId :=
+  events.foldl (fun owned event => match event with
+    | .evolved _ _ target => if owned.contains target then owned else owned.push target
+    | _ => owned) owned
+
+def installEvolution (state : State) (machine : Evolution.Machine) : State :=
   let mons := machine.party.map Progression.PersistentMon.battle
   let player := state.engine.battle.player
   let activeMon := mons.getD player.activeIndex player.active.active
@@ -223,7 +244,17 @@ private def installEvolution (state : State) (machine : Evolution.Machine) : Sta
   { state with
     engine := { state.engine with battle }
     playerProgression := machine.party
+    ownedSpecies := installEvolutionOwned state.ownedSpecies machine.events
     canEvolveFlags := 0 }
+
+@[simp] theorem evolution_install_preserves_names (state : State)
+    (machine : Evolution.Machine) :
+    (installEvolution state machine).partyNames = state.partyNames := by
+  rfl
+
+@[simp] theorem evolution_owned_witness :
+    installEvolutionOwned #[] [.evolved 0 1 2] = #[2] := by
+  native_decide
 
 /-- Complete an already exhausted evolution scan. -/
 def completeEvolution (state : State) (machine : Evolution.Machine) : EvolutionResult :=
@@ -352,7 +383,7 @@ inductive StepResult where
       (nextEnemyAction : Option Full.Action) (events : List Engine.Event)
   | inactive (state : State)
 
-private def countFlags (flags : UInt8) : UInt8 :=
+def countFlags (flags : UInt8) : UInt8 :=
   (List.range 8).foldl (fun count bit => if flags.toNat.testBit bit then count + 1 else count) 0
 
 def expRecipientEligible (flags : UInt8) (index : Nat) (fainted : Bool) : Bool :=
@@ -361,6 +392,114 @@ def expRecipientEligible (flags : UInt8) (index : Nat) (fainted : Bool) : Bool :
 @[simp] theorem fainted_recipient_skipped (flags : UInt8) (index : Nat) :
     expRecipientEligible flags index true = false := by
   simp [expRecipientEligible]
+
+def copyLevelUpFields (active partyMon : MonState) : MonState :=
+  let active := { active with hp := partyMon.hp }
+  let active := { active with level := partyMon.level }
+  let active := { active with maxHp := partyMon.maxHp }
+  let active := { active with attack := partyMon.attack }
+  let active := { active with defense := partyMon.defense }
+  let active := { active with speed := partyMon.speed }
+  { active with special := partyMon.special }
+
+def levelUpBadgeBoostsEnabled : BattleMode → Bool
+  | .link => false
+  | _ => true
+
+private def setCombatStat (mon : MonState) (stat : Nat) (value : UInt16) : MonState :=
+  match stat with
+  | 0 => { mon with attack := value }
+  | 1 => { mon with defense := value }
+  | 2 => { mon with speed := value }
+  | _ => { mon with special := value }
+
+private def stageAt (stages : StatStages) : Nat → UInt8
+  | 0 => stages.attack
+  | 1 => stages.defense
+  | 2 => stages.speed
+  | _ => stages.special
+
+private def unmodifiedAt (stats : CombatStats) : Nat → UInt16
+  | 0 => stats.attack
+  | 1 => stats.defense
+  | 2 => stats.speed
+  | _ => stats.special
+
+private def reapplyStages (mon : MonState) (unmodified : CombatStats)
+    (stages : StatStages) : MonState :=
+  (List.range 4).foldl (fun mon stat =>
+    setCombatStat mon stat (DamageStats.applyStage (unmodifiedAt unmodified stat)
+      (stageAt stages stat))) mon
+
+private def reapplyLevelStatus (mon : MonState) : MonState :=
+  let mon := if mon.paralyzed then { mon with speed := UInt16.ofNat (mon.speed.toNat / 4) }
+    else mon
+  if mon.burned then { mon with attack := UInt16.ofNat (mon.attack.toNat / 2) } else mon
+
+private def reapplyLevelBadges (badges : UInt8) (mon : MonState) : MonState :=
+  let boost (bit stat : Nat) (mon : MonState) :=
+    if bitSet badges bit then setCombatStat mon stat
+      (DamageStats.badgeBoost (match stat with
+        | 0 => mon.attack | 1 => mon.defense | 2 => mon.speed | _ => mon.special))
+    else mon
+  boost 6 3 (boost 4 2 (boost 2 1 (boost 0 0 mon)))
+
+/-- Active level-up synchronization copies only HP/level/stats, then recomputes
+stages, burn/paralysis, and non-link badge boosts. Transform retains copied
+identity, moves/PP, status, volatile bytes, and the prior unmodified stat row. -/
+def reapplyLevelUpActive (mode : BattleMode) (badges : UInt8)
+    (before : Battle.SideState) (partyMon : MonState) : Battle.SideState :=
+  let transformed := bitSet before.volatile.status3 Wram.BattleStatus3.transformed
+  let unmodified := if transformed then before.unmodified else CombatStats.ofMon partyMon
+  let copied := copyLevelUpFields before.active partyMon
+  let calculated := reapplyStages copied unmodified before.stages
+  let calculated := reapplyLevelStatus calculated
+  let calculated := if levelUpBadgeBoostsEnabled mode then
+    reapplyLevelBadges badges calculated else calculated
+  let active := { before.active with hp := partyMon.hp }
+  let active := { active with level := partyMon.level }
+  let active := { active with maxHp := partyMon.maxHp }
+  let active := { active with attack := calculated.attack }
+  let active := { active with defense := calculated.defense }
+  let active := { active with speed := calculated.speed }
+  let active := { active with special := calculated.special }
+  { before with active, unmodified }
+
+@[simp] theorem level_up_preserves_copied_identity (mode : BattleMode) (badges : UInt8)
+    (before : Battle.SideState) (partyMon : MonState) :
+    let after := reapplyLevelUpActive mode badges before partyMon
+    after.active.species = before.active.species ∧
+    after.active.moves = before.active.moves ∧ after.active.pp = before.active.pp ∧
+    after.active.status = before.active.status ∧ after.volatile = before.volatile ∧
+    after.active.hp = partyMon.hp ∧ after.active.maxHp = partyMon.maxHp ∧
+    after.active.level = partyMon.level := by
+  simp [reapplyLevelUpActive]
+
+private def levelUpTestMon : MonState :=
+  { species := 1, hp := 50, boxLevel := 50, status := 0x10,
+    type1 := 0, type2 := 0, catchRate := 45, moves := #[1, 2, 3, 4], dvs := 0,
+    level := 50, maxHp := 100, attack := 100, defense := 100, speed := 100,
+    special := 100, pp := #[1, 1, 1, 1] }
+
+private def levelUpTestSide : Battle.SideState :=
+  let side := Battle.SideState.fresh levelUpTestMon
+  { side with stages := { side.stages with attack := 8 } }
+
+/-- Modified stages run first, burn/paralysis second, and badges last; link mode
+bypasses badge application. -/
+theorem level_up_reapplication_order_witness :
+    (reapplyLevelUpActive .wild 1 levelUpTestSide levelUpTestMon).active.attack = 84 ∧
+    (reapplyLevelUpActive .link 1 levelUpTestSide levelUpTestMon).active.attack = 75 ∧
+    (reapplyLevelUpActive .wild 1 levelUpTestSide levelUpTestMon).unmodified.attack = 100 := by
+  native_decide
+
+def markCanEvolve (flags : UInt8) (index : Nat) (levelsGained : UInt8) : UInt8 :=
+  if levelsGained != 0 then flags ||| (1 <<< index).toUInt8 else flags
+
+@[simp] theorem gained_level_sets_evolution_flag (flags : UInt8) (index : Nat)
+    (levelsGained : UInt8) (gained : levelsGained != 0) :
+    markCanEvolve flags index levelsGained = flags ||| (1 <<< index).toUInt8 := by
+  simp [markCanEvolve, gained]
 
 private def awardGroup (state : State) (source : Progression.AwardSource)
     (awardFlags : UInt8) : State :=
@@ -383,7 +522,7 @@ private def awardGroup (state : State) (source : Progression.AwardSource)
           (Data.Progression.growthRates.getD mon.battle.species.toNat 0)
         let result := Progression.award rate (Data.speciesData mon.battle.species)
           source context mon index
-        let flags := if result.levelsGained != 0 then flags ||| (1 <<< index).toUInt8 else flags
+        let flags := markCanEvolve flags index result.levelsGained
         let requests := requests ++ result.requests.filterMap (fun request => match request with
           | .learnMove index move => some (index, move)
           | _ => none)
@@ -392,8 +531,13 @@ private def awardGroup (state : State) (source : Progression.AwardSource)
     let rows := awarded.1
     let mons := rows.map Progression.PersistentMon.battle
     let player := state.engine.battle.player
+    let oldActiveMon := synced.getD player.activeIndex (persistent 0 player.active.active)
     let activeMon := mons.getD player.activeIndex player.active.active
-    let player := { player with party := { mons }, active := { player.active with active := activeMon } }
+    let activeLeveled := activeMon.level != oldActiveMon.battle.level
+    let active := if activeLeveled then
+      reapplyLevelUpActive state.engine.battle.mode state.engine.badges player.active activeMon
+      else player.active
+    let player := { player with party := { mons }, active }
     let battle := state.engine.battle.setSide .player player
     { state with
       engine := { state.engine with battle }
@@ -408,6 +552,7 @@ private def halveSource (source : Progression.AwardSource) : Progression.AwardSo
     baseDefense := source.baseDefense >>> 1
     baseSpeed := source.baseSpeed >>> 1
     baseSpecial := source.baseSpecial >>> 1
+    catchRate := source.catchRate >>> 1
     baseExp := source.baseExp >>> 1 }
 
 def expAllEffectiveSource (source : Progression.AwardSource)
@@ -420,8 +565,13 @@ first participant count, then divides it again by full party membership. -/
 theorem exp_all_destructive_double_division :
     let source : Progression.AwardSource :=
       { baseHp := 100, baseAttack := 100, baseDefense := 100,
-        baseSpeed := 100, baseSpecial := 100, baseExp := 100, level := 50 }
-    (expAllEffectiveSource source 2 5).baseExp = 5 := by
+        baseSpeed := 100, baseSpecial := 100, catchRate := 100,
+        baseExp := 100, level := 50 }
+    let effective := expAllEffectiveSource source 2 5
+    effective.baseHp = 5 ∧ effective.baseAttack = 5 ∧
+      effective.baseDefense = 5 ∧ effective.baseSpeed = 5 ∧
+      effective.baseSpecial = 5 ∧ effective.catchRate = 5 ∧
+      effective.baseExp = 5 := by
   native_decide
 
 private def partyFlags (count : Nat) : UInt8 :=
@@ -438,6 +588,9 @@ sizes, independent of later fainted-recipient rejection. -/
 theorem exp_all_counts_full_party : expAllDivisorExhaustive = true := by
   native_decide
 
+@[simp] theorem all_eight_gain_bits_count : countFlags 0xff = 8 := by
+  native_decide
+
 private def awardEnemy (state : State) : State :=
   if state.engine.battle.mode == .link then state
   else
@@ -449,6 +602,7 @@ private def awardEnemy (state : State) : State :=
         baseDefense := data.baseDef
         baseSpeed := data.baseSpd
         baseSpecial := data.baseSpc
+        catchRate := data.catchRate
         baseExp := data.baseExp
         level := enemy.level }
     let state := if state.hasExpAll then
