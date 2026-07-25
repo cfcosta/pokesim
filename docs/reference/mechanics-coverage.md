@@ -711,7 +711,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] a Substitute survives incoming damage exactly equal to its remaining HP (`Battle.BugWitnesses.substitute_exact_damage_survival_occurs`)
 - [x] Transform invulnerability-check bugs (`Battle.Rom.TransformRoutine.transform_invulnerability_exact`)
 - [x] Swift before invulnerability check (`Battle.Full.Engine.swift_precedes_accuracy_gates`)
-- [ ] drain-on-Substitute broken check
+- [x] drain-on-Substitute broken check (`Battle.Full.Effects.drain_ignores_substitute_gate`)
 - [x] extra enemy stat-down failure gate also reducing damaging side effects through a second independent draw
 - [ ] AI effectiveness neutral constant mismatch
 - [x] Reflect/Light Screen overflow and zero divisor (`Battle.BugWitnesses.screen_overflow_occurs`)

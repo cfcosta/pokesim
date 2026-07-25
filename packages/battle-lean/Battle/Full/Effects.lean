@@ -734,6 +734,22 @@ theorem ohko_accuracy_miss_fails (context : Context) :
     ⟨context, .failed, []⟩ : Outcome).signal = .failed
   rfl
 
+/-- The drain handler does not inspect Substitute. Whenever the surrounding
+attack path permits the effect (including a surviving Substitute), healing is
+still half damage with minimum one and the max-HP cap. -/
+theorem drain_ignores_substitute_gate (context : Context) (damage : UInt16) :
+    (applyAfter Data.Effect.drainHp TypeChart.grass true false damage context).context.attacker.active.hp =
+      UInt16.ofNat (min (context.attacker.active.hp.toNat +
+        max 1 (damage.toNat / 2)) context.attacker.active.maxHp.toNat) := by
+  change UInt16.ofNat
+    (min (context.attacker.active.hp.toNat +
+      (UInt16.ofNat (max 1 (damage.toNat / 2))).toNat)
+      context.attacker.active.maxHp.toNat) = _
+  have damageBound := UInt16.toNat_lt damage
+  have amountBound : max 1 (damage.toNat / 2) < 65536 := by omega
+  simp
+  rw [Nat.mod_eq_of_lt amountBound]
+
 /-- Hyper Beam recharge is skipped when its hit faints the target. -/
 theorem hyperBeam_faint_skips_recharge (context : Context) (damage : UInt16) :
     (applyAfter Data.Effect.hyperBeam TypeChart.normal true true damage context).context =
