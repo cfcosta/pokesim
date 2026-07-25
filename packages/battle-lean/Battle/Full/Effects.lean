@@ -26,6 +26,17 @@ private def mask (index : Nat) : UInt8 := (1 <<< index).toUInt8
 private def setBit (byte : UInt8) (index : Nat) : UInt8 := byte ||| mask index
 private def clearBit (byte : UInt8) (index : Nat) : UInt8 := byte &&& ~~~(mask index)
 
+private theorem recharge_clear_bit (byte : UInt8) :
+    bitSet (clearBit byte Wram.BattleStatus2.needsToRecharge)
+      Wram.BattleStatus2.needsToRecharge = false := by
+  have checked : (List.range 256).all (fun n =>
+      bitSet (clearBit n.toUInt8 Wram.BattleStatus2.needsToRecharge)
+        Wram.BattleStatus2.needsToRecharge = false) = true := by
+    native_decide
+  have atByte := (List.all_eq_true.mp checked) byte.toNat
+    (List.mem_range.mpr (UInt8.toNat_lt byte))
+  simpa using atByte
+
 structure Context where
   attackerSide : Side
   attacker : Battle.SideState
@@ -703,6 +714,19 @@ theorem haze_incapacitated_cancels (context : Context)
     (hazeOutcome context).signal = .cancelTargetMove := by
   simp only [hazeOutcome]
   rw [if_pos incapacitated]
+
+/-- Sleep clears the target recharge bit before every existing-status,
+accuracy-result, and sleep-duration branch, including RNG-stuck continuation. -/
+theorem sleep_always_clears_recharge (context : Context) (hit : Bool) :
+    (applyBefore Data.Effect.sleep hit context).context.defender.volatile.recharging = false := by
+  unfold applyBefore
+  rw [show (EffectPlan.plan Data.Effect.sleep).mechanic = .sleep by native_decide]
+  simp only
+  split
+  · simp [setDefenderVolatile, withDefender, Volatile.recharging,
+      recharge_clear_bit]
+  · split <;> simp [setDefenderVolatile, withDefender, Volatile.recharging,
+      recharge_clear_bit]
 
 /-- Direct paralysis does not consult Substitute. Given an otherwise eligible
 target, the handler succeeds even while the volatile Substitute bit is set. -/
