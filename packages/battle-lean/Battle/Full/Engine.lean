@@ -40,6 +40,7 @@ structure State where
   runAttempts : UInt8 := 0
   canceledAction : Option Side := none
   aiLayer2Encouragement : UInt8 := 0
+  trainerAiItem : Bool := false
   deriving Repr, DecidableEq
 
 inductive Event where
@@ -707,8 +708,12 @@ private def applySwitch (state : State) (who : Side) (target : Fin 6)
         aiLayer2Encouragement := switchAiLayer state.aiLayer2Encouragement who forced }
 
 private def applyItem (state : State) (who : Side) (request : Items.Request) : StepResult :=
+  let trainerOwned := state.trainerAiItem && who == .enemy
+  let state := if trainerOwned then { state with trainerAiItem := false } else state
   let user : Items.UserState := { side := side state who, bag := bag state who }
-  match Items.use state.battle.mode user request with
+  let result := if trainerOwned then Items.aiUse state.battle.mode user request
+    else Items.use state.battle.mode user request
+  match result with
   | .rejected _ => .invalidAction state who
   | .capturePending user ball =>
       let state := setBag (setSide state who user.side) who user.bag

@@ -312,6 +312,44 @@ def use (mode : BattleMode) (state : UserState) (request : Request) : Result :=
             | 0x53 => usePpRestore state request true true
             | _ => .rejected state
 
+/-- Trainer cures write healed/status-cleared identity back to the active row
+without rebuilding mutable combat stats from the party record. -/
+def retainTrainerCureStats (before after : Battle.SideState) : Battle.SideState :=
+  let mon := { after.active with attack := before.active.attack }
+  let mon := { mon with defense := before.active.defense }
+  let mon := { mon with speed := before.active.speed }
+  let mon := { mon with special := before.active.special }
+  { after with active := mon }
+
+@[simp] theorem trainer_cure_retains_combat_stats (before after : Battle.SideState) :
+    let result := retainTrainerCureStats before after
+    result.active.attack = before.active.attack ∧
+      result.active.defense = before.active.defense ∧
+      result.active.speed = before.active.speed ∧
+      result.active.special = before.active.special := by
+  simp [retainTrainerCureStats]
+
+def clearTrainerToxic (side : Battle.SideState) : Battle.SideState :=
+  { side with volatile := { side.volatile with status3 := side.volatile.status3 &&&
+    ~~~((1 <<< Wram.BattleStatus3.badlyPoisoned).toUInt8) } }
+
+@[simp] theorem trainer_full_restore_clears_toxic (side : Battle.SideState) :
+    (clearTrainerToxic side).volatile.badlyPoisoned = false := by
+  simp [clearTrainerToxic, Battle.Volatile.badlyPoisoned, bitSet,
+    Wram.BattleStatus3.badlyPoisoned]
+
+/-- Execute an AI-owned item. Full Heal and Full Restore share player item
+storage updates but retain the loaded enemy combat-stat bytes. -/
+def aiUse (mode : BattleMode) (state : UserState) (request : Request) : Result :=
+  match use mode state request with
+  | .committed next events =>
+      if request.item == 0x34 || request.item == 0x10 then
+        let side := retainTrainerCureStats state.side.active next.side.active
+        let side := if request.item == 0x10 then clearTrainerToxic side else side
+        .committed { next with side := { next.side with active := side } } events
+      else .committed next events
+  | result => result
+
 /-! ## Item fidelity theorems -/
 
 @[simp] theorem link_bag_rejected (state : UserState) (request : Request) :

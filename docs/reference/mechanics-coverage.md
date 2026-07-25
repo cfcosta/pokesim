@@ -610,7 +610,7 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [ ] Cooltrainer F missing-return behavior
 - [ ] strict current-HP-below-`floor(maxHP / divisor)` threshold
 - [ ] heal cap and HP-bar scratch writes
-- [ ] status/Toxic cleanup without recalculating burn/paralysis-reduced enemy combat stats
+- [x] status/Toxic cleanup without recalculating burn/paralysis-reduced enemy combat stats (`trainer_cure_retains_combat_stats`, `trainer_full_restore_clears_toxic`)
 - [ ] enemy switch living-count rule and deterministic lowest-index other-living send-out scan, with no destination RNG and raw unbounded search
 - [ ] all [47 class dispatch rows](trainer-ai-dispatch.md), direct `Random` source, and exact `percent`-macro thresholds
 - [ ] `wAICount = $ff` lazy class-count initialization per send-out
@@ -746,7 +746,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [ ] wild-faint run prompt uses party slot 1 Speed regardless of active/replacement
 - [ ] healed-enemy recall-message underflow and zero-divisor raw divergence affect switch timing
 - [x] transformed non-Ditto capture becomes Ditto (`Battle.Full.Capture.transformed_stores_ditto`)
-- [ ] active status-cure whole-stat reset versus AI cure's retained penalized stats
+- [x] active status-cure whole-stat reset versus AI cure's retained penalized stats (`Battle.Full.Items.trainer_cure_retains_combat_stats`)
 - [ ] disobedient replacement move charging the originally selected PP slot
 - [ ] transformed Mirror Move/Metronome original-party PP increment
 - [ ] EXP All destructive double-division path

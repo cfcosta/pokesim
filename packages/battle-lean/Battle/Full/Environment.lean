@@ -448,8 +448,11 @@ def executeTrainerPlan (player : Full.Action) : TrainerPlan → Option StepResul
   | .switch state target => some (step state player (.switch target))
   | .item state item =>
       let itemId := trainerItemId item
-      let engine := { state.engine with enemyBag := [{ item := itemId, count := 1 }] }
-      some (step { state with engine } player (.item { item := itemId }))
+      let engine := { state.engine with
+        enemyBag := [{ item := itemId, count := 1 }]
+        trainerAiItem := true }
+      let target := engine.battle.enemy.activeIndex
+      some (step { state with engine } player (.item { item := itemId, partyTarget := target }))
   | .choosingMove _ _ | .invalidClass _ => none
 
 def resumeNested (state : State) (who : Side) (move : MoveId) : StepResult :=
