@@ -721,7 +721,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] Jump Kick miss recoil based on zeroed damage (`Battle.Full.Engine.jumpKick_zeroed_damage_recoil`)
 - [x] Substitute self-damage turn-flip interaction (`Battle.Full.Engine.turn_flipped_self_damage_selects_opponent`)
 - [x] enemy PP not decremented (`Battle.Full.Engine.enemy_pp_not_decremented`)
-- [ ] disabled-move/PP-Up-bit Struggle-selection anomaly
+- [x] disabled-move/PP-Up-bit Struggle-selection anomaly (`Battle.Full.disabled_pp_up_struggle_anomaly`)
 - [x] sleep wake consumes turn (`Battle.Full.Status.waking_consumes_turn`)
 - [x] frozen target Fire defrost before side-effect RNG (`Battle.Full.Effects.fire_defrost_precedes_side_rng`)
 - [x] Hyper Beam/status interactions, including Sleep bypass and freeze asymmetry (`sleep_always_clears_recharge`, `freeze_recharge_asymmetry`)
@@ -747,7 +747,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [ ] healed-enemy recall-message underflow and zero-divisor raw divergence affect switch timing
 - [x] transformed non-Ditto capture becomes Ditto (`Battle.Full.Capture.transformed_stores_ditto`)
 - [x] active status-cure whole-stat reset versus AI cure's retained penalized stats (`Battle.Full.Items.trainer_cure_retains_combat_stats`)
-- [ ] disobedient replacement move charging the originally selected PP slot
+- [x] disobedient replacement move charging the originally selected PP slot (`Battle.Full.Engine.disobedience_charges_original_slot`)
 - [ ] transformed Mirror Move/Metronome original-party PP increment
 - [ ] EXP All destructive double-division path
 - [ ] link setup leading-zero list mismatch

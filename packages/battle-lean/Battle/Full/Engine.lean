@@ -869,6 +869,14 @@ def step (state : State) (playerAction enemyAction : Full.Action) : StepResult :
 private def selectedFin (slot : UInt8) : Fin 4 :=
   ⟨slot.toNat % 4, Nat.mod_lt _ (by omega)⟩
 
+/-- The alternate move identity is reloaded, but `DecrementPP` still receives the
+original menu-selected slot from the pending input. -/
+def disobedienceChargedSlot (input : Disobedience.Input) : Fin 4 :=
+  selectedFin input.selectedSlot
+
+@[simp] theorem disobedience_charges_original_slot (input : Disobedience.Input) :
+    (disobedienceChargedSlot input).val = input.selectedSlot.toNat % 4 := rfl
+
 private def afterDisobedience (result : StepResult) (nextEnemyAction : Option Full.Action)
     (prior : List Event) : StepResult :=
   match prependEvents prior result with
@@ -891,7 +899,7 @@ def resumeDisobedience (state : State) (machine : Disobedience.Machine)
       let resultEvent := Event.disobedience result
       let player := side state .player
       let defender := side state .enemy
-      let slot := selectedFin machine.input.selectedSlot
+      let slot := disobedienceChargedSlot machine.input
       let action := if machine.input.selectedMove == 165 then Full.Action.struggle
         else .fight slot
       let completed := match result with

@@ -179,7 +179,7 @@ example : (feedAll (start testInput) [0xa0, 0x0a, 0xf0]).phase =
 
 /-- Candidate selection checks the full PP byte: PP-Up bits make a zero-current-
 PP alternate selectable when another slot keeps the total-PP guard open. -/
-example :
+theorem pp_up_bits_make_zero_pp_selectable :
     let input := { testInput with pp := #[10, 0x40, 1, 0] }
     (feedAll (start input) [0xa0, 0x00, 0x01]).phase =
       .done (.alternate 1 2) := by native_decide

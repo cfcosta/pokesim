@@ -38,9 +38,27 @@ private def usableMoveSlot (side : Full.SideState) (slot : Nat) : Bool :=
     currentPp (side.active.active.pp.getD slot 0) != 0 &&
     side.active.volatile.disabledMoveNumber != side.active.active.moves.getD slot 0
 
-/-- All four move slots are exhausted/empty after masking PP-Up bits. -/
+/-- `AnyMoveToSelect`: without Disable, mask PP-Up bits after OR-ing all
+four bytes. With Disable, skip that encoded slot and test the remaining packed
+bytes without masking, preserving the PP-Up anomaly. -/
+def anyMovePpAvailable (disabled : UInt8) (pp : Array UInt8) : Bool :=
+  let encoded := disabled >>> 4
+  if encoded == 0 then
+    (((pp.getD 0 0 ||| pp.getD 1 0) ||| pp.getD 2 0) ||| pp.getD 3 0) &&& Wram.ppMask != 0
+  else
+    (Array.range Wram.numMoves).any fun slot =>
+      slot + 1 != encoded.toNat && pp.getD slot 0 != 0
+
+/-- Cartridge Struggle preselection, including malformed packed-PP behavior. -/
 def mustStruggle (side : Full.SideState) : Bool :=
-  !(Array.range Wram.numMoves).any (usableMoveSlot side)
+  !anyMovePpAvailable side.active.volatile.disabledMove side.active.active.pp
+
+/-- With slot two disabled, slot one's zero-current-PP byte still prevents
+Struggle solely because its PP-Up bit is set. -/
+theorem disabled_pp_up_struggle_anomaly :
+    anyMovePpAvailable 0x20 #[0x40, 0, 0, 0] = true ∧
+      (#[0x40, 0, 0, 0].all fun packed => packed &&& Wram.ppMask == 0) = true := by
+  native_decide
 
 /-- Item is policy-reachable in this mode and bag. Handler-level contextual
 failure remains distinct and is returned by `Items.use`. -/
