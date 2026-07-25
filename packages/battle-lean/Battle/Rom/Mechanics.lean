@@ -70,6 +70,16 @@ theorem handler_table_exact {sha256 : Sha256} {rom : CanonicalRom}
   have agreement := certificate.effects.handlers
   simpa [Effects.pointerHandlersAgree] using agreement
 
+/-- Every ROM-decoded move routes through its ROM-decoded effect pointer to the
+handler class required by the independent plan. Effect zero is the deliberate
+no-pointer ordinary-damage case. -/
+def moveRoutesAgree (rom : Array Sm83.Byte) : Bool :=
+  let handlers := (Effects.decodePointers rom).map Effects.handlerAt
+  (Tables.decodeMoves rom).all fun move =>
+    if move.effect == 0 then (Full.EffectPlan.plan move.effect).mechanic == .ordinary
+    else handlers.getD (move.effect.toNat - 1) none ==
+      some (Effects.expectedHandler move.effect)
+
 /-- Every decoded canonical move selects an indexed effect ID. This connects the
 ROM move rows to the complete 86-word handler table rather than merely proving
 that the independently authored move array is internally bounded. -/
@@ -91,6 +101,14 @@ theorem combat_tables_exact {sha256 : Sha256} {rom : CanonicalRom}
         CombatTables.expectedStatRatioBytes :=
   CombatTables.certified_combat_tables certificate.combat
 
+/-- All 165 canonical move rows route to the exact decoded handler class. -/
+theorem move_routes_exact {sha256 : Sha256} {rom : CanonicalRom}
+    (certificate : CanonicalMechanicsBytes sha256 rom) :
+    moveRoutesAgree rom.bytes = true := by
+  have handlers := handler_table_exact certificate
+  simp only [moveRoutesAgree, certificate.tables.moves, handlers]
+  native_decide
+
 /-- Compact conjunction used by downstream battle-routine refinement. -/
 theorem canonical_mechanics_exact {sha256 : Sha256} {rom : CanonicalRom}
     (certificate : CanonicalMechanicsBytes sha256 rom) :
@@ -103,9 +121,11 @@ theorem canonical_mechanics_exact {sha256 : Sha256} {rom : CanonicalRom}
       CombatTables.decodeTypeEffectBytes rom.bytes =
         CombatTables.expectedTypeEffectBytes ∧
       CombatTables.decodeStatRatioBytes rom.bytes =
-        CombatTables.expectedStatRatioBytes := by
+        CombatTables.expectedStatRatioBytes ∧
+      moveRoutesAgree rom.bytes = true := by
   exact ⟨certificate.tables.moves, certificate.tables.baseStats,
     handler_table_exact certificate, move_effects_indexed certificate,
-    certificate.combat.typeEffects, certificate.combat.statRatios⟩
+    certificate.combat.typeEffects, certificate.combat.statRatios,
+    move_routes_exact certificate⟩
 
 end Battle.Rom.Mechanics

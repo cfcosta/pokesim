@@ -144,6 +144,10 @@ proof-facing `CanonicalMechanicsBytes` certificate. Its
 `canonical_mechanics_exact` theorem establishes exact battle-relevant species
 headers, all 165 move rows, bounded effect IDs, and all handler selections for
 any caller-supplied ROM satisfying that certificate.
+`Battle.Rom.Mechanics.move_routes_exact` additionally quantifies over all 165
+ROM-decoded move rows: effect zero selects ordinary damage, and every nonzero
+effect indexes the ROM pointer whose classified target is exactly the independent
+plan's handler.
 
 `Battle.Rom.EffectRoutines.CanonicalLeafEffectsBytes` adds exact code-window
 witnesses for `HyperBeamEffect` (`0f:79c1`), shared `ClearHyperBeam`
