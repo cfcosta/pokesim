@@ -234,10 +234,18 @@ private def stageForXItem (item : UInt8) (stages : StatStages) : Option (StatSta
   | 0x44 => some ({ stages with special := raise stages.special }, 3)
   | _ => none
 
-private def maxPp (move : MoveId) (packed : UInt8) : UInt8 :=
+/-- Maximum current PP from the packed PP-Up count. The cartridge divides the
+base by five first, caps that per-item bonus at seven, then repeats it once per
+PP Up; this differs from multiplying before division and matters for 40-PP
+moves. -/
+def maxPp (move : MoveId) (packed : UInt8) : UInt8 :=
   let base := (Data.moveData move).pp.toNat
   let ups := (packed >>> 6).toNat
-  (base + base * ups / 5).toUInt8
+  let bonus := min (base / 5) 7
+  (base + bonus * ups).toUInt8
+
+@[simp] theorem growl_three_pp_ups_cap : maxPp 45 0xC0 = 61 := by
+  native_decide
 
 private def restoreSlot (mon : MonState) (slot : Nat) (maximum : Bool) : MonState × Bool :=
   let move := mon.moves.getD slot 0
