@@ -548,6 +548,13 @@ private def damageSelf (context : Context) (damage : UInt16) : Context :=
   let hp := Step.saturatingSub context.attacker.active.hp damage
   withAttacker context { context.attacker with active := { context.attacker.active with hp } }
 
+/-- Drain handlers destructively halve `wDamage`, with a minimum of one. -/
+def drainDamageWord (damage : UInt16) : UInt16 :=
+  UInt16.ofNat (max 1 (damage.toNat / 2))
+
+@[simp] theorem drain_halves_shared_damage (damage : UInt16) :
+    drainDamageWord damage = UInt16.ofNat (max 1 (damage.toNat / 2)) := rfl
+
 /-- Post-damage/remaining effect phase. -/
 def applyAfter (effect moveType : UInt8) (hit targetFainted : Bool)
     (damage : UInt16) (context : Context) : Outcome :=
@@ -589,7 +596,7 @@ def applyAfter (effect moveType : UInt8) (hit targetFainted : Bool)
           { out with events := event :: out.events }
   | .drain | .dreamEater =>
       if !hit then { context := context } else
-        let amount := UInt16.ofNat (max 1 (damage.toNat / 2))
+        let amount := drainDamageWord damage
         let hp := UInt16.ofNat
           (min (context.attacker.active.hp.toNat + amount.toNat) context.attacker.active.maxHp.toNat)
         let attacker := { context.attacker with active := { context.attacker.active with hp } }

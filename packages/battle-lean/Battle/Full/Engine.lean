@@ -606,7 +606,12 @@ match damageResult with
           let effectNullified := applied.effectNullified || extra.effectNullified
           let after := if effectNullified then ({ context := context } : Effects.Outcome)
             else Effects.applyAfter effect move.type hit targetFainted lastActual context
-          let state := setLastMove (installEffectsContext finalState who after.context) who moveId
+          let state := installEffectsContext finalState who after.context
+          let state := if !effectNullified && hit &&
+              (mechanic == .drain || mechanic == .dreamEater) then
+            { state with sharedDamage := Effects.drainDamageWord state.sharedDamage }
+            else state
+          let state := setLastMove state who moveId
           let (state, lockEvents) := advanceMoveLock state who
           let events := critEvents ++ damageEvents ++ handlerGateEvents ++ accuracyEvents ++
             before.events.map .effect ++
