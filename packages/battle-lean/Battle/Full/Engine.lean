@@ -873,12 +873,29 @@ def advanceReplacementQueue (current queued : Option Side) (who : Side) :
     advanceReplacementQueue (some .enemy) none .enemy = (none, none) := by
   native_decide
 
+/-- `SendOutMon` clears only `wPlayerMoveNum`; the loaded power/type/etc.
+record remains stale. -/
+def clearPlayerMoveOnSendOut (scratch : Selection.MoveScratch) : Selection.MoveScratch :=
+  { scratch with selectedMove := 0 }
+
+def clearPlayerSelectionOnSendOut (state : State) : State :=
+  { state with playerSelection := clearPlayerMoveOnSendOut state.playerSelection }
+
+@[simp] theorem send_out_clears_move_but_retains_record (scratch : Selection.MoveScratch) :
+    (clearPlayerMoveOnSendOut scratch).selectedMove = 0 ∧
+    (clearPlayerMoveOnSendOut scratch).power = scratch.power ∧
+    (clearPlayerMoveOnSendOut scratch).type = scratch.type ∧
+    (clearPlayerMoveOnSendOut scratch).accuracy = scratch.accuracy ∧
+    (clearPlayerMoveOnSendOut scratch).pp = scratch.pp := by
+  simp [clearPlayerMoveOnSendOut]
+
 private def applySwitch (state : State) (who : Side) (target : Fin 6)
     (forced : Bool := false) : Option State :=
   match state.battle.switchTo who target.val with
   | none => none
   | some battle =>
       let state := { state with battle := battle }
+      let state := if who == .player then clearPlayerSelectionOnSendOut state else state
       let replacements := advanceReplacementQueue state.forcedReplacement
         state.queuedReplacement who
       some { state with
@@ -918,6 +935,12 @@ def orderingMove (state : State) (who : Side) (action : Full.Action) : Step.Reso
   if isFight action then
     (moveOfAction state who action).map (fun pair => resolveMove pair.1) |>.getD (resolveMove 165)
   else resolveMove (selection state who).selectedMove
+
+@[simp] theorem send_out_removes_stale_priority (state : State) (target : Fin 6) :
+    (orderingMove (clearPlayerSelectionOnSendOut state) .player (.switch target)).priority =
+      .normal := by
+  change (resolveMove 0).priority = .normal
+  native_decide
 
 @[simp] theorem commitSelection_switch (state : State) (who : Side) (target : Fin 6) :
     commitSelection state who (.switch target) = state := rfl

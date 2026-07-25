@@ -719,7 +719,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] badge boost stacking with screen catastrophe (`Battle.BugWitnesses.badge_screen_catastrophe_occurs`)
 - [x] Counter shared/stale state behavior, including highlighted-then-cancelled move (`Battle.Full.Selection.cancel_preserves`, `Battle.Full.Engine.stale_tackle_record_enables_counter`)
 - [x] stale Quick Attack/Counter ordering for non-move player actions (`Battle.Full.Engine.stale_counter_nonfight_priority`)
-- [ ] stale Quick Attack/Counter ordering across player send-out's partial loaded-record clear
+- [x] Quick Attack/Counter priority is removed by player send-out's move-ID clear while the rest of the loaded record stays stale (`Battle.Full.Engine.send_out_clears_move_but_retains_record`, `send_out_removes_stale_priority`)
 - [x] Jump Kick miss recoil based on zeroed damage (`Battle.Full.Engine.jumpKick_zeroed_damage_recoil`)
 - [x] Substitute self-damage turn-flip interaction (`Battle.Full.Engine.turn_flipped_self_damage_selects_opponent`)
 - [x] enemy PP not decremented (`Battle.Full.Engine.enemy_pp_not_decremented`)
