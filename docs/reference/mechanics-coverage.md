@@ -587,7 +587,7 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [x] layer 3 type-effectiveness scoring, including first matching defender type only (`ai_first_matching_defender_type`, `ScoreInput.fromBattle`)
 - [x] AI effectiveness `$10` initialization bug (`Battle.Full.TrainerController.ai_neutral_constant_mismatch`)
 - [ ] minimum-score filtering algorithm and malformed leading-zero divergence
-- [ ] exact 63/64/63/66 byte slot buckets and rejection among nonzero candidate slots
+- [x] exact 63/64/63/66 byte slot buckets and rejection among nonzero candidate slots (`slot_bucket_cardinalities`, `SelectsMove`)
 - [ ] blank and disabled retry
 - [x] unlimited enemy PP behavior (`Battle.Full.Engine.enemy_pp_not_decremented`)
 

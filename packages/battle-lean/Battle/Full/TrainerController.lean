@@ -63,6 +63,14 @@ def slotBucket (raw : UInt8) : Fin 4 :=
   else if h : raw.toNat < 190 then ⟨2, by omega⟩
   else ⟨3, by omega⟩
 
+/-- All 256 bytes partition into the cartridge's biased 63/64/63/66 slots. -/
+theorem slot_bucket_cardinalities :
+    ((List.range 256).filter fun raw => (slotBucket raw.toUInt8).val == 0).length = 63 ∧
+    ((List.range 256).filter fun raw => (slotBucket raw.toUInt8).val == 1).length = 64 ∧
+    ((List.range 256).filter fun raw => (slotBucket raw.toUInt8).val == 2).length = 63 ∧
+    ((List.range 256).filter fun raw => (slotBucket raw.toUInt8).val == 3).length = 66 := by
+  native_decide
+
 /-- Finite successful move-selection traces. Blank/disabled buckets reject and
 consume another `BattleRandom`; malformed all-reject states may diverge. -/
 inductive SelectsMove (moves : Array MoveId) (disabled : MoveId) :
