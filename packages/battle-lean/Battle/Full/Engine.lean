@@ -39,6 +39,7 @@ structure State where
   enemySelection : Selection.MoveScratch := {}
   runAttempts : UInt8 := 0
   canceledAction : Option Side := none
+  aiLayer2Encouragement : UInt8 := 0
   deriving Repr, DecidableEq
 
 inductive Event where
@@ -642,7 +643,16 @@ private def orderingMove (state : State) (who : Side) (action : Full.Action) : S
     (moveOfAction state who action).map (fun pair => resolveMove pair.1) |>.getD (resolveMove 165)
   else resolveMove (selection state who).selectedMove
 
+/-- `ExecuteEnemyMove` increments layer-2 encouragement before status gates. -/
+def beginEnemyExecution (state : State) : State :=
+  { state with aiLayer2Encouragement := state.aiLayer2Encouragement + 1 }
+
+@[simp] theorem beginEnemyExecution_increments (state : State) :
+    (beginEnemyExecution state).aiLayer2Encouragement =
+      state.aiLayer2Encouragement + 1 := rfl
+
 private def executeCommitted (state : State) (who : Side) (action : Full.Action) : StepResult :=
+  let state := if who == .enemy && isFight action then beginEnemyExecution state else state
   if state.canceledAction == some who then
     .transitioned { state with canceledAction := none } []
   else if isFight action then attack state who action
@@ -708,7 +718,8 @@ def step (state : State) (playerAction enemyAction : Full.Action) : StepResult :
           match action with
           | .switch target =>
               match applySwitch state forced target with
-              | some state => .transitioned state [.switched forced target.val]
+              | some state => .transitioned { state with aiLayer2Encouragement := 0 }
+                  [.switched forced target.val]
               | none => .invalidAction state forced
           | .run =>
               let terminal := Outcome.BattleTerminal.mk' (.linkRun forced) state.battle.mode .player

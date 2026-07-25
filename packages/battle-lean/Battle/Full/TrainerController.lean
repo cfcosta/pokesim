@@ -4,6 +4,7 @@ Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.Full.Action
 import Battle.TrainerAI
+import Battle.TypeChart
 
 /-!
 # Complete trainer controller
@@ -111,8 +112,28 @@ def feedMove (machine : MoveMachine) : MoveMachine :=
       let machine := { machine with draws := machine.draws ++ [raw] }
       { machine with phase := if accepted then .selected slot else .choosing }
 
-/-- Move-layer score input. Type effectiveness is supplied by the already exact
-type fold; arrays are per-slot observations. -/
+/-- `AIGetTypeEffectiveness`: first table row matching either defender type,
+with the cartridge's hexadecimal `$10` neutral initializer. -/
+def aiTypeEffectiveness (moveType targetType1 targetType2 : UInt8) : UInt8 :=
+  match TypeChart.typeEffects.find? (fun entry =>
+    entry.1 == moveType &&
+      (entry.2.1 == targetType1 || entry.2.1 == targetType2)) with
+  | some entry => entry.2.2
+  | none => 0x10
+
+private def hasBetterAlternative (moves : List MoveId) (currentType : UInt8) : Bool :=
+  match moves with
+  | [] => false
+  | move :: rest =>
+      if move == 0 then false
+      else
+        let data := Data.moveData move
+        data.effect == Data.Effect.superFang ||
+          data.effect == Data.Effect.specialDamage ||
+          data.effect == Data.Effect.fly ||
+          (data.type != currentType && data.power != 0) ||
+          hasBetterAlternative rest currentType
+
 structure ScoreInput where
   moves : Array MoveId
   targetStatus : UInt8
@@ -121,6 +142,20 @@ structure ScoreInput where
   notEffective : Array Bool
   disabledSlot : Option (Fin 4) := none
   deriving Repr, DecidableEq, BEq
+
+/-- Build exact layer-3 observations from active target types and the contiguous
+move prefix. -/
+def ScoreInput.fromBattle (moves : Array MoveId) (targetStatus : UInt8)
+    (layer2Encouragement : UInt8) (targetType1 targetType2 : UInt8)
+    (disabledSlot : Option (Fin 4) := none) : ScoreInput :=
+  let effectiveness := moves.map fun move =>
+    aiTypeEffectiveness (Data.moveData move).type targetType1 targetType2
+  { moves, targetStatus, layer2Encouragement
+    superEffective := effectiveness.map fun value => value > 0x10
+    notEffective := moves.mapIdx fun slot move =>
+      effectiveness.getD slot 0x10 < 0x10 &&
+        hasBetterAlternative moves.toList (Data.moveData move).type
+    disabledSlot }
 
 private def layer1 (input : ScoreInput) (slot score : Nat) : Nat :=
   let move := Data.moveData (input.moves.getD slot 0)
@@ -213,6 +248,22 @@ theorem class_table_total (classId : UInt8)
     simp
     omega
   simpa only [round] using atClass
+
+/-- An unlisted neutral pair retains hexadecimal 16 rather than the damage
+system's decimal 10 neutral constant. -/
+theorem ai_neutral_constant_mismatch :
+    aiTypeEffectiveness TypeChart.normal TypeChart.normal TypeChart.normal = 0x10 ∧
+      aiTypeEffectiveness TypeChart.normal TypeChart.normal TypeChart.normal ≠
+        TypeChart.effective := by
+  native_decide
+
+/-- The scan stops at the first matching row across either defender type. Poison
+against Bug/Poison therefore sees the earlier Poison resistance before the later
+Bug weakness. -/
+theorem ai_first_matching_defender_type :
+    aiTypeEffectiveness TypeChart.poison TypeChart.bug TypeChart.poison =
+      TypeChart.notVeryEffective := by
+  native_decide
 
 /-- CooltrainerF action decision is independent of its consumed random byte. -/
 theorem cooltrainerF_random_dead (first second : UInt8)

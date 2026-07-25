@@ -251,13 +251,24 @@ private def trainerContext (state : State) : TrainerAI.Context :=
     maxHp := enemy.active.active.maxHp
     hasSwitchReserve := !enemy.legalSwitches.isEmpty }
 
+private def trainerScoreInput (state : State) : TrainerController.ScoreInput :=
+  let enemy := state.engine.battle.enemy.active.active
+  let target := state.engine.battle.player.active.active
+  TrainerController.ScoreInput.fromBattle enemy.moves target.status
+    state.engine.aiLayer2Encouragement target.type1 target.type2
+    (if state.engine.battle.enemy.active.volatile.disabledMoveNumber == 0 then none
+     else
+       let slot := (state.engine.battle.enemy.active.volatile.disabledMove.toNat / 16 - 1) % 4
+       some ⟨slot, by omega⟩)
+
 /-- Consume the trainer action-AI direct-Random byte, then either commit an
-item/switch routine or enter minimum-score BattleRandom move selection. -/
-def prepareTrainer (state : State) (directRandom : UInt8)
-    (scoreInput : TrainerController.ScoreInput) : TrainerPlan :=
+item/switch routine or enter minimum-score BattleRandom move selection. Layer-3
+observations are derived internally from the active target and canonical table. -/
+def prepareTrainer (state : State) (directRandom : UInt8) : TrainerPlan :=
   match TrainerController.classRow? state.trainerClass with
   | none => .invalidClass state
   | some row =>
+      let scoreInput := trainerScoreInput state
       let remaining := state.trainerActionsLeft.getD row.initialActions
       let decision := if remaining == 0 then TrainerController.ActionDecision.normal
         else TrainerController.decideAction row.routine directRandom (trainerContext state)

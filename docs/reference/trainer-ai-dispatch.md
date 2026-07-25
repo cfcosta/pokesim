@@ -14,7 +14,7 @@ The trainer controller has two independent tables. `TrainerClassMoveChoiceModifi
 | 2 | Only while `wAILayer2Encouragement == 1`, subtract 1 for effect IDs `$0A`–`$19` or `$32`–`$41`. The test is by numeric interval, not semantic family. |
 | 3 | Subtract 1 for the first-match type helper's super-effective result. For a not-effective result, add 1 only if the scan finds Super Fang, a special-damage effect, Fly, or a nonzero-power move of a different type. |
 
-`ExecuteEnemyMove` increments `wAILayer2Encouragement` before status gates. It normally enables layer 2 on the second selection, but AI action substitution delays the increment, status-blocked execution still increments it, forced replacement clears it, and voluntary AI switching retains it.
+`ExecuteEnemyMove` increments `wAILayer2Encouragement` before status gates. It normally enables layer 2 on the second selection, but AI action substitution delays the increment, status-blocked execution still increments it, forced replacement clears it, and voluntary AI switching retains it. `Battle.Full.Engine.beginEnemyExecution` owns this transition; `Environment.prepareTrainer` derives the score input from that state rather than accepting caller-supplied effectiveness flags.
 
 All four scores start at 10. The disabled slot is overwritten with `$50`. The minimum-score filter writes move IDs into selected slots and zero into the rest.
 
@@ -120,4 +120,5 @@ HP threshold comparisons are strict. Successful items decrement `wAICount`; a sw
 - AI status cures clear party/active status and `BADLY_POISONED` but do not rebuild burn/paralysis-reduced active stats.
 - AI switching copies HP, active party-position, and status into the outgoing party record, overwriting `MON_BOX_LEVEL` with the party index; it then resets participation for the new enemy and deterministically selects the lowest-index other living slot.
 - Move lists with malformed gaps retain their exact early-return, retry, or divergence behavior.
+- `AIGetTypeEffectiveness` initializes neutral to hexadecimal `$10` (16), scans the ordered type triples once, and returns the first row matching either defender type. `ScoreInput.fromBattle` derives layer-3 super/not-effective observations from this helper and the contiguous move prefix.
 - The class table, layer byte streams, counts, and pointers require ROM-byte decoder and original-byte equality theorems.

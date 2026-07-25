@@ -584,8 +584,8 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [ ] layer 1 redundant-status scoring
 - [ ] layer 2 exact numeric effect intervals and `== 1` gate lifecycle across execution, status locks, AI actions, forced replacement, and voluntary switch
 - [ ] all layer scans stop at first zero move ID
-- [ ] layer 3 type-effectiveness scoring, including first matching defender type only
-- [ ] AI effectiveness `$10` initialization bug
+- [x] layer 3 type-effectiveness scoring, including first matching defender type only (`ai_first_matching_defender_type`, `ScoreInput.fromBattle`)
+- [x] AI effectiveness `$10` initialization bug (`Battle.Full.TrainerController.ai_neutral_constant_mismatch`)
 - [ ] minimum-score filtering algorithm and malformed leading-zero divergence
 - [ ] exact 63/64/63/66 byte slot buckets and rejection among nonzero candidate slots
 - [ ] blank and disabled retry
@@ -713,7 +713,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] Swift before invulnerability check (`Battle.Full.Engine.swift_precedes_accuracy_gates`)
 - [x] drain-on-Substitute broken check (`Battle.Full.Effects.drain_ignores_substitute_gate`)
 - [x] extra enemy stat-down failure gate also reducing damaging side effects through a second independent draw
-- [ ] AI effectiveness neutral constant mismatch
+- [x] AI effectiveness neutral constant mismatch (`Battle.Full.TrainerController.ai_neutral_constant_mismatch`)
 - [x] Reflect/Light Screen overflow and zero divisor (`Battle.BugWitnesses.screen_overflow_occurs`)
 - [x] badge boost stacking with screen catastrophe (`Battle.BugWitnesses.badge_screen_catastrophe_occurs`)
 - [ ] Counter shared/stale state behavior, including highlighted-then-cancelled move
