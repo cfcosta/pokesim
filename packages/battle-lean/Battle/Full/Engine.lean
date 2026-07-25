@@ -506,8 +506,13 @@ def resolveSimultaneousPrepared (state : State) (detectedFirst : Side) : State �
     let state := { state with forcedReplacement := none }
     ({ state with queuedReplacement := none }, faintEvents ++ [.terminal terminal])
   else if enemyOut then
+    -- Enemy-first recoil handling removes the simultaneously fainted player
+    -- after `FaintEnemyPokemon` has written zero, leaving raw result one while
+    -- still taking TrainerBattleVictory and paying out. Player-first handling
+    -- later rewrites the result to zero in `FaintEnemyPokemon`.
+    let rawResult : UInt8 := if detectedFirst == .enemy then 1 else 0
     let terminal := Outcome.BattleTerminal.mk' (.partyExhausted .enemy)
-      state.battle.mode .player 0 0 (some detectedFirst)
+      state.battle.mode .player rawResult 0 (some detectedFirst)
     let state := if state.battle.mode == .trainer then
       { state with playerMoney := state.playerMoney.add state.trainerPrize }
       else state
@@ -543,8 +548,23 @@ theorem simultaneous_enemy_exhausted_is_win (state : State) (first : Side)
     (enemyOut : (side state .enemy).partyExhausted = true) :
     (resolveSimultaneousPrepared state first).1.battle.phase = .ending
       (Outcome.BattleTerminal.mk' (.partyExhausted .enemy) state.battle.mode
-        .player 0 0 (some first)) := by
+        .player (if first == .enemy then 1 else 0) 0 (some first)) := by
   simp [resolveSimultaneousPrepared, playerLives, enemyOut]
+
+/-- Enemy-first simultaneous fainting can display trainer victory and pay out
+while retaining raw `wBattleResult = 1` from the player-faint removal. -/
+theorem enemy_first_simultaneous_trainer_win_keeps_loss_byte (state : State)
+    (trainer : state.battle.mode = .trainer)
+    (playerLives : (side state .player).partyExhausted = false)
+    (enemyOut : (side state .enemy).partyExhausted = true) :
+    let after := (resolveSimultaneousPrepared state .enemy).1
+    (∃ terminal, after.battle.phase = .ending terminal ∧
+      terminal.cause = .partyExhausted .enemy ∧ terminal.rawResult = 1) ∧
+      after.playerMoney = state.playerMoney.add state.trainerPrize := by
+  have enemySelf : (Side.enemy == Side.enemy) = true := by native_decide
+  have trainerSelf : (BattleMode.trainer == BattleMode.trainer) = true := by native_decide
+  simp [resolveSimultaneousPrepared, playerLives, enemyOut, trainer,
+    enemySelf, trainerSelf, Outcome.BattleTerminal.mk']
 
 private def applyResidual (state : State) (who : Side) : State × List Event :=
   let result := Status.applyResiduals (side state who).active (side state who.other).active

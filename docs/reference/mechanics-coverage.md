@@ -736,7 +736,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] drain halves shared damage scratch before Counter/Bide can consume it (`Battle.Full.Effects.drain_halves_shared_damage`)
 - [x] trainer/wild move slot selection's 63/64/63/66 initial bucket bias (`Battle.Full.TrainerController.slot_bucket_cardinalities`)
 - [x] final WRAM cannot distinguish all zero-result terminal causes after cleanup (`Battle.Outcome.cleanup_erases_terminal_distinctions`)
-- [ ] simultaneous faint write order can produce trainer lose text and payout with raw result 1
+- [x] enemy-first simultaneous faint write order can produce trainer-victory handling and payout with raw result 1 (`Battle.Full.Engine.enemy_first_simultaneous_trainer_win_keeps_loss_byte`)
 - [x] simultaneous active faint can be nonterminal when reserves remain (`Battle.Full.Engine.simultaneous_with_reserves_is_nonterminal`)
 - [x] two-stage stat effect at current stat 999/1 silently retains one stage despite failure text (`raise_attack_999_two_stage_residue`, `lower_attack_1_two_stage_residue`)
 - [x] capture naming and current-box slot-1 insertion/whole-array shift (`Battle.Full.CaptureProtocol.box_slot_one_exact`)
