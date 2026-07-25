@@ -718,7 +718,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] badge boost stacking with screen catastrophe (`Battle.BugWitnesses.badge_screen_catastrophe_occurs`)
 - [ ] Counter shared/stale state behavior, including highlighted-then-cancelled move
 - [ ] stale Quick Attack/Counter ordering for non-move player actions and across player send-out's partial loaded-record clear
-- [ ] Jump Kick miss recoil based on zeroed damage
+- [x] Jump Kick miss recoil based on zeroed damage (`Battle.Full.Engine.jumpKick_zeroed_damage_recoil`)
 - [ ] Substitute self-damage turn-flip interaction
 - [ ] enemy PP not decremented
 - [ ] disabled-move/PP-Up-bit Struggle-selection anomaly

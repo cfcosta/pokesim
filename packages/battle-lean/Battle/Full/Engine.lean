@@ -352,6 +352,48 @@ private def applyDamage (state : State) (who : Side) (damage : UInt16) : DamageA
       actualDamage := actual, targetFainted := hp == 0,
       events := [.damage who actual hp] }
 
+/-- Three right shifts of zeroed miss damage, followed by the minimum-one
+fallback in `PrintMoveFailureText`. -/
+def jumpKickCrashDamage (damage : UInt16) : UInt16 :=
+  let shifted := damage >>> 3
+  if shifted == 0 then 1 else shifted
+
+@[simp] theorem jumpKick_zeroed_damage_recoil : jumpKickCrashDamage 0 = 1 := by
+  native_decide
+
+private structure CrashApplied where
+  state : State
+  userFainted : Bool
+  events : List Event
+
+/-- Missed Jump Kick/Hi Jump Kick uses already-zeroed `wDamage`, so three shifts
+still produce the minimum crash damage one. If the user has a Substitute, the
+turn-sensitive shared routine applies that point to the opponent's Substitute
+scratch instead. -/
+def applyJumpKickCrash (state : State) (who : Side) : CrashApplied :=
+  let crashDamage := jumpKickCrashDamage 0
+  let user := side state who
+  if user.active.volatile.hasSubstitute then
+    let targetWho := who.other
+    let target := side state targetWho
+    let old := target.active.volatile.substituteHp
+    let breaks := substituteBreaks old crashDamage
+    let remaining := if breaks then 0 else old - crashDamage.toUInt8
+    let volatile := { target.active.volatile with substituteHp := remaining }
+    let volatile := { volatile with status2 := if breaks then volatile.status2 &&&
+      ~~~((1 <<< Wram.BattleStatus2.hasSubstituteUp).toUInt8) else volatile.status2 }
+    let state := setSide { state with sharedDamage := crashDamage } targetWho
+      { target with active := { target.active with volatile } }
+    { state, userFainted := false,
+      events := [.substituteDamage targetWho crashDamage.toUInt8 remaining] }
+  else
+    let hp := Step.saturatingSub user.active.active.hp crashDamage
+    let actual := user.active.active.hp - hp
+    let active := { user.active with active := { user.active.active with hp } }
+    { state := setSide { state with sharedDamage := actual } who { user with active }
+      userFainted := hp == 0
+      events := [.damage who actual hp] }
+
 private structure RepeatedDamage where
   state : State
   lastActual : UInt16
@@ -517,37 +559,49 @@ match damageResult with
         .transitioned state (critEvents ++ damageEvents ++ handlerGateEvents ++
           accuracyEvents ++ before.events.map .effect ++ events)
     | _ =>
-        let damage := if hit then damage else 0
-        let totalHits := if !hit then 1 else match before.signal with
-          | .repeatHits count => count.toNat
-          | _ => 1
-        let applied := applyDamage state who damage
-        let extra := if applied.targetFainted then
-          { state := applied.state, lastActual := applied.actualDamage,
-            targetFainted := true, events := [] }
-          else applyExtraHits (totalHits - 1) applied.state who damage
-        let finalState := if mechanic == .trapping && action != .noAction then
-          if hit then setLockedDamage extra.state who damage
-          else clearTrappingLock extra.state who
-          else extra.state
-        let targetFainted := applied.targetFainted || extra.targetFainted
-        let lastActual := if totalHits ≤ 1 then applied.actualDamage else extra.lastActual
-        let context := effectsContext finalState who moveId slot
-          (side finalState who).active (side finalState who.other).active finalState.battle.rng
-        let effectNullified := applied.effectNullified || extra.effectNullified
-        let after := if effectNullified then ({ context := context } : Effects.Outcome)
-          else Effects.applyAfter effect move.type hit targetFainted lastActual context
-        let state := setLastMove (installEffectsContext finalState who after.context) who moveId
-        let (state, lockEvents) := advanceMoveLock state who
-        let events := critEvents ++ damageEvents ++ handlerGateEvents ++ accuracyEvents ++
-          before.events.map .effect ++
-          applied.events ++ extra.events ++ after.events.map .effect ++ lockEvents
-        if targetFainted then
-          let (state, faintEvents) := recordFaint state who.other
-          .transitioned state (events ++ faintEvents)
+        if mechanic == .jumpKick && !hit then
+          let crash := applyJumpKickCrash state who
+          let state := setLastMove crash.state who moveId
+          let events := critEvents ++ damageEvents ++ handlerGateEvents ++ accuracyEvents ++
+            before.events.map .effect ++ crash.events
+          if crash.userFainted then
+            let (state, faintEvents) := recordFaint state who
+            .transitioned state (events ++ faintEvents)
+          else
+            let (state, residualEvents) := applyResidual state who
+            .transitioned state (events ++ residualEvents)
         else
-          let (state, residualEvents) := applyResidual state who
-          .transitioned state (events ++ residualEvents)
+          let damage := if hit then damage else 0
+          let totalHits := if !hit then 1 else match before.signal with
+            | .repeatHits count => count.toNat
+            | _ => 1
+          let applied := applyDamage state who damage
+          let extra := if applied.targetFainted then
+            { state := applied.state, lastActual := applied.actualDamage,
+              targetFainted := true, events := [] }
+            else applyExtraHits (totalHits - 1) applied.state who damage
+          let finalState := if mechanic == .trapping && action != .noAction then
+            if hit then setLockedDamage extra.state who damage
+            else clearTrappingLock extra.state who
+            else extra.state
+          let targetFainted := applied.targetFainted || extra.targetFainted
+          let lastActual := if totalHits ≤ 1 then applied.actualDamage else extra.lastActual
+          let context := effectsContext finalState who moveId slot
+            (side finalState who).active (side finalState who.other).active finalState.battle.rng
+          let effectNullified := applied.effectNullified || extra.effectNullified
+          let after := if effectNullified then ({ context := context } : Effects.Outcome)
+            else Effects.applyAfter effect move.type hit targetFainted lastActual context
+          let state := setLastMove (installEffectsContext finalState who after.context) who moveId
+          let (state, lockEvents) := advanceMoveLock state who
+          let events := critEvents ++ damageEvents ++ handlerGateEvents ++ accuracyEvents ++
+            before.events.map .effect ++
+            applied.events ++ extra.events ++ after.events.map .effect ++ lockEvents
+          if targetFainted then
+            let (state, faintEvents) := recordFaint state who.other
+            .transitioned state (events ++ faintEvents)
+          else
+            let (state, residualEvents) := applyResidual state who
+            .transitioned state (events ++ residualEvents)
 
 private def attack (state : State) (who : Side) (action : Full.Action)
     (overrideMove : Option MoveId := none) (skipStatus : Bool := false) : StepResult :=
