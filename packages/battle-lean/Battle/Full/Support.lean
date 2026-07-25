@@ -7,6 +7,9 @@ import Battle.Full.Capture
 import Battle.Full.Safari
 import Battle.Full.TrainerController
 import Battle.Full.Progression
+import Battle.Full.Link
+import Battle.Full.Selection
+import Battle.Full.CaptureProtocol
 import Battle.BugCompatibility
 
 /-!
@@ -36,6 +39,9 @@ structure ModelCoverage : Prop where
     [1, 2, 3, 4, 8].all (fun item => (Capture.Ball.ofItem item).isSome) = true
   progressionDomains : Data.Progression.growthRates.size = 191 ∧
     Data.Progression.initialMoves.size = 191 ∧ Data.Progression.rows.size = 191
+  linkWireDomain : [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0x0d, 0x0e, 0x0f].all
+    (fun value => (Link.decodeAction value).isSome) = true
+  selectionCancel : ∀ state : Selection.State, (Selection.cancelFight state).1 = state
 
 /-- Dispatch, generator, and externally audited bug closure for the full model. -/
 theorem model_coverage : ModelCoverage :=
@@ -47,6 +53,8 @@ theorem model_coverage : ModelCoverage :=
     generatedEnemyLegal := Environment.enemy_reset_legal
     captureBallDomain := by native_decide
     progressionDomains := ⟨Data.Progression.growthRates_size,
-      Data.Progression.initialMoves_size, Data.Progression.rows_size⟩ }
+      Data.Progression.initialMoves_size, Data.Progression.rows_size⟩
+    linkWireDomain := by native_decide
+    selectionCancel := Selection.cancel_preserves }
 
 end Battle.Full.Support

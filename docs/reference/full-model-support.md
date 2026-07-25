@@ -37,12 +37,13 @@ The certificate is independent of the external source tree.
 ## Native smoke matrix
 
 ```text
-episodes=100 finished=98 truncated=2 nested_open=0
+episodes=100 finished=82 truncated=18 nested_open=0
 blocked=0 invalid=0 rng_stuck=0 division_freeze=0 other=0
-repaired=0 transitions=11349
+repaired=0 transitions=78296
 ```
 
-The two horizon-open runs are not terminal outcomes.
+The 18 horizon-open runs are not terminal outcomes; status-heavy generated
+parties can produce legitimate long-running or nonterminating battles.
 
 ## Claim boundary
 
@@ -51,7 +52,7 @@ canonical dispatch domains. They do **not** establish full cartridge-equivalence
 The following remain outside `ModelCoverage`:
 
 - decoded-ROM refinement for battle routines and effect handlers;
-- exact presentation/menu traces and selection-scratch behavior;
+- decoded-ROM refinement of menu/presentation traces and their timing;
 - continuous fetched-IR execution from battle entry through cleanup and return;
 - full hardware assumptions for non-link `Random`, waits, audio, serial, and
   presentation timing.
