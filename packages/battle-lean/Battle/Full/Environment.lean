@@ -381,6 +381,20 @@ private def halveSource (source : Progression.AwardSource) : Progression.AwardSo
     baseSpecial := source.baseSpecial >>> 1
     baseExp := source.baseExp >>> 1 }
 
+def expAllEffectiveSource (source : Progression.AwardSource)
+    (participants partyMembers : UInt8) : Progression.AwardSource :=
+  Progression.divideSource (Progression.divideSource (halveSource source) participants)
+    partyMembers
+
+/-- The second pass observes the source already destructively divided by the
+first participant count, then divides it again by full party membership. -/
+theorem exp_all_destructive_double_division :
+    let source : Progression.AwardSource :=
+      { baseHp := 100, baseAttack := 100, baseDefense := 100,
+        baseSpeed := 100, baseSpecial := 100, baseExp := 100, level := 50 }
+    (expAllEffectiveSource source 2 5).baseExp = 5 := by
+  native_decide
+
 private def partyFlags (count : Nat) : UInt8 :=
   (List.range count).foldl (fun flags index => flags ||| (1 <<< index).toUInt8) 0
 
