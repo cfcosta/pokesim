@@ -69,9 +69,14 @@ structure DispatchTailContract (state : FunctionalState) : Prop where
   op6f : (tail8 state).memory.read (tail8 state).registers.pc = 0x6F
   q9 : RoutineSummary.Quiet (tail9 state)
   opE9 : (tail9 state).memory.read (tail9 state).registers.pc = 0xE9
-  slotOffset : (tail2 state).registers.a = 0x30
-  tableBase : (tail3 state).registers.hl = 0x7150
-  pointerTarget : (dispatchTarget state).registers.pc = 0x7B1E
+  tableLow : (tail2 state).memory.read
+    (Word.ofNat ((tail2 state).registers.pc.toNat + 1)) = 0x50
+  tableHigh : (tail2 state).memory.read
+    (Word.ofNat ((tail2 state).registers.pc.toNat + 2)) = 0x71
+  zeroB : (tail3 state).memory.read
+    (Word.ofNat ((tail3 state).registers.pc.toNat + 1)) = 0x00
+  pointerLow : (tail6 state).memory.read (tail6 state).registers.hl = 0x1E
+  pointerHigh : (tail7 state).memory.read (tail7 state).registers.hl = 0x7B
 
 /-- Ten decoded instructions turn effect `$19` into pointer-table byte offset
 `$30` and jump through the little-endian slot to `$7B1E`. -/
@@ -80,6 +85,7 @@ theorem dispatch_tail_exact (state : FunctionalState)
     (RoutineSummary.runSteps 10 state).state = dispatchTarget state ∧
     (tail2 state).registers.a = 0x30 ∧
     (tail3 state).registers.hl = 0x7150 ∧
+    (tail6 state).registers.hl = 0x7180 ∧
     (dispatchTarget state).registers.pc = 0x7B1E := by
   have a := oneStep (RoutineSummary.step_decA state contract.q0.1
     contract.q0.2.2 contract.q0.2.1 contract.op3d)
@@ -118,7 +124,49 @@ theorem dispatch_tail_exact (state : FunctionalState)
     (by simpa using abcdefgh) i
   have all := RoutineSummary.runSteps_state_add 9 1 state (tail9 state)
     (dispatchTarget state) (by simpa using abcdefghi) j
-  exact ⟨all, contract.slotOffset, contract.tableBase, contract.pointerTarget⟩
+  have slotOffset : (tail2 state).registers.a = 0x30 := by
+    simp [tail2, tail1, RoutineSummary.addA, RoutineSummary.decA,
+      RoutineSummary.advancePc, Registers.set8, contract.effect19, Alu.apply,
+      Alu.dec8, Alu.add8]
+    native_decide
+  have tableBase : (tail3 state).registers.hl = 0x7150 := by
+    simp [tail3, RoutineSummary.ldHlImmediate, RoutineSummary.immediateWord,
+      contract.tableLow, contract.tableHigh, RoutineSummary.increment_twice,
+      Registers.setHL, Registers.hl]
+    native_decide
+  have bZero : (tail4 state).registers.b = 0x00 := by
+    simp [tail4, RoutineSummary.ldBImmediate, contract.zeroB, Registers.set8]
+  have aOffset : (tail4 state).registers.a = 0x30 := by
+    simpa [tail4, RoutineSummary.ldBImmediate, Registers.set8] using slotOffset
+  have bcOffset : (tail5 state).registers.bc = 0x0030 := by
+    simp [tail5, RoutineSummary.ldCFromA, RoutineSummary.advancePc,
+      Registers.set8, Registers.bc, bZero, aOffset]
+    native_decide
+  have hlBase : (tail5 state).registers.hl = 0x7150 := by
+    simpa [tail5, tail4, RoutineSummary.ldCFromA, RoutineSummary.ldBImmediate,
+      RoutineSummary.advancePc, Registers.set8, Registers.hl] using tableBase
+  have slotAddress : (tail6 state).registers.hl = 0x7180 := by
+    simp [tail6, RoutineSummary.addHlBc, RoutineSummary.advancePc,
+      Registers.setHL, Registers.hl, bcOffset, Alu.addHL]
+    change Word.ofNat ((tail5 state).registers.hl.toNat + 48) = 0x7180
+    rw [hlBase]
+    native_decide
+  have lowByte : (tail6 state).memory.read
+      (Word.ofBytes (tail6 state).registers.h (tail6 state).registers.l) = 0x1E := by
+    simpa only [Registers.hl] using contract.pointerLow
+  have highByte : (tail6 state).memory.read
+      (Word.ofNat ((Word.ofBytes (tail6 state).registers.h
+        (tail6 state).registers.l).toNat + 1)) = 0x7B := by
+    simpa [tail7, RoutineSummary.ldAFromHlInc, RoutineSummary.advancePc,
+      Registers.setHL, Registers.hl] using contract.pointerHigh
+  have pointerTarget : (dispatchTarget state).registers.pc = 0x7B1E := by
+    simp [dispatchTarget, tail9, tail8, tail7, RoutineSummary.jpHl,
+      RoutineSummary.ldLFromA, RoutineSummary.ldHAtHl,
+      RoutineSummary.ldAFromHlInc, RoutineSummary.advancePc, Registers.set8,
+      Registers.setHL, Registers.hl]
+    rw [lowByte, highByte]
+    native_decide
+  exact ⟨all, slotOffset, tableBase, slotAddress, pointerTarget⟩
 
 /-! ## Player and enemy selectors -/
 
@@ -172,7 +220,8 @@ theorem player_haze_dispatch_exact (state : FunctionalState)
   have selectedPrefix := select_common_exact state contract.toDispatchSelectContract
   have tail := (dispatch_tail_exact (select4 state) contract.tail).1
   exact ⟨RoutineSummary.runSteps_state_add 4 10 state (select4 state)
-    (dispatchTarget (select4 state)) selectedPrefix tail, contract.tail.pointerTarget⟩
+    (dispatchTarget (select4 state)) selectedPrefix tail,
+    (dispatch_tail_exact (select4 state) contract.tail).2.2.2.2⟩
 
 structure EnemyDispatchContract (state : FunctionalState) extends
     DispatchSelectContract state where
@@ -195,7 +244,7 @@ theorem enemy_haze_dispatch_exact (state : FunctionalState)
   have tail := (dispatch_tail_exact (selectEnemy state) contract.tail).1
   exact ⟨RoutineSummary.runSteps_state_add 5 10 state (selectEnemy state)
     (dispatchTarget (selectEnemy state)) (by simpa using selected) tail,
-    contract.tail.pointerTarget⟩
+    (dispatch_tail_exact (selectEnemy state) contract.tail).2.2.2.2⟩
 
 /-! ## JumpMoveEffect return shell -/
 
