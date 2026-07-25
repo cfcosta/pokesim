@@ -336,6 +336,7 @@ inductive StepResult where
       (nextAction : Option Full.Action) (events : List Engine.Event)
   | runPending (state : State) (side : Side) (opponentAction : Full.Action)
       (events : List Engine.Event)
+  | wildFaintRunPending (state : State) (events : List Engine.Event)
   | disobediencePending (state : State) (machine : Disobedience.Machine)
       (nextEnemyAction : Option Full.Action) (events : List Engine.Event)
   | inactive (state : State)
@@ -494,6 +495,7 @@ private def lift (outer : State) : Engine.StepResult → StepResult
   | .mimicPending engine side slot next events =>
       .mimicPending { outer with engine } side slot next events
   | .runPending engine side action events => .runPending { outer with engine } side action events
+  | .wildFaintRunPending engine events => .wildFaintRunPending { outer with engine } events
   | .disobediencePending engine machine next events =>
       .disobediencePending { outer with engine } machine next events
   | .inactive engine => .inactive { outer with engine }
@@ -557,6 +559,41 @@ def resolveRun (state : State) (runner : Side) (opponentAction : Full.Action)
   | .failed attempts =>
       let engine := { state.engine with runAttempts := attempts }
       lift { state with engine } (Engine.resumeFailedRun engine runner opponentAction)
+
+/-- The post-faint run prompt reads party slot one Speed, not the active or
+chosen replacement. Failure consumes an attempt but keeps the replacement
+boundary open; no enemy action executes. -/
+def wildFaintRunSpeed (state : State) : UInt16 :=
+  let player := state.engine.battle.player
+  (player.party.mons.getD 0 player.active.active).speed
+
+@[simp] theorem wild_faint_speed_uses_slot_one (state : State) :
+    wildFaintRunSpeed state =
+      ((state.engine.battle.player.party.mons.getD 0
+        state.engine.battle.player.active.active).speed) := rfl
+
+def resolveWildFaintRun (state : State) (random : UInt8) : StepResult :=
+  let playerSpeed := wildFaintRunSpeed state
+  let enemySpeed := state.engine.battle.enemy.active.active.speed
+  match Escape.attempt .wild false playerSpeed enemySpeed state.engine.runAttempts random with
+  | .escaped attempts =>
+      let engine := { state.engine with runAttempts := attempts }
+      let terminal := Outcome.BattleTerminal.mk' .ordinaryRun .wild .player 2
+      let engine := { engine with battle := { engine.battle with phase := .ending terminal } }
+      .transitioned { state with engine } [.terminal terminal]
+  | .failed attempts =>
+      .transitioned { state with engine := { state.engine with runAttempts := attempts } } []
+  | .prohibitedTrainer => .wildFaintRunPending state []
+
+theorem failed_wild_faint_run_keeps_replacement (state : State) (random attempts : UInt8)
+    (failed : Escape.attempt .wild false (wildFaintRunSpeed state)
+      state.engine.battle.enemy.active.active.speed state.engine.runAttempts random =
+        .failed attempts) :
+    resolveWildFaintRun state random = .transitioned
+      { state with engine := { state.engine with runAttempts := attempts } } [] := by
+  unfold resolveWildFaintRun
+  simp only
+  rw [failed]
 
 inductive SafariResult where
   | transitioned (state : State)

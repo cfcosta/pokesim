@@ -169,7 +169,7 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [ ] canceled/failed menu operation does not consume action
 - [ ] `CANNOT_MOVE` when trapped after top-level selection
 - [ ] replacement choice after faint
-- [ ] wild-faint choice to replace or attempt escape using `wPartyMon1Speed`
+- [x] wild-faint choice to replace or attempt escape using `wPartyMon1Speed` (`Battle.Full.forced_wild_player_may_try_run`, `Battle.Full.Environment.wildFaintRunSpeed`, `resolveWildFaintRun`)
 - [ ] shift-style stay/switch response before trainer send-out
 - [ ] ordinary player Mimic target-move request
 - [ ] item party/move target requests and cancellation
@@ -744,7 +744,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [ ] enemy switch destination is deterministic lowest-index other living slot, with unbounded raw scan
 - [x] player faint clears party status but preserves fought flag; Revive can restore gain-EXP eligibility (`player_faint_clears_party_status`, `faint_preserves_fought_flags`, `revive_restores_fought_recipient`)
 - [x] EXP All counts fainted in-party members in the divisor but skips their awards (`exp_all_counts_full_party`, `fainted_recipient_skipped`)
-- [ ] wild-faint run prompt uses party slot 1 Speed regardless of active/replacement
+- [x] wild-faint run prompt uses party slot 1 Speed regardless of active/replacement (`Battle.Full.Environment.wild_faint_speed_uses_slot_one`)
 - [ ] healed-enemy recall-message underflow and zero-divisor raw divergence affect switch timing
 - [x] transformed non-Ditto capture becomes Ditto (`Battle.Full.Capture.transformed_stores_ditto`)
 - [x] active status-cure whole-stat reset versus AI cure's retained penalized stats (`Battle.Full.Items.trainer_cure_retains_combat_stats`)

@@ -70,6 +70,7 @@ inductive StepResult where
       (nextAction : Option Full.Action) (events : List Event)
   | runPending (state : State) (side : Side) (opponentAction : Full.Action)
       (events : List Event)
+  | wildFaintRunPending (state : State) (events : List Event)
   | disobediencePending (state : State) (machine : Disobedience.Machine)
       (nextEnemyAction : Option Full.Action) (events : List Event)
   | inactive (state : State)
@@ -142,7 +143,7 @@ private def setLockedDamage (state : State) : Side → UInt16 → State
 
 private def actionContext (state : State) (who : Side) : Full.ActionContext :=
   { side := side state who, bag := bag state who, mode := state.battle.mode,
-    forcedReplacement := state.forcedReplacement == some who }
+    owner := who, forcedReplacement := state.forcedReplacement == some who }
 
 private def currentPp (packed : UInt8) : UInt8 := packed &&& Wram.ppMask
 private def decrementPp (packed : UInt8) : UInt8 :=
@@ -967,6 +968,7 @@ private def prependEvents (prior : List Event) : StepResult → StepResult
   | .mimicPending state side slot next events =>
       .mimicPending state side slot next (prior ++ events)
   | .runPending state side action events => .runPending state side action (prior ++ events)
+  | .wildFaintRunPending state events => .wildFaintRunPending state (prior ++ events)
   | .disobediencePending state machine next events =>
       .disobediencePending state machine next (prior ++ events)
   | .invalidAction state side => .invalidAction state side
@@ -1019,10 +1021,14 @@ def step (state : State) (playerAction enemyAction : Full.Action) : StepResult :
               | some state => .transitioned state [.switched forced target.val]
               | none => .invalidAction state forced
           | .run =>
-              let terminal := Outcome.BattleTerminal.mk' (.linkRun forced) state.battle.mode .player
-                (if forced == .player then 1 else 0)
-              .transitioned { state with battle := { state.battle with phase := .ending terminal } }
-                [.terminal terminal]
+              if state.battle.mode == .link then
+                let terminal := Outcome.BattleTerminal.mk' (.linkRun forced) state.battle.mode .player
+                  (if forced == .player then 1 else 0)
+                .transitioned { state with battle := { state.battle with phase := .ending terminal } }
+                  [.terminal terminal]
+              else if forced == .player && state.battle.mode == .wild then
+                .wildFaintRunPending state []
+              else .invalidAction state forced
           | _ => .invalidAction state forced
         else
           let processNonFight := fun (state : State) (who : Side) (action : Full.Action) =>

@@ -28,6 +28,7 @@ structure ActionContext where
   side : Full.SideState
   bag : Items.Bag
   mode : BattleMode
+  owner : Side := .player
   forcedReplacement : Bool := false
   deriving Repr, DecidableEq
 
@@ -72,7 +73,8 @@ def legal (context : ActionContext) (action : Action) : Bool :=
   if context.forcedReplacement then
     match action with
     | .switch target => context.side.canSwitchTo target.val
-    | .run => context.mode == .link
+    | .run => context.mode == .link ||
+        (context.owner == .player && context.mode == .wild)
     | _ => false
   else
     match context.mode with
@@ -121,6 +123,12 @@ theorem forced_switch_exact (context : ActionContext) (target : Fin 6)
   unfold legal
   rw [forced]
   rfl
+
+@[simp] theorem forced_wild_player_may_try_run (side : Full.SideState) (bag : Items.Bag) :
+    legal { side, bag, mode := .wild, owner := .player, forcedReplacement := true } .run = true := rfl
+
+@[simp] theorem forced_wild_enemy_cannot_run (side : Full.SideState) (bag : Items.Bag) :
+    legal { side, bag, mode := .wild, owner := .enemy, forcedReplacement := true } .run = false := rfl
 
 /-- A fight slot can be legal only when Struggle is not required. -/
 theorem legal_fight_not_exhausted (context : ActionContext) (slot : Fin 4)
