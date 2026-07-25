@@ -268,15 +268,22 @@ private def confuse (context : Context) : Outcome :=
     ⟨setDefenderVolatile { context with rng } volatile, .continue,
       [.rawRng "confusion-duration" raw]⟩
 
+def installSelfHeal (attacker : Battle.SideState) (hp : UInt16) (rest : Bool) :
+    Battle.SideState :=
+  let mon := { attacker.active with hp }
+  let mon := { mon with status := if rest then 2 else attacker.active.status }
+  { attacker with active := mon }
+
+@[simp] theorem rest_heal_preserves_toxic (attacker : Battle.SideState) (hp : UInt16) :
+    (installSelfHeal attacker hp true).volatile = attacker.volatile := rfl
+
 private def healSelf (context : Context) : Outcome :=
   let kind := if context.move == 156 then Effects.Healing.Kind.rest
     else if context.move == 135 then .softboiled else .recover
   match Effects.Healing.use kind context.attacker.active.hp context.attacker.active.maxHp with
   | .failed => ⟨context, .failed, []⟩
   | .healed hp rest =>
-      let mon := { context.attacker.active with hp := hp }
-      let mon := { mon with status := if rest then 2 else context.attacker.active.status }
-      let attacker := { context.attacker with active := mon }
+      let attacker := installSelfHeal context.attacker hp rest
       ⟨withAttacker context attacker, .continue,
         [.healed (hp - context.attacker.active.hp)]⟩
 

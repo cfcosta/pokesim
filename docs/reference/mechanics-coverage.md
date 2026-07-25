@@ -729,7 +729,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] Rest full-HP failure before status cure and fixed two-turn sleep request (`rest_full_hp_fails`, `rest_success_exact`)
 - [ ] Max Ether/Max Elixer PP-Up-bit comparison
 - [x] player Full Restore damaged-active Toxic flag persistence (`Battle.Full.Items.full_restore_preserves_active_status3`)
-- [ ] Rest retains Toxic flag/counter and seeded residual can still use it during sleep
+- [x] Rest retains Toxic flag/counter and seeded residual can still use it during sleep (`rest_heal_preserves_toxic`, `toxic_leech_seed_ticks_twice`)
 - [ ] poison/burn KO does not stop same-pass Leech Seed or its overkill healing
 - [ ] drain halves shared damage scratch before Counter/Bide can consume it
 - [ ] trainer/wild move slot selection's 63/64/63/66 initial bucket bias
