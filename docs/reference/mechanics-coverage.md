@@ -283,7 +283,7 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [ ] stage intermediate truncation
 - [ ] Mist checks
 - [ ] X Accuracy bypasses stage/final accuracy only after Dream Eater/Substitute/Fly-Dig/Mist gates
-- [ ] Swift returns before Substitute/Fly-Dig/Mist/X Accuracy behavior
+- [x] Swift returns before Substitute/Fly-Dig/Mist/X Accuracy behavior (`Battle.Full.Engine.swift_precedes_accuracy_gates`)
 - [ ] Fly/Dig invulnerability ordering
 - [ ] Dream Eater sleep check
 - [ ] Substitute interaction
@@ -710,7 +710,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] Substitute can leave user at zero HP (`Battle.BugWitnesses.decoded_substitute_zero_user_hp_occurs`)
 - [x] a Substitute survives incoming damage exactly equal to its remaining HP (`Battle.BugWitnesses.substitute_exact_damage_survival_occurs`)
 - [x] Transform invulnerability-check bugs (`Battle.Rom.TransformRoutine.transform_invulnerability_exact`)
-- [ ] Swift before invulnerability check
+- [x] Swift before invulnerability check (`Battle.Full.Engine.swift_precedes_accuracy_gates`)
 - [ ] drain-on-Substitute broken check
 - [x] extra enemy stat-down failure gate also reducing damaging side effects through a second independent draw
 - [ ] AI effectiveness neutral constant mismatch

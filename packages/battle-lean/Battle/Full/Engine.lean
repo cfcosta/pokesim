@@ -204,7 +204,7 @@ private def rejectsBeforeAccuracy (mechanic : EffectPlan.Mechanic)
       bitSet defender.volatile.status2 Wram.BattleStatus2.protectedByMist
   | _ => false
 
-private def resolveAccuracy (mechanic : EffectPlan.Mechanic) (move : Step.ResolvedMove)
+def resolveAccuracy (mechanic : EffectPlan.Mechanic) (move : Step.ResolvedMove)
     (attacker defender : Battle.SideState) (rng : Rng.LinkRng) : Bool × Rng.LinkRng × List Event :=
   if mechanic == .swift then (true, rng, [])
   else if bitSet defender.volatile.status1 Wram.BattleStatus1.invulnerable then (false, rng, [])
@@ -213,6 +213,13 @@ private def resolveAccuracy (mechanic : EffectPlan.Mechanic) (move : Step.Resolv
     let effective := Accuracy.calcHitChance move.accuracy attacker.stages.accuracy defender.stages.evasion
     let (raw, rng) := rng.next
     (Accuracy.hits effective raw, rng, [.rng "accuracy" raw])
+
+/-- Swift returns before invulnerability, Substitute/Mist policy, X Accuracy, and
+the final random draw. -/
+theorem swift_precedes_accuracy_gates (move : Step.ResolvedMove)
+    (attacker defender : Battle.SideState) (rng : Rng.LinkRng) :
+    resolveAccuracy .swift move attacker defender rng = (true, rng, []) := by
+  rfl
 
 private def drawPsywave : Nat → Side → UInt8 → Rng.LinkRng →
     Option (UInt8 × Rng.LinkRng × List Event)
