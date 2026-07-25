@@ -287,6 +287,12 @@ type-byte pairs. The success path copies exactly two target type bytes to the
 user; the Fly/Dig path reaches the failure tail without either write. Both paths
 have exact functional bus traces and continuous fetched-IR lifts.
 
+`Battle.Rom.OhkoRoutine` retains the complete `OneHitKOEffect_` byte window and
+proves its two-byte `SUB`/`SBC` comparison universally: the success predicate is
+exactly unsigned current attacker Speed greater than or equal to current target
+Speed. This closes the tie case and slower branch arithmetic, but not yet the
+handler's full bus trace or the surrounding random-damage/accuracy call order.
+
 The remaining animation/text tails still need frame/timing summaries.
 Whole-battle reachability and full Game Boy device lifting remain separate.
 

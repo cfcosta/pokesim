@@ -2,7 +2,7 @@
 Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
-import Battle.Rom.ConversionRoutine
+import Battle.Rom.OhkoRoutine
 
 /-!
 # Caller-supplied canonical ROM fixture
@@ -42,7 +42,8 @@ def retainedLayoutMatches (rom : CanonicalRom) : Bool :=
     EffectRoutines.leafWindowsAgree rom.bytes &&
     EffectPrefixes.prefixWindowsAgree rom.bytes &&
     ExplodeRoutine.windowAgrees rom.bytes &&
-    ConversionRoutine.windowAgrees rom.bytes
+    ConversionRoutine.windowAgrees rom.bytes &&
+    OhkoRoutine.windowAgrees rom.bytes
 
 /-- Load and reject any fixture that does not satisfy the retained Lean-visible
 layout contract. -/

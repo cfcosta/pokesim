@@ -176,6 +176,11 @@ at `04:79a3`. Its exact summaries cover both acting sides, both normalized
 invulnerability outcomes, and every target type-byte pair through either the
 animation-call or failure-presentation boundary.
 
+`Battle.Rom.OhkoRoutine` retains the full `OneHitKOEffect_` window at `0c:7f57`
+and proves that its low-byte `SUB` followed by high-byte `SBC` accepts exactly
+unsigned attacker Speed greater than or equal to target Speed. This is a
+universal arithmetic summary, not yet a complete handler cycle trace.
+
 `Battle.Rom.CombatTables` closes three more mechanics-critical data seams: the
 four high-critical move IDs and terminator, all 82 ordered type-effect triples
 and terminator, and all 13 numerator/denominator stat-stage ratios. These are

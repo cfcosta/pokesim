@@ -61,6 +61,7 @@ import Battle.Rom.EffectRoutines
 import Battle.Rom.EffectPrefixes
 import Battle.Rom.ExplodeRoutine
 import Battle.Rom.ConversionRoutine
+import Battle.Rom.OhkoRoutine
 import Battle.Diff
 import Battle.Driver
 import Battle.DriverInvariant

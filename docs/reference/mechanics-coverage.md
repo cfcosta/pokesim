@@ -296,7 +296,7 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [ ] Substitute damage path, damage-greater-than-255 break, and exact-damage zero-HP survival
 - [ ] substitute break zeroes the attacker's loaded effect while nonbreaking hits retain it
 - [ ] Rage-building response to damage
-- [ ] OHKO succeeds when user current Speed is equal to or greater than target Speed
+- [x] OHKO succeeds when user current Speed is equal to or greater than target Speed (`Battle.Rom.OhkoRoutine.decoded_speed_comparison_exact`)
 - [ ] OHKO critical-test draw, speed-failure early exit, and successful type/random-damage/accuracy ordering
 - [ ] Super Fang one-half current HP with minimum one
 - [ ] fixed-damage/Super Fang bypass of ordinary STAB/type adjustment
