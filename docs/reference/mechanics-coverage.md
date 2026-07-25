@@ -603,11 +603,11 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [ ] Lt. Surge X Speed
 - [ ] Brock Full Heal
 - [ ] Erika/Lorelei Super Potion thresholds
-- [ ] Blaine unconditional selected Super Potion bug
+- [x] Blaine unconditional selected Super Potion bug (`Battle.BugWitnesses.blaine_full_hp_bug_occurs`)
 - [ ] Sabrina/Lance Hyper Potion thresholds
 - [ ] Rival Potion/Full Restore thresholds
 - [ ] Agatha switch/heal branches
-- [ ] Cooltrainer F missing-return behavior
+- [x] Cooltrainer F missing-return behavior (`cooltrainerF_random_dead`, `cooltrainer_random_gate_bug_occurs`)
 - [ ] strict current-HP-below-`floor(maxHP / divisor)` threshold
 - [ ] heal cap and HP-bar scratch writes
 - [x] status/Toxic cleanup without recalculating burn/paralysis-reduced enemy combat stats (`trainer_cure_retains_combat_stats`, `trainer_full_restore_clears_toxic`)
