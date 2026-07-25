@@ -155,6 +155,11 @@ the flat fetched-IR adapter: each physical trace equals the functional trace
 plus one successor-fetch overlap and projects to the same registers/WRAM. Full
 Game Boy device-adapter reachability remains separate.
 
+`Battle.Rom.EffectPrefixes` adds exact banked windows for `FocusEnergyEffect_`
+(`09:7f86`) and `MistEffect_` (`0c:7f2b`). Universal execution reaches either
+the exact post-mutation presentation boundary or the already-active failure
+boundary and proves acting-side-only status writes before presentation code.
+
 `Battle.Rom.CombatTables` closes three more mechanics-critical data seams: the
 four high-critical move IDs and terminator, all 82 ordered type-effect triples
 and terminator, and all 13 numerator/denominator stat-stage ratios. These are

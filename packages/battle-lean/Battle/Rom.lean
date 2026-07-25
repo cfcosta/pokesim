@@ -9,4 +9,5 @@ import Battle.Rom.Effects
 import Battle.Rom.CombatTables
 import Battle.Rom.Mechanics
 import Battle.Rom.EffectRoutines
+import Battle.Rom.EffectPrefixes
 import Battle.Rom.Fixture

@@ -268,9 +268,15 @@ functional SM83 execution:
 
 These bodies are also run continuously through the flat fetched-IR adapter. The
 physical traces equal the functional traces plus exactly one overlapped successor
-fetch, with equal projected registers and affected WRAM. This still does not
-prove that whole-battle control flow reaches them under exactly the model's
-conditions or lift the flat bus through the full Game Boy device adapter.
+fetch, with equal projected registers and affected WRAM.
+
+`Battle.Rom.EffectPrefixes` additionally proves the mechanics prefixes of the
+banked `FocusEnergyEffect_` and `MistEffect_` implementations. Both side branches
+and every pair of incoming status bytes reach the exact success-presentation or
+already-active-failure PC; successful paths set only the acting side's bit and
+failed paths preserve both bytes. The following animation/text tails still need
+frame/timing summaries. Whole-battle reachability and full Game Boy device
+lifting also remain separate.
 
 ## Proof obligations
 
