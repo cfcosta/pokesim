@@ -419,8 +419,11 @@ Keep generator and battle RNG seeds separate. Team sampling must not perturb bat
 
 `Battle.RL.Environment` now provides the single-environment form of this API for
 the ordinary one-mon profile: `reset`, `observe`, `legalActions`, `step`, `settle`,
-and `done`. Reset retains proof-carrying canonical teams; legal masks contain
-only supported nonempty fight slots; invalid, inactive, and RNG-stuck outcomes
+and `done`. Reset teaches compatible ordinary TM/HM moves over exact natural
+acquisition rows until all four slots are supported, retaining the replay proof
+and remaining shared ledger in `ResetSide`; it never slices an unordered learn
+pool. Legal masks contain only supported nonempty fight slots; invalid, inactive,
+and RNG-stuck outcomes
 are distinct. A faint enters `ending`, and only the separate no-op profile
 cleanup `settle` enters `returned` and makes `done = true`.
 
@@ -437,7 +440,7 @@ legal actions include forced replacement, and same-action Mirror Move,
 Metronome, and Mimic continuations do not consume another policy decision. The
 `battleFullSelfPlay` smoke matrix accounts for every episode as either a returned
 finite behavior or an explicitly horizon-open behavior. On the pinned matrix,
-98 return and two remain open after 4,096 decisions; neither is relabeled as a
+94 return and six remain open after 4,096 decisions; neither is relabeled as a
 battle terminal.
 
 ## RL release checks

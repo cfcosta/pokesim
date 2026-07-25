@@ -33,68 +33,163 @@ def playable (mon : MonState) : Bool :=
       let id := mon.moves.getD index 0
       Ordinary.supportedMove id && Ordinary.currentPp (mon.pp.getD index 0) != 0
 
-/-- Generator entries with at least one move in the ordinary profile. -/
-def ordinaryEntries : Array SpeciesEntry :=
-  pokedex.filter fun entry => entry.movePool.any Ordinary.supportedMove
+/-- Strong reset condition for the restricted kernel: all four slots are
+ordinary moves with positive PP, preventing unsupported leftovers from becoming
+a policy dead end after the first usable slot is exhausted. -/
+def profileReady (mon : MonState) : Bool :=
+  monLegal genDex .canonical mon &&
+    (Array.range Wram.numMoves).all fun index =>
+      let id := mon.moves.getD index 0
+      Ordinary.supportedMove id && Ordinary.currentPp (mon.pp.getD index 0) != 0
+
+/-- Compatible machines whose move bodies are inside the restricted ordinary
+kernel. -/
+private def ordinaryMachines (species : SpeciesId) : Array MoveHistory.MachineIndex :=
+  (Array.range 55).filterMap fun index =>
+    if bounded : index < 55 then
+      let machine : MoveHistory.MachineIndex := ⟨index, bounded⟩
+      if Data.Progression.machineCompatible species index &&
+          Ordinary.supportedMove (MoveHistory.machineMove machine) then some machine else none
+    else none
+
+private def ordinaryEntries : Array SpeciesEntry :=
+  pokedex.filter fun entry => (ordinaryMachines entry.speciesId).size ≥ 4
 
 #guard ordinaryEntries.size > 0
-#guard ordinaryEntries.all fun entry => entry.movePool.any Ordinary.supportedMove
 
 private def ordinaryEntryOf (index : Nat) : SpeciesEntry :=
   ordinaryEntries.getD (index % ordinaryEntries.size) default
 
-private def supportedPool (entry : SpeciesEntry) : Array MoveId :=
-  entry.movePool.filter Ordinary.supportedMove
+private def firstUnsupportedSlot (mon : MonState) : Fin 4 :=
+  if !Ordinary.supportedMove (mon.moves.getD 0 0) then 0
+  else if !Ordinary.supportedMove (mon.moves.getD 1 0) then 1
+  else if !Ordinary.supportedMove (mon.moves.getD 2 0) then 2
+  else 3
 
-/-- Reset-side evidence retained for auditing and snapshot construction. -/
-structure ResetSide where
-  team : DynamicGenerator.CanonicalTeam
-  active : MonState
-  first : team.1[0]? = some active
-  playableActive : playable active = true
+private def applyOrdinaryMachines : List MoveHistory.MachineIndex →
+    MonState × MoveHistory.ResourceLedger × List MoveHistory.Event →
+    MonState × MoveHistory.ResourceLedger × List MoveHistory.Event
+  | [], state => state
+  | machine :: tail, state =>
+      if profileReady state.1 then state
+      else
+        let slot := firstUnsupportedSlot state.1
+        match MoveHistory.teach state.1 state.2.1 machine slot with
+        | none => applyOrdinaryMachines tail state
+        | some (mon, ledger) =>
+            applyOrdinaryMachines tail (mon, ledger, state.2.2 ++ [.teach machine slot])
 
-/-- Sample one level-100 ordinary-profile mon. Species, DVs, move count, and pool
-rotation all consume the link RNG. -/
-private def candidateMon (rng : Rng.LinkRng) : MonState × Rng.LinkRng :=
+private structure CandidateSide where
+  mon : MonState
+  plan : MoveHistory.MonPlan
+  initialLedger : MoveHistory.ResourceLedger
+  remainingLedger : MoveHistory.ResourceLedger
+  rng : Rng.LinkRng
+
+private def candidateSide (rng : Rng.LinkRng) : CandidateSide :=
   let (speciesByte, rng) := rng.next
   let (atkByte, rng) := rng.next
   let (defByte, rng) := rng.next
   let (spdByte, rng) := rng.next
   let (spcByte, rng) := rng.next
-  let (countByte, rng) := rng.next
   let (startByte, rng) := rng.next
   let entry := ordinaryEntryOf speciesByte.toNat
-  let pool := DynamicGenerator.rotatePool (supportedPool entry) startByte.toNat
-  let entry := { entry with movePool := pool }
-  let moveCount := countByte.toNat % Wram.numMoves + 1
-  (genMon entry 100 atkByte defByte spdByte spcByte moveCount, rng)
+  let origin : MoveHistory.Origin :=
+    { species := entry.speciesId, level := 100
+      atkDv := atkByte, defDv := defByte, spdDv := spdByte, spcDv := spcByte }
+  let initialLedger := MoveHistory.ResourceLedger.oneEach 0
+  let mon := MoveHistory.acquire origin
+  let machines := DynamicGenerator.rotatePool (ordinaryMachines origin.species) startByte.toNat
+  let state := applyOrdinaryMachines machines.toList (mon, initialLedger, [])
+  { mon := state.1, plan := { origin, events := state.2.2 }
+    initialLedger, remainingLedger := state.2.1, rng }
 
+/-- Reset-side evidence retained for auditing and snapshot construction. -/
+structure ResetSide where
+  active : MonState
+  legal : teamLegal genDex .canonical #[active] = true
+  playableActive : playable active = true
+  history : MoveHistory.TeamHistory
+  remainingLedger : MoveHistory.ResourceLedger
+  historyReplays : MoveHistory.replayTeam history = some (#[active], remainingLedger)
+
+def ResetSide.team (side : ResetSide) : DynamicGenerator.CanonicalTeam :=
+  ⟨#[side.active], side.legal⟩
+
+private def fallbackOrigin : MoveHistory.Origin :=
+  { species := 21, level := 100 -- Mew: one natural move, then three compatible TMs
+    atkDv := 15, defDv := 15, spdDv := 15, spcDv := 15 }
+
+private def fallbackMachine1 : MoveHistory.MachineIndex := ⟨4, by omega⟩  -- TM05 Mega Kick
+private def fallbackMachine2 : MoveHistory.MachineIndex := ⟨11, by omega⟩ -- TM12 Water Gun
+private def fallbackMachine3 : MoveHistory.MachineIndex := ⟨17, by omega⟩ -- TM18 Counter
+private def fallbackMachine4 : MoveHistory.MachineIndex := ⟨25, by omega⟩ -- TM26 Earthquake
+private def fallbackPlan : MoveHistory.MonPlan :=
+  { origin := fallbackOrigin
+    events := [.teach fallbackMachine1 0, .teach fallbackMachine2 1,
+      .teach fallbackMachine3 2, .teach fallbackMachine4 3] }
+private def fallbackLedger : MoveHistory.ResourceLedger := MoveHistory.ResourceLedger.oneEach 0
+private def fallbackRemaining : MoveHistory.ResourceLedger :=
+  { fallbackLedger with tmCopies :=
+      ((((fallbackLedger.tmCopies.modify 4 (fun copies => copies - 1)).modify 11
+        (fun copies => copies - 1)).modify 17 (fun copies => copies - 1)).modify 25
+        (fun copies => copies - 1)) }
 private def fallbackMon : MonState :=
-  let entry := ordinaryEntryOf 0
-  genMon { entry with movePool := supportedPool entry } 100 15 15 15 15 1
+  let mon := MoveHistory.acquire fallbackOrigin
+  let move1 := MoveHistory.machineMove fallbackMachine1
+  let move2 := MoveHistory.machineMove fallbackMachine2
+  let move3 := MoveHistory.machineMove fallbackMachine3
+  let move4 := MoveHistory.machineMove fallbackMachine4
+  { mon with
+    moves := (((mon.moves.modify 0 (fun _ => move1)).modify 1 (fun _ => move2)).modify 2
+      (fun _ => move3)).modify 3 (fun _ => move4)
+    pp := (((mon.pp.modify 0 (fun _ => movePP move1)).modify 1 (fun _ => movePP move2)).modify 2
+      (fun _ => movePP move3)).modify 3 (fun _ => movePP move4) }
+private def fallbackHistory : MoveHistory.TeamHistory :=
+  { initialLedger := fallbackLedger, plans := #[fallbackPlan] }
 
 private theorem fallbackPlayable : playable fallbackMon = true := by native_decide
+private theorem fallbackProfileReady : profileReady fallbackMon = true := by native_decide
 private theorem fallbackLegal :
     teamLegal genDex .canonical #[fallbackMon] = true := by native_decide
+private theorem fallbackReplays :
+    MoveHistory.replayTeam fallbackHistory = some (#[fallbackMon], fallbackRemaining) := by
+  native_decide
 
 private def fallbackSide : ResetSide :=
-  { team := ⟨#[fallbackMon], fallbackLegal⟩
-    active := fallbackMon
-    first := rfl
-    playableActive := fallbackPlayable }
+  { active := fallbackMon
+    legal := fallbackLegal
+    playableActive := fallbackPlayable
+    history := fallbackHistory
+    remainingLedger := fallbackRemaining
+    historyReplays := fallbackReplays }
 
-/-- Sample a coherent one-mon reset side. Both required predicates are checked
-into proof fields; failure takes the explicit fallback path. -/
+/- Rejection-sample a progression-witnessed one-mon team until the restricted
+ordinary profile has a usable move. Exhausting the finite generator budget takes
+the explicit replayable fallback; it never fabricates a move subset. -/
+set_option maxHeartbeats 1000000 in
+def sampleSideAttempts : Nat → Rng.LinkRng → ResetSide × Rng.LinkRng × Bool
+  | 0, rng => (fallbackSide, rng, true)
+  | attempts + 1, rng =>
+      let candidate := candidateSide rng
+      let team := #[candidate.mon]
+      let history : MoveHistory.TeamHistory :=
+        { initialLedger := candidate.initialLedger, plans := #[candidate.plan] }
+      if profileReady candidate.mon then
+        if hp : playable candidate.mon = true then
+          if legal : teamLegal genDex .canonical team = true then
+            if replayed : MoveHistory.replayTeam history =
+                some (team, candidate.remainingLedger) then
+              ({ active := candidate.mon, legal, playableActive := hp, history
+                 remainingLedger := candidate.remainingLedger
+                 historyReplays := replayed }, candidate.rng, false)
+            else sampleSideAttempts attempts candidate.rng
+          else sampleSideAttempts attempts candidate.rng
+        else sampleSideAttempts attempts candidate.rng
+      else sampleSideAttempts attempts candidate.rng
+
 def sampleSide (rng : Rng.LinkRng) : ResetSide × Rng.LinkRng × Bool :=
-  let (candidate, rng) := candidateMon rng
-  if hp : playable candidate = true then
-    if ht : teamLegal genDex .canonical #[candidate] = true then
-      ({ team := ⟨#[candidate], ht⟩, active := candidate,
-         first := rfl, playableActive := hp }, rng, false)
-    else
-      (fallbackSide, rng, true)
-  else
-    (fallbackSide, rng, true)
+  sampleSideAttempts 8 rng
 
 /-- RL state. Reset teams are retained with legality evidence; `battle` is the
 live mutable active-state view used by the ordinary kernel. -/
@@ -284,6 +379,16 @@ def settle (state : State) : State :=
     teamLegal genDex .canonical (reset generatorRng battleRng).enemyReset.team.1 = true :=
   (reset generatorRng battleRng).enemyReset.team.2
 
+@[simp] theorem reset_player_history_replays (generatorRng battleRng : Rng.LinkRng) :
+    let side := (reset generatorRng battleRng).playerReset
+    MoveHistory.replayTeam side.history = some (side.team.1, side.remainingLedger) :=
+  (reset generatorRng battleRng).playerReset.historyReplays
+
+@[simp] theorem reset_enemy_history_replays (generatorRng battleRng : Rng.LinkRng) :
+    let side := (reset generatorRng battleRng).enemyReset
+    MoveHistory.replayTeam side.history = some (side.team.1, side.remainingLedger) :=
+  (reset generatorRng battleRng).enemyReset.historyReplays
+
 /-- Settling an ending state is the only environment operation that establishes
 `done`; the terminal witness is retained unchanged. -/
 theorem settle_done {state : State} {terminal : Outcome.BattleTerminal}
@@ -295,7 +400,6 @@ theorem settle_done {state : State} {terminal : Outcome.BattleTerminal}
 
 private def reset0 : State := reset Rng.seed0 Rng.seed0
 
-#guard !reset0.repairedReset
 #guard teamLegal genDex .canonical reset0.playerReset.team.1
 #guard teamLegal genDex .canonical reset0.enemyReset.team.1
 #guard playable reset0.playerReset.active
