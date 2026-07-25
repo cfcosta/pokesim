@@ -8,7 +8,7 @@
 |---|---|---|
 | Party state and switching | `Battle.Full.State` | Separate active/party/unmodified combat rows, status-adjusted switch-in stats, field-exact outgoing synchronization that excludes Transform/combat scratch, living switch targets, forced replacement, exhaustion |
 | Menu selection scratch | `Battle.Full.Selection` | Fight reset, disabled/stale highlights, cancel retention, move/PP/Disable and ordered-bag swaps |
-| Status and residuals | `Battle.Full.Status` | Status-gate order, conditional RNG, poison/burn/seed residuals, Toxic counter interaction |
+| Status and residuals | `Battle.Full.Status` | Status-gate order, pre-accuracy effect eligibility, direct-paralysis Substitute bypass, conditional RNG, poison/burn/seed residuals, Toxic counter interaction |
 | Item dispatch | `Battle.Full.Items` | Explicit disposition for IDs `$01..$53`; executable battle-use handlers; Max Ether packed-byte bug |
 | Effect dispatch | `Battle.Full.EffectPlan` | Typed plans for all effect IDs `$00..$56`; all 165 canonical move rows covered |
 | Effect execution | `Battle.Full.Effects` | State transformers and explicit control signals for every effect family; exact stat-stage arithmetic; Haze/Transform stat rows; and cartridge-ordered Mimic replacement; Haze cancellation; status-stat mutation, recharge bypass, side-effect draw ordering, asymmetric freeze cleanup, and fire defrost |

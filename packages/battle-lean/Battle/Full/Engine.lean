@@ -186,6 +186,21 @@ private def bypassesAccuracy (mechanic : EffectPlan.Mechanic)
     (attacker : Battle.SideState) : Bool :=
   mechanic == .swift || bitSet attacker.volatile.status2 Wram.BattleStatus2.usingXAccuracy
 
+/-- Eligibility gates executed by ResidualEffects1 handlers before their own
+`MoveHitTest` call. Rejection here consumes no accuracy byte. -/
+private def rejectsBeforeAccuracy (mechanic : EffectPlan.Mechanic)
+    (move : Step.ResolvedMove) (defender : Battle.SideState) : Bool :=
+  match mechanic with
+  | .sleep => !defender.volatile.recharging && defender.active.status != 0
+  | .poison => defender.volatile.hasSubstitute || defender.active.status != 0 ||
+      defender.active.type1 == TypeChart.poison || defender.active.type2 == TypeChart.poison
+  | .paralyze => defender.active.status != 0 ||
+      (move.type == TypeChart.electric &&
+        (defender.active.type1 == TypeChart.ground ||
+          defender.active.type2 == TypeChart.ground))
+  | .confusion => defender.volatile.hasSubstitute
+  | _ => false
+
 private def resolveAccuracy (mechanic : EffectPlan.Mechanic) (move : Step.ResolvedMove)
     (attacker defender : Battle.SideState) (rng : Rng.LinkRng) : Bool × Rng.LinkRng × List Event :=
   if mechanic == .swift then (true, rng, [])
@@ -433,7 +448,8 @@ match damageResult with
 | .error _ => .divisionFreeze state critEvents
 | .ok (damage, rng, damageEvents, typeMiss) =>
     let (accuracyHit, rng, accuracyEvents) :=
-      if continuedTrap || (mechanic == .sleep && defenderFull.active.volatile.recharging) then
+      if rejectsBeforeAccuracy mechanic move defenderFull.active then (false, rng, [])
+      else if continuedTrap || (mechanic == .sleep && defenderFull.active.volatile.recharging) then
         (true, rng, [])
       else if requiresAccuracy mechanic move.power then
         resolveAccuracy mechanic move attacker defenderFull.active rng

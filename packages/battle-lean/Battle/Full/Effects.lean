@@ -205,7 +205,7 @@ private def applyMajorStatus (status : UInt8) (moveType : UInt8)
     (context : Context) : Outcome :=
   let target := context.defender.active
   let typeImmune := target.type1 == moveType || target.type2 == moveType
-  if context.defender.volatile.hasSubstitute || target.status != 0 || typeImmune then
+  if target.status != 0 || typeImmune then
     ⟨context, .failed, []⟩
   else
     let mon := { target with status }
@@ -216,6 +216,18 @@ private def applyMajorStatus (status : UInt8) (moveType : UInt8)
       else mon
     ⟨withDefender context { context.defender with active := mon }, .continue,
       [.statusApplied status]⟩
+
+private def paralyze (moveType : UInt8) (context : Context) : Outcome :=
+  let target := context.defender.active
+  let groundImmune := moveType == TypeChart.electric &&
+    (target.type1 == TypeChart.ground || target.type2 == TypeChart.ground)
+  if target.status != 0 || groundImmune then ⟨context, .failed, []⟩
+  else
+    let mon := { target with
+      status := mask Wram.Status.par
+      speed := UInt16.ofNat (target.speed.toNat / 4) }
+    ⟨withDefender context { context.defender with active := mon }, .continue,
+      [.statusApplied (mask Wram.Status.par)]⟩
 
 private def poison (toxic : Bool) (context : Context) : Outcome :=
   let target := context.defender.active
@@ -454,8 +466,7 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
   | .reflect => screen context false
   | .poison => if hit then poison (context.move == 92) context else ⟨context, .failed, []⟩
   | .paralyze => if hit then
-      applyMajorStatus (mask Wram.Status.par) TypeChart.electric context
-      else ⟨context, .failed, []⟩
+      paralyze (Data.moveData context.move).type context else ⟨context, .failed, []⟩
   | .substitute => substitute context
   | .mimic =>
       if !hit || bitSet context.defender.volatile.status1 Wram.BattleStatus1.invulnerable then
@@ -660,6 +671,16 @@ theorem haze_incapacitated_cancels (context : Context)
     (hazeOutcome context).signal = .cancelTargetMove := by
   simp only [hazeOutcome]
   rw [if_pos incapacitated]
+
+/-- Direct paralysis does not consult Substitute. Given an otherwise eligible
+target, the handler succeeds even while the volatile Substitute bit is set. -/
+theorem direct_paralysis_ignores_substitute (context : Context) (moveType : UInt8)
+    (healthy : context.defender.active.status = 0)
+    (notGroundImmune : (moveType == TypeChart.electric &&
+      (context.defender.active.type1 == TypeChart.ground ||
+        context.defender.active.type2 == TypeChart.ground)) = false) :
+    (paralyze moveType context).signal = .continue := by
+  simp [paralyze, healthy, notGroundImmune]
 
 /-- The cartridge's subtract-with-borrow accepts a Speed tie despite the source
 comment saying "higher": equal current Speeds produce the successful OHKO flag. -/
