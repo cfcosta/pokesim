@@ -215,6 +215,20 @@ theorem toxic_two_calls_tick (side : Battle.SideState)
     simpa [Volatile.badlyPoisoned] using toxic
   simp [decreaseResidualHp, toxic, preserved, UInt8.add_assoc]
 
+/-- Integrated poison/burn plus Leech Seed processing invokes the Toxic-aware
+HP routine twice and therefore advances the counter twice in one residual pass. -/
+theorem toxic_leech_seed_ticks_twice (actor opponent : Battle.SideState)
+    (poisonOrBurn : (actor.active.poisoned || actor.active.burned) = true)
+    (toxic : actor.volatile.badlyPoisoned = true)
+    (seeded : actor.volatile.seeded = true) :
+    (applyResiduals actor opponent).actor.volatile.toxicCounter =
+      actor.volatile.toxicCounter + 2 := by
+  have seededAfterFirst : (decreaseResidualHp actor).side.volatile.seeded = true := by
+    simp only [decreaseResidualHp, toxic, if_pos]
+    simpa [Volatile.seeded] using seeded
+  simp [applyResiduals, poisonOrBurn, seededAfterFirst]
+  exact toxic_two_calls_tick actor toxic
+
 #guard baseResidualDamage 1 == 1
 #guard baseResidualDamage 160 == 10
 

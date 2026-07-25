@@ -336,7 +336,7 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [ ] Focus Energy/Dire Hit
 - [x] Substitute HP and zero-HP-user behavior (`Battle.Rom.SubstituteRoutine.decoded_affordability_exact`)
 - [ ] Hyper Beam recharge and target-faint skip because effect is not always-happen
-- [ ] Leech Seed and Toxic-counter interaction
+- [x] Leech Seed and Toxic-counter interaction (`Battle.Full.Status.toxic_leech_seed_ticks_twice`)
 - [x] Reflect (`Battle.Rom.ScreenRoutine.screens_exact`)
 - [x] Light Screen (`Battle.Rom.ScreenRoutine.screens_exact`)
 - [x] Transform player/enemy invulnerability-check asymmetry (`Battle.Rom.TransformRoutine.transform_invulnerability_exact`)
@@ -704,7 +704,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [ ] Fly/Dig attack-turn self-confusion/full paralysis/Disable clears charging but leaves invulnerability
 - [ ] generated charge reloads selected wrapper/original move rather than retaining generated move identity
 - [x] threshold equality failure in accuracy/critical checks (`accuracy_boundary_occurs`, `critical_boundary_occurs`)
-- [ ] Toxic + Leech Seed counter interaction
+- [x] Toxic + Leech Seed counter interaction (`Battle.Full.Status.toxic_leech_seed_ticks_twice`)
 - [x] player/enemy Psywave zero asymmetry (`Battle.BugWitnesses.psywave_link_desync_occurs`)
 - [x] Bide high-byte-only clear (`Battle.BugWitnesses.bide_link_desync_occurs`)
 - [x] Substitute can leave user at zero HP (`Battle.BugWitnesses.decoded_substitute_zero_user_hp_occurs`)
