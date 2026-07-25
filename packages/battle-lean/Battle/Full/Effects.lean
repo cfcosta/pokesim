@@ -289,7 +289,17 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
       ⟨startLock { context with rng } Wram.BattleStatus1.thrashingAbout turns,
         .continue, [.rawRng "thrash-turns" raw]⟩
   | .switchOrTeleport =>
-      if context.mode == .trainer then ⟨context, .failed, []⟩ else ⟨context, .escaped, [.signal .escaped]⟩
+      if context.mode != .wild then ⟨context, .failed, []⟩
+      else if context.attacker.active.level ≥ context.defender.active.level then
+        ⟨context, .escaped, [.signal .escaped]⟩
+      else
+        let bound := context.attacker.active.level + context.defender.active.level + 1
+        match drawAccepted 2305 context.rng (fun raw => raw < bound) "move-escape" with
+        | none => ⟨context, .rngStuck, [.signal .rngStuck]⟩
+        | some (raw, rng, events) =>
+            if raw ≥ (context.defender.active.level >>> 2) then
+              ⟨{ context with rng }, .escaped, events ++ [.signal .escaped]⟩
+            else ⟨{ context with rng }, .failed, events⟩
   | .sleep =>
       if !hit || context.defender.active.status != 0 then ⟨context, .failed, []⟩
       else match drawAccepted 2305 context.rng
@@ -330,8 +340,11 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
   | .heal => healSelf context
   | .transform =>
       let target := context.defender.active
-      let mon := { context.attacker.active with type1 := target.type1 }
+      let mon := { context.attacker.active with species := target.species }
+      let mon := { mon with type1 := target.type1 }
       let mon := { mon with type2 := target.type2 }
+      let mon := { mon with catchRate := target.catchRate }
+      let mon := { mon with dvs := target.dvs }
       let mon := { mon with moves := target.moves }
       let mon := { mon with attack := target.attack }
       let mon := { mon with defense := target.defense }
