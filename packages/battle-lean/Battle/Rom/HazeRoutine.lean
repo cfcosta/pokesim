@@ -42,6 +42,8 @@ private def hazeBytes : List Byte :=
    0x53, 0x7A, 0xC3, 0x49, 0x3C]
 
 private def helpersEntry : UInt16 := 0x7A37
+private def hazeWrapperEntry : UInt16 := 0x7B1E
+private def hazeWrapperBytes : List Byte := [0x21, 0xDA, 0x79, 0x06, 0x04, 0xC3, 0xD6, 0x35]
 private def helperBytes : List Byte :=
   [0xCB, 0xBE, 0x23, 0x7E, 0xE6, 0x78, 0x22, 0x7E,
    0xE6, 0xF8, 0x77, 0xC9, 0x06, 0x08, 0x22, 0x05,
@@ -1432,6 +1434,42 @@ theorem haze_core_to_print_exact (initial core returned : FunctionalState)
     initial core (hazePrintText returned) coreExecution tail
   simpa [Nat.add_assoc] using composed
 
+/-! ## Effect-table wrapper -/
+
+def hazeWrapper1 (s : FunctionalState) := RoutineSummary.ldHlImmediate s
+def hazeWrapper2 (s : FunctionalState) := RoutineSummary.ldBImmediate (hazeWrapper1 s)
+def hazeWrapperDispatch (s : FunctionalState) := RoutineSummary.jpAbsolute (hazeWrapper2 s)
+
+structure HazeWrapperContract (state : FunctionalState) : Prop where
+  q0 : RoutineSummary.Quiet state
+  op21 : state.memory.read state.registers.pc = 0x21
+  q1 : RoutineSummary.Quiet (hazeWrapper1 state)
+  op06 : (hazeWrapper1 state).memory.read (hazeWrapper1 state).registers.pc = 0x06
+  q2 : RoutineSummary.Quiet (hazeWrapper2 state)
+  opC3 : (hazeWrapper2 state).memory.read (hazeWrapper2 state).registers.pc = 0xC3
+  hazeTarget : (hazeWrapperDispatch state).registers.hl = 0x79DA
+  hazeBank : (hazeWrapperDispatch state).registers.b = 0x04
+  bankswitchTarget : (hazeWrapperDispatch state).registers.pc = 0x35D6
+
+/-- The effect-table Haze wrapper decodes to the exact bank, target, and common
+`Bankswitch` tail entry in three instructions. -/
+theorem haze_wrapper_exact (state : FunctionalState) (contract : HazeWrapperContract state) :
+    (RoutineSummary.runSteps 3 state).state = hazeWrapperDispatch state ∧
+    (hazeWrapperDispatch state).registers.hl = 0x79DA ∧
+    (hazeWrapperDispatch state).registers.b = 0x04 ∧
+    (hazeWrapperDispatch state).registers.pc = 0x35D6 := by
+  have a := oneStep (RoutineSummary.step_ldHlImmediate state contract.q0.1
+    contract.q0.2.2 contract.q0.2.1 contract.op21)
+  have b := oneStep (RoutineSummary.step_ldBImmediate (hazeWrapper1 state) contract.q1.1
+    contract.q1.2.2 contract.q1.2.1 contract.op06)
+  have c := oneStep (RoutineSummary.step_jpAbsolute (hazeWrapper2 state) contract.q2.1
+    contract.q2.2.2 contract.q2.2.1 contract.opC3)
+  have ab := RoutineSummary.runSteps_state_add 1 1 state (hazeWrapper1 state)
+    (hazeWrapper2 state) a b
+  have abc := RoutineSummary.runSteps_state_add 2 1 state (hazeWrapper2 state)
+    (hazeWrapperDispatch state) (by simpa using ab) c
+  exact ⟨abc, contract.hazeTarget, contract.hazeBank, contract.bankswitchTarget⟩
+
 structure RequiredHazeBytes (rom : Array Byte) : Prop where
   gameplayWindow : Tables.tableBytes rom
       (romOffset 0x04 (Word.ofNat hazeEntry.toNat)) hazeBytes.length =
@@ -1439,16 +1477,30 @@ structure RequiredHazeBytes (rom : Array Byte) : Prop where
   helperWindow : Tables.tableBytes rom
       (romOffset 0x04 (Word.ofNat helpersEntry.toNat)) helperBytes.length =
     helperBytes.map (fun byte => byte.toNat.toUInt8)
+  wrapperWindow : Tables.tableBytes rom
+      (romOffset 0x0F (Word.ofNat hazeWrapperEntry.toNat)) hazeWrapperBytes.length =
+    hazeWrapperBytes.map (fun byte => byte.toNat.toUInt8)
 
 structure CanonicalHazeBytes (sha256 : Sha256) (rom : CanonicalRom) : Prop where
   transform : TransformRoutine.CanonicalTransformBytes sha256 rom
   haze : RequiredHazeBytes rom.bytes
+
+/-- The canonical certificate chain connects effect ID `$19`'s exact table slot
+to the byte-certified Haze wrapper. This is dispatch selection, not yet an
+execution theorem for `_JumpMoveEffect` or `Bankswitch`. -/
+theorem canonical_effect19_wrapper {sha256 : Sha256} {rom : CanonicalRom}
+    (certificate : CanonicalHazeBytes sha256 rom) :
+    Effects.decodePointer rom.bytes 0x18 = 0x7B1E :=
+  Effects.haze_pointer_exact
+    certificate.transform.leechSeed.substitute.healing.screens.ohko.conversion.explode.prefixes.leaves.mechanics.effects
 
 /-- Runtime fixture predicate only. -/
 def windowAgrees (rom : Array Byte) : Bool :=
   decide (Tables.tableBytes rom (romOffset 0x04 (Word.ofNat hazeEntry.toNat))
       hazeBytes.length = hazeBytes.map (fun byte => byte.toNat.toUInt8)) &&
   decide (Tables.tableBytes rom (romOffset 0x04 (Word.ofNat helpersEntry.toNat))
-      helperBytes.length = helperBytes.map (fun byte => byte.toNat.toUInt8))
+      helperBytes.length = helperBytes.map (fun byte => byte.toNat.toUInt8)) &&
+  decide (Tables.tableBytes rom (romOffset 0x0F (Word.ofNat hazeWrapperEntry.toNat))
+      hazeWrapperBytes.length = hazeWrapperBytes.map (fun byte => byte.toNat.toUInt8))
 
 end Battle.Rom.HazeRoutine

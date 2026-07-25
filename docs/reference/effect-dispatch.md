@@ -325,6 +325,15 @@ the copy path; player Transform reloads and tests the player's own status-1 byte
 reaching failure only for self-invulnerability. Exact functional and continuous
 fetched-IR traces end at the copy/failure boundaries.
 
+`Battle.Rom.HazeRoutine` compositionally proves the three helper routines and
+all four turn/status gameplay paths through both volatile-status returns. The
+paths take 184, 186, 186, or 188 architectural instructions from `HazeEffect_`
+entry. Its canonical certificate also fixes effect `$19` pointer slot `$18` to
+wrapper `$7B1E`; the wrapper's three decoded instructions load target `$79DA`,
+bank `$04`, and tail-jump to `Bankswitch`. The latter routine and `CallBankF`
+animation remain named external execution contracts rather than assumed local
+steps.
+
 The remaining animation/text tails still need frame/timing summaries.
 Whole-battle reachability and full Game Boy device lifting remain separate.
 

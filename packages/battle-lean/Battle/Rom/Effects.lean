@@ -189,6 +189,7 @@ structure RequiredEffectBytes (rom : Array Sm83.Byte) : Prop where
         [pointer.toUInt8, (pointer >>> 8).toUInt8]
   phases : phaseTablesAgree rom = true
   handlers : pointerHandlersAgree rom = true
+  hazePointer : decodePointer rom 0x18 = 0x7B1E
 
 /-- A supplied byte certificate proves that canonical ROM dispatch selects the
 same phase memberships and typed handler classes as the model. -/
@@ -196,6 +197,12 @@ theorem certified_dispatch {rom : Array Sm83.Byte}
     (certificate : RequiredEffectBytes rom) :
     phaseTablesAgree rom = true ∧ pointerHandlersAgree rom = true :=
   ⟨certificate.phases, certificate.handlers⟩
+
+/-- Effect ID `$19` occupies zero-based pointer slot `$18`; its exact wrapper
+address is retained separately from the typed handler-class agreement. -/
+theorem haze_pointer_exact {rom : Array Sm83.Byte}
+    (certificate : RequiredEffectBytes rom) :
+    decodePointer rom 0x18 = 0x7B1E := certificate.hazePointer
 
 /-- Runtime fixture predicate. This is evidence for a temporary hash-checked ROM,
 not a replacement for `RequiredEffectBytes` in proof modules. -/
