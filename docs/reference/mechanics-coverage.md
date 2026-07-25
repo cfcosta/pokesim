@@ -742,7 +742,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] layer-2 AI gate carries across voluntary AI switch but resets on forced replacement (`forced_enemy_switch_resets_ai_layer`, `voluntary_enemy_switch_retains_ai_layer`)
 - [ ] enemy switch destination is deterministic lowest-index other living slot, with unbounded raw scan
 - [x] player faint clears party status but preserves fought flag; Revive can restore gain-EXP eligibility (`player_faint_clears_party_status`, `faint_preserves_fought_flags`, `revive_restores_fought_recipient`)
-- [ ] EXP All counts fainted in-party members in the divisor but skips their awards
+- [x] EXP All counts fainted in-party members in the divisor but skips their awards (`exp_all_counts_full_party`, `fainted_recipient_skipped`)
 - [ ] wild-faint run prompt uses party slot 1 Speed regardless of active/replacement
 - [ ] healed-enemy recall-message underflow and zero-divisor raw divergence affect switch timing
 - [x] transformed non-Ditto capture becomes Ditto (`Battle.Full.Capture.transformed_stores_ditto`)

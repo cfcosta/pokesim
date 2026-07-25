@@ -326,6 +326,13 @@ inductive StepResult where
 private def countFlags (flags : UInt8) : UInt8 :=
   (List.range 8).foldl (fun count bit => if flags.toNat.testBit bit then count + 1 else count) 0
 
+def expRecipientEligible (flags : UInt8) (index : Nat) (fainted : Bool) : Bool :=
+  flags.toNat.testBit index && !fainted
+
+@[simp] theorem fainted_recipient_skipped (flags : UInt8) (index : Nat) :
+    expRecipientEligible flags index true = false := by
+  simp [expRecipientEligible]
+
 private def awardGroup (state : State) (source : Progression.AwardSource)
     (awardFlags : UInt8) : State :=
   let recipients := countFlags awardFlags
@@ -342,7 +349,7 @@ private def awardGroup (state : State) (source : Progression.AwardSource)
       let flags := accumulator.2.1
       let requests := accumulator.2.2
       let mon := row.getD index (synced.getD index (persistent 0 fallbackMon))
-      if awardFlags.toNat.testBit index && !mon.battle.fainted then
+      if expRecipientEligible awardFlags index mon.battle.fainted then
         let rate := Progression.GrowthRate.ofId
           (Data.Progression.growthRates.getD mon.battle.species.toNat 0)
         let result := Progression.award rate (Data.speciesData mon.battle.species)
@@ -376,6 +383,17 @@ private def halveSource (source : Progression.AwardSource) : Progression.AwardSo
 
 private def partyFlags (count : Nat) : UInt8 :=
   (List.range count).foldl (fun flags index => flags ||| (1 <<< index).toUInt8) 0
+
+def expAllDivisor (partySize : Nat) : UInt8 :=
+  countFlags (partyFlags partySize)
+
+def expAllDivisorExhaustive : Bool :=
+  (List.range 7).all fun size => expAllDivisor size == size.toUInt8
+
+/-- Every in-party row contributes to the second-pass divisor for legal party
+sizes, independent of later fainted-recipient rejection. -/
+theorem exp_all_counts_full_party : expAllDivisorExhaustive = true := by
+  native_decide
 
 private def awardEnemy (state : State) : State :=
   if state.engine.battle.mode == .link then state
