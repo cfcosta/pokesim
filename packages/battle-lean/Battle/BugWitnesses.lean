@@ -3,6 +3,7 @@ Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.BugCompatibility
+import Battle.Full.Engine
 import Battle.Rom.SubstituteRoutine
 
 /-!
@@ -70,6 +71,12 @@ theorem decoded_substitute_zero_user_hp_occurs :
       (UInt16.ofNat (Rom.SubstituteRoutine.decodedCost 100).toNat) 100 =
         .created 0 (Rom.SubstituteRoutine.decodedCost 100) := by
   exact Rom.SubstituteRoutine.decoded_equality_leaves_zero 100
+
+/-- Incoming damage exactly equal to Substitute HP leaves the zero-HP
+Substitute active because the subtraction returns without carry. -/
+theorem substitute_exact_damage_survival_occurs :
+    Full.Engine.substituteBreaks 25 25 = false := by
+  native_decide
 
 /-- Recover/Rest's broken comparison rejects a non-full 45/300 HP state. -/
 theorem healing_false_failure_occurs :
@@ -153,6 +160,7 @@ structure OccurrenceCertificate : Prop where
   criticalBoundary : Critical.occurs 255 255 ≠ Critical.occursInclusive 255 255
   substitute : Effects.Substitute.use false 25 100 = .created 0 25 ∧
     intendedSubstitute 25 100 = .insufficientHp
+  substituteSurvival : Full.Engine.substituteBreaks 25 25 = false
   healing : Effects.Healing.checkFails 45 300 = true ∧ (45 : UInt16) ≠ 300
   cooltrainer :
     let context : TrainerAI.Context :=
@@ -185,6 +193,7 @@ theorem all_gen1_bug_occurrences : OccurrenceCertificate :=
     accuracyBoundary := accuracy_boundary_occurs
     criticalBoundary := critical_boundary_occurs
     substitute := substitute_zero_user_hp_occurs
+    substituteSurvival := substitute_exact_damage_survival_occurs
     healing := healing_false_failure_occurs
     cooltrainer := cooltrainer_random_gate_bug_occurs
     blaine := by native_decide

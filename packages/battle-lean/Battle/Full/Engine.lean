@@ -297,7 +297,19 @@ private structure DamageApplied where
   state : State
   actualDamage : UInt16
   targetFainted : Bool
+  effectNullified : Bool := false
   events : List Event
+
+/-- `AttackSubstitute` returns without breaking on exact low-byte subtraction;
+any nonzero damage high byte breaks immediately. -/
+def substituteBreaks (substituteHp : UInt8) (damage : UInt16) : Bool :=
+  damage.toNat > 255 || substituteHp.toNat < damage.toNat
+
+@[simp] theorem substitute_exact_damage_survives (hp : UInt8) :
+    substituteBreaks hp (UInt16.ofNat hp.toNat) = false := by
+  have bounded := UInt8.toNat_lt hp
+  simp [substituteBreaks]
+  omega
 
 private def applyDamage (state : State) (who : Side) (damage : UInt16) : DamageApplied :=
   let targetWho := who.other
@@ -305,7 +317,7 @@ private def applyDamage (state : State) (who : Side) (damage : UInt16) : DamageA
   if target.active.volatile.hasSubstitute then
     let old := target.active.volatile.substituteHp
     let actual := min old damage.toUInt8
-    let breaks := old.toNat ≤ damage.toNat
+    let breaks := substituteBreaks old damage
     let remaining := if breaks then 0 else old - damage.toUInt8
     let volatile := { target.active.volatile with substituteHp := remaining }
     let volatile := { volatile with status2 := if breaks then target.active.volatile.status2 &&&
@@ -316,8 +328,8 @@ private def applyDamage (state : State) (who : Side) (damage : UInt16) : DamageA
       { volatile with bideAccumulated := volatile.bideAccumulated + actualDamage }
       else volatile
     { state := { (setSide state targetWho { target with active := { target.active with volatile } }) with
-        sharedDamage := actualDamage },
-      actualDamage, targetFainted := false,
+        sharedDamage := damage },
+      actualDamage, targetFainted := false, effectNullified := breaks,
       events := [.substituteDamage targetWho actual remaining] }
   else
     let hp := Step.saturatingSub target.active.active.hp damage
@@ -336,6 +348,7 @@ private structure RepeatedDamage where
   state : State
   lastActual : UInt16
   targetFainted : Bool
+  effectNullified : Bool := false
   events : List Event
 
 private def applyExtraHits : Nat → State → Side → UInt16 → RepeatedDamage
@@ -344,12 +357,14 @@ private def applyExtraHits : Nat → State → Side → UInt16 → RepeatedDamag
       let applied := applyDamage state who damage
       if applied.targetFainted then
         { state := applied.state, lastActual := applied.actualDamage,
-          targetFainted := true, events := applied.events }
+          targetFainted := true, effectNullified := applied.effectNullified,
+          events := applied.events }
       else
         let tail := applyExtraHits count applied.state who damage
         { state := tail.state
           lastActual := if count == 0 then applied.actualDamage else tail.lastActual
           targetFainted := tail.targetFainted
+          effectNullified := applied.effectNullified || tail.effectNullified
           events := applied.events ++ tail.events }
 
 private def terminalFor (state : State) (fainted : Side) : Outcome.BattleTerminal :=
@@ -511,7 +526,9 @@ match damageResult with
         let lastActual := if totalHits ≤ 1 then applied.actualDamage else extra.lastActual
         let context := effectsContext finalState who moveId slot
           (side finalState who).active (side finalState who.other).active finalState.battle.rng
-        let after := Effects.applyAfter effect move.type hit targetFainted lastActual context
+        let effectNullified := applied.effectNullified || extra.effectNullified
+        let after := if effectNullified then ({ context := context } : Effects.Outcome)
+          else Effects.applyAfter effect move.type hit targetFainted lastActual context
         let state := setLastMove (installEffectsContext finalState who after.context) who moveId
         let (state, lockEvents) := advanceMoveLock state who
         let events := critEvents ++ damageEvents ++ handlerGateEvents ++ accuracyEvents ++
