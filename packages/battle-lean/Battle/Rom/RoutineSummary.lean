@@ -97,6 +97,10 @@ theorem step_legal_trace (state : FunctionalState) (opcode : Byte)
     (Functional.step state).trace = (legalResult state opcode shape).trace := by
   rw [step_legal state opcode shape running opcodeAtPc decoded]
 
+@[simp] theorem ofBytes_high_low : ∀ address : Word,
+    Word.ofBytes address.highByte address.lowByte = address := by
+  native_decide
+
 private theorem increment_bounded : ∀ address : Word, ∀ offset : Fin 8,
     Word.ofNat ((Word.ofNat (address.toNat + offset.val)).toNat + 1) =
       Word.ofNat (address.toNat + offset.val + 1) := by
@@ -130,6 +134,22 @@ private theorem increment_bounded : ∀ address : Word, ∀ offset : Fin 8,
     Word.ofNat ((Word.ofNat (address.toNat + 7)).toNat + 1) =
       Word.ofNat (address.toNat + 8) := increment_bounded address ⟨7, by omega⟩
 
+private theorem first_three_distinct : ∀ address : Word,
+    address ≠ Word.ofNat (address.toNat + 1) ∧
+    address ≠ Word.ofNat (address.toNat + 2) ∧
+    Word.ofNat (address.toNat + 1) ≠ Word.ofNat (address.toNat + 2) := by
+  native_decide
+
+theorem address_ne_next (address : Word) :
+    address ≠ Word.ofNat (address.toNat + 1) := (first_three_distinct address).1
+
+theorem address_ne_next_two (address : Word) :
+    address ≠ Word.ofNat (address.toNat + 2) := (first_three_distinct address).2.1
+
+theorem next_ne_next_two (address : Word) :
+    Word.ofNat (address.toNat + 1) ≠ Word.ofNat (address.toNat + 2) :=
+  (first_three_distinct address).2.2
+
 def advancePc (state : FunctionalState) : Registers :=
   { state.registers with pc := Word.ofNat (state.registers.pc.toNat + 1) }
 
@@ -151,6 +171,46 @@ def ldAtDeA (s : FunctionalState) : FunctionalState :=
 def ldAtHlIncA (s : FunctionalState) : FunctionalState :=
   let memory := s.memory.write s.registers.hl s.registers.a
   let registers := (advancePc s).setHL (Word.ofNat (s.registers.hl.toNat + 1))
+  let s := { s with registers }
+  let s := { s with memory }
+  { s with haltBug := false }
+
+/-- State transformer for `INC HL`. -/
+def incHl (s : FunctionalState) : FunctionalState :=
+  let registers := (advancePc s).setHL (Word.ofNat (s.registers.hl.toNat + 1))
+  let s := { s with registers }
+  { s with haltBug := false }
+
+/-- State transformer for `LD A,[HL]`. -/
+def ldAAtHl (s : FunctionalState) : FunctionalState :=
+  let registers := { advancePc s with a := s.memory.read s.registers.hl }
+  let s := { s with registers }
+  { s with haltBug := false }
+
+/-- State transformer for `LD [HL],A`. -/
+def ldAtHlA (s : FunctionalState) : FunctionalState :=
+  let memory := s.memory.write s.registers.hl s.registers.a
+  let s := { s with registers := advancePc s }
+  let s := { s with memory }
+  { s with haltBug := false }
+
+/-- State transformer for `AND d8`. -/
+def andImmediate (s : FunctionalState) : FunctionalState :=
+  let immediateAddress := Word.ofNat (s.registers.pc.toNat + 1)
+  let operand := s.memory.read immediateAddress
+  let result := Alu.and8 s.registers.a operand
+  let registers := { s.registers with pc := Word.ofNat (immediateAddress.toNat + 1) }
+  let registers := { registers with a := result.value }
+  let registers := { registers with flags := result.flags }
+  let s := { s with registers }
+  { s with haltBug := false }
+
+/-- State transformer for `RES 7,[HL]`, including the two-byte CB fetch. -/
+def res7AtHl (s : FunctionalState) : FunctionalState :=
+  let value := Alu.resetBit ⟨7, by omega⟩ (s.memory.read s.registers.hl)
+  let memory := s.memory.write s.registers.hl value
+  let afterPrefix := Word.ofNat (s.registers.pc.toNat + 1)
+  let registers := { s.registers with pc := Word.ofNat (afterPrefix.toNat + 1) }
   let s := { s with registers }
   let s := { s with memory }
   { s with haltBug := false }
@@ -190,7 +250,7 @@ macro "routine_instruction_simp" : tactic => `(tactic|
     Registers.setHL, Registers.setDE, Registers.hl, Registers.de, Registers.set8,
     Registers.set16, Registers.get16, Registers.get8, Functional.immediate8,
     Word.highByte, Word.lowByte, advancePc, ldAFromHlInc, ldAtDeA, ldAtHlIncA,
-    incDe, decB,
+    incHl, ldAAtHl, ldAtHlA, andImmediate, res7AtHl, incDe, decB, Alu.apply,
     jrNz, *])
 
 /-- Exact decoded `LD A,[HL+]` state equation. -/
@@ -225,6 +285,67 @@ theorem step_ldAtHlIncA (state : FunctionalState)
     native_decide
   rw [step_legal_state state 0x22 _ running opcode decoded]
   routine_instruction_simp
+
+/-- Exact decoded `INC HL` state equation. -/
+theorem step_incHl (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0x23) :
+    (Functional.step state).state = incHl state := by
+  have decoded : Decode.base (0x23 : Byte) = .legal (.inc16 .hl) := by native_decide
+  rw [step_legal_state state 0x23 _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `LD A,[HL]` state equation. -/
+theorem step_ldAAtHl (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0x7E) :
+    (Functional.step state).state = ldAAtHl state := by
+  have decoded : Decode.base (0x7E : Byte) = .legal (.ld8 (.reg .a) .atHL) := by
+    native_decide
+  rw [step_legal_state state 0x7E _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `LD [HL],A` state equation. -/
+theorem step_ldAtHlA (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0x77) :
+    (Functional.step state).state = ldAtHlA state := by
+  have decoded : Decode.base (0x77 : Byte) = .legal (.ld8 .atHL (.reg .a)) := by
+    native_decide
+  rw [step_legal_state state 0x77 _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `AND d8` state equation. -/
+theorem step_andImmediate (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0xE6) :
+    (Functional.step state).state = andImmediate state := by
+  have decoded : Decode.base (0xE6 : Byte) = .legal (.aluAImm .and) := by native_decide
+  rw [step_legal_state state 0xE6 _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `RES 7,[HL]` state equation. -/
+theorem step_res7AtHl (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (prefixAtPc : state.memory.read state.registers.pc = 0xCB)
+    (subopcode : state.memory.read (Word.ofNat (state.registers.pc.toNat + 1)) = 0xBE) :
+    (Functional.step state).state = res7AtHl state := by
+  have baseDecoded : Decode.base (0xCB : Byte) = .prefix := by native_decide
+  have cbDecoded : Decode.cb (0xBE : Byte) = .res ⟨7, by omega⟩ .atHL := by native_decide
+  unfold Functional.step
+  simp only [running]
+  rw [prefixAtPc]
+  simp only [noHaltBug, Bool.false_eq_true, if_false, baseDecoded]
+  simp only [Functional.read]
+  rw [subopcode, cbDecoded]
+  simp [res7AtHl, Functional.executeShape, Functional.readTarget,
+    Functional.writeTarget, Functional.read, Functional.write,
+    Functional.withRegisters, Functional.matureIme, Registers.hl, scheduled, running]
 
 /-- Exact decoded `INC DE` state equation. -/
 theorem step_incDe (state : FunctionalState)

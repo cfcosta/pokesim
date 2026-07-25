@@ -354,6 +354,182 @@ theorem resetStats_eight_exact (initial : FunctionalState)
     · rw [states]
       exact iterateResetStatsBlocks_memory 8 initial
 
+/-! ## CureVolatileStatuses -/
+
+/-- Successive symbolic states of the eight-instruction call-free body. -/
+def cureS1 (state : FunctionalState) := RoutineSummary.res7AtHl state
+def cureS2 (state : FunctionalState) := RoutineSummary.incHl (cureS1 state)
+def cureS3 (state : FunctionalState) := RoutineSummary.ldAAtHl (cureS2 state)
+def cureS4 (state : FunctionalState) := RoutineSummary.andImmediate (cureS3 state)
+def cureS5 (state : FunctionalState) := RoutineSummary.ldAtHlIncA (cureS4 state)
+def cureS6 (state : FunctionalState) := RoutineSummary.ldAAtHl (cureS5 state)
+def cureS7 (state : FunctionalState) := RoutineSummary.andImmediate (cureS6 state)
+def cureVolatileBlock (state : FunctionalState) := RoutineSummary.ldAtHlA (cureS7 state)
+
+/-- Dynamic decode/stability contract at every instruction boundary. Keeping the
+observations on transformed states makes overlapping code writes impossible by
+construction without hiding them behind a global non-aliasing assumption. -/
+structure CureVolatileContract (state : FunctionalState) : Prop where
+  quiet : RoutineSummary.Quiet state
+  prefixByte : state.memory.read state.registers.pc = 0xCB
+  subopcode : state.memory.read (Word.ofNat (state.registers.pc.toNat + 1)) = 0xBE
+  op23 : (cureS1 state).memory.read (cureS1 state).registers.pc = 0x23
+  op7eFirst : (cureS2 state).memory.read (cureS2 state).registers.pc = 0x7E
+  opE6First : (cureS3 state).memory.read (cureS3 state).registers.pc = 0xE6
+  firstMask : (cureS3 state).memory.read
+    (Word.ofNat ((cureS3 state).registers.pc.toNat + 1)) = 0x78
+  op22 : (cureS4 state).memory.read (cureS4 state).registers.pc = 0x22
+  op7eSecond : (cureS5 state).memory.read (cureS5 state).registers.pc = 0x7E
+  opE6Second : (cureS6 state).memory.read (cureS6 state).registers.pc = 0xE6
+  secondMask : (cureS6 state).memory.read
+    (Word.ofNat ((cureS6 state).registers.pc.toNat + 1)) = 0xF8
+  op77 : (cureS7 state).memory.read (cureS7 state).registers.pc = 0x77
+
+private theorem cureQuiet1 (state : FunctionalState) (quiet : RoutineSummary.Quiet state) :
+    RoutineSummary.Quiet (cureS1 state) := by
+  rcases quiet with ⟨running, halt, scheduled⟩
+  exact ⟨by simp [cureS1, RoutineSummary.res7AtHl, running],
+    by simp [cureS1, RoutineSummary.res7AtHl],
+    by simp [cureS1, RoutineSummary.res7AtHl, scheduled]⟩
+
+private theorem cureQuiet2 (state : FunctionalState) (quiet : RoutineSummary.Quiet (cureS1 state)) :
+    RoutineSummary.Quiet (cureS2 state) := by
+  rcases quiet with ⟨running, halt, scheduled⟩
+  exact ⟨by simp [cureS2, RoutineSummary.incHl, running],
+    by simp [cureS2, RoutineSummary.incHl],
+    by simp [cureS2, RoutineSummary.incHl, scheduled]⟩
+
+private theorem cureQuiet3 (state : FunctionalState) (quiet : RoutineSummary.Quiet (cureS2 state)) :
+    RoutineSummary.Quiet (cureS3 state) := by
+  rcases quiet with ⟨running, halt, scheduled⟩
+  exact ⟨by simp [cureS3, RoutineSummary.ldAAtHl, running],
+    by simp [cureS3, RoutineSummary.ldAAtHl],
+    by simp [cureS3, RoutineSummary.ldAAtHl, scheduled]⟩
+
+private theorem cureQuiet4 (state : FunctionalState) (quiet : RoutineSummary.Quiet (cureS3 state)) :
+    RoutineSummary.Quiet (cureS4 state) := by
+  rcases quiet with ⟨running, halt, scheduled⟩
+  exact ⟨by simp [cureS4, RoutineSummary.andImmediate, running],
+    by simp [cureS4, RoutineSummary.andImmediate],
+    by simp [cureS4, RoutineSummary.andImmediate, scheduled]⟩
+
+private theorem cureQuiet5 (state : FunctionalState) (quiet : RoutineSummary.Quiet (cureS4 state)) :
+    RoutineSummary.Quiet (cureS5 state) := by
+  rcases quiet with ⟨running, halt, scheduled⟩
+  exact ⟨by simp [cureS5, RoutineSummary.ldAtHlIncA, running],
+    by simp [cureS5, RoutineSummary.ldAtHlIncA],
+    by simp [cureS5, RoutineSummary.ldAtHlIncA, scheduled]⟩
+
+private theorem cureQuiet6 (state : FunctionalState) (quiet : RoutineSummary.Quiet (cureS5 state)) :
+    RoutineSummary.Quiet (cureS6 state) := by
+  rcases quiet with ⟨running, halt, scheduled⟩
+  exact ⟨by simp [cureS6, RoutineSummary.ldAAtHl, running],
+    by simp [cureS6, RoutineSummary.ldAAtHl],
+    by simp [cureS6, RoutineSummary.ldAAtHl, scheduled]⟩
+
+private theorem cureQuiet7 (state : FunctionalState) (quiet : RoutineSummary.Quiet (cureS6 state)) :
+    RoutineSummary.Quiet (cureS7 state) := by
+  rcases quiet with ⟨running, halt, scheduled⟩
+  exact ⟨by simp [cureS7, RoutineSummary.andImmediate, running],
+    by simp [cureS7, RoutineSummary.andImmediate],
+    by simp [cureS7, RoutineSummary.andImmediate, scheduled]⟩
+
+/-- Exact decoded execution of `CureVolatileStatuses`, stopping before `RET`. -/
+theorem cureVolatile_block_exact (state : FunctionalState)
+    (contract : CureVolatileContract state) :
+    (RoutineSummary.runSteps 8 state).state = cureVolatileBlock state := by
+  have q1 := cureQuiet1 state contract.quiet
+  have q2 := cureQuiet2 state q1
+  have q3 := cureQuiet3 state q2
+  have q4 := cureQuiet4 state q3
+  have q5 := cureQuiet5 state q4
+  have q6 := cureQuiet6 state q5
+  have q7 := cureQuiet7 state q6
+  have one := RoutineSummary.step_res7AtHl state contract.quiet.1
+    contract.quiet.2.2 contract.quiet.2.1 contract.prefixByte contract.subopcode
+  have two := RoutineSummary.step_incHl (cureS1 state) q1.1 q1.2.2 q1.2.1 contract.op23
+  have three := RoutineSummary.step_ldAAtHl (cureS2 state) q2.1 q2.2.2 q2.2.1
+    contract.op7eFirst
+  have four := RoutineSummary.step_andImmediate (cureS3 state) q3.1 q3.2.2 q3.2.1
+    contract.opE6First
+  have five := RoutineSummary.step_ldAtHlIncA (cureS4 state) q4.1 q4.2.2 q4.2.1
+    contract.op22
+  have six := RoutineSummary.step_ldAAtHl (cureS5 state) q5.1 q5.2.2 q5.2.1
+    contract.op7eSecond
+  have seven := RoutineSummary.step_andImmediate (cureS6 state) q6.1 q6.2.2 q6.2.1
+    contract.opE6Second
+  have eight := RoutineSummary.step_ldAtHlA (cureS7 state) q7.1 q7.2.2 q7.2.1
+    contract.op77
+  have one' : (Functional.step state).state = cureS1 state := by
+    simpa [cureS1] using one
+  have two' : (Functional.step (cureS1 state)).state = cureS2 state := by
+    simpa [cureS2] using two
+  have three' : (Functional.step (cureS2 state)).state = cureS3 state := by
+    simpa [cureS3] using three
+  have four' : (Functional.step (cureS3 state)).state = cureS4 state := by
+    simpa [cureS4] using four
+  have five' : (Functional.step (cureS4 state)).state = cureS5 state := by
+    simpa [cureS5] using five
+  have six' : (Functional.step (cureS5 state)).state = cureS6 state := by
+    simpa [cureS6] using six
+  have seven' : (Functional.step (cureS6 state)).state = cureS7 state := by
+    simpa [cureS7] using seven
+  have eight' : (Functional.step (cureS7 state)).state = cureVolatileBlock state := by
+    simpa [cureVolatileBlock] using eight
+  simp only [RoutineSummary.runSteps]
+  rw [one', two', three', four', five', six', seven', eight']
+
+/-- Semantic effect of the decoded volatile-status body. It clears confusion
+bit 7 in the first byte, retains only bits 3--6 in the second, and retains only
+bits 3--7 in the third. All three source bytes remain symbolic. -/
+theorem cureVolatile_block_effect (state : FunctionalState)
+    (contract : CureVolatileContract state) :
+    let first := state.registers.hl
+    let second := Word.ofNat (first.toNat + 1)
+    let third := Word.ofNat (first.toNat + 2)
+    let out := cureVolatileBlock state
+    out.memory.read first = Alu.resetBit ⟨7, by omega⟩ (state.memory.read first) ∧
+    out.memory.read second = (Alu.and8 (state.memory.read second) 0x78).value ∧
+    out.memory.read third = (Alu.and8 (state.memory.read third) 0xF8).value ∧
+    out.registers.hl = third := by
+  have firstMask := contract.firstMask
+  have secondMask := contract.secondMask
+  simp only [cureS1, cureS2, cureS3, cureS4, cureS5, cureS6, cureS7,
+    cureVolatileBlock, RoutineSummary.res7AtHl, RoutineSummary.incHl,
+    RoutineSummary.ldAAtHl, RoutineSummary.andImmediate,
+    RoutineSummary.ldAtHlIncA, RoutineSummary.ldAtHlA,
+    RoutineSummary.advancePc, Registers.setHL, Registers.hl,
+    RoutineSummary.increment_twice, RoutineSummary.increment_after_two,
+    RoutineSummary.increment_after_three, RoutineSummary.increment_after_four,
+    RoutineSummary.increment_after_five, RoutineSummary.increment_after_six,
+    RoutineSummary.increment_after_seven, RoutineSummary.ofBytes_high_low] at firstMask secondMask ⊢
+  have firstNext : Word.ofBytes state.registers.h state.registers.l ≠
+      Word.ofNat ((Word.ofBytes state.registers.h state.registers.l).toNat + 1) := by
+    simpa only [Registers.hl] using RoutineSummary.address_ne_next state.registers.hl
+  have firstThird : Word.ofBytes state.registers.h state.registers.l ≠
+      Word.ofNat ((Word.ofBytes state.registers.h state.registers.l).toNat + 2) := by
+    simpa only [Registers.hl] using RoutineSummary.address_ne_next_two state.registers.hl
+  have secondThird : Word.ofNat ((Word.ofBytes state.registers.h state.registers.l).toNat + 1) ≠
+      Word.ofNat ((Word.ofBytes state.registers.h state.registers.l).toNat + 2) := by
+    simpa only [Registers.hl] using RoutineSummary.next_ne_next_two state.registers.hl
+  constructor
+  · rw [firstMask]
+    rw [FlatMemory.read_write_other _ _ _ _
+      firstThird]
+    rw [FlatMemory.read_write_other _ _ _ _
+      firstNext]
+    exact FlatMemory.read_write_same _ _ _
+  · constructor
+    · rw [firstMask]
+      rw [FlatMemory.read_write_other _ _ _ _ secondThird]
+      rw [FlatMemory.read_write_same]
+      rw [FlatMemory.read_write_other _ _ _ _ (Ne.symm firstNext)]
+    · rw [secondMask]
+      rw [FlatMemory.read_write_same]
+      rw [FlatMemory.read_write_other _ _ _ _ (Ne.symm secondThird)]
+      rw [FlatMemory.read_write_other _ _ _ _ (Ne.symm firstThird)]
+      exact ⟨rfl, trivial⟩
+
 /-! ## ResetStatMods -/
 
 private def resetModsLoop : Word := 0x7A45

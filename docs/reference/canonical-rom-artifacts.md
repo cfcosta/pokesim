@@ -158,7 +158,10 @@ without enumerating the eight-byte stat vector. `resetStats_eight_exact` then
 composes all forty loop instructions under explicit per-head code/stability
 contracts and yields the exact eight-byte copy fold. The same compositional
 method proves all twenty-four `ResetStatMods` loop instructions produce an exact
-eight-byte fill with the caller's accumulator value. Whole-handler call reachability
+eight-byte fill with the caller's accumulator value. The eight decoded
+`CureVolatileStatuses` body instructions are also composed symbolically, proving
+confusion-bit removal and the exact `$78`/`$F8` masks on arbitrary status bytes.
+Whole-handler call reachability
 and presentation-tail composition remain separate obligations.
 
 `Battle.Rom.EffectRoutines.CanonicalLeafEffectsBytes` adds exact code-window
