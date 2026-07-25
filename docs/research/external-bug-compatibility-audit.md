@@ -70,3 +70,47 @@ false-failure enumeration, universal trainer-control-flow equations, relational
 link witnesses, universal 16-bit scaling, and exact interaction witnesses. The
 ordinary execution path directly uses the shared critical, accuracy, and damage-
 stat primitives and propagates division freeze as a distinct stop reason.
+
+## Explicit occurrence layer
+
+`Battle.BugWitnesses` complements the universal certificate with named concrete
+occurrence theorems. Each audited family now has an input where cartridge behavior
+observably differs from an intended comparison or enters the claimed pathological
+state:
+
+| Family | Occurrence theorem |
+|---|---|
+| Focus Energy | `focus_energy_occurs` |
+| Accuracy boundary | `accuracy_boundary_occurs` |
+| Critical boundary | `critical_boundary_occurs` |
+| Substitute zero-user HP | `substitute_zero_user_hp_occurs` |
+| Healing false failure | `healing_false_failure_occurs` |
+| Cooltrainer-F dead gate | `cooltrainer_random_gate_bug_occurs` |
+| Blaine full-HP item | `blaine_full_hp_bug_occurs` |
+| Psywave link divergence | `psywave_link_desync_occurs` |
+| Bide link divergence | `bide_link_desync_occurs` |
+| Screen overflow | `screen_overflow_occurs` |
+| Low-defense division freeze | `low_defense_freeze_occurs` |
+| Equal-stage non-cancellation | `equal_stages_fail_to_cancel_occurs` |
+| Badge/screen catastrophe | `badge_screen_catastrophe_occurs` |
+
+`all_gen1_bug_occurrences` packages those thirteen facts into one proposition.
+The Substitute and healing witnesses additionally have decoded-ROM arithmetic
+variants derived through `Battle.Rom.SubstituteRoutine` and
+`Battle.Rom.HealRoutine`. This still does not promote handwritten intended fixes
+or runtime ROM checks into whole-cartridge equivalence.
+
+## Differences from the external scope
+
+The external project proves translated helper functions over a partial CPU and
+uses `#eval` checks as validation. This project does not import that CPU or those
+translations: it uses its independently verified full legal opcode semantics,
+keeps runtime checks outside theorem modules, and requires explicit canonical
+byte witnesses for ROM-linked claims. It also narrows two potentially misleading
+headlines:
+
+- Cooltrainer F does not literally always switch; the dead random return makes
+  low-HP healing unconditional, while healthy states can still attack.
+- The uncapped Swords Dance wrap examples are mathematical but blocked by the
+  ordinary 999 stat cap; screen doubling and badge reapplication provide the
+  reachable overflow paths instead.

@@ -6,14 +6,17 @@ A Lean 4 model, differential harness, and proof library for the Generation 1
 
 The package owns the *game/battle* layer: the RNG stream, the damage pipeline,
 move effects, status conditions, stat stages and badge boosts, trainer AI, item
-and ball effects, and catching — **including every original bug**, because the
-ROM's behaviour is the specification. The overworld is out of scope.
+and ball effects, and catching. Cartridge bugs inside the declared profile are
+preserved rather than repaired; `Battle.BugCompatibility` gives universal
+characterizations for thirteen independently audited families, while
+`Battle.BugWitnesses.all_gen1_bug_occurrences` proves a concrete occurrence for
+each one. The overworld is out of scope.
 
-It is deliberately independent of the processor. It does not decode SM83
-opcodes, model the cartridge, or drive Game Boy peripherals: that is the
-companion `sm83-lean` package. Instead, the Stage-0 differential harness runs
-`sm83-lean` over the assembled battle routines as its **oracle** and checks the
-abstract battle model against it.
+The high-level battle model is deliberately independent of processor semantics.
+ROM decoding, Pokémon-owned device composition, and refinement modules live in
+this package but import the standalone companion `sm83-lean` candidate. Runtime
+fixtures remain supporting checks; theorem modules require caller-supplied hash
+and byte witnesses and never treat processor execution as an unproved oracle.
 
 ## Semantic layers
 

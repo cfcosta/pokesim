@@ -28,6 +28,7 @@ import Battle.Effects.Healing
 import Battle.TrainerAI
 import Battle.LinkBugs
 import Battle.BugCompatibility
+import Battle.BugWitnesses
 import Battle.Full.State
 import Battle.Full.Status
 import Battle.Full.Items
