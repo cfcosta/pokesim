@@ -673,27 +673,27 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 ## Link battle
 
 - [ ] party exchange representation
-- [ ] link action values for move/switch/no-action/Struggle/run
-- [ ] internally/external-clock role
-- [ ] equal-Speed inversion
+- [x] link action values for move/switch/no-action/Struggle/run (`Battle.Full.Link.encodeAction`, `decodeAction`, `action_roundtrip`)
+- [x] internally/external-clock role (`Battle.Full.Link.ClockRole`)
+- [x] equal-Speed inversion (`Battle.Full.Link.equal_speed_roles_agree_on_physical_first`)
 - [ ] two post-setup ten-byte blocks plus each perspective's first-nine active seeds and index
-- [ ] internal-clock alias versus external-clock scan/copy and legitimate-leading-zero mismatch
-- [ ] per-perspective `seed := 5 × seed + 1` update
-- [ ] conditional equal-list/equal-index invariant and explicit paired-state desynchronization
-- [ ] no trainer AI
-- [ ] no item use and no link move-menu cancel/reordering
-- [ ] no EXP
-- [ ] remote switch behavior
+- [x] internal-clock alias versus external-clock scan/copy and legitimate-leading-zero mismatch (`Battle.Full.Link.internalSetupList`, `externalSetupList`, `leading_zero_setup_mismatch`)
+- [x] per-perspective `seed := 5 × seed + 1` update (`Battle.Rng.regenStep`, `regenerate`)
+- [x] conditional equal-list/equal-index invariant and explicit paired-state desynchronization (`Battle.Full.Link.mirroredRng`, `StepResult`)
+- [x] no trainer AI (`Battle.Full.Engine.step` link action pairing bypasses `TrainerController`)
+- [x] no item use and no link move-menu cancel/reordering (`Battle.Full.Link.items_have_no_link_encoding`, `action_roundtrip`)
+- [x] no EXP (`Battle.Full.Environment.finishBattle` link branch)
+- [x] remote switch behavior (`Battle.Full.Link.encodeAction`, `step`)
 - [ ] link Mimic random target selection
 - [ ] win/loss/draw result-code interpretation
 - [ ] paired cartridge-perspective code-path relational proof
 - [ ] link `EndOfBattle` copies mirrored active-enemy status to party but not HP; authoritative local party versus disposable remote mirror
 - [ ] battle-driver return precedes cable club's unconditional `HealParty`; full cable-session theorem composes it separately
-- [ ] known Psywave desync
-- [ ] known Bide-clear desync
-- [ ] Mirror Move/Metronome trapping desync warning
+- [x] known Psywave desync (`Battle.LinkBugs.psywave_link_desync`, `psywave_link_desync_exists`)
+- [x] known Bide-clear desync (`Battle.LinkBugs.bide_desync_iff`, `bide_300_desync`)
+- [x] Mirror Move/Metronome trapping desync warning (`Battle.Full.Link.DesyncCause.generatedTrappingWrapper`, `knownCause`)
 - [ ] paired terminal-cause/raw-field agreement when no desync occurs
-- [ ] explicit divergence relation when cartridge sides desynchronize
+- [x] explicit divergence relation when cartridge sides desynchronize (`Battle.Full.Link.StepResult.desynchronized`)
 
 ## Known behavior regressions
 

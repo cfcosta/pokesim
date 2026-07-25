@@ -142,6 +142,10 @@ theorem action_roundtrip (action : Full.Action) (encoded : (encodeAction action)
   | item request => simp [encodeAction] at encoded
   | struggle | noAction | run => native_decide
 
+@[simp] theorem items_have_no_link_encoding (request : Items.Request) :
+    encodeAction (.item request) = none := by
+  rfl
+
 /-- Concrete legitimate-leading-zero setup mismatch. -/
 theorem leading_zero_setup_mismatch :
     let generated : Array UInt8 := #[0, 5, 6, 7, 8, 9, 10, 11, 12, 13]
