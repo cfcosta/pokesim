@@ -868,6 +868,139 @@ theorem resetMods_routine_exact (state : FunctionalState)
     simpa [loopFinal, loopInitial, RoutineSummary.ldBImmediate] using
       iterateResetModsBlocks_memory 8 loopInitial
 
+/-! ## Haze reset prefix through four helper returns -/
+
+def hazeP1 (s : FunctionalState) := RoutineSummary.ldAImmediate s
+def hazeP2 (s : FunctionalState) := RoutineSummary.ldHlImmediate (hazeP1 s)
+def hazeP3 (s : FunctionalState) := RoutineSummary.callAbsolute (hazeP2 s)
+def hazeP4 (s : FunctionalState) :=
+  RoutineSummary.ret (iterateResetModsBlocks 8 (RoutineSummary.ldBImmediate (hazeP3 s)))
+def hazeP5 (s : FunctionalState) := RoutineSummary.ldHlImmediate (hazeP4 s)
+def hazeP6 (s : FunctionalState) := RoutineSummary.callAbsolute (hazeP5 s)
+def hazeP7 (s : FunctionalState) :=
+  RoutineSummary.ret (iterateResetModsBlocks 8 (RoutineSummary.ldBImmediate (hazeP6 s)))
+def hazeP8 (s : FunctionalState) := RoutineSummary.ldHlImmediate (hazeP7 s)
+def hazeP9 (s : FunctionalState) := RoutineSummary.ldDeImmediate (hazeP8 s)
+def hazeP10 (s : FunctionalState) := RoutineSummary.callAbsolute (hazeP9 s)
+def hazeP11 (s : FunctionalState) :=
+  RoutineSummary.ret (iterateResetStatsBlocks 8 (RoutineSummary.ldBImmediate (hazeP10 s)))
+def hazeP12 (s : FunctionalState) := RoutineSummary.ldHlImmediate (hazeP11 s)
+def hazeP13 (s : FunctionalState) := RoutineSummary.ldDeImmediate (hazeP12 s)
+def hazeP14 (s : FunctionalState) := RoutineSummary.callAbsolute (hazeP13 s)
+def hazeResetPrefix (s : FunctionalState) :=
+  RoutineSummary.ret (iterateResetStatsBlocks 8 (RoutineSummary.ldBImmediate (hazeP14 s)))
+
+structure HazeResetPrefixContract (state : FunctionalState) : Prop where
+  q0 : RoutineSummary.Quiet state
+  op3e : state.memory.read state.registers.pc = 0x3E
+  q1 : RoutineSummary.Quiet (hazeP1 state)
+  op21a : (hazeP1 state).memory.read (hazeP1 state).registers.pc = 0x21
+  q2 : RoutineSummary.Quiet (hazeP2 state)
+  call1 : (hazeP2 state).memory.read (hazeP2 state).registers.pc = 0xCD
+  mods1 : ResetModsRoutineContract (hazeP3 state)
+  q4 : RoutineSummary.Quiet (hazeP4 state)
+  op21b : (hazeP4 state).memory.read (hazeP4 state).registers.pc = 0x21
+  q5 : RoutineSummary.Quiet (hazeP5 state)
+  call2 : (hazeP5 state).memory.read (hazeP5 state).registers.pc = 0xCD
+  mods2 : ResetModsRoutineContract (hazeP6 state)
+  q7 : RoutineSummary.Quiet (hazeP7 state)
+  op21c : (hazeP7 state).memory.read (hazeP7 state).registers.pc = 0x21
+  q8 : RoutineSummary.Quiet (hazeP8 state)
+  op11a : (hazeP8 state).memory.read (hazeP8 state).registers.pc = 0x11
+  q9 : RoutineSummary.Quiet (hazeP9 state)
+  call3 : (hazeP9 state).memory.read (hazeP9 state).registers.pc = 0xCD
+  stats1 : ResetStatsRoutineContract (hazeP10 state)
+  q11 : RoutineSummary.Quiet (hazeP11 state)
+  op21d : (hazeP11 state).memory.read (hazeP11 state).registers.pc = 0x21
+  q12 : RoutineSummary.Quiet (hazeP12 state)
+  op11b : (hazeP12 state).memory.read (hazeP12 state).registers.pc = 0x11
+  q13 : RoutineSummary.Quiet (hazeP13 state)
+  call4 : (hazeP13 state).memory.read (hazeP13 state).registers.pc = 0xCD
+  stats2 : ResetStatsRoutineContract (hazeP14 state)
+
+private theorem oneStep {state out : FunctionalState}
+    (step : (Functional.step state).state = out) :
+    (RoutineSummary.runSteps 1 state).state = out := by
+  simpa [RoutineSummary.runSteps] using step
+
+/-- The complete common Haze reset prefix: 147 decoded instructions include
+both modifier fills, both stat copies, all four calls, and all four returns. -/
+theorem haze_reset_prefix_exact (state : FunctionalState)
+    (contract : HazeResetPrefixContract state) :
+    (RoutineSummary.runSteps 147 state).state = hazeResetPrefix state := by
+  have s01 := oneStep (RoutineSummary.step_ldAImmediate state contract.q0.1
+    contract.q0.2.2 contract.q0.2.1 contract.op3e)
+  have s12 := oneStep (RoutineSummary.step_ldHlImmediate (hazeP1 state) contract.q1.1
+    contract.q1.2.2 contract.q1.2.1 contract.op21a)
+  have firstTwo := RoutineSummary.runSteps_state_add 1 1 state (hazeP1 state)
+    (hazeP2 state) s01 s12
+  have call1Step := RoutineSummary.step_callAbsolute (hazeP2 state) contract.q2.1
+    contract.q2.2.2 contract.q2.2.1 contract.call1
+  have call1Head := RoutineSummary.runSteps_after_first 26 (hazeP2 state)
+    (hazeP3 state) call1Step
+  have mods1 := (resetMods_routine_exact (hazeP3 state) contract.mods1).1
+  have call1Body : (RoutineSummary.runSteps 27 (hazeP2 state)).state = hazeP4 state := by
+    rw [call1Head]
+    simpa [hazeP4] using mods1
+  have part1 := RoutineSummary.runSteps_state_add 2 27 state (hazeP2 state)
+    (hazeP4 state) firstTwo call1Body
+
+  have s45 := oneStep (RoutineSummary.step_ldHlImmediate (hazeP4 state) contract.q4.1
+    contract.q4.2.2 contract.q4.2.1 contract.op21b)
+  have call2Step := RoutineSummary.step_callAbsolute (hazeP5 state) contract.q5.1
+    contract.q5.2.2 contract.q5.2.1 contract.call2
+  have call2Head := RoutineSummary.runSteps_after_first 26 (hazeP5 state)
+    (hazeP6 state) call2Step
+  have mods2 := (resetMods_routine_exact (hazeP6 state) contract.mods2).1
+  have call2Body : (RoutineSummary.runSteps 27 (hazeP5 state)).state = hazeP7 state := by
+    rw [call2Head]
+    simpa [hazeP7] using mods2
+  have part2 := RoutineSummary.runSteps_state_add 1 27 (hazeP4 state) (hazeP5 state)
+    (hazeP7 state) s45 call2Body
+
+  have s78 := oneStep (RoutineSummary.step_ldHlImmediate (hazeP7 state) contract.q7.1
+    contract.q7.2.2 contract.q7.2.1 contract.op21c)
+  have s89 := oneStep (RoutineSummary.step_ldDeImmediate (hazeP8 state) contract.q8.1
+    contract.q8.2.2 contract.q8.2.1 contract.op11a)
+  have setup3 := RoutineSummary.runSteps_state_add 1 1 (hazeP7 state) (hazeP8 state)
+    (hazeP9 state) s78 s89
+  have call3Step := RoutineSummary.step_callAbsolute (hazeP9 state) contract.q9.1
+    contract.q9.2.2 contract.q9.2.1 contract.call3
+  have call3Head := RoutineSummary.runSteps_after_first 42 (hazeP9 state)
+    (hazeP10 state) call3Step
+  have stats1 := (resetStats_routine_exact (hazeP10 state) contract.stats1).1
+  have call3Body : (RoutineSummary.runSteps 43 (hazeP9 state)).state = hazeP11 state := by
+    rw [call3Head]
+    simpa [hazeP11] using stats1
+  have part3 := RoutineSummary.runSteps_state_add 2 43 (hazeP7 state) (hazeP9 state)
+    (hazeP11 state) setup3 call3Body
+
+  have s1112 := oneStep (RoutineSummary.step_ldHlImmediate (hazeP11 state) contract.q11.1
+    contract.q11.2.2 contract.q11.2.1 contract.op21d)
+  have s1213 := oneStep (RoutineSummary.step_ldDeImmediate (hazeP12 state) contract.q12.1
+    contract.q12.2.2 contract.q12.2.1 contract.op11b)
+  have setup4 := RoutineSummary.runSteps_state_add 1 1 (hazeP11 state) (hazeP12 state)
+    (hazeP13 state) s1112 s1213
+  have call4Step := RoutineSummary.step_callAbsolute (hazeP13 state) contract.q13.1
+    contract.q13.2.2 contract.q13.2.1 contract.call4
+  have call4Head := RoutineSummary.runSteps_after_first 42 (hazeP13 state)
+    (hazeP14 state) call4Step
+  have stats2 := (resetStats_routine_exact (hazeP14 state) contract.stats2).1
+  have call4Body : (RoutineSummary.runSteps 43 (hazeP13 state)).state =
+      hazeResetPrefix state := by
+    rw [call4Head]
+    simpa [hazeResetPrefix] using stats2
+  have part4 := RoutineSummary.runSteps_state_add 2 43 (hazeP11 state) (hazeP13 state)
+    (hazeResetPrefix state) setup4 call4Body
+
+  have firstHalf := RoutineSummary.runSteps_state_add 29 28 state (hazeP4 state)
+    (hazeP7 state) (by simpa using part1) (by simpa using part2)
+  have third := RoutineSummary.runSteps_state_add 57 45 state (hazeP7 state)
+    (hazeP11 state) (by simpa using firstHalf) (by simpa using part3)
+  have fourth := RoutineSummary.runSteps_state_add 102 45 state (hazeP11 state)
+    (hazeResetPrefix state) (by simpa using third) (by simpa using part4)
+  simpa using fourth
+
 structure RequiredHazeBytes (rom : Array Byte) : Prop where
   gameplayWindow : Tables.tableBytes rom
       (romOffset 0x04 (Word.ofNat hazeEntry.toNat)) hazeBytes.length =

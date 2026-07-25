@@ -163,7 +163,10 @@ eight-byte fill with the caller's accumulator value. The eight decoded
 confusion-bit removal and the exact `$78`/`$F8` masks on arbitrary status bytes.
 `resetStats_routine_exact`, `resetMods_routine_exact`, and
 `cureVolatile_routine_exact` include the count-loading prologues and stack
-returns, rather than stopping at call-free bodies. Whole-handler call reachability
+returns, rather than stopping at call-free bodies. `haze_reset_prefix_exact`
+then composes 147 decoded instructions from `HazeEffect_` entry through both
+modifier fills and both stat-copy helper calls/returns under explicit dynamic
+code, stack, and per-loop contracts. Whole-handler call reachability
 and presentation-tail composition remain separate obligations.
 
 `Battle.Rom.EffectRoutines.CanonicalLeafEffectsBytes` adds exact code-window

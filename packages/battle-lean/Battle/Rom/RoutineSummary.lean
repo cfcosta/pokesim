@@ -36,6 +36,13 @@ def runSteps : Nat → FunctionalState → Execution
 @[simp] theorem runSteps_zero (state : FunctionalState) :
     runSteps 0 state = { state, trace := [] } := rfl
 
+/-- Replace the first architectural step while composing a routine body. -/
+theorem runSteps_after_first (count : Nat) (initial after : FunctionalState)
+    (first : (Functional.step initial).state = after) :
+    (runSteps (count + 1) initial).state = (runSteps count after).state := by
+  simp only [runSteps]
+  rw [first]
+
 /-- Exact-count executions compose without exposing or re-evaluating either
 sub-block. -/
 theorem runSteps_add (left right : Nat) (state : FunctionalState) :
@@ -49,6 +56,17 @@ theorem runSteps_add (left right : Nat) (state : FunctionalState) :
       simp only [Nat.succ_add, runSteps]
       rw [induction]
       simp [List.append_assoc]
+
+/-- State-only corollary used to compose independently proved routine blocks. -/
+theorem runSteps_state_add (left right : Nat) (initial middle final : FunctionalState)
+    (first : (runSteps left initial).state = middle)
+    (second : (runSteps right middle).state = final) :
+    (runSteps (left + right) initial).state = final := by
+  have composed := congrArg Execution.state (runSteps_add left right initial)
+  rw [composed]
+  simp only
+  rw [first]
+  exact second
 
 /-- The common precondition for local battle routines that do not schedule IME
 changes or enter HALT/STOP/lock. -/
@@ -175,6 +193,84 @@ def ldAtHlIncA (s : FunctionalState) : FunctionalState :=
   let s := { s with memory }
   { s with haltBug := false }
 
+/-- Common two-byte immediate fetch result. -/
+def immediateWord (s : FunctionalState) : Word :=
+  let lowAddress := Word.ofNat (s.registers.pc.toNat + 1)
+  let highAddress := Word.ofNat (lowAddress.toNat + 1)
+  Word.ofBytes (s.memory.read highAddress) (s.memory.read lowAddress)
+
+/-- State transformer for `LD A,d8`. -/
+def ldAImmediate (s : FunctionalState) : FunctionalState :=
+  let immediateAddress := Word.ofNat (s.registers.pc.toNat + 1)
+  let registers := { s.registers with a := s.memory.read immediateAddress }
+  let registers := { registers with pc := Word.ofNat (immediateAddress.toNat + 1) }
+  { s with registers, haltBug := false }
+
+/-- State transformer for `LD HL,d16`. -/
+def ldHlImmediate (s : FunctionalState) : FunctionalState :=
+  let registers := (s.registers.setHL (immediateWord s))
+  let registers := { registers with pc := Word.ofNat (s.registers.pc.toNat + 3) }
+  { s with registers, haltBug := false }
+
+/-- State transformer for `LD DE,d16`. -/
+def ldDeImmediate (s : FunctionalState) : FunctionalState :=
+  let registers := (s.registers.setDE (immediateWord s))
+  let registers := { registers with pc := Word.ofNat (s.registers.pc.toNat + 3) }
+  { s with registers, haltBug := false }
+
+/-- State transformer for `LDH A,[a8]`. -/
+def ldhAImmediate (s : FunctionalState) : FunctionalState :=
+  let immediateAddress := Word.ofNat (s.registers.pc.toNat + 1)
+  let dataAddress := Word.ofNat (0xFF00 + (s.memory.read immediateAddress).toNat)
+  let registers := { s.registers with a := s.memory.read dataAddress }
+  let registers := { registers with pc := Word.ofNat (immediateAddress.toNat + 1) }
+  { s with registers, haltBug := false }
+
+/-- State transformer for `AND A`. -/
+def andA (s : FunctionalState) : FunctionalState :=
+  let result := Alu.apply .and s.registers.a s.registers.a s.registers.flags
+  let registers := { advancePc s with a := result.value, flags := result.flags }
+  { s with registers, haltBug := false }
+
+/-- State transformer for `XOR A`. -/
+def xorA (s : FunctionalState) : FunctionalState :=
+  let result := Alu.apply .xor s.registers.a s.registers.a s.registers.flags
+  let registers := { advancePc s with a := result.value, flags := result.flags }
+  { s with registers, haltBug := false }
+
+/-- State transformer for `JR Z,e8`. -/
+def jrZ (state : FunctionalState) : FunctionalState :=
+  let afterOpcode := Word.ofNat (state.registers.pc.toNat + 1)
+  let afterImmediate := Word.ofNat (afterOpcode.toNat + 1)
+  let registers := { state.registers with pc := afterImmediate }
+  let registers := if Alu.conditionHolds .z registers.flags then
+    { registers with pc := (registers.pc.addSignedByte
+      (state.memory.read (Word.ofNat (state.registers.pc.toNat + 1)))) }
+    else registers
+  { state with registers, haltBug := false }
+
+/-- State transformer for `DEC DE`. -/
+def decDe (s : FunctionalState) : FunctionalState :=
+  let registers := (advancePc s).setDE (Word.ofNat (s.registers.de.toNat + 65535))
+  { s with registers, haltBug := false }
+
+/-- State transformer for `LD [HL],d8`. -/
+def ldAtHlImmediate (s : FunctionalState) : FunctionalState :=
+  let immediateAddress := Word.ofNat (s.registers.pc.toNat + 1)
+  let memory := s.memory.write s.registers.hl (s.memory.read immediateAddress)
+  let registers := { s.registers with pc := Word.ofNat (immediateAddress.toNat + 1) }
+  { s with registers, memory, haltBug := false }
+
+/-- State transformer for `LD [a16],A`. -/
+def ldAbsoluteA (s : FunctionalState) : FunctionalState :=
+  let memory := s.memory.write (immediateWord s) s.registers.a
+  let registers := { s.registers with pc := Word.ofNat (s.registers.pc.toNat + 3) }
+  { s with registers, memory, haltBug := false }
+
+/-- State transformer for `JP a16`. -/
+def jpAbsolute (s : FunctionalState) : FunctionalState :=
+  { s with registers := { s.registers with pc := immediateWord s }, haltBug := false }
+
 /-- State transformer for `LD B,d8`. -/
 def ldBImmediate (s : FunctionalState) : FunctionalState :=
   let immediateAddress := Word.ofNat (s.registers.pc.toNat + 1)
@@ -182,6 +278,21 @@ def ldBImmediate (s : FunctionalState) : FunctionalState :=
   let registers := (s.registers.set8 .b value)
   let registers := { registers with pc := Word.ofNat (immediateAddress.toNat + 1) }
   let s := { s with registers }
+  { s with haltBug := false }
+
+/-- State transformer for unconditional `CALL a16`. -/
+def callAbsolute (s : FunctionalState) : FunctionalState :=
+  let lowAddress := Word.ofNat (s.registers.pc.toNat + 1)
+  let highAddress := Word.ofNat (lowAddress.toNat + 1)
+  let returnAddress := Word.ofNat (highAddress.toNat + 1)
+  let target := Word.ofBytes (s.memory.read highAddress) (s.memory.read lowAddress)
+  let highStack := Word.ofNat (s.registers.sp.toNat + 65535)
+  let lowStack := Word.ofNat (highStack.toNat + 65535)
+  let memory := (s.memory.write highStack returnAddress.highByte).write
+    lowStack returnAddress.lowByte
+  let registers := { s.registers with sp := lowStack, pc := target }
+  let s := { s with registers }
+  let s := { s with memory }
   { s with haltBug := false }
 
 /-- State transformer for unconditional `RET`. -/
@@ -264,14 +375,19 @@ def jrNz (state : FunctionalState) : FunctionalState :=
 macro "routine_instruction_simp" : tactic => `(tactic|
   simp [legalResult, InstructionShape.immediateBytes, Functional.fetchImmediate,
     Functional.executeShape, Functional.readMem16, Functional.writeMem16,
-    Functional.popWord, Functional.incrementSP,
+    Functional.popWord, Functional.incrementSP, Functional.pushWord,
+    Functional.decrementSP,
     Functional.read, Functional.write, Functional.idle, Functional.withRegisters,
     Functional.updateMemoryPointer, Functional.memoryAddress, Functional.readTarget,
     Functional.writeTarget, Functional.matureIme, Functional.setFlags,
     Registers.setHL, Registers.setDE, Registers.hl, Registers.de, Registers.set8,
     Registers.set16, Registers.get16, Registers.get8, Functional.immediate8,
+    Functional.immediate16,
     Word.highByte, Word.lowByte, advancePc, ldAFromHlInc, ldAtDeA, ldAtHlIncA,
-    ldBImmediate, ret, incHl, ldAAtHl, ldAtHlA, andImmediate, res7AtHl, incDe,
+    immediateWord, ldAImmediate, ldHlImmediate, ldDeImmediate, ldhAImmediate,
+    andA, xorA, jrZ, decDe, ldAtHlImmediate, ldAbsoluteA, jpAbsolute,
+    ldBImmediate, callAbsolute, ret, incHl, ldAAtHl, ldAtHlA, andImmediate,
+    res7AtHl, incDe,
     decB, Alu.apply,
     jrNz, *])
 
@@ -308,6 +424,117 @@ theorem step_ldAtHlIncA (state : FunctionalState)
   rw [step_legal_state state 0x22 _ running opcode decoded]
   routine_instruction_simp
 
+/-- Exact decoded `LD A,d8` state equation. -/
+theorem step_ldAImmediate (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0x3E) :
+    (Functional.step state).state = ldAImmediate state := by
+  have decoded : Decode.base (0x3E : Byte) = .legal (.ld8Imm (.reg .a)) := by native_decide
+  rw [step_legal_state state 0x3E _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `LD HL,d16` state equation. -/
+theorem step_ldHlImmediate (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0x21) :
+    (Functional.step state).state = ldHlImmediate state := by
+  have decoded : Decode.base (0x21 : Byte) = .legal (.ld16Imm .hl) := by native_decide
+  rw [step_legal_state state 0x21 _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `LD DE,d16` state equation. -/
+theorem step_ldDeImmediate (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0x11) :
+    (Functional.step state).state = ldDeImmediate state := by
+  have decoded : Decode.base (0x11 : Byte) = .legal (.ld16Imm .de) := by native_decide
+  rw [step_legal_state state 0x11 _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `LDH A,[a8]` state equation. -/
+theorem step_ldhAImmediate (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0xF0) :
+    (Functional.step state).state = ldhAImmediate state := by
+  have decoded : Decode.base (0xF0 : Byte) = .legal .ldhAImm := by native_decide
+  rw [step_legal_state state 0xF0 _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `AND A` state equation. -/
+theorem step_andA (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0xA7) :
+    (Functional.step state).state = andA state := by
+  have decoded : Decode.base (0xA7 : Byte) = .legal (.aluA .and (.reg .a)) := by native_decide
+  rw [step_legal_state state 0xA7 _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `XOR A` state equation. -/
+theorem step_xorA (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0xAF) :
+    (Functional.step state).state = xorA state := by
+  have decoded : Decode.base (0xAF : Byte) = .legal (.aluA .xor (.reg .a)) := by native_decide
+  rw [step_legal_state state 0xAF _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `JR Z,e8` state equation. -/
+theorem step_jrZ (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0x28) :
+    (Functional.step state).state = jrZ state := by
+  have decoded : Decode.base (0x28 : Byte) = .legal (.jrCond .z) := by native_decide
+  rw [step_legal_state state 0x28 _ running opcode decoded]
+  routine_instruction_simp
+  split <;> simp_all
+
+/-- Exact decoded `DEC DE` state equation. -/
+theorem step_decDe (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0x1B) :
+    (Functional.step state).state = decDe state := by
+  have decoded : Decode.base (0x1B : Byte) = .legal (.dec16 .de) := by native_decide
+  rw [step_legal_state state 0x1B _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `LD [HL],d8` state equation. -/
+theorem step_ldAtHlImmediate (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0x36) :
+    (Functional.step state).state = ldAtHlImmediate state := by
+  have decoded : Decode.base (0x36 : Byte) = .legal (.ld8Imm .atHL) := by native_decide
+  rw [step_legal_state state 0x36 _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `LD [a16],A` state equation. -/
+theorem step_ldAbsoluteA (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0xEA) :
+    (Functional.step state).state = ldAbsoluteA state := by
+  have decoded : Decode.base (0xEA : Byte) = .legal .ldAbsA := by native_decide
+  rw [step_legal_state state 0xEA _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded `JP a16` state equation. -/
+theorem step_jpAbsolute (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0xC3) :
+    (Functional.step state).state = jpAbsolute state := by
+  have decoded : Decode.base (0xC3 : Byte) = .legal .jp := by native_decide
+  rw [step_legal_state state 0xC3 _ running opcode decoded]
+  routine_instruction_simp
+
 /-- Exact decoded `LD B,d8` state equation. -/
 theorem step_ldBImmediate (state : FunctionalState)
     (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
@@ -317,6 +544,16 @@ theorem step_ldBImmediate (state : FunctionalState)
   have decoded : Decode.base (0x06 : Byte) = .legal (.ld8Imm (.reg .b)) := by
     native_decide
   rw [step_legal_state state 0x06 _ running opcode decoded]
+  routine_instruction_simp
+
+/-- Exact decoded unconditional `CALL a16` state equation. -/
+theorem step_callAbsolute (state : FunctionalState)
+    (running : state.mode = .running) (scheduled : state.scheduledImeEnable = false)
+    (noHaltBug : state.haltBug = false)
+    (opcode : state.memory.read state.registers.pc = 0xCD) :
+    (Functional.step state).state = callAbsolute state := by
+  have decoded : Decode.base (0xCD : Byte) = .legal .call := by native_decide
+  rw [step_legal_state state 0xCD _ running opcode decoded]
   routine_instruction_simp
 
 /-- Exact decoded unconditional `RET` state equation. -/
