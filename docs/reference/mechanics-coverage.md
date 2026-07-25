@@ -736,7 +736,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [ ] final WRAM cannot distinguish all zero-result terminal causes after cleanup
 - [ ] simultaneous faint write order can produce trainer lose text and payout with raw result 1
 - [ ] simultaneous active faint can be nonterminal when reserves remain
-- [ ] two-stage stat effect at current stat 999/1 silently retains one stage despite failure text
+- [x] two-stage stat effect at current stat 999/1 silently retains one stage despite failure text (`raise_attack_999_two_stage_residue`, `lower_attack_1_two_stage_residue`)
 - [ ] capture naming and current-box slot-1 insertion/whole-array shift
 - [ ] Old Man player-name restoration leaves aliased wild encounter bytes overwritten
 - [ ] layer-2 AI gate carries across voluntary AI switch but resets on forced replacement
@@ -745,7 +745,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [ ] EXP All counts fainted in-party members in the divisor but skips their awards
 - [ ] wild-faint run prompt uses party slot 1 Speed regardless of active/replacement
 - [ ] healed-enemy recall-message underflow and zero-divisor raw divergence affect switch timing
-- [ ] transformed non-Ditto capture becomes Ditto
+- [x] transformed non-Ditto capture becomes Ditto (`Battle.Full.Capture.transformed_stores_ditto`)
 - [ ] active status-cure whole-stat reset versus AI cure's retained penalized stats
 - [ ] disobedient replacement move charging the originally selected PP slot
 - [ ] transformed Mirror Move/Metronome original-party PP increment
