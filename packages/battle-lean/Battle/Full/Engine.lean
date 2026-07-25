@@ -443,11 +443,33 @@ private def applyExtraHits : Nat → State → Side → UInt16 → RepeatedDamag
           effectNullified := applied.effectNullified || tail.effectNullified
           events := applied.events ++ tail.events }
 
+/-- Player faint writes zero major status to both loaded and party records,
+without touching participation metadata owned by the environment. -/
+def clearPlayerFaintStatus (fullSide : Full.SideState) : Full.SideState :=
+  let synced := fullSide.syncOutgoing
+  let mon := { synced.active.active with status := 0 }
+  let party := { mons := synced.party.mons.modify synced.activeIndex fun stored =>
+    { stored with status := 0 } }
+  { synced with party, active := { synced.active with active := mon } }
+
+@[simp] theorem player_faint_clears_active_status (fullSide : Full.SideState) :
+    (clearPlayerFaintStatus fullSide).active.active.status = 0 := rfl
+
+/-- The corresponding persistent active-party row receives the same zero. -/
+theorem player_faint_clears_party_status (fullSide : Full.SideState)
+    (inBounds : fullSide.activeIndex < fullSide.party.mons.size) :
+    ((clearPlayerFaintStatus fullSide).party.mons.getD fullSide.activeIndex
+      fullSide.active.active).status = 0 := by
+  simp only [clearPlayerFaintStatus, Full.SideState.syncOutgoing]
+  simp [Array.getD, inBounds, Array.getElem_modify_self]
+
 private def terminalFor (state : State) (fainted : Side) : Outcome.BattleTerminal :=
   Outcome.BattleTerminal.mk' (.partyExhausted fainted) state.battle.mode .player
     (if fainted == .enemy then 0 else 1)
 
 private def recordFaint (state : State) (fainted : Side) : State × List Event :=
+  let state := if fainted == .player then
+    setSide state .player (clearPlayerFaintStatus (side state .player)) else state
   let fullSide := side state fainted
   if fullSide.partyExhausted then
     let terminal := terminalFor state fainted

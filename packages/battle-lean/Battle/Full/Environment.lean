@@ -401,12 +401,34 @@ private def awardEnemy (state : State) : State :=
     let activeFlag := (1 <<< state.engine.battle.player.activeIndex).toUInt8
     { state with gainExpFlags := activeFlag, foughtFlags := activeFlag }
 
+def clearGainFlag (flags : UInt8) (target : Nat) : UInt8 :=
+  flags &&& ~~~((1 <<< target).toUInt8)
+
+def restoreGainFlag (gain fought : UInt8) (target : Nat) : UInt8 :=
+  if bitSet fought target then gain ||| (1 <<< target).toUInt8 else gain
+
+@[simp] theorem faint_preserves_fought_flags (gain fought : UInt8) (target : Nat) :
+    (clearGainFlag gain target, fought).2 = fought := rfl
+
+@[simp] theorem revive_restores_fought_recipient (gain fought : UInt8) (target : Nat)
+    (participated : bitSet fought target = true) :
+    restoreGainFlag gain fought target = gain ||| (1 <<< target).toUInt8 := by
+  simp [restoreGainFlag, participated]
+
 private def applyProgressionEvents (state : State) (events : List Engine.Event) : State :=
   let state := events.foldl (fun state event => match event with
     | .switched .player target =>
         { state with
           gainExpFlags := state.gainExpFlags ||| (1 <<< target).toUInt8,
           foughtFlags := state.foughtFlags ||| (1 <<< target).toUInt8 }
+    | .fainted .player =>
+        { state with gainExpFlags := (clearGainFlag state.gainExpFlags
+            state.engine.battle.player.activeIndex) }
+    | .item .player itemEvents =>
+        itemEvents.foldl (fun state event => match event with
+          | .revived target => { state with gainExpFlags :=
+              (restoreGainFlag state.gainExpFlags state.foughtFlags target) }
+          | _ => state) state
     | _ => state) state
   if events.any (fun event => match event with | .fainted .enemy => true | _ => false) then
     awardEnemy state

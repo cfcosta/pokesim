@@ -741,7 +741,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [ ] Old Man player-name restoration leaves aliased wild encounter bytes overwritten
 - [x] layer-2 AI gate carries across voluntary AI switch but resets on forced replacement (`forced_enemy_switch_resets_ai_layer`, `voluntary_enemy_switch_retains_ai_layer`)
 - [ ] enemy switch destination is deterministic lowest-index other living slot, with unbounded raw scan
-- [ ] player faint clears party status but preserves fought flag; Revive can restore gain-EXP eligibility
+- [x] player faint clears party status but preserves fought flag; Revive can restore gain-EXP eligibility (`player_faint_clears_party_status`, `faint_preserves_fought_flags`, `revive_restores_fought_recipient`)
 - [ ] EXP All counts fainted in-party members in the divisor but skips their awards
 - [ ] wild-faint run prompt uses party slot 1 Speed regardless of active/replacement
 - [ ] healed-enemy recall-message underflow and zero-divisor raw divergence affect switch timing
