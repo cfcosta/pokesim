@@ -34,7 +34,7 @@ structure ActionContext where
 
 private def currentPp (packed : UInt8) : UInt8 := packed &&& Wram.ppMask
 
-private def usableMoveSlot (side : Full.SideState) (slot : Nat) : Bool :=
+def usableMoveSlot (side : Full.SideState) (slot : Nat) : Bool :=
   side.active.active.moves.getD slot 0 != 0 &&
     currentPp (side.active.active.pp.getD slot 0) != 0 &&
     side.active.volatile.disabledMoveNumber != side.active.active.moves.getD slot 0
@@ -129,6 +129,28 @@ theorem forced_switch_exact (context : ActionContext) (target : Fin 6)
 
 @[simp] theorem forced_wild_enemy_cannot_run (side : Full.SideState) (bag : Items.Bag) :
     legal { side, bag, mode := .wild, owner := .enemy, forcedReplacement := true } .run = false := rfl
+
+theorem ordinary_fight_exact (context : ActionContext) (slot : Fin 4)
+    (mode : context.mode = .wild ∨ context.mode = .trainer ∨ context.mode = .link)
+    (notForced : context.forcedReplacement = false) :
+    legal context (.fight slot) =
+      (!mustStruggle context.side && usableMoveSlot context.side slot.val) := by
+  rcases mode with mode | mode | mode
+  all_goals
+    unfold legal
+    rw [notForced]
+    simp only [Bool.false_eq_true, if_false]
+    rw [mode]
+
+@[simp] theorem trainer_run_selectable (side : Full.SideState) (bag : Items.Bag) :
+    legal { side, bag, mode := .trainer } .run = true := rfl
+
+@[simp] theorem ordinary_item_exact (side : Full.SideState) (bag : Items.Bag)
+    (mode : BattleMode) (request : Items.Request)
+    (ordinary : mode = .wild ∨ mode = .trainer) :
+    legal { side, bag, mode } (.item request) =
+      itemSelectable { side, bag, mode } request := by
+  rcases ordinary with rfl | rfl <;> rfl
 
 /-- A fight slot can be legal only when Struggle is not required. -/
 theorem legal_fight_not_exhausted (context : ActionContext) (slot : Fin 4)

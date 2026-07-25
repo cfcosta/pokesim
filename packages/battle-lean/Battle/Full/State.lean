@@ -53,6 +53,13 @@ def SideState.canSwitchTo (side : SideState) (target : Nat) : Bool :=
   target < side.party.mons.size && target != side.activeIndex &&
     !(side.party.mons.getD target side.active.active).fainted
 
+theorem SideState.canSwitchTo_sound (side : SideState) (target : Nat)
+    (legal : side.canSwitchTo target = true) :
+    target < side.party.mons.size ∧ target ≠ side.activeIndex ∧
+      ((side.party.mons[target]?).getD side.active.active).fainted = false := by
+  simp [SideState.canSwitchTo] at legal
+  exact ⟨legal.1.1, legal.1.2, legal.2⟩
+
 inductive SwitchResult where
   | switched (side : SideState)
   | invalid (side : SideState)

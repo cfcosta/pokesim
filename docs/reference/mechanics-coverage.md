@@ -152,15 +152,15 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [ ] full-menu bypass only for Rage/recharge/Thrash/charge continuation
 - [ ] Fight-without-slot behavior for sleep/freeze/Bide/trapping states
 - [ ] switch/item/run remain selectable in those post-menu lock states
-- [ ] ordinary Fight/move-slot availability
-- [ ] selectable move has PP and is not disabled
-- [ ] Struggle when no selectable move remains
-- [ ] `AnyMoveToSelect` PP masking differences with/without Disable and PP Up bits
-- [ ] potential move-menu trap when disabled handling sees raw PP-Up bits but slots have zero current PP
-- [ ] player item legality
+- [x] ordinary Fight/move-slot availability (`Battle.Full.ordinary_fight_exact`)
+- [x] selectable move has PP and is not disabled (`Battle.Full.usableMoveSlot`, `ordinary_fight_exact`)
+- [x] Struggle when no selectable move remains (`Battle.Full.mustStruggle`, `legal_fight_not_exhausted`)
+- [x] `AnyMoveToSelect` PP masking differences with/without Disable and PP Up bits (`Battle.Full.anyMovePpAvailable`)
+- [x] potential move-menu trap when disabled handling sees raw PP-Up bits but slots have zero current PP (`Battle.Full.disabled_pp_up_struggle_anomaly`)
+- [x] player item legality (`Battle.Full.ordinary_item_exact`, `itemSelectable`)
 - [ ] item target legality
-- [ ] switch target is living and not active
-- [ ] run legality and trainer prohibition
+- [x] switch target is living and not active (`Battle.Full.SideState.canSwitchTo_sound`)
+- [x] run legality and trainer prohibition (`Battle.Full.trainer_run_selectable`, `Battle.Full.Escape.trainer_prohibited`)
 - [ ] link action exchange values
 - [ ] Safari actions
 - [ ] successful item consumes action
@@ -186,11 +186,11 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [x] stale selected move influences Quick Attack/Counter order for item/switch turns (`Battle.Full.Engine.stale_counter_nonfight_priority`)
 - [x] stale loaded power/type influences enemy Counter (`Battle.Full.Engine.stale_tackle_record_enables_counter`)
 - [ ] player send-out clears selected-slot index/move number but retains selected move, shared damage, and adjacent loaded-record scratch
-- [ ] ordinary move-menu SELECT swaps active move IDs and PP
+- [x] ordinary move-menu SELECT swaps active move IDs and PP (`Battle.Full.Selection.swapMoves_exact`)
 - [ ] move swap updates party move IDs and PP, including transformed active/party mismatch
-- [ ] move swap updates disabled-slot encoding
-- [ ] battle-bag SELECT swaps ordered item/quantity entries
-- [ ] move/bag reorder consumes no battle turn
+- [x] move swap updates disabled-slot encoding (`Battle.Full.Selection.swapMoves_exact`)
+- [x] battle-bag SELECT swaps ordered item/quantity entries (`Battle.Full.Selection.swapBag_exact`)
+- [x] move/bag reorder consumes no battle turn (`Battle.Full.Selection.swapMoves`, `swapBag` are selection-only transitions)
 - [ ] cartridge-ineffective selection attempt versus protocol-invalid response
 - [ ] canonical RL `ActionCommit` trace refines one concrete menu path
 - [ ] full selection trace covers browse/cancel/reorder paths

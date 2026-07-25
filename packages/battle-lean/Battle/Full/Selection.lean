@@ -94,6 +94,16 @@ def swapMoves (state : State) (first second : Fin 4) : State × Event :=
   ({ state with side := { state.side with active := { active with active := mon, volatile } } },
     .movesSwapped first second)
 
+theorem swapMoves_exact (state : State) (first second : Fin 4) :
+    let after := (swapMoves state first second).1
+    after.side.active.active.moves =
+        swapArray state.side.active.active.moves first.val second.val ∧
+      after.side.active.active.pp =
+        swapArray state.side.active.active.pp first.val second.val ∧
+      after.side.active.volatile.disabledMove =
+        remapDisabled state.side.active.volatile.disabledMove first second := by
+  simp [swapMoves]
+
 /-- SELECT swaps complete ordered bag stack entries without consuming a turn. -/
 def swapBag (state : State) (first second : Nat) : State × Event :=
   ({ state with bag := swapArray state.bag.toArray first second |>.toList },
@@ -117,6 +127,10 @@ theorem enabled_highlight_loads (state : State) (slot : Fin 4)
     intro equal
     simp [equal] at enabled
   simp [highlight, ne]
+
+@[simp] theorem swapBag_exact (state : State) (first second : Nat) :
+    (swapBag state first second).1.bag =
+      (swapArray state.bag.toArray first second).toList := rfl
 
 /-- Disabled highlighting retains every stale loaded field except the cursor. -/
 theorem disabled_highlight_preserves_selected (state : State) (slot : Fin 4)
