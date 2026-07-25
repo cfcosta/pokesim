@@ -150,6 +150,13 @@ ROM-decoded move rows: effect zero selects ordinary damage, and every nonzero
 effect indexes the ROM pointer whose classified target is exactly the independent
 plan's handler.
 
+`Battle.Rom.HazeRoutine.RequiredHazeBytes` retains the complete bank-04 Haze
+gameplay and helper windows. Its `resetStats_block_exact` theorem composes five
+decoded architectural instructions for an arbitrary symbolic source byte, and
+`resetStats_block_effect` proves the copy, pointer, counter, and branch invariant
+without enumerating the eight-byte stat vector. Whole-handler call reachability
+and presentation-tail composition remain separate obligations.
+
 `Battle.Rom.EffectRoutines.CanonicalLeafEffectsBytes` adds exact code-window
 witnesses for `HyperBeamEffect` (`0f:79c1`), shared `ClearHyperBeam`
 (`0f:79cf`), and `RageEffect` (`0f:79df`). Its headline theorem decodes those

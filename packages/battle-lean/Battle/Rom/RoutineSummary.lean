@@ -97,7 +97,7 @@ theorem step_legal_trace (state : FunctionalState) (opcode : Byte)
     (Functional.step state).trace = (legalResult state opcode shape).trace := by
   rw [step_legal state opcode shape running opcodeAtPc decoded]
 
-private def advancePc (state : FunctionalState) : Registers :=
+def advancePc (state : FunctionalState) : Registers :=
   { state.registers with pc := Word.ofNat (state.registers.pc.toNat + 1) }
 
 /-- State transformer for `LD A,[HL+]`. -/
