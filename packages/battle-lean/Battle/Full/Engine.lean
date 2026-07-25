@@ -29,6 +29,8 @@ structure State where
   playerMoney : Money.Bcd3 := Money.Bcd3.ofNat 0
   trainerPrize : Money.Bcd3 := Money.Bcd3.ofNat 0
   sharedDamage : UInt16 := 0
+  playerLockedDamage : UInt16 := 0
+  enemyLockedDamage : UInt16 := 0
   playerId : UInt16 := 0
   playerOtIds : Array UInt16 := #[]
   badges : UInt8 := 0xff
@@ -83,6 +85,14 @@ private def lastMove (state : State) : Side → MoveId
 private def setLastMove (state : State) : Side → MoveId → State
   | .player, move => { state with playerLastMove := move }
   | .enemy, move => { state with enemyLastMove := move }
+
+private def lockedDamage (state : State) : Side → UInt16
+  | .player => state.playerLockedDamage
+  | .enemy => state.enemyLockedDamage
+
+private def setLockedDamage (state : State) : Side → UInt16 → State
+  | .player, damage => { state with playerLockedDamage := damage }
+  | .enemy, damage => { state with enemyLockedDamage := damage }
 
 private def actionContext (state : State) (who : Side) : Full.ActionContext :=
   { side := side state who, bag := bag state who, mode := state.battle.mode,
@@ -263,6 +273,26 @@ private def applyDamage (state : State) (who : Side) (damage : UInt16) : DamageA
       actualDamage := actual, targetFainted := hp == 0,
       events := [.damage who actual hp] }
 
+private structure RepeatedDamage where
+  state : State
+  lastActual : UInt16
+  targetFainted : Bool
+  events : List Event
+
+private def applyExtraHits : Nat → State → Side → UInt16 → RepeatedDamage
+  | 0, state, _, _ => { state, lastActual := 0, targetFainted := false, events := [] }
+  | count + 1, state, who, damage =>
+      let applied := applyDamage state who damage
+      if applied.targetFainted then
+        { state := applied.state, lastActual := applied.actualDamage,
+          targetFainted := true, events := applied.events }
+      else
+        let tail := applyExtraHits count applied.state who damage
+        { state := tail.state
+          lastActual := if count == 0 then applied.actualDamage else tail.lastActual
+          targetFainted := tail.targetFainted
+          events := applied.events ++ tail.events }
+
 private def terminalFor (state : State) (fainted : Side) : Outcome.BattleTerminal :=
   Outcome.BattleTerminal.mk' (.partyExhausted fainted) state.battle.mode .player
     (if fainted == .enemy then 0 else 1)
@@ -286,6 +316,15 @@ private def applyResidual (state : State) (who : Side) : State × List Event :=
   let state := setSide state who.other { side state who.other with active := result.opponent }
   if result.actor.active.fainted then recordFaint state who else (state, [])
 
+private def clearTrappingLock (state : State) (who : Side) : State :=
+  let current := side state who
+  let volatile := { current.active.volatile with
+    status1 := current.active.volatile.status1 &&&
+      ~~~((1 <<< Wram.BattleStatus1.usingTrappingMove).toUInt8)
+    numAttacksLeft := 0 }
+  setSide (setLockedDamage state who 0) who
+    { current with active := { current.active with volatile } }
+
 /-- Consume the current execution from Bide/Thrash/trapping counters. Thrash
 completion samples its confusion duration at the lock-release boundary. -/
 private def advanceMoveLock (state : State) (who : Side) : State × List Event :=
@@ -302,6 +341,8 @@ private def advanceMoveLock (state : State) (who : Side) : State × List Event :
       (setSide state who { current with active := { current.active with volatile } }, [])
     else
       let wasThrashing := bitSet volatile.status1 Wram.BattleStatus1.thrashingAbout
+      let wasTrapping := bitSet volatile.status1 Wram.BattleStatus1.usingTrappingMove
+      let state := if wasTrapping then setLockedDamage state who 0 else state
       let volatile := { volatile with numAttacksLeft := 0 }
       let volatile := { volatile with status1 := volatile.status1 &&& ~~~lockMask }
       if wasThrashing then
@@ -327,8 +368,9 @@ let state := decrementMovePp state who slot
 let move := resolveMove moveId
 let effect := (Data.moveData moveId).effect
 let mechanic := (EffectPlan.plan effect).mechanic
+let continuedTrap := action == .noAction && mechanic == .trapping
 let (rng, critical, critEvents) :=
-  if move.power == 0 then (state.battle.rng, false, [])
+  if move.power == 0 || continuedTrap then (state.battle.rng, false, [])
   else
     let (raw, rng) := state.battle.rng.next
     let focus := bitSet attacker.volatile.status2 Wram.BattleStatus2.gettingPumped
@@ -337,6 +379,7 @@ let (rng, critical, critEvents) :=
 let continuedBide := action == .noAction && mechanic == .bide
 let damageResult := if continuedBide then
     .ok (UInt16.ofNat (min 0xffff (attacker.volatile.bideAccumulated.toNat * 2)), rng, [])
+  else if continuedTrap then .ok (lockedDamage state who, rng, [])
   else if moveId == 68 then
     let previous := Data.moveData (lastMove state who.other)
     let validType := previous.type == TypeChart.normal || previous.type == TypeChart.fighting
@@ -348,7 +391,8 @@ match damageResult with
 | .error _ => .divisionFreeze state critEvents
 | .ok (damage, rng, damageEvents) =>
     let (hit, rng, accuracyEvents) :=
-      if requiresAccuracy mechanic move.power then
+      if continuedTrap then (true, rng, [])
+      else if requiresAccuracy mechanic move.power then
         resolveAccuracy mechanic move attacker defenderFull.active rng
       else (true, rng, [])
     let context := effectsContext state who moveId slot attacker defenderFull.active rng
@@ -375,16 +419,28 @@ match damageResult with
         .transitioned state (critEvents ++ accuracyEvents ++ before.events.map .effect ++ events)
     | _ =>
         let damage := if hit then damage else 0
+        let totalHits := if !hit then 1 else match before.signal with
+          | .repeatHits count => count.toNat
+          | _ => 1
         let applied := applyDamage state who damage
-        let context := effectsContext applied.state who moveId slot
-          (side applied.state who).active (side applied.state who.other).active applied.state.battle.rng
-        let after := Effects.applyAfter effect move.type hit applied.targetFainted
-          applied.actualDamage context
-        let state := setLastMove (installEffectsContext applied.state who after.context) who moveId
+        let extra := if applied.targetFainted then
+          { state := applied.state, lastActual := applied.actualDamage,
+            targetFainted := true, events := [] }
+          else applyExtraHits (totalHits - 1) applied.state who damage
+        let finalState := if mechanic == .trapping && action != .noAction then
+          if hit then setLockedDamage extra.state who damage
+          else clearTrappingLock extra.state who
+          else extra.state
+        let targetFainted := applied.targetFainted || extra.targetFainted
+        let lastActual := if totalHits ≤ 1 then applied.actualDamage else extra.lastActual
+        let context := effectsContext finalState who moveId slot
+          (side finalState who).active (side finalState who.other).active finalState.battle.rng
+        let after := Effects.applyAfter effect move.type hit targetFainted lastActual context
+        let state := setLastMove (installEffectsContext finalState who after.context) who moveId
         let (state, lockEvents) := advanceMoveLock state who
         let events := critEvents ++ damageEvents ++ accuracyEvents ++ before.events.map .effect ++
-          applied.events ++ after.events.map .effect ++ lockEvents
-        if applied.targetFainted then
+          applied.events ++ extra.events ++ after.events.map .effect ++ lockEvents
+        if targetFainted then
           let (state, faintEvents) := recordFaint state who.other
           .transitioned state (events ++ faintEvents)
         else

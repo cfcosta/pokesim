@@ -245,10 +245,15 @@ does. -/
 def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
   match (plan effect).mechanic with
   | .ordinary | .unused | .drain | .burnSide _ | .freezeSide _ | .paralyzeSide _
-  | .poisonSide _ | .explode | .dreamEater | .payDay | .swift | .multiHit
-  | .flinchSide _ | .superFang | .specialDamage | .attackTwice | .jumpKick
-  | .recoil | .statDownSide _ | .confusionSide | .twineedle | .hyperBeam
+  | .poisonSide _ | .explode | .dreamEater | .payDay | .swift
+  | .flinchSide _ | .superFang | .specialDamage | .jumpKick
+  | .recoil | .statDownSide _ | .confusionSide | .hyperBeam
   | .rage => { context := context }
+  | .multiHit =>
+      let (count, context, events) := multiHitCount context
+      ⟨context, .repeatHits count, events ++ [.signal (.repeatHits count)]⟩
+  | .attackTwice | .twineedle =>
+      ⟨context, .repeatHits 2, [.signal (.repeatHits 2)]⟩
   | .mirrorMove =>
       if context.defenderLastMove == 0 then ⟨context, .failed, []⟩
       else ⟨context, .callMove context.defenderLastMove,
@@ -306,7 +311,7 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
   | .trapping =>
       let (count, context, events) := multiHitCount context
       let context := startLock context Wram.BattleStatus1.usingTrappingMove count
-      ⟨context, .repeatHits count, events ++ [.signal (.repeatHits count)]⟩
+      ⟨context, .continue, events⟩
   | .mist =>
       let index := Wram.BattleStatus2.protectedByMist
       if bitSet context.attacker.volatile.status2 index then ⟨context, .failed, []⟩
@@ -411,10 +416,15 @@ def applyAfter (effect moveType : UInt8) (hit targetFainted : Bool)
   | .payDay =>
       let money := Money.addPayDay context.payDayMoney context.attacker.active.level
       { context := { context with payDayMoney := money } }
-  | .multiHit =>
-      let (count, context, events) := multiHitCount context
-      ⟨context, .repeatHits count, events ++ [.signal (.repeatHits count)]⟩
-  | .attackTwice | .twineedle => ⟨context, .repeatHits 2, [.signal (.repeatHits 2)]⟩
+  | .multiHit | .attackTwice => { context := context }
+  | .twineedle =>
+      if !hit then { context := context }
+      else
+        let (success, context, event) := sideChance 52 context
+        if success then
+          let out := poison false context
+          { out with events := event :: out.events }
+        else ⟨context, .continue, [event]⟩
   | .flinchSide threshold =>
       if !hit then { context := context }
       else
