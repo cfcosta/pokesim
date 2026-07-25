@@ -181,6 +181,11 @@ and proves that its low-byte `SUB` followed by high-byte `SBC` accepts exactly
 unsigned attacker Speed greater than or equal to target Speed. This is a
 universal arithmetic summary, not yet a complete handler cycle trace.
 
+`Battle.Rom.ScreenRoutine` retains the shared Reflect/Light Screen mechanics
+window at `0e:7b97`. Functional and continuous fetched-IR summaries cover every
+status-3 byte pair, both acting sides, both screen IDs, and both success/failure
+presentation boundaries.
+
 `Battle.Rom.CombatTables` closes three more mechanics-critical data seams: the
 four high-critical move IDs and terminator, all 82 ordered type-effect triples
 and terminator, and all 13 numerator/denominator stat-stage ratios. These are

@@ -293,6 +293,12 @@ exactly unsigned current attacker Speed greater than or equal to current target
 Speed. This closes the tie case and slower branch arithmetic, but not yet the
 handler's full bus trace or the surrounding random-damage/accuracy call order.
 
+`Battle.Rom.ScreenRoutine` proves the shared `ReflectLightScreenEffect_`
+gameplay prefix for both acting sides, both move IDs, and every pair of status-3
+bytes. Exact traces distinguish the already-active failure path from the single
+bit-setting success path and continue through one overlapped fetch at the common
+presentation boundaries.
+
 The remaining animation/text tails still need frame/timing summaries.
 Whole-battle reachability and full Game Boy device lifting remain separate.
 

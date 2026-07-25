@@ -337,8 +337,8 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [ ] Substitute HP and zero-HP-user behavior
 - [ ] Hyper Beam recharge and target-faint skip because effect is not always-happen
 - [ ] Leech Seed and Toxic-counter interaction
-- [ ] Reflect
-- [ ] Light Screen
+- [x] Reflect (`Battle.Rom.ScreenRoutine.screens_exact`)
+- [x] Light Screen (`Battle.Rom.ScreenRoutine.screens_exact`)
 - [ ] Transform species/types/catch/moves/DVs/current combat stats copy boundaries
 - [ ] Transform preserves user HP/level/max HP and sets nonblank copied PP to 5
 - [ ] Transform copies unmodified stats/stat stages and stores enemy original DVs
