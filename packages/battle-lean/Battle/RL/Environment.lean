@@ -123,16 +123,24 @@ structure Observation where
 `legalActions` returns only `.fight` constructors. -/
 abbrev PolicyAction := Battle.Action
 
+def installReset (player enemy : ResetSide) (repaired : Bool)
+    (battleRng : Rng.LinkRng) : State :=
+  { playerReset := player
+    enemyReset := enemy
+    battle := BattleState.start player.active enemy.active battleRng .link
+    repairedReset := repaired }
+
+@[simp] theorem installReset_uses_supplied_battle_rng (player enemy : ResetSide)
+    (repaired : Bool) (battleRng : Rng.LinkRng) :
+    (installReset player enemy repaired battleRng).battle.rng = battleRng := rfl
+
 /-- Dynamically reset both sides from generator entropy while installing a
 separate battle RNG. Team sampling can never perturb battle randomness. Both
 reset teams carry canonical-legality proofs. -/
 def reset (generatorRng battleRng : Rng.LinkRng) : State :=
   let (player, generatorRng, playerRepaired) := sampleSide generatorRng
   let (enemy, _, enemyRepaired) := sampleSide generatorRng
-  { playerReset := player
-    enemyReset := enemy
-    battle := BattleState.start player.active enemy.active battleRng .link
-    repairedReset := playerRepaired || enemyRepaired }
+  installReset player enemy (playerRepaired || enemyRepaired) battleRng
 
 /-- RL completion occurs only after the explicit settled-return phase. -/
 def done (state : State) : Bool :=

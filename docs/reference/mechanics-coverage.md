@@ -767,10 +767,10 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [ ] canonical ordinary snapshot and paired-perspective link snapshot codecs/theorems
 - [ ] deterministic transcript replay including capture naming and nested move-learning traces
 - [ ] ordinary seeded provider disclaimer/contract
-- [ ] separate team-generation and battle RNG
-- [ ] battle-valid generator theorem
-- [ ] canonical-species generator theorem
-- [ ] learnset-legal generator theorem
+- [x] separate team-generation and battle RNG (`Battle.RL.Environment.installReset_uses_supplied_battle_rng`)
+- [x] battle-valid generator theorem (`Battle.RL.DynamicGenerator.sample_sound`)
+- [x] canonical-species generator theorem (`Battle.RL.DynamicGenerator.sample_sound` via canonical `teamLegal`)
+- [x] learnset-legal generator theorem (`Battle.RL.DynamicGenerator.sample_sound` via canonical `teamLegal`)
 - [ ] progression-witnessed history relative to supplied roster/resource ledger
 - [ ] no unconditional new-save reachability claim without overworld proof
 - [ ] trainer-defined generator equivalence
