@@ -752,7 +752,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] EXP All destructive double-division path (`Battle.Full.Environment.exp_all_destructive_double_division`)
 - [ ] link setup leading-zero list mismatch
 - [x] Safari bait expiry catch-rate persistence (`Battle.Full.Safari.bait_expiry_retains_catch_rate`)
-- [ ] wild-battle post-victory item-evolution bug
+- [x] wild-battle post-victory item-evolution bug (`Battle.Full.Evolution.wild_item_evolution_bug_occurs`)
 - [ ] simultaneous faint victory-sound/control behavior, with sound itself excluded
 
 ## RL adapter

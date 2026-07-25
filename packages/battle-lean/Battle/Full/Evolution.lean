@@ -75,6 +75,30 @@ def start (party : Array Progression.PersistentMon) (flags : UInt8)
     (mode : BattleMode) (aliasedItem : Option UInt8 := none) : Machine :=
   advance { party, flags, mode, aliasedItem, cursor := 0, phase := .completed }
 
+/-- A stale item byte supplied after a wild victory is interpreted exactly as an
+item evolution trigger for a flagged party member. -/
+theorem wild_item_alias_offers (mon : Progression.PersistentMon) (item : UInt8)
+    (target : SpeciesId)
+    (eligible : Progression.evolutionTarget? mon (.afterBattle (some item)) true = some target) :
+    (start #[mon] 1 .wild (some item)).phase = .offered 0 target := by
+  have wildSelf : (BattleMode.wild == BattleMode.wild) = true := by native_decide
+  simp [start, advance, nextOffer?, targetAt?, flagged, trigger, wildSelf, eligible]
+
+private def aliasedEvolutionWitness : Progression.PersistentMon :=
+  { battle :=
+      { species := 4, hp := 1, boxLevel := 1, status := 0, type1 := 0, type2 := 0,
+        catchRate := 0, moves := #[0, 0, 0, 0], dvs := 0, level := 1, maxHp := 1,
+        attack := 1, defense := 1, speed := 1, special := 1, pp := #[0, 0, 0, 0] }
+    otId := 0
+    experience := 0
+    statExp := { hp := 0, attack := 0, defense := 0, speed := 0, special := 0 } }
+
+/-- Concrete item `$0A` alias: flagged internal species `$04` is offered target
+`$8E` after a wild battle even though no evolution item was intentionally used. -/
+theorem wild_item_evolution_bug_occurs :
+    (start #[aliasedEvolutionWitness] 1 .wild (some 10)).phase = .offered 0 142 := by
+  native_decide
+
 private def exactLevelMove? (species : SpeciesId) (level : UInt8) : Option MoveId :=
   let row := Data.Progression.rows.getD species.toNat { evolutions := #[], levelMoves := #[] }
   (row.levelMoves.find? fun entry => entry.level == level).map Data.Progression.LevelMove.move
