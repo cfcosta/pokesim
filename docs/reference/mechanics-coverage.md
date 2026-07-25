@@ -24,18 +24,18 @@ The project has moved beyond discovery for the processor, canonical build, initi
 - [ ] battle transitive call graph generated through calls, bankswitches, predefs, pointer tables, and text callbacks
 - [ ] trainer end-text/map callbacks classified as projected mutation, proved frame, or out of scope
 - [ ] every in-scope ROM range classified
-- [ ] separately licensed, immutable-revision [`sm83-lean` package](sm83-semantics-package.md)
-- [ ] exact-hash gb-opcodes plus [five-source microarchitecture audit](sm83-microarchitecture-contract.md)
+- [x] separately licensed, immutable-revision [`sm83-lean` package](sm83-semantics-package.md)
+- [x] exact-hash gb-opcodes plus [five-source microarchitecture audit](sm83-microarchitecture-contract.md)
 - [x] exact 244-legal + CB-prefix + 11-lockup base partition and all 256 CB entries
 - [x] decoder/encoder length, immediate, PC-wrap, and byte-round-trip theorems
-- [ ] arithmetic/flag semantics, including 2048-case DAA theorem, old-Z irrelevance, all 4096 Mooneye rows, and signed-SP rules
-- [ ] load/store/register-pair semantics and typed zero-low-nibble F codec
-- [ ] declarative, de-overlapped, and physical fetched-IR semantics with sequence-level fetch reassociation
-- [ ] 101-family address/data/IDU/commit/poll schedules and typed CPU-T/M-cycle accounting
-- [ ] staged EI/DI/RETI, prefetch-aware five-cycle interrupt entry and exact IE-push cancellation/retargeting
-- [ ] HALT wake/bug and one-byte/multibyte/CB/RST following-byte cases; seven STOP outcomes; invalid no-fetch lockup
+- [x] arithmetic/flag semantics, including 2048-case DAA theorem, old-Z irrelevance, all 4096 Mooneye rows, and signed-SP rules
+- [x] load/store/register-pair semantics and typed zero-low-nibble F codec
+- [x] declarative, de-overlapped, and physical fetched-IR semantics with sequence-level fetch reassociation
+- [x] 101-family address/data/IDU/commit/poll schedules and typed CPU-T/M-cycle accounting
+- [x] staged EI/DI/RETI, prefetch-aware five-cycle interrupt entry and exact IE-push cancellation/retargeting
+- [x] HALT wake/bug and one-byte/multibyte/CB/RST following-byte cases; seven STOP outcomes; invalid no-fetch lockup
 - [x] full pinned flat-bus corpus, microarchitecture source audit, and theorem/axiom audit
-- [ ] proved `DmgCpuBCommonBoot` T1F–T4R bus/read-fold/interrupt/clock composition and checked profile manifest
+- [x] proved `DmgCpuBCommonBoot` T1F–T4R bus/read-fold/interrupt/clock composition and checked profile manifest
 - [ ] ROM banking and far-call behavior
 - [ ] WRAM/HRAM and aliases
 - [ ] Game Boy `DIV`, timer, interrupt, VBlank, and device behavior needed by battle
@@ -45,10 +45,10 @@ The project has moved beyond discovery for the processor, canonical build, initi
 - [ ] audio/VBlank progress required by sound-completion loops
 - [ ] serial waits and externally/internally clocked role
 - [ ] paired cartridge-perspective state and serial-exchange semantics
-- [ ] external-clock random-list leading-zero scan and post-setup list mismatch
+- [x] external-clock random-list leading-zero scan and post-setup list mismatch (`Battle.Full.Link.leading_zero_setup_mismatch`)
 - [ ] `_Multiply` and `_Divide`
-- [ ] `percent` macro's `$ff / 100` integer scaling at every probability threshold
-- [ ] divergence and fuel-exhaustion distinction
+- [x] `percent` macro's `$ff / 100` integer scaling at every probability threshold
+- [x] divergence and fuel-exhaustion distinction
 
 ## Canonical data
 
@@ -57,14 +57,14 @@ The project has moved beyond discovery for the processor, canonical build, initi
 | Move records | 165 × 6 bytes | `pokered/data/moves/moves.asm` | ROM-certified |
 | Move IDs | 0 plus 165 moves | `pokered/constants/move_constants.asm` | Discovered |
 | Move effects | IDs `$00`–`$56` with gaps | `pokered/constants/move_effect_constants.asm` | Discovered |
-| Effect pointers | one per nonzero effect slot | `pokered/data/moves/effects_pointers.asm` | Discovered |
+| Effect pointers | one per nonzero effect slot | `pokered/data/moves/effects_pointers.asm` | ROM-certified |
 | Base species | 150 contiguous records + detached Mew | `pokered/data/pokemon/base_stats*`, `pokered/data/pokemon/mew.asm` | ROM-certified |
 | Internal species map | IDs with gaps/special forms | `pokered/constants/pokemon_constants.asm` | Discovered |
 | Pokédex IDs | 151 ordinary constants | `pokered/constants/pokedex_constants.asm` | Discovered |
 | Type IDs | physical and special ranges with gaps | `pokered/constants/type_constants.asm` | Discovered |
-| Type triples | ordered non-neutral interactions | `pokered/data/types/type_matchups.asm` | Discovered |
-| Stage ratios | [13 exact decimal-style numerator/denominator pairs and update flow](stat-modifier-flow.md) | `pokered/data/battle/stat_modifiers.asm` | Discovered |
-| Percent thresholds | [literal event expressions, 165 move-accuracy expansions, and boundaries](probability-thresholds.md) | moves/battle/effect/AI source | Discovered |
+| Type triples | ordered non-neutral interactions | `pokered/data/types/type_matchups.asm` | ROM-certified |
+| Stage ratios | [13 exact decimal-style numerator/denominator pairs and update flow](stat-modifier-flow.md) | `pokered/data/battle/stat_modifiers.asm` | ROM-certified |
+| Percent thresholds | [literal event expressions, 165 move-accuracy expansions, and boundaries](probability-thresholds.md) | moves/battle/effect/AI source | Machine-validated |
 | Trainer classes | 47 | `pokered/constants/trainer_constants.asm` | Discovered |
 | Trainer parties | class-indexed variable records | `pokered/data/trainers/parties.asm` | Discovered |
 | Trainer move scoring | [47 class-indexed layer lists](trainer-ai-dispatch.md) | `pokered/data/trainers/move_choices.asm` | Discovered |
@@ -699,22 +699,23 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 
 Each item needs at least one source-linked test; mechanics-affecting items need a theorem or fall out of a broader refinement theorem.
 
-- [ ] Focus Energy right shift
-- [ ] [exact percent-macro thresholds](probability-thresholds.md), comparison polarities, and boundary bytes
+- [x] Focus Energy right shift (`Battle.BugWitnesses.focus_energy_occurs`)
+- [x] [exact percent-macro thresholds](probability-thresholds.md), comparison polarities, and boundary bytes
 - [ ] Fly/Dig attack-turn self-confusion/full paralysis/Disable clears charging but leaves invulnerability
 - [ ] generated charge reloads selected wrapper/original move rather than retaining generated move identity
-- [ ] threshold equality failure in accuracy/critical checks
+- [x] threshold equality failure in accuracy/critical checks (`accuracy_boundary_occurs`, `critical_boundary_occurs`)
 - [ ] Toxic + Leech Seed counter interaction
-- [ ] player/enemy Psywave zero asymmetry
-- [ ] Bide high-byte-only clear
-- [ ] Substitute can leave user at zero HP and can itself survive exact damage at zero substitute HP
-- [ ] Transform invulnerability-check bugs
+- [x] player/enemy Psywave zero asymmetry (`Battle.BugWitnesses.psywave_link_desync_occurs`)
+- [x] Bide high-byte-only clear (`Battle.BugWitnesses.bide_link_desync_occurs`)
+- [x] Substitute can leave user at zero HP (`Battle.BugWitnesses.decoded_substitute_zero_user_hp_occurs`)
+- [x] a Substitute survives incoming damage exactly equal to its remaining HP (`Battle.BugWitnesses.substitute_exact_damage_survival_occurs`)
+- [x] Transform invulnerability-check bugs (`Battle.Rom.TransformRoutine.transform_invulnerability_exact`)
 - [ ] Swift before invulnerability check
 - [ ] drain-on-Substitute broken check
-- [ ] extra enemy stat-down failure gate also reducing damaging side effects through a second independent draw
+- [x] extra enemy stat-down failure gate also reducing damaging side effects through a second independent draw
 - [ ] AI effectiveness neutral constant mismatch
-- [ ] Reflect/Light Screen overflow and zero divisor
-- [ ] badge boost stacking
+- [x] Reflect/Light Screen overflow and zero divisor (`Battle.BugWitnesses.screen_overflow_occurs`)
+- [x] badge boost stacking with screen catastrophe (`Battle.BugWitnesses.badge_screen_catastrophe_occurs`)
 - [ ] Counter shared/stale state behavior, including highlighted-then-cancelled move
 - [ ] stale Quick Attack/Counter ordering for non-move player actions and across player send-out's partial loaded-record clear
 - [ ] Jump Kick miss recoil based on zeroed damage
@@ -724,7 +725,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [ ] sleep wake consumes turn
 - [ ] frozen target Fire defrost asymmetry
 - [ ] Hyper Beam/status interactions, including Sleep bypass and freeze asymmetry
-- [ ] healing move high-byte comparison overflow cases
+- [x] healing move high-byte comparison overflow cases (`Battle.BugWitnesses.decoded_healing_false_failure_occurs`)
 - [ ] Rest full-HP failure before status cure and fixed two-turn sleep write
 - [ ] Max Ether/Max Elixer PP-Up-bit comparison
 - [ ] player Full Restore damaged-active Toxic flag persistence
