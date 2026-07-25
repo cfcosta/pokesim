@@ -6,7 +6,7 @@
 
 | Domain | Module | Machine-checked boundary |
 |---|---|---|
-| Party state and switching | `Battle.Full.State` | Separate active/party rows and unmodified combat stats, outgoing synchronization, living switch targets, forced replacement, exhaustion |
+| Party state and switching | `Battle.Full.State` | Separate active/party/unmodified combat rows, status-adjusted switch-in stats, field-exact outgoing synchronization that excludes Transform/combat scratch, living switch targets, forced replacement, exhaustion |
 | Menu selection scratch | `Battle.Full.Selection` | Fight reset, disabled/stale highlights, cancel retention, move/PP/Disable and ordered-bag swaps |
 | Status and residuals | `Battle.Full.Status` | Status-gate order, conditional RNG, poison/burn/seed residuals, Toxic counter interaction |
 | Item dispatch | `Battle.Full.Items` | Explicit disposition for IDs `$01..$53`; executable battle-use handlers; Max Ether packed-byte bug |
@@ -37,12 +37,12 @@ The certificate is independent of the external source tree.
 ## Native smoke matrix
 
 ```text
-episodes=100 finished=82 truncated=18 nested_open=0
+episodes=100 finished=80 truncated=20 nested_open=0
 blocked=0 invalid=0 rng_stuck=0 division_freeze=0 other=0
-repaired=0 transitions=78296
+repaired=0 transitions=84443
 ```
 
-The 18 horizon-open runs are not terminal outcomes; status-heavy generated
+The 20 horizon-open runs are not terminal outcomes; status-heavy generated
 parties can produce legitimate long-running or nonterminating battles.
 
 ## Claim boundary

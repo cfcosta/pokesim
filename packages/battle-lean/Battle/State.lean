@@ -213,10 +213,18 @@ structure SideState where
   volatile : Volatile
   deriving Repr, DecidableEq, BEq
 
-/-- Fresh switch-in: copy the party stats into both mutable and unmodified
-battle rows, then reset stages and volatile state. -/
+/-- Initial active combat stats include the cartridge's burn/paralysis
+penalties, while the unmodified row retains the party values. -/
+def MonState.withBattleStatusPenalties (mon : MonState) : MonState :=
+  let mon := if mon.paralyzed then
+    { mon with speed := UInt16.ofNat (mon.speed.toNat / 4) } else mon
+  if mon.burned then
+    { mon with attack := UInt16.ofNat (mon.attack.toNat / 2) } else mon
+
+/-- Fresh switch-in: retain party stats in the unmodified row, install
+status-adjusted mutable stats, then reset stages and volatile state. -/
 def SideState.fresh (m : MonState) : SideState :=
-  { active := m, unmodified := CombatStats.ofMon m,
+  { active := m.withBattleStatusPenalties, unmodified := CombatStats.ofMon m,
     stages := StatStages.neutral, volatile := Volatile.clear }
 
 /-- The whole battle: both sides, the RNG cursor, the turn counter, the mode, and

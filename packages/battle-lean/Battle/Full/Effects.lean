@@ -349,9 +349,12 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
       let context := withAttacker context (clearSide context.attacker)
       { context := withDefender context (clearSide context.defender) }
   | .bide =>
-      let context := startLock context Wram.BattleStatus1.storingEnergy 2
+      let (raw, rng) := context.rng.next
+      let turns := (raw &&& 1) + 2
+      let context := startLock { context with rng }
+        Wram.BattleStatus1.storingEnergy turns
       let volatile := { context.attacker.volatile with bideAccumulated := 0 }
-      { context := setAttackerVolatile context volatile }
+      ⟨setAttackerVolatile context volatile, .continue, [.rawRng "bide-turns" raw]⟩
   | .thrash =>
       let (raw, rng) := context.rng.next
       let turns := (raw &&& 1) + 2

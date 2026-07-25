@@ -156,27 +156,21 @@ private def decrementMovePp (state : State) (who : Side) (slot : Fin 4)
     setSide state who { current with active := { current.active with active := mon } }
 
 private def effectiveSpeed (fullSide : Full.SideState) : UInt16 :=
-  let staged := DamageStats.applyStage fullSide.active.active.speed fullSide.active.stages.speed
-  if fullSide.active.active.paralyzed then staged >>> 2 else staged
+  fullSide.active.active.speed
 
 private def screenUp (defender : Battle.SideState) (special : Bool) : Bool :=
   bitSet defender.volatile.status3
     (if special then Wram.BattleStatus3.hasLightScreenUp else Wram.BattleStatus3.hasReflectUp)
 
 private def offensiveStat (attacker : Battle.SideState) (special critical : Bool) : UInt16 :=
-  let base := if special then attacker.active.special else attacker.active.attack
-  if critical then base
-  else
-    let stage := if special then attacker.stages.special else attacker.stages.attack
-    let modified := DamageStats.applyStage base stage
-    if !special && attacker.active.burned then modified >>> 1 else modified
+  if critical then
+    if special then attacker.unmodified.special else attacker.unmodified.attack
+  else if special then attacker.active.special else attacker.active.attack
 
 private def defensiveStat (defender : Battle.SideState) (special critical : Bool) : UInt16 :=
-  let base := if special then defender.active.special else defender.active.defense
-  if critical then base
-  else
-    let stage := if special then defender.stages.special else defender.stages.defense
-    DamageStats.applyStage base stage
+  if critical then
+    if special then defender.unmodified.special else defender.unmodified.defense
+  else if special then defender.active.special else defender.active.defense
 
 private def requiresAccuracy (mechanic : EffectPlan.Mechanic) (power : UInt8) : Bool :=
   if power != 0 then true else

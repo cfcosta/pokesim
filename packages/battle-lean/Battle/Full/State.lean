@@ -35,10 +35,17 @@ at the last synchronization boundary. -/
 def SideState.wf (side : SideState) : Bool :=
   side.party.wf && side.activeIndex < side.party.mons.size && side.active.active.wf
 
-/-- Install the active battle row back into persistent party storage. -/
+/-- Install only fields copied by the cartridge's outgoing-active routine.
+Transformed species/types/DVs and mutable combat stats never leak into party
+storage. -/
 def SideState.syncOutgoing (side : SideState) : SideState :=
+  let live := side.active.active
   { side with party :=
-      { mons := side.party.mons.modify side.activeIndex (fun _ => side.active.active) } }
+      { mons := side.party.mons.modify side.activeIndex fun stored =>
+          let stored := { stored with hp := live.hp }
+          let stored := { stored with status := live.status }
+          let stored := { stored with moves := live.moves }
+          { stored with pp := live.pp } } }
 
 /-- Switch legality after outgoing synchronization. -/
 def SideState.canSwitchTo (side : SideState) (target : Nat) : Bool :=
@@ -118,15 +125,14 @@ theorem switch_success_shape (side : SideState) (target : Nat)
           (side.syncOutgoing.party.mons.getD target side.syncOutgoing.active.active) } := by
   simp [SideState.switchTo, legal]
 
-/-- Synchronization makes reading the old active slot return the active battle
-row whenever the old index is in bounds. -/
+/-- Synchronization copies exactly the four outgoing mutable fields. -/
 theorem syncOutgoing_reads_active (side : SideState)
     (oldInBounds : side.activeIndex < side.party.mons.size) :
-    side.syncOutgoing.party.mons.getD side.activeIndex side.active.active =
-      side.active.active := by
+    let stored := side.syncOutgoing.party.mons.getD side.activeIndex side.active.active
+    stored.hp = side.active.active.hp ∧ stored.status = side.active.active.status ∧
+      stored.moves = side.active.active.moves ∧ stored.pp = side.active.active.pp := by
   simp only [SideState.syncOutgoing, Array.getD, Array.size_modify, oldInBounds,
     ↓reduceDIte]
-  exact Array.getElem_modify_self (xs := side.party.mons) (i := side.activeIndex)
-    (fun _ => side.active.active) (by simpa using oldInBounds)
+  simp [Array.getElem_modify_self]
 
 end Battle.Full
