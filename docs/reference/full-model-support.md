@@ -25,6 +25,7 @@
 | Turn composition | `Battle.Full.Engine` | Actions, ordering, status, damage/effects, items, residuals, faint/replacement, terminal witness |
 | RL protocol | `Battle.Full.Environment` | Dynamic proof-carrying parties, participation flags, EXP awards, persistent progression rows, nested learning/evolution, observations and legal actions |
 | Self-play | `Battle.Full.SelfPlay` | Independent policy RNGs, nested continuations, finite/open behavior distinction |
+| Paired link execution | `Battle.Full.Link` | Action-nybble exchange, clock roles/equal-Speed inversion, dual cartridge engines, mirror/RNG checks, explicit known desynchronization causes |
 | Domain certificate | `Battle.Full.Support.model_coverage` | Move/effect, item, trainer, ball, generator, and external-bug domain closure |
 
 ## External bug compatibility
