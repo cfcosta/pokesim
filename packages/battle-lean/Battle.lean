@@ -54,6 +54,8 @@ import Battle.Refinement.Bridge
 import Battle.Refinement.Trace
 import Battle.Refinement.Simulation
 import Battle.Rom.Tables
+import Battle.Rom.Effects
+import Battle.Rom.Mechanics
 import Battle.Diff
 import Battle.Driver
 import Battle.DriverInvariant

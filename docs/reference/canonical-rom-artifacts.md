@@ -113,6 +113,12 @@ not fetch invalid opcodes or STOP.
 | `EvosMovesPointerTable` | `0e:705c` |
 | first evolution/learnset payload | `0e:71d8` |
 | `PokedexOrder` | `10:5024` |
+| `ResidualEffects1` | `0f:4000` |
+| `SetDamageEffects` | `0f:4011` |
+| `ResidualEffects2` | `0f:4014` |
+| `AlwaysHappenSideEffects` | `0f:4030` |
+| `SpecialEffects` / `SpecialEffectsCont` | `0f:403b` / `0f:4049` |
+| `MoveEffectPointerTable` | `0f:7150` |
 
 `Rom.Closure.TableLayout` proves the fixed ranges: 165 six-byte move rows,
 150 28-byte ordinary base-stat rows plus Mew's detached row, 190 two-byte
@@ -125,3 +131,13 @@ exact level/item/trade evolution records, and ordered level/move pairs against
 `Battle.Data.Progression`. `RequiredTableBytes` exposes the caller-supplied proof
 boundary; the temporary ROM fixture checks agreement with all independently
 authored `Battle.Data` arrays.
+
+`Battle.Rom.Effects` additionally decodes all six terminated effect-phase tables
+and all 86 little-endian handler pointers. It compares their exact byte order,
+terminators, and pointer target classes with `Battle.Full.EffectPlan`; unknown
+pointer addresses do not collapse to `NULL`. `Battle.Rom.Mechanics` combines
+whole-ROM hash identity, `RequiredTableBytes`, and `RequiredEffectBytes` into the
+proof-facing `CanonicalMechanicsBytes` certificate. Its
+`canonical_mechanics_exact` theorem establishes exact battle-relevant species
+headers, all 165 move rows, bounded effect IDs, and all handler selections for
+any caller-supplied ROM satisfying that certificate.

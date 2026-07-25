@@ -2,7 +2,7 @@
 Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
-import Battle.Rom.Tables
+import Battle.Rom.Effects
 
 /-!
 # Caller-supplied canonical ROM fixture
@@ -36,7 +36,8 @@ def retainedLayoutMatches (rom : CanonicalRom) : Bool :=
     decide (bytesAt rom.bytes Symbols.initOpponent.offset 16 = initOpponentPrefix) &&
     decide (bytesAt rom.bytes Symbols.initBattleCommon.offset 16 = initBattleCommonPrefix) &&
     decide (bytesAt rom.bytes Symbols.startBattle.offset 16 = startBattlePrefix) &&
-    Tables.agreesWithAuthored rom.bytes
+    Tables.agreesWithAuthored rom.bytes &&
+    Effects.agreesWithPlan rom.bytes
 
 /-- Load and reject any fixture that does not satisfy the retained Lean-visible
 layout contract. -/
@@ -46,6 +47,6 @@ def loadChecked (path : System.FilePath) : IO CanonicalRom := do
     pure rom
   else
     throw <| IO.userError
-      "ROM fixture failed retained windows or decoded-table agreement; verify it with tools/check-pokered-build.py"
+      "ROM fixture failed retained windows or decoded data/effect-table agreement; verify it with tools/check-pokered-build.py"
 
 end Battle.Rom.Fixture

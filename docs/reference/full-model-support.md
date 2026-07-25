@@ -51,7 +51,8 @@ The modules above establish an executable high-level full-party model and total
 canonical dispatch domains. They do **not** establish full cartridge-equivalence.
 The following remain outside `ModelCoverage`:
 
-- decoded-ROM refinement for battle routines and effect handlers;
+- decoded-ROM transition refinement for effect-handler bodies (data rows,
+  phase tables, and pointer dispatch are now byte-certified);
 - decoded-ROM refinement of menu/presentation traces and their timing;
 - continuous fetched-IR execution from battle entry through cleanup and return;
 - full hardware assumptions for non-link `Random`, waits, audio, serial, and

@@ -109,6 +109,15 @@ def evosMovesPointerTable : Symbol := ⟨0x0E, 0x705C⟩
 def evosMovesData : Symbol := ⟨0x0E, 0x71D8⟩
 def pokedexOrder : Symbol := ⟨0x10, 0x5024⟩
 
+/-! Move-effect phase and pointer tables from canonical bank `$0F`. -/
+def residualEffects1 : Symbol := ⟨0x0F, 0x4000⟩
+def setDamageEffects : Symbol := ⟨0x0F, 0x4011⟩
+def residualEffects2 : Symbol := ⟨0x0F, 0x4014⟩
+def alwaysHappenSideEffects : Symbol := ⟨0x0F, 0x4030⟩
+def specialEffects : Symbol := ⟨0x0F, 0x403B⟩
+def specialEffectsCont : Symbol := ⟨0x0F, 0x4049⟩
+def moveEffectPointerTable : Symbol := ⟨0x0F, 0x7150⟩
+
 end Symbols
 
 @[inline] def romOffset (bank : Nat) (address : Word) : Nat :=
@@ -142,6 +151,9 @@ def evosMovesPointerSize : Nat := speciesIndexCount * 2
 def pokedexOrderSize : Nat := speciesIndexCount
 
 def evosMovesDataSize : Nat := 0x79EC - Symbols.evosMovesData.address.toNat
+
+def moveEffectCount : Nat := 0x56
+def moveEffectPointerSize : Nat := moveEffectCount * 2
 
 /-- `Moves` occupies exactly the bytes before `BaseStats`. -/
 @[simp] theorem moves_end :

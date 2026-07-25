@@ -254,11 +254,11 @@ Hyper Beam is not in `AlwaysHappenSideEffects`. Because target HP is checked bef
 
 ## Proof obligations
 
-- Decode all 87 effect IDs and all 86 pointer words from canonical ROM bytes.
-- Prove every table terminator and membership against its ROM slice.
-- Prove all move-record effect bytes are in the decoded range.
-- Classify unused IDs even though no canonical move record selects them.
-- Prove each direct special case before treating a `NULL` pointer as safe.
+- [x] Decode all 87 effect IDs and all 86 pointer words from canonical ROM bytes (`Battle.Rom.Effects`).
+- [x] Prove every table terminator, byte order, and membership against its ROM slice (`RequiredEffectBytes`).
+- [x] Prove all move-record effect bytes are in the decoded range (`Battle.Rom.Mechanics.move_effects_indexed`).
+- [x] Classify unused IDs even though no canonical move record selects them.
+- [ ] Prove each direct special-case routine before treating a `NULL` pointer as behaviorally summarized.
 - Preserve effect-byte/control-flow changes across Twineedle, Bide, Rage, Mirror Move, and Metronome paths.
 - Preserve drain's in-place halving of shared `wDamage`, not only the HP heal.
 - Preserve Rest's active status write without clearing Toxic flag/counter state.
