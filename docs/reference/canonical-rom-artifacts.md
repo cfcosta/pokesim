@@ -146,10 +146,11 @@ headers, all 165 move rows, bounded effect IDs, and all handler selections for
 any caller-supplied ROM satisfying that certificate.
 
 `Battle.Rom.EffectRoutines.CanonicalLeafEffectsBytes` adds exact code-window
-witnesses for `HyperBeamEffect` (`0f:79c1`) and `RageEffect` (`0f:79df`). Its
-headline theorem decodes those supplied ROM bytes and proves the complete
-18/20-M-cycle player/enemy bus traces and status-bit summaries universally over
-all incoming status-byte pairs. These are de-overlapped functional CPU traces;
+witnesses for `HyperBeamEffect` (`0f:79c1`), shared `ClearHyperBeam`
+(`0f:79cf`), and `RageEffect` (`0f:79df`). Its headline theorem decodes those
+supplied ROM bytes and proves the complete 18/20-M-cycle set-bit and 25/27-M-cycle
+clear-bit player/enemy bus traces and status summaries universally over all
+incoming status-byte pairs. These are de-overlapped functional CPU traces;
 continuous fetched-IR/system lifting remains separate.
 
 `Battle.Rom.CombatTables` closes three more mechanics-critical data seams: the

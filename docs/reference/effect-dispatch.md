@@ -254,14 +254,17 @@ Hyper Beam is not in `AlwaysHappenSideEffects`. Because target HP is checked bef
 
 ## Decoded leaf-routine proofs
 
-`Battle.Rom.EffectRoutines` now proves the call-free tails of `HyperBeamEffect`
-and `RageEffect` from hash-certified ROM windows. For both player and enemy paths
-and all 65,536 pairs of incoming status bytes, the functional SM83 execution:
+`Battle.Rom.EffectRoutines` now proves the call-free tails of `HyperBeamEffect`,
+`RageEffect`, and shared `ClearHyperBeam` from hash-certified ROM windows. For
+both player and enemy paths and all 65,536 pairs of incoming status bytes, the
+functional SM83 execution:
 
 - returns to the staged caller with the stack restored;
 - sets bit 5 (recharge) or bit 6 (Rage) only on the acting side;
 - follows the exact ordered opcode/immediate/HRAM/WRAM/write/stack/idle bus trace;
-- takes 18 M-cycles on the player path and 20 M-cycles on the enemy path.
+- takes 18 M-cycles on the player path and 20 M-cycles on the enemy path for
+  Hyper Beam/Rage; `ClearHyperBeam` takes 25/27 M-cycles and also proves HL
+  restoration.
 
 This closes those leaf bodies at the de-overlapped M-cycle layer. It does not yet
 prove that whole-battle control flow reaches them under exactly the model's
