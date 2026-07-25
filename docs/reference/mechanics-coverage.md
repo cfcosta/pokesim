@@ -527,8 +527,8 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [ ] Poke Flute
 - [ ] Ether/Max Ether/Elixer/Max Elixer are battle-reachable, including party/move targeting
 - [ ] Max Ether/Max Elixer PP-Up-bit no-effect detection bug
-- [ ] PP Up is rejected during battle
-- [ ] invalid/key/overworld-only item behavior while in battle
+- [x] PP Up is rejected during battle (`Battle.Full.Items.pp_up_rejected_in_battle`)
+- [x] invalid/key/overworld-only item behavior while in battle (`Battle.Full.Items.disposition`, `ordinary_table_total`)
 - [ ] inventory quantity removal and ordered bag representation
 - [ ] trainer-ball rejection removes the ball and consumes the action
 - [ ] party count exactly 6 plus box count exactly 20 rejects a ball without removal/turn consumption
@@ -542,12 +542,12 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [ ] active/party synchronization after item
 - [ ] active status cure copies party max HP/all combat stats without reapplying stages, badges, burn, or paralysis, then calls normally-inert `DoubleOrHalveSelectedStats`
 - [ ] trainer AI status cures clear status/Toxic bytes without restoring burn/paralysis-reduced combat stats
-- [ ] Full Restore damaged-active path versus full-HP status-cure path, including Toxic flag handling
+- [x] Full Restore damaged-active path versus full-HP status-cure path, including Toxic flag handling (`Battle.Full.Items.damaged_full_restore_preserves_status3`, `full_hp_full_restore_clears_toxic`)
 - [ ] item use during trapping and counter decrement behavior
-- [ ] items forbidden by the link battle menu before dispatch
+- [x] items forbidden by the link battle menu before dispatch (`Battle.Full.Items.link_bag_rejected`, `Battle.Full.Link.items_have_no_link_encoding`)
 - [ ] raw-bag `POKEDEX` action-success/UI path and unobtainable `SURFBOARD`/badge-alias behavior
 - [ ] vitamins, Rare Candy, evolution stones, PP Up, and TM/HM battle rejection
-- [ ] IDs `$54`–`$C3` index beyond `ItemUsePtrTable`; canonical bag validation versus raw control flow
+- [x] IDs `$54`–`$C3` classify beyond `ItemUsePtrTable` (`Battle.Full.Items.out_of_range_54`); canonical-bag validation versus raw CPU control flow remains a system obligation
 
 ## Capture
 
@@ -729,7 +729,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] healing move high-byte comparison overflow cases (`Battle.BugWitnesses.decoded_healing_false_failure_occurs`)
 - [x] Rest full-HP failure before status cure and fixed two-turn sleep request (`rest_full_hp_fails`, `rest_success_exact`)
 - [x] Max Ether/Max Elixer PP-Up-bit comparison (`Battle.Full.Items.max_restore_packed_comparison_bug`)
-- [x] player Full Restore damaged-active Toxic flag persistence (`Battle.Full.Items.full_restore_preserves_active_status3`)
+- [x] player Full Restore damaged-active Toxic flag persistence (`Battle.Full.Items.damaged_full_restore_preserves_status3`)
 - [x] Rest retains Toxic flag/counter and seeded residual can still use it during sleep (`rest_heal_preserves_toxic`, `toxic_leech_seed_ticks_twice`)
 - [x] poison/burn KO does not stop same-pass Leech Seed or its overkill healing (`Battle.Full.Status.leech_seed_runs_after_residual_ko`)
 - [x] drain halves shared damage scratch before Counter/Bide can consume it (`Battle.Full.Effects.drain_halves_shared_damage`)

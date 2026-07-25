@@ -193,15 +193,37 @@ private def useHeal (state : UserState) (request : Request) (amount : Nat) : Res
       .committed (consume next request.item)
         [.healed request.partyTarget (after.hp - before.hp)]
 
+def fullRestoreVolatile (volatile : Battle.Volatile) (fullHpStatusOnly : Bool) : Battle.Volatile :=
+  if fullHpStatusOnly then
+    { volatile with status3 := volatile.status3 &&&
+      ~~~((1 <<< Wram.BattleStatus3.badlyPoisoned).toUInt8) }
+  else volatile
+
+@[simp] theorem damaged_full_restore_preserves_status3 (volatile : Battle.Volatile) :
+    (fullRestoreVolatile volatile false).status3 = volatile.status3 := by
+  rfl
+
+@[simp] theorem full_hp_full_restore_clears_toxic (volatile : Battle.Volatile) :
+    (fullRestoreVolatile volatile true).badlyPoisoned = false := by
+  simp [fullRestoreVolatile, Battle.Volatile.badlyPoisoned, bitSet,
+    Wram.BattleStatus3.badlyPoisoned]
+
 private def useFullRestore (state : UserState) (request : Request) : Result :=
   match mapTarget state request.partyTarget fun mon =>
       if mon.hp == 0 || (mon.hp == mon.maxHp && mon.status == 0) then none
       else some { mon with hp := mon.maxHp, status := 0 } with
   | none => .rejected state
   | some next =>
-      -- The player item path never clears the active Toxic flag/counter.
+      -- Damaged Full Restore bypasses the Full Heal branch and leaves Toxic
+      -- volatile state stale. At full HP, status-only Full Restore takes that
+      -- branch and clears the active Toxic flag.
+      let before := state.side.syncOutgoing.party.mons.getD request.partyTarget
+        state.side.active.active
+      let activeTarget := request.partyTarget == state.side.activeIndex
+      let fullHpStatusOnly := activeTarget && before.hp == before.maxHp
+      let volatile := fullRestoreVolatile state.side.active.volatile fullHpStatusOnly
       let next := { next with side := { next.side with active :=
-        { next.side.active with volatile := state.side.active.volatile } } }
+        { next.side.active with volatile } } }
       .committed (consume next request.item)
         [.healed request.partyTarget
           ((next.side.party.mons.getD request.partyTarget next.side.active.active).hp -
@@ -275,12 +297,13 @@ private def usePpRestore (state : UserState) (request : Request) (all maximum : 
 private def wakeMon (mon : MonState) : MonState :=
   { mon with status := mon.status &&& ~~~Wram.Status.slpMask }
 
-private def useFlute (state : UserState) (request : Request) : Result :=
+private def useFlute (state : UserState) (_request : Request) : Result :=
   let side := state.side.syncOutgoing
   let party := { mons := side.party.mons.map wakeMon }
   let active := { side.active with active := wakeMon side.active.active }
   let next := { state with side := { side with party, active } }
-  .committed (consume next request.item) [.flute]
+  -- The Poké Flute is a reusable key item.
+  .committed next [.flute]
 
 /-- Execute one ordinary bag item. Capture arithmetic is delegated to the capture
 module through `.capturePending`; no ball is approximated as damage. -/
@@ -364,16 +387,17 @@ def aiUse (mode : BattleMode) (state : UserState) (request : Request) : Result :
     use .link state request = .rejected state := by
   rfl
 
-/-- Player Full Restore updates HP and major status but never clears the active
-`BADLY_POISONED` volatile bit. -/
-theorem full_restore_preserves_active_status3 (state next : UserState) (request : Request)
-    (events : List Event)
-    (h : useFullRestore state request = .committed next events) :
-    next.side.active.volatile.status3 = state.side.active.volatile.status3 := by
-  simp only [useFullRestore, mapTarget, updateMon, consume] at h
-  split at h <;> simp_all
-  rcases h with ⟨rfl, _⟩
-  rfl
+@[simp] theorem flute_preserves_bag (state : UserState) (request : Request) :
+    match useFlute state request with
+    | .committed next _ => next.bag = state.bag
+    | _ => False := by
+  simp [useFlute]
+
+@[simp] theorem pp_up_rejected_in_battle : disposition 0x32 = .battleReject := by
+  native_decide
+
+@[simp] theorem out_of_range_54 : disposition 0x54 = .outOfRange := by
+  native_decide
 
 /-- Max Ether's no-effect comparison uses the full packed byte. Therefore a
 packed value with PP-Up bits cannot compare equal to a max-PP byte whose PP-Up
