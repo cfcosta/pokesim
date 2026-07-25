@@ -29,6 +29,7 @@ structure State where
   canEvolveFlags : UInt8 := 0
   gainExpFlags : UInt8 := 1
   foughtFlags : UInt8 := 1
+  hasExpAll : Bool := false
   pendingLearning : List (Nat × MoveId) := []
   lastEpilogue : Option Money.EpilogueResult := none
 
@@ -77,7 +78,8 @@ def reset (generatorRng battleRng : Rng.LinkRng)
     repairedReset := player.repaired || enemy.repaired
     box := #[]
     playerProgression := player.team.1.map (persistent 0)
-    enemyProgression := enemy.team.1.map (persistent 0xffff) }
+    enemyProgression := enemy.team.1.map (persistent 0xffff)
+    hasExpAll := playerBag.contains 0x4b }
 
 /-- Done only after explicit cleanup settlement. -/
 def done (state : State) : Bool :=
@@ -234,6 +236,57 @@ inductive StepResult where
 private def countFlags (flags : UInt8) : UInt8 :=
   (List.range 8).foldl (fun count bit => if flags.toNat.testBit bit then count + 1 else count) 0
 
+private def awardGroup (state : State) (source : Progression.AwardSource)
+    (awardFlags : UInt8) : State :=
+  let recipients := countFlags awardFlags
+  if recipients == 0 then state
+  else
+    let context : Progression.AwardContext :=
+      { playerId := state.engine.playerId
+        trainerBattle := state.engine.battle.mode == .trainer
+        recipients }
+    let synced := syncProgressionRows state.playerProgression (currentParty state .player)
+    let initial := (synced, state.canEvolveFlags, state.pendingLearning)
+    let awarded := (List.range synced.size).foldl (fun accumulator index =>
+      let row := accumulator.1
+      let flags := accumulator.2.1
+      let requests := accumulator.2.2
+      let mon := row.getD index (synced.getD index (persistent 0 fallbackMon))
+      if awardFlags.toNat.testBit index && !mon.battle.fainted then
+        let rate := Progression.GrowthRate.ofId
+          (Data.Progression.growthRates.getD mon.battle.species.toNat 0)
+        let result := Progression.award rate (Data.speciesData mon.battle.species)
+          source context mon index
+        let flags := if result.levelsGained != 0 then flags ||| (1 <<< index).toUInt8 else flags
+        let requests := requests ++ result.requests.filterMap (fun request => match request with
+          | .learnMove index move => some (index, move)
+          | _ => none)
+        (row.modify index (fun _ => result.mon), flags, requests)
+      else (row, flags, requests)) initial
+    let rows := awarded.1
+    let mons := rows.map Progression.PersistentMon.battle
+    let player := state.engine.battle.player
+    let activeMon := mons.getD player.activeIndex player.active.active
+    let player := { player with party := { mons }, active := { player.active with active := activeMon } }
+    let battle := state.engine.battle.setSide .player player
+    { state with
+      engine := { state.engine with battle }
+      playerProgression := rows
+      canEvolveFlags := awarded.2.1
+      pendingLearning := awarded.2.2 }
+
+private def halveSource (source : Progression.AwardSource) : Progression.AwardSource :=
+  { source with
+    baseHp := source.baseHp >>> 1
+    baseAttack := source.baseAttack >>> 1
+    baseDefense := source.baseDefense >>> 1
+    baseSpeed := source.baseSpeed >>> 1
+    baseSpecial := source.baseSpecial >>> 1
+    baseExp := source.baseExp >>> 1 }
+
+private def partyFlags (count : Nat) : UInt8 :=
+  (List.range count).foldl (fun flags index => flags ||| (1 <<< index).toUInt8) 0
+
 private def awardEnemy (state : State) : State :=
   if state.engine.battle.mode == .link then state
   else
@@ -247,42 +300,16 @@ private def awardEnemy (state : State) : State :=
         baseSpecial := data.baseSpc
         baseExp := data.baseExp
         level := enemy.level }
-    let recipients := countFlags state.gainExpFlags
-    if recipients == 0 then state
-    else
-      let context : Progression.AwardContext :=
-        { playerId := state.engine.playerId
-          trainerBattle := state.engine.battle.mode == .trainer
-          recipients }
-      let synced := syncProgressionRows state.playerProgression (currentParty state .player)
-      let initial := (synced, state.canEvolveFlags, state.pendingLearning)
-      let awarded := (List.range synced.size).foldl (fun accumulator index =>
-        let row := accumulator.1
-        let flags := accumulator.2.1
-        let requests := accumulator.2.2
-        let mon := row.getD index (synced.getD index (persistent 0 fallbackMon))
-        if state.gainExpFlags.toNat.testBit index && !mon.battle.fainted then
-          let rate := Progression.GrowthRate.ofId
-            (Data.Progression.growthRates.getD mon.battle.species.toNat 0)
-          let result := Progression.award rate (Data.speciesData mon.battle.species)
-            source context mon index
-          let flags := if result.levelsGained != 0 then flags ||| (1 <<< index).toUInt8 else flags
-          let requests := requests ++ result.requests.filterMap (fun request => match request with
-            | .learnMove index move => some (index, move)
-            | _ => none)
-          (row.modify index (fun _ => result.mon), flags, requests)
-        else (row, flags, requests)) initial
-      let rows := awarded.1
-      let mons := rows.map Progression.PersistentMon.battle
-      let player := state.engine.battle.player
-      let activeMon := mons.getD player.activeIndex player.active.active
-      let player := { player with party := { mons }, active := { player.active with active := activeMon } }
-      let battle := state.engine.battle.setSide .player player
-      { state with
-        engine := { state.engine with battle }
-        playerProgression := rows
-        canEvolveFlags := awarded.2.1
-        pendingLearning := awarded.2.2 }
+    let state := if state.hasExpAll then
+      let halved := halveSource source
+      let participants := countFlags state.gainExpFlags
+      let state := awardGroup state halved state.gainExpFlags
+      -- GainExperience divided the same WRAM source in place during phase one.
+      let destructivelyDivided := Progression.divideSource halved participants
+      awardGroup state destructivelyDivided (partyFlags state.playerProgression.size)
+    else awardGroup state source state.gainExpFlags
+    let activeFlag := (1 <<< state.engine.battle.player.activeIndex).toUInt8
+    { state with gainExpFlags := activeFlag, foughtFlags := activeFlag }
 
 private def applyProgressionEvents (state : State) (events : List Engine.Event) : State :=
   let state := events.foldl (fun state event => match event with

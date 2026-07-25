@@ -49,8 +49,6 @@ canonical dispatch domains. They do **not** establish full cartridge-equivalence
 The following remain outside `ModelCoverage`:
 
 - decoded-ROM refinement for battle routines and effect handlers;
-- EXP All's destructive second division and malformed eight-bit gain-flag edge
-  cases beyond the ordinary integrated participation award path;
 - exact presentation/menu traces and selection-scratch behavior;
 - continuous fetched-IR execution from battle entry through cleanup and return;
 - full hardware assumptions for non-link `Random`, waits, audio, serial, and
