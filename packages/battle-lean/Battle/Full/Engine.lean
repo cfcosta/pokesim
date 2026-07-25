@@ -178,7 +178,7 @@ private def defensiveStat (defender : Battle.SideState) (special critical : Bool
 private def requiresAccuracy (mechanic : EffectPlan.Mechanic) (power : UInt8) : Bool :=
   if power != 0 then true else
     match mechanic with
-    | .sleep | .confusion | .poison | .paralyze | .statUp _ _ | .statDown _ _
+    | .sleep | .confusion | .poison | .paralyze | .statDown _ _
     | .mimic | .leechSeed | .disable => true
     | _ => false
 

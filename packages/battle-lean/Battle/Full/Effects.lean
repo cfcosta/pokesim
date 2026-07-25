@@ -446,24 +446,28 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
   | .confusion => if hit then confuse context else ⟨context, .failed, []⟩
   | .heal => healSelf context
   | .transform =>
-      let target := context.defender.active
-      let mon := { context.attacker.active with species := target.species }
-      let mon := { mon with type1 := target.type1 }
-      let mon := { mon with type2 := target.type2 }
-      let mon := { mon with catchRate := target.catchRate }
-      let mon := { mon with dvs := target.dvs }
-      let mon := { mon with moves := target.moves }
-      let mon := { mon with attack := target.attack }
-      let mon := { mon with defense := target.defense }
-      let mon := { mon with speed := target.speed }
-      let mon := { mon with special := target.special }
-      let mon := { mon with pp := target.moves.map (fun move => if move == 0 then 0 else 5) }
-      let volatile := { context.attacker.volatile with
-        status3 := setBit context.attacker.volatile.status3 Wram.BattleStatus3.transformed }
-      let attacker : Battle.SideState :=
-        { active := mon, unmodified := context.defender.unmodified,
-          stages := context.defender.stages, volatile }
-      ⟨withAttacker context attacker, .continue, [.transformed]⟩
+      if context.attackerSide == .player &&
+          bitSet context.attacker.volatile.status1 Wram.BattleStatus1.invulnerable then
+        ⟨context, .failed, []⟩
+      else
+        let target := context.defender.active
+        let mon := { context.attacker.active with species := target.species }
+        let mon := { mon with type1 := target.type1 }
+        let mon := { mon with type2 := target.type2 }
+        let mon := { mon with catchRate := target.catchRate }
+        let mon := { mon with dvs := target.dvs }
+        let mon := { mon with moves := target.moves }
+        let mon := { mon with attack := target.attack }
+        let mon := { mon with defense := target.defense }
+        let mon := { mon with speed := target.speed }
+        let mon := { mon with special := target.special }
+        let mon := { mon with pp := target.moves.map (fun move => if move == 0 then 0 else 5) }
+        let volatile := { context.attacker.volatile with
+          status3 := setBit context.attacker.volatile.status3 Wram.BattleStatus3.transformed }
+        let attacker : Battle.SideState :=
+          { active := mon, unmodified := context.defender.unmodified,
+            stages := context.defender.stages, volatile }
+        ⟨withAttacker context attacker, .continue, [.transformed]⟩
   | .lightScreen => screen context true
   | .reflect => screen context false
   | .poison => if hit then poison (context.move == 92) context else ⟨context, .failed, []⟩
