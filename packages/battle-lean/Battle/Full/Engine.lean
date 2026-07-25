@@ -38,6 +38,7 @@ structure State where
   playerSelection : Selection.MoveScratch := {}
   enemySelection : Selection.MoveScratch := {}
   runAttempts : UInt8 := 0
+  canceledAction : Option Side := none
   deriving Repr, DecidableEq
 
 inductive Event where
@@ -429,6 +430,8 @@ match damageResult with
       | _ => Effects.applyBefore effect hit context
       else Effects.applyBefore effect hit context
     let state := installEffectsContext state who before.context
+    let state := if before.signal == .cancelTargetMove then
+      { state with canceledAction := some who.other } else state
     match before.signal with
     | .rngStuck => .rngStuck state (critEvents ++ damageEvents ++ accuracyEvents ++
         before.events.map .effect)
@@ -570,7 +573,9 @@ private def orderingMove (state : State) (who : Side) (action : Full.Action) : S
   else resolveMove (selection state who).selectedMove
 
 private def executeCommitted (state : State) (who : Side) (action : Full.Action) : StepResult :=
-  if isFight action then attack state who action
+  if state.canceledAction == some who then
+    .transitioned { state with canceledAction := none } []
+  else if isFight action then attack state who action
   else
     let (state, events) := applyResidual state who
     .transitioned state events

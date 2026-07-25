@@ -50,6 +50,7 @@ inductive Signal where
   | escaped
   | callMove (move : MoveId)
   | mimicChoice
+  | cancelTargetMove
   | rngStuck
   deriving Repr, DecidableEq, BEq
 
@@ -305,6 +306,29 @@ private def disable (context : Context) : Outcome :=
         [.rawRng "disable-slot" slotRaw, .rawRng "disable-turns" turnRaw,
          .disabled move turns]⟩
 
+private def hazeOutcome (context : Context) : Outcome :=
+  let targetWasIncapacitated := context.defender.active.asleep ||
+    context.defender.active.frozen
+  let clearSide := fun (side : Battle.SideState) =>
+    let active := { side.active with attack := side.unmodified.attack }
+    let active := { active with defense := side.unmodified.defense }
+    let active := { active with speed := side.unmodified.speed }
+    let active := { active with special := side.unmodified.special }
+    let volatile := { side.volatile with
+      status1 := clearBit side.volatile.status1 Wram.BattleStatus1.confused }
+    let volatile := { volatile with status2 := side.volatile.status2 &&& 0x78 }
+    let volatile := { volatile with status3 := side.volatile.status3 &&& 0xF8 }
+    let volatile := { volatile with disabledMove := 0 }
+    let volatile := { volatile with disabledMoveNumber := 0 }
+    { active, unmodified := side.unmodified, stages := StatStages.neutral, volatile }
+  let attacker := clearSide context.attacker
+  let defender := clearSide context.defender
+  let defender := { defender with active := { defender.active with status := 0 } }
+  let context := withDefender (withAttacker context attacker) defender
+  if targetWasIncapacitated then
+    ⟨context, .cancelTargetMove, [.signal .cancelTargetMove]⟩
+  else { context := context }
+
 /-- Pre/standalone effect phase. `hit` is the already-resolved hit test for
 routines that call `MoveHitTest`; direct setup effects ignore it where the ROM
 does. -/
@@ -333,22 +357,7 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
         let mon := { context.attacker.active with type1 := context.defender.active.type1 }
         let mon := { mon with type2 := context.defender.active.type2 }
         { context := withAttacker context { context.attacker with active := mon } }
-  | .haze =>
-      let clearSide := fun (side : Battle.SideState) =>
-        let active := { side.active with status := 0 }
-        let active := { active with attack := side.unmodified.attack }
-        let active := { active with defense := side.unmodified.defense }
-        let active := { active with speed := side.unmodified.speed }
-        let active := { active with special := side.unmodified.special }
-        let volatile := { side.volatile with
-          status1 := clearBit side.volatile.status1 Wram.BattleStatus1.confused }
-        let volatile := { volatile with status2 := side.volatile.status2 &&& 0x78 }
-        let volatile := { volatile with status3 := side.volatile.status3 &&& 0xF8 }
-        let volatile := { volatile with disabledMove := 0 }
-        let volatile := { volatile with disabledMoveNumber := 0 }
-        { active, unmodified := side.unmodified, stages := StatStages.neutral, volatile }
-      let context := withAttacker context (clearSide context.attacker)
-      { context := withDefender context (clearSide context.defender) }
+  | .haze => hazeOutcome context
   | .bide =>
       let (raw, rng) := context.rng.next
       let turns := (raw &&& 1) + 2
@@ -608,6 +617,24 @@ theorem lower_attack_1_two_stage_residue (context : Context)
       (lowerStage context 0 2).context.defender.stages.attack = 2 := by
   simp [lowerStage, getStage, setStage, currentStat, withDefender,
     noSubstitute, noMist, stage, current]
+
+/-- Haze cures only its target's nonvolatile status while retaining the user's,
+even though stages, combat stats, and selected volatile fields reset for both. -/
+theorem haze_status_target_only (context : Context) :
+    let outcome := hazeOutcome context
+    outcome.context.attacker.active.status = context.attacker.active.status ∧
+      outcome.context.defender.active.status = 0 := by
+  simp only [hazeOutcome]
+  split <;> simp [withAttacker, withDefender]
+
+/-- Sleep or freeze on the cured target selects the cartridge's `$FF` selected-
+move cancellation path. -/
+theorem haze_incapacitated_cancels (context : Context)
+    (incapacitated : (context.defender.active.asleep ||
+      context.defender.active.frozen) = true) :
+    (hazeOutcome context).signal = .cancelTargetMove := by
+  simp only [hazeOutcome]
+  rw [if_pos incapacitated]
 
 /-- Hyper Beam recharge is skipped when its hit faints the target. -/
 theorem hyperBeam_faint_skips_recharge (context : Context) (damage : UInt16) :

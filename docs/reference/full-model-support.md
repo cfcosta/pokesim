@@ -11,7 +11,7 @@
 | Status and residuals | `Battle.Full.Status` | Status-gate order, conditional RNG, poison/burn/seed residuals, Toxic counter interaction |
 | Item dispatch | `Battle.Full.Items` | Explicit disposition for IDs `$01..$53`; executable battle-use handlers; Max Ether packed-byte bug |
 | Effect dispatch | `Battle.Full.EffectPlan` | Typed plans for all effect IDs `$00..$56`; all 165 canonical move rows covered |
-| Effect execution | `Battle.Full.Effects` | State transformers and explicit control signals for every effect family; exact stat-stage arithmetic; Haze/Transform stat rows; and cartridge-ordered Mimic replacement with random or typed menu selection |
+| Effect execution | `Battle.Full.Effects` | State transformers and explicit control signals for every effect family; exact stat-stage arithmetic; Haze/Transform stat rows; and cartridge-ordered Mimic replacement; Haze target-only curing and selected-move cancellation |
 | Trainer controller | `Battle.Full.TrainerController`, `Battle.Full.Environment` | All 47 class rows, scoring layers, action counts/routines, direct-Random actions, minimum-score slot rejection, executable plans |
 | Capture | `Battle.Full.Capture`, `Battle.Full.CaptureProtocol` | Ball arithmetic, shake counts, rebuilt stored rows, nested naming/defaults, party append, box slot-one parallel shifts, malformed no-storage paths |
 | Safari | `Battle.Full.Safari`, `Battle.Full.Environment` | Integrated ball/bait/rock/run protocol, rejection factors, catch mutation, last-ball ordering, post-action escape and terminal causes |
