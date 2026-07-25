@@ -104,7 +104,19 @@ def act (state : State) (action : Action) (factorRaw escapeRaw : UInt8)
       | result => result
   | .ball =>
       let state := { state with balls := state.balls - 1 }
-      if state.balls == 0 then .ballsExhausted state else .capturePending state
+      .capturePending state
+
+/-- Post-ball continuation. The last Safari Ball is still thrown; out-of-balls
+is checked only after an unsuccessful capture action returns. -/
+def afterCapture (state : State) (caught : Bool) (escapeRaw : UInt8)
+    (speed : UInt16) : Result :=
+  if caught then .continue state
+  else if state.balls == 0 then .ballsExhausted state
+  else
+    let state := tickFactors state
+    match escapeThreshold speed state with
+    | none => .enemyRan state
+    | some threshold => if escapeRaw < threshold then .enemyRan state else .continue state
 
 /-! ## Safari theorems -/
 

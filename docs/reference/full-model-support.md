@@ -14,7 +14,7 @@
 | Effect execution | `Battle.Full.Effects` | State transformers and explicit control signals for every effect family |
 | Trainer controller | `Battle.Full.TrainerController`, `Battle.Full.Environment` | All 47 class rows, scoring layers, action counts/routines, direct-Random actions, minimum-score slot rejection, executable plans |
 | Capture | `Battle.Full.Capture`, `Battle.Full.CaptureProtocol` | Ball arithmetic, shake counts, rebuilt stored rows, nested naming/defaults, party append, box slot-one parallel shifts, malformed no-storage paths |
-| Safari | `Battle.Full.Safari` | Ball/bait/rock/run protocol, factors, catch mutation, escape threshold |
+| Safari | `Battle.Full.Safari`, `Battle.Full.Environment` | Integrated ball/bait/rock/run protocol, rejection factors, catch mutation, last-ball ordering, post-action escape and terminal causes |
 | Run | `Battle.Full.Escape` | Wild run arithmetic, attempt counter, trainer prohibition, inclusive comparison |
 | Disobedience | `Battle.Full.Disobedience` | Reactive rejection loops, badge thresholds, alternate moves, status overwrite, PP-Up candidate bug |
 | Progression data | `Battle.Data.Progression` | 191 internal-species growth, initial-move, exact evolution-method, and level/move rows; ROM-certified |

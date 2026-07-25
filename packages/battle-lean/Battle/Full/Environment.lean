@@ -7,6 +7,7 @@ import Battle.Full.Capture
 import Battle.Full.CaptureProtocol
 import Battle.Full.Evolution
 import Battle.Full.TrainerController
+import Battle.Full.Safari
 import Battle.RL.DynamicGenerator
 
 /-!
@@ -30,6 +31,7 @@ structure State where
   boxNames : Array CaptureProtocol.StoredName := #[]
   ownedSpecies : Array SpeciesId := #[]
   pendingCapture : Option CaptureProtocol.Pending := none
+  safari : Option Safari.State := none
   playerProgression : Array Progression.PersistentMon := #[]
   enemyProgression : Array Progression.PersistentMon := #[]
   canEvolveFlags : UInt8 := 0
@@ -81,6 +83,10 @@ def reset (generatorRng battleRng : Rng.LinkRng)
   let battle : Full.State :=
     { player := playerSide, enemy := enemySide, rng := battleRng, turn := 0,
       mode, phase := .battling }
+  let safari : Option Safari.State := if mode == .safari then
+    some (Safari.State.mk 30 enemySide.active.active.catchRate
+      enemySide.active.active.catchRate 0 0)
+    else none
   { engine := { battle, playerBag, enemyBag }
     playerReset := player.team
     enemyReset := enemy.team
@@ -90,7 +96,8 @@ def reset (generatorRng battleRng : Rng.LinkRng)
     playerProgression := player.team.1.map (persistent 0)
     enemyProgression := enemy.team.1.map (persistent 0xffff)
     hasExpAll := playerBag.contains 0x4b
-    trainerClass }
+    trainerClass := trainerClass
+    safari := safari }
 
 /-- Done only after explicit cleanup settlement. -/
 def done (state : State) : Bool :=
@@ -457,9 +464,40 @@ def resolveRun (state : State) (runner : Side) (opponentAction : Full.Action)
       let engine := { state.engine with runAttempts := attempts }
       lift { state with engine } (Engine.resumeFailedRun engine runner opponentAction)
 
+inductive SafariResult where
+  | transitioned (state : State)
+  | needsFactorRandom (state : State) (action : Safari.Action)
+  | capturePending (state : State)
+  | inactive (state : State)
+
+private def safariTerminal (state : State) (cause : Outcome.TerminalCause) : State :=
+  let terminal := Outcome.BattleTerminal.mk' cause .safari .player 0
+  { state with engine := { state.engine with battle :=
+    { state.engine.battle with phase := .ending terminal } } }
+
+/-- Resolve bait/rock/run or enter the Safari Ball capture calculation. -/
+def resolveSafari (state : State) (action : Safari.Action)
+    (factorRaw escapeRaw : UInt8) : SafariResult :=
+  match state.safari with
+  | none => .inactive state
+  | some safari =>
+      let speed := state.engine.battle.enemy.active.active.speed
+      match Safari.act safari action factorRaw escapeRaw speed with
+      | .needsFactorRandom safari action =>
+          .needsFactorRandom { state with safari := some safari } action
+      | .capturePending safari => .capturePending { state with safari := some safari }
+      | .enemyRan safari => .transitioned (safariTerminal { state with safari := some safari }
+          .safariEnemyRan)
+      | .ballsExhausted safari => .transitioned (safariTerminal { state with safari := some safari }
+          .safariBallsExhausted)
+      | .playerRan safari => .transitioned (safariTerminal { state with safari := some safari }
+          .ordinaryRun)
+      | .continue safari => .transitioned { state with safari := some safari }
+      | .needsEscapeRandom safari => .transitioned { state with safari := some safari }
+
 /-- Supply the hardware-Random bytes for a pending non-link ball throw. Rejected
-Rand1 remains a request for another byte; successful capture appends to party or
-box and enters the witnessed ending phase. -/
+Rand1 remains a request for another byte; successful capture enters the nested
+pre-name storage phase. -/
 def resolveCapture (state : State) (ball : Capture.Ball) (rand1 rand2 : UInt8)
     (ghost : Bool := false) : Capture.Result × State :=
   let enemy := state.engine.battle.enemy.active.active
@@ -517,6 +555,30 @@ def resolveCapture (state : State) (ball : Capture.Ball) (rand1 rand2 : UInt8)
         let state := { state with boxNames := storage.boxNames }
         (result, { state with ownedSpecies := storage.owned })
   | _ => (result, state)
+
+/-- Resolve a pending Safari Ball, then perform the post-action ball/escape
+check only after a failed throw. -/
+def resolveSafariCapture (state : State) (rand1 rand2 escapeRaw : UInt8) :
+    Capture.Result × State :=
+  match state.safari with
+  | none => (.rejectedCapacity, state)
+  | some safari =>
+      let enemySide := state.engine.battle.enemy
+      let enemyMon := { enemySide.active.active with catchRate := safari.catchRate }
+      let enemySide := { enemySide with active := { enemySide.active with active := enemyMon } }
+      let engine := { state.engine with battle := state.engine.battle.setSide .enemy enemySide }
+      let (result, state) := resolveCapture { state with engine } .safari rand1 rand2
+      match result with
+      | .caught _ _ => (result, state)
+      | .needsRand1 => (result, state)
+      | _ =>
+          match Safari.afterCapture safari false escapeRaw enemyMon.speed with
+          | .ballsExhausted safari =>
+              (result, safariTerminal { state with safari := some safari } .safariBallsExhausted)
+          | .enemyRan safari =>
+              (result, safariTerminal { state with safari := some safari } .safariEnemyRan)
+          | .continue safari => (result, { state with safari := some safari })
+          | _ => (result, state)
 
 /-- Resolve the mandatory ordinary-capture naming response, then atomically
 install all party/box parallel arrays and witness the capture terminal. -/
