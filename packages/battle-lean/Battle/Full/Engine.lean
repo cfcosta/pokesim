@@ -146,9 +146,12 @@ private def actionContext (state : State) (who : Side) : Full.ActionContext :=
     owner := who, forcedReplacement := state.forcedReplacement == some who }
 
 private def currentPp (packed : UInt8) : UInt8 := packed &&& Wram.ppMask
-private def decrementPp (packed : UInt8) : UInt8 :=
-  let pp := currentPp packed
-  if pp == 0 then packed else (packed &&& Wram.ppUpMask) ||| (pp - 1)
+/-- Cartridge `dec [hl]` mutates the complete packed PP byte. Malformed
+zero-current-PP values can therefore borrow through or destroy PP-Up bits. -/
+def decrementPp (packed : UInt8) : UInt8 := packed - 1
+
+@[simp] theorem decrement_zero_pp_underflows : decrementPp 0 = 0xff := by native_decide
+@[simp] theorem decrement_pp_up_only_deforms : decrementPp 0x40 = 0x3f := by native_decide
 
 private def moveOfAction (state : State) (who : Side) : Full.Action → Option (MoveId × Fin 4)
   | .fight slot => some ((side state who).active.active.moves.getD slot.val 0, slot)

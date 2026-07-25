@@ -244,20 +244,20 @@ The proof must preserve this player/enemy control-flow order, including random c
 
 ## Traded-Pokémon disobedience
 
-- [ ] disabled entirely in link battles
-- [ ] two-byte OT ID comparison with player ID
-- [ ] badge thresholds: 10/30/50/70/101
-- [ ] level-at-or-below-threshold obedience
-- [ ] first swapped-byte rejection/obedience loop
-- [ ] second rejection loop selecting alternate behavior
-- [ ] alternate usable move and retry conditions, including raw full-PP-byte nonzero check
-- [ ] replacement move changes `wCurrentMenuItem` but PP decrement still uses the originally selected `wPlayerMoveListIndex`
-- [ ] zero-current-PP replacement with PP Up bits can underflow/deform the full PP byte on decrement
-- [ ] no alternate move with one move, Disable, Struggle, or only one PP-bearing move
-- [ ] random nap duration and whole-status-byte overwrite of poison/burn/paralysis
-- [ ] loaf/turn-away/ignore text branch state
-- [ ] disobedient self-damage path
-- [ ] exact `BattleRandom` consumption and move-record reload
+- [x] disabled entirely in link battles (`Battle.Full.Disobedience.link_obeys_without_draws`)
+- [x] two-byte OT ID comparison with player ID (`Battle.Full.Disobedience.owned_obeys_without_draws`)
+- [x] badge thresholds: 10/30/50/70/101 (`Battle.Full.Disobedience.badge_obedience_thresholds`)
+- [x] level-at-or-below-threshold obedience (`Battle.Full.Disobedience.level_at_threshold_obeys`)
+- [x] first swapped-byte rejection/obedience loop (`Battle.Full.Disobedience.feed`)
+- [x] second rejection loop selecting alternate behavior (`swapped_then_unswapped_alternate_witness`)
+- [x] alternate usable move and retry conditions, including raw full-PP-byte nonzero check (`canChooseAlternate`, `pp_up_bits_make_zero_pp_selectable`)
+- [x] replacement move changes identity but PP decrement still uses the originally selected `wPlayerMoveListIndex` (`Battle.Full.Engine.disobedience_charges_original_slot`)
+- [x] zero-current-PP replacement with PP Up bits can underflow/deform the full PP byte on decrement (`Battle.Full.Engine.decrement_zero_pp_underflows`, `decrement_pp_up_only_deforms`)
+- [x] no alternate move with one move, Disable, Struggle, or only one PP-bearing move (`Battle.Full.Disobedience.canChooseAlternate`)
+- [x] random nap duration and whole-status-byte overwrite of poison/burn/paralysis (`Battle.Full.Disobedience.nap_whole_status_witness`)
+- [x] loaf/turn-away/ignore text branch state (`Battle.Full.Disobedience.feed` `.idleText`)
+- [x] disobedient self-damage path (`Battle.Full.Disobedience.self_damage_witness`)
+- [x] exact `BattleRandom` phase consumption and move identity reload (`Battle.Full.Disobedience.Machine.draws`, `feed`, `Battle.Full.Engine.resumeDisobedience`)
 
 ## Damage and hit system
 

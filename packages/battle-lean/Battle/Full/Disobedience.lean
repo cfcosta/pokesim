@@ -89,7 +89,7 @@ private def ppTotal (pp : Array UInt8) : UInt8 :=
   (pp.getD 0 0 &&& 0x3f) + (pp.getD 1 0 &&& 0x3f) +
     (pp.getD 2 0 &&& 0x3f) + (pp.getD 3 0 &&& 0x3f)
 
-private def canChooseAlternate (input : Input) : Bool :=
+def canChooseAlternate (input : Input) : Bool :=
   let selectedPp := input.pp.getD input.selectedSlot.toNat 0 &&& 0x3f
   input.moves.getD 1 0 != 0 && input.disabledMoveNumber == 0 &&
     input.selectedMove != 0xa5 && ppTotal input.pp != selectedPp
@@ -145,6 +145,18 @@ byte; it is not a manufactured failure. -/
 def feedAll (machine : Machine) (bytes : List UInt8) : Machine :=
   bytes.foldl feed machine
 
+theorem badge_obedience_thresholds :
+    obedienceLevel 0 = 10 ∧ obedienceLevel 0x02 = 30 ∧
+    obedienceLevel 0x08 = 50 ∧ obedienceLevel 0x20 = 70 ∧
+    obedienceLevel 0x80 = 101 := by
+  native_decide
+
+@[simp] theorem level_at_threshold_obeys (input : Input)
+    (level : input.level ≤ obedienceLevel input.badges) :
+    ∃ result, (start input).phase = .done result := by
+  refine ⟨.obeyed input.selectedSlot (selectedMove input), ?_⟩
+  simp [start, level]
+
 @[simp] theorem link_obeys_without_draws (input : Input) (h : input.mode = .link) :
     (start input).draws = [] ∧ ∃ result, (start input).phase = .done result := by
   have linkEq : (BattleMode.link == BattleMode.link) = true := by native_decide
@@ -166,15 +178,18 @@ private def testInput : Input :=
 
 /-- The first and second loops use swapped and unswapped bytes respectively;
 then alternate-slot rejection uses `random & 3`. -/
-example : (feedAll (start testInput) [0xa0, 0x00, 0x01]).phase =
+theorem swapped_then_unswapped_alternate_witness :
+    (feedAll (start testInput) [0xa0, 0x00, 0x01]).phase =
     .done (.alternate 1 2) := by native_decide
 
 /-- Nap overwrites the whole status byte with the nonzero generated counter. -/
-example : (feedAll (start testInput) [0xa0, 0x0a, 0x00, 0x08]).phase =
+theorem nap_whole_status_witness :
+    (feedAll (start testInput) [0xa0, 0x0a, 0x00, 0x08]).phase =
     .done (.nap 1) := by native_decide
 
 /-- The middle branch of the swapped-byte subtraction inflicts self-damage. -/
-example : (feedAll (start testInput) [0xa0, 0x0a, 0xf0]).phase =
+theorem self_damage_witness :
+    (feedAll (start testInput) [0xa0, 0x0a, 0xf0]).phase =
     .done .selfDamage := by native_decide
 
 /-- Candidate selection checks the full PP byte: PP-Up bits make a zero-current-
