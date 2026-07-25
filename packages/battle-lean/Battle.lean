@@ -43,6 +43,7 @@ import Battle.Full.Progression
 import Battle.Full.Learning
 import Battle.Full.Money
 import Battle.Full.Evolution
+import Battle.Full.Selection
 import Battle.Full.TrainerController
 import Battle.Full.Environment
 import Battle.Full.SelfPlay

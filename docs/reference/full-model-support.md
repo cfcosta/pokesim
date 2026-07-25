@@ -7,6 +7,7 @@
 | Domain | Module | Machine-checked boundary |
 |---|---|---|
 | Party state and switching | `Battle.Full.State` | Separate active/party rows, outgoing synchronization, living switch targets, forced replacement, exhaustion |
+| Menu selection scratch | `Battle.Full.Selection` | Fight reset, disabled/stale highlights, cancel retention, move/PP/Disable and ordered-bag swaps |
 | Status and residuals | `Battle.Full.Status` | Status-gate order, conditional RNG, poison/burn/seed residuals, Toxic counter interaction |
 | Item dispatch | `Battle.Full.Items` | Explicit disposition for IDs `$01..$53`; executable battle-use handlers; Max Ether packed-byte bug |
 | Effect dispatch | `Battle.Full.EffectPlan` | Typed plans for all effect IDs `$00..$56`; all 165 canonical move rows covered |

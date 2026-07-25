@@ -6,6 +6,7 @@ import Battle.Full.Action
 import Battle.Full.Effects
 import Battle.Full.Escape
 import Battle.Full.Disobedience
+import Battle.Full.Selection
 import Battle.Ordinary
 
 /-!
@@ -34,6 +35,8 @@ structure State where
   playerId : UInt16 := 0
   playerOtIds : Array UInt16 := #[]
   badges : UInt8 := 0xff
+  playerSelection : Selection.MoveScratch := {}
+  enemySelection : Selection.MoveScratch := {}
   runAttempts : UInt8 := 0
   deriving Repr, DecidableEq
 
@@ -85,6 +88,33 @@ private def lastMove (state : State) : Side → MoveId
 private def setLastMove (state : State) : Side → MoveId → State
   | .player, move => { state with playerLastMove := move }
   | .enemy, move => { state with enemyLastMove := move }
+
+private def selection (state : State) : Side → Selection.MoveScratch
+  | .player => state.playerSelection
+  | .enemy => state.enemySelection
+
+private def setSelection (state : State) : Side → Selection.MoveScratch → State
+  | .player, scratch => { state with playerSelection := scratch }
+  | .enemy, scratch => { state with enemySelection := scratch }
+
+private def commitSelection (state : State) (who : Side) (action : Full.Action) : State :=
+  match action with
+  | .fight slot =>
+      let selectionState : Selection.State :=
+        { side := side state who, bag := bag state who, scratch := selection state who,
+          runAttempts := state.runAttempts }
+      let selectionState := if who == .player then (Selection.openFight selectionState).1
+        else selectionState
+      let selectionState := (Selection.highlight selectionState slot).1
+      { (setSelection state who selectionState.scratch) with
+        runAttempts := selectionState.runAttempts }
+  | .struggle =>
+      let data := Data.moveData 165
+      let scratch := { selection state who with selectedMove := 165 }
+      let scratch := { scratch with power := data.power }
+      let scratch := { scratch with type := data.type }
+      setSelection state who scratch
+  | _ => state
 
 private def lockedDamage (state : State) : Side → UInt16
   | .player => state.playerLockedDamage
@@ -381,7 +411,7 @@ let damageResult := if continuedBide then
     .ok (UInt16.ofNat (min 0xffff (attacker.volatile.bideAccumulated.toNat * 2)), rng, [])
   else if continuedTrap then .ok (lockedDamage state who, rng, [])
   else if moveId == 68 then
-    let previous := Data.moveData (lastMove state who.other)
+    let previous := selection state who.other
     let validType := previous.type == TypeChart.normal || previous.type == TypeChart.fighting
     let counter := if previous.power != 0 && validType then
       UInt16.ofNat (min 0xffff (state.sharedDamage.toNat * 2)) else 0
@@ -536,6 +566,17 @@ private def isFight : Full.Action → Bool
   | .fight _ | .struggle => true
   | _ => false
 
+private def orderingMove (state : State) (who : Side) (action : Full.Action) : Step.ResolvedMove :=
+  if isFight action then
+    (moveOfAction state who action).map (fun pair => resolveMove pair.1) |>.getD (resolveMove 165)
+  else resolveMove (selection state who).selectedMove
+
+private def executeCommitted (state : State) (who : Side) (action : Full.Action) : StepResult :=
+  if isFight action then attack state who action
+  else
+    let (state, events) := applyResidual state who
+    .transitioned state events
+
 private def prependEvents (prior : List Event) : StepResult → StepResult
   | .transitioned state events => .transitioned state (prior ++ events)
   | .capturePending state ball events => .capturePending state ball (prior ++ events)
@@ -548,6 +589,32 @@ private def prependEvents (prior : List Event) : StepResult → StepResult
   | .invalidAction state side => .invalidAction state side
   | .inactive state => .inactive state
 
+private def executePair (state : State) (playerAction enemyAction : Full.Action)
+    (prior : List Event := []) : StepResult :=
+  let playerMove := orderingMove state .player playerAction
+  let enemyMove := orderingMove state .enemy enemyAction
+  let (first, _, rng) := Step.turnOrder playerMove.priority enemyMove.priority
+    (effectiveSpeed (side state .player)) (effectiveSpeed (side state .enemy)) state.battle.rng
+  let state := { state with battle := { state.battle with rng } }
+  let firstAction := if first == .player then playerAction else enemyAction
+  match executeCommitted state first firstAction with
+  | .transitioned state events =>
+      let events := prior ++ events
+      if state.forcedReplacement.isSome || state.battle.phase.isTerminal then
+        .transitioned state events
+      else
+        let second := first.other
+        let secondAction := if second == .player then playerAction else enemyAction
+        match executeCommitted state second secondAction with
+        | .transitioned state more =>
+            .transitioned { state with battle :=
+              { state.battle with turn := state.battle.turn + 1 } } (events ++ more)
+        | result => prependEvents events result
+  | .disobediencePending state machine _ events =>
+      let next := if first == .player then some enemyAction else none
+      .disobediencePending state machine next (prior ++ events)
+  | result => prependEvents prior result
+
 /-- Resolve one policy turn. Forced replacement is a separate boundary; ordinary
 switch/item actions commit before attacks, so attacks target the loaded mon. -/
 def step (state : State) (playerAction enemyAction : Full.Action) : StepResult :=
@@ -555,95 +622,67 @@ def step (state : State) (playerAction enemyAction : Full.Action) : StepResult :
   | .battling =>
       if !Full.legal (actionContext state .player) playerAction then .invalidAction state .player
       else if !Full.legal (actionContext state .enemy) enemyAction then .invalidAction state .enemy
-      else if state.forcedReplacement.isSome then
-        let forced := state.forcedReplacement.getD .player
-        let action := if forced == .player then playerAction else enemyAction
-        match action with
-        | .switch target =>
-            match applySwitch state forced target with
-            | some state => .transitioned state [.switched forced target.val]
-            | none => .invalidAction state forced
-        | .run =>
-            let terminal := Outcome.BattleTerminal.mk' (.linkRun forced) state.battle.mode .player
-              (if forced == .player then 1 else 0)
-            .transitioned { state with battle := { state.battle with phase := .ending terminal } }
-              [.terminal terminal]
-        | _ => .invalidAction state forced
       else
-        let processNonFight := fun (state : State) (who : Side) (action : Full.Action) =>
+        let state := commitSelection (commitSelection state .player playerAction) .enemy enemyAction
+        if state.forcedReplacement.isSome then
+          let forced := state.forcedReplacement.getD .player
+          let action := if forced == .player then playerAction else enemyAction
           match action with
-          | .switch target => applySwitch state who target
-          | _ => some state
-        match processNonFight state .player playerAction with
-        | none => .invalidAction state .player
-        | some state => match processNonFight state .enemy enemyAction with
-          | none => .invalidAction state .enemy
-          | some state =>
-              match playerAction, enemyAction with
-              | .item playerRequest, .item enemyRequest =>
-                  match applyItem state .player playerRequest with
-                  | .transitioned state playerEvents =>
-                      prependEvents playerEvents (applyItem state .enemy enemyRequest)
-                  | result => result
-              | .item request, enemyAction =>
-                  match applyItem state .player request with
-                  | .transitioned state itemEvents =>
-                      if isFight enemyAction then
-                        prependEvents itemEvents (attack state .enemy enemyAction)
-                      else .transitioned state itemEvents
-                  | result => result
-              | playerAction, .item request =>
-                  match applyItem state .enemy request with
-                  | .transitioned state itemEvents =>
-                      if isFight playerAction then
-                        prependEvents itemEvents (attack state .player playerAction)
-                      else .transitioned state itemEvents
-                  | result => result
-              | .run, _ =>
-                  if state.battle.mode == .link then
-                    let terminal := Outcome.BattleTerminal.mk' (.linkRun .player)
-                      state.battle.mode .player 1
-                    .transitioned { state with battle := { state.battle with phase := .ending terminal } }
-                      [.terminal terminal]
-                  else if state.battle.mode == .trainer then .transitioned state []
-                  else .runPending state .player enemyAction []
-              | _, .run =>
-                  if state.battle.mode == .link then
-                    let terminal := Outcome.BattleTerminal.mk' (.linkRun .enemy)
-                      state.battle.mode .player 0
-                    .transitioned { state with battle := { state.battle with phase := .ending terminal } }
-                      [.terminal terminal]
-                  else .runPending state .enemy playerAction []
-              | _, _ =>
-                  if !isFight playerAction && !isFight enemyAction then
-                    .transitioned { state with battle := { state.battle with turn := state.battle.turn + 1 } } []
-                  else if isFight playerAction && !isFight enemyAction then attack state .player playerAction
-                  else if !isFight playerAction && isFight enemyAction then attack state .enemy enemyAction
-                  else
-                    let playerMove := (moveOfAction state .player playerAction).map
-                      (fun pair => resolveMove pair.1) |>.getD (resolveMove 165)
-                    let enemyMove := (moveOfAction state .enemy enemyAction).map
-                      (fun pair => resolveMove pair.1) |>.getD (resolveMove 165)
-                    let (first, _, rng) := Step.turnOrder playerMove.priority enemyMove.priority
-                      (effectiveSpeed (side state .player)) (effectiveSpeed (side state .enemy)) state.battle.rng
-                    let state := { state with battle := { state.battle with rng } }
-                    let firstAction := if first == .player then playerAction else enemyAction
-                    match attack state first firstAction with
-                    | .transitioned state events =>
-                        if state.forcedReplacement.isSome || state.battle.phase.isTerminal then
-                          .transitioned state events
-                        else
-                          let second := first.other
-                          let secondAction := if second == .player then playerAction else enemyAction
-                          match attack state second secondAction with
-                          | .transitioned state more =>
-                              .transitioned { state with battle :=
-                                { state.battle with turn := state.battle.turn + 1 } } (events ++ more)
-                          | result => result
-                    | .disobediencePending state machine _ events =>
-                        let next := if first == .player then some enemyAction else none
-                        .disobediencePending state machine next events
+          | .switch target =>
+              match applySwitch state forced target with
+              | some state => .transitioned state [.switched forced target.val]
+              | none => .invalidAction state forced
+          | .run =>
+              let terminal := Outcome.BattleTerminal.mk' (.linkRun forced) state.battle.mode .player
+                (if forced == .player then 1 else 0)
+              .transitioned { state with battle := { state.battle with phase := .ending terminal } }
+                [.terminal terminal]
+          | _ => .invalidAction state forced
+        else
+          let processNonFight := fun (state : State) (who : Side) (action : Full.Action) =>
+            match action with
+            | .switch target => applySwitch state who target
+            | _ => some state
+          match processNonFight state .player playerAction with
+          | none => .invalidAction state .player
+          | some state => match processNonFight state .enemy enemyAction with
+            | none => .invalidAction state .enemy
+            | some state =>
+                match playerAction, enemyAction with
+                | .item playerRequest, .item enemyRequest =>
+                    match applyItem state .player playerRequest with
+                    | .transitioned state playerEvents =>
+                        match applyItem state .enemy enemyRequest with
+                        | .transitioned state enemyEvents =>
+                            executePair state playerAction enemyAction (playerEvents ++ enemyEvents)
+                        | result => prependEvents playerEvents result
                     | result => result
+                | .item request, enemyAction =>
+                    match applyItem state .player request with
+                    | .transitioned state itemEvents =>
+                        executePair state playerAction enemyAction itemEvents
+                    | result => result
+                | playerAction, .item request =>
+                    match applyItem state .enemy request with
+                    | .transitioned state itemEvents =>
+                        executePair state playerAction enemyAction itemEvents
+                    | result => result
+                | .run, _ =>
+                    if state.battle.mode == .link then
+                      let terminal := Outcome.BattleTerminal.mk' (.linkRun .player)
+                        state.battle.mode .player 1
+                      .transitioned { state with battle := { state.battle with phase := .ending terminal } }
+                        [.terminal terminal]
+                    else if state.battle.mode == .trainer then .transitioned state []
+                    else .runPending state .player enemyAction []
+                | _, .run =>
+                    if state.battle.mode == .link then
+                      let terminal := Outcome.BattleTerminal.mk' (.linkRun .enemy)
+                        state.battle.mode .player 0
+                      .transitioned { state with battle := { state.battle with phase := .ending terminal } }
+                        [.terminal terminal]
+                    else .runPending state .enemy playerAction []
+                | _, _ => executePair state playerAction enemyAction
   | _ => .inactive state
 
 private def selectedFin (slot : UInt8) : Fin 4 :=
@@ -657,7 +696,7 @@ private def afterDisobedience (result : StepResult) (nextEnemyAction : Option Fu
         .transitioned state events
       else match nextEnemyAction with
         | none => .transitioned state events
-        | some action => prependEvents events (attack state .enemy action)
+        | some action => prependEvents events (executeCommitted state .enemy action)
   | result => result
 
 /-- Supply one `BattleRandom` byte to a pending disobedience routine. Rejection
