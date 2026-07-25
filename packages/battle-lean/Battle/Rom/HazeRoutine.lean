@@ -354,6 +354,90 @@ theorem resetStats_eight_exact (initial : FunctionalState)
     · rw [states]
       exact iterateResetStatsBlocks_memory 8 initial
 
+/-! ### Complete ResetStats helper -/
+
+private theorem quiet_ldBImmediate (state : FunctionalState)
+    (quiet : RoutineSummary.Quiet state) :
+    RoutineSummary.Quiet (RoutineSummary.ldBImmediate state) := by
+  rcases quiet with ⟨running, halt, scheduled⟩
+  exact ⟨by simp [RoutineSummary.ldBImmediate, running],
+    by simp [RoutineSummary.ldBImmediate],
+    by simp [RoutineSummary.ldBImmediate, scheduled]⟩
+
+private theorem quiet_resetStatsBlock (state : FunctionalState)
+    (quiet : RoutineSummary.Quiet state) : RoutineSummary.Quiet (resetStatsBlock state) := by
+  rcases quiet with ⟨running, halt, scheduled⟩
+  exact ⟨by simp [resetStatsBlock, RoutineSummary.jrNz, RoutineSummary.decB,
+      RoutineSummary.incDe, RoutineSummary.ldAtDeA, RoutineSummary.ldAFromHlInc,
+      RoutineSummary.advancePc, running],
+    by simp [resetStatsBlock, RoutineSummary.jrNz],
+    by simp [resetStatsBlock, RoutineSummary.jrNz, RoutineSummary.decB,
+      RoutineSummary.incDe, RoutineSummary.ldAtDeA, RoutineSummary.ldAFromHlInc,
+      RoutineSummary.advancePc, scheduled]⟩
+
+private theorem quiet_iterateResetStatsBlocks (count : Nat) (state : FunctionalState)
+    (quiet : RoutineSummary.Quiet state) :
+    RoutineSummary.Quiet (iterateResetStatsBlocks count state) := by
+  induction count generalizing state with
+  | zero => exact quiet
+  | succ count induction =>
+      exact induction (resetStatsBlock state) (quiet_resetStatsBlock state quiet)
+
+structure ResetStatsRoutineContract (state : FunctionalState) : Prop where
+  quiet : RoutineSummary.Quiet state
+  op06 : state.memory.read state.registers.pc = 0x06
+  count : state.memory.read (Word.ofNat (state.registers.pc.toNat + 1)) = 0x08
+  blocks : ResetStatsContracts 8 (RoutineSummary.ldBImmediate state)
+  retOpcode : (iterateResetStatsBlocks 8 (RoutineSummary.ldBImmediate state)).memory.read
+    (iterateResetStatsBlocks 8 (RoutineSummary.ldBImmediate state)).registers.pc = 0xC9
+
+/-- Complete `ResetStats`: load the exact count eight, copy eight bytes, and
+return to the stack-provided caller in forty-two architectural instructions. -/
+theorem resetStats_routine_exact (state : FunctionalState)
+    (contract : ResetStatsRoutineContract state) :
+    (RoutineSummary.runSteps 42 state).state =
+      RoutineSummary.ret (iterateResetStatsBlocks 8 (RoutineSummary.ldBImmediate state)) ∧
+    (RoutineSummary.runSteps 42 state).state.memory =
+      copyBytes 8 state.memory (RoutineSummary.ldBImmediate state).registers.hl
+        (RoutineSummary.ldBImmediate state).registers.de := by
+  let loopInitial := RoutineSummary.ldBImmediate state
+  let loopFinal := iterateResetStatsBlocks 8 loopInitial
+  have first := RoutineSummary.step_ldBImmediate state contract.quiet.1
+    contract.quiet.2.2 contract.quiet.2.1 contract.op06
+  have loops := (resetStats_eight_exact loopInitial contract.blocks).1
+  have qLoop := quiet_ldBImmediate state contract.quiet
+  have qFinal := quiet_iterateResetStatsBlocks 8 loopInitial qLoop
+  have returns := RoutineSummary.step_ret loopFinal qFinal.1 qFinal.2.2 qFinal.2.1
+    contract.retOpcode
+  have composeLoops := RoutineSummary.runSteps_add 1 40 state
+  have composed41 : RoutineSummary.runSteps 41 state =
+      (let firstRun := RoutineSummary.runSteps 1 state
+       let secondRun := RoutineSummary.runSteps 40 firstRun.state
+       { state := secondRun.state, trace := firstRun.trace ++ secondRun.trace }) := by
+    simpa using composeLoops
+  have run41 : (RoutineSummary.runSteps 41 state).state = loopFinal := by
+    rw [composed41]
+    simp only
+    rw [show (RoutineSummary.runSteps 1 state).state = loopInitial by
+      simpa [RoutineSummary.runSteps, loopInitial] using first]
+    simpa [loopFinal] using loops
+  have composeReturn := RoutineSummary.runSteps_add 41 1 state
+  have composed42 : RoutineSummary.runSteps 42 state =
+      (let firstRun := RoutineSummary.runSteps 41 state
+       let secondRun := RoutineSummary.runSteps 1 firstRun.state
+       { state := secondRun.state, trace := firstRun.trace ++ secondRun.trace }) := by
+    simpa using composeReturn
+  have finalState : (RoutineSummary.runSteps 42 state).state = RoutineSummary.ret loopFinal := by
+    rw [composed42]
+    simp only
+    rw [run41]
+    simpa [RoutineSummary.runSteps] using returns
+  constructor
+  · simpa [loopFinal, loopInitial] using finalState
+  · rw [finalState]
+    change loopFinal.memory = _
+    simpa [loopFinal, loopInitial] using iterateResetStatsBlocks_memory 8 loopInitial
+
 /-! ## CureVolatileStatuses -/
 
 /-- Successive symbolic states of the eight-instruction call-free body. -/
@@ -478,6 +562,46 @@ theorem cureVolatile_block_exact (state : FunctionalState)
     simpa [cureVolatileBlock] using eight
   simp only [RoutineSummary.runSteps]
   rw [one', two', three', four', five', six', seven', eight']
+
+private theorem cureQuiet8 (state : FunctionalState)
+    (quiet : RoutineSummary.Quiet (cureS7 state)) :
+    RoutineSummary.Quiet (cureVolatileBlock state) := by
+  rcases quiet with ⟨running, halt, scheduled⟩
+  exact ⟨by simp [cureVolatileBlock, RoutineSummary.ldAtHlA, running],
+    by simp [cureVolatileBlock, RoutineSummary.ldAtHlA],
+    by simp [cureVolatileBlock, RoutineSummary.ldAtHlA, scheduled]⟩
+
+structure CureVolatileRoutineContract (state : FunctionalState) extends
+    CureVolatileContract state where
+  retOpcode : (cureVolatileBlock state).memory.read
+    (cureVolatileBlock state).registers.pc = 0xC9
+
+/-- Complete `CureVolatileStatuses`, including the stack return. -/
+theorem cureVolatile_routine_exact (state : FunctionalState)
+    (contract : CureVolatileRoutineContract state) :
+    (RoutineSummary.runSteps 9 state).state =
+      RoutineSummary.ret (cureVolatileBlock state) := by
+  have body := cureVolatile_block_exact state contract.toCureVolatileContract
+  have q1 := cureQuiet1 state contract.quiet
+  have q2 := cureQuiet2 state q1
+  have q3 := cureQuiet3 state q2
+  have q4 := cureQuiet4 state q3
+  have q5 := cureQuiet5 state q4
+  have q6 := cureQuiet6 state q5
+  have q7 := cureQuiet7 state q6
+  have q8 := cureQuiet8 state q7
+  have returns := RoutineSummary.step_ret (cureVolatileBlock state)
+    q8.1 q8.2.2 q8.2.1 contract.retOpcode
+  have composed := RoutineSummary.runSteps_add 8 1 state
+  have composed9 : RoutineSummary.runSteps 9 state =
+      (let firstRun := RoutineSummary.runSteps 8 state
+       let secondRun := RoutineSummary.runSteps 1 firstRun.state
+       { state := secondRun.state, trace := firstRun.trace ++ secondRun.trace }) := by
+    simpa using composed
+  rw [composed9]
+  simp only
+  rw [body]
+  simpa [RoutineSummary.runSteps] using returns
 
 /-- Semantic effect of the decoded volatile-status body. It clears confusion
 bit 7 in the first byte, retains only bits 3--6 in the second, and retains only
@@ -670,6 +794,79 @@ theorem resetMods_eight_exact (initial : FunctionalState)
     exact states
   · rw [show 24 = 3 * 8 by omega, states]
     exact iterateResetModsBlocks_memory 8 initial
+
+/-! ### Complete ResetStatMods helper -/
+
+private theorem quiet_resetModsBlock (state : FunctionalState)
+    (quiet : RoutineSummary.Quiet state) : RoutineSummary.Quiet (resetModsBlock state) := by
+  rcases quiet with ⟨running, halt, scheduled⟩
+  exact ⟨by simp [resetModsBlock, RoutineSummary.jrNz, RoutineSummary.decB,
+      RoutineSummary.ldAtHlIncA, RoutineSummary.advancePc, running],
+    by simp [resetModsBlock, RoutineSummary.jrNz],
+    by simp [resetModsBlock, RoutineSummary.jrNz, RoutineSummary.decB,
+      RoutineSummary.ldAtHlIncA, RoutineSummary.advancePc, scheduled]⟩
+
+private theorem quiet_iterateResetModsBlocks (count : Nat) (state : FunctionalState)
+    (quiet : RoutineSummary.Quiet state) :
+    RoutineSummary.Quiet (iterateResetModsBlocks count state) := by
+  induction count generalizing state with
+  | zero => exact quiet
+  | succ count induction =>
+      exact induction (resetModsBlock state) (quiet_resetModsBlock state quiet)
+
+structure ResetModsRoutineContract (state : FunctionalState) : Prop where
+  quiet : RoutineSummary.Quiet state
+  op06 : state.memory.read state.registers.pc = 0x06
+  count : state.memory.read (Word.ofNat (state.registers.pc.toNat + 1)) = 0x08
+  blocks : ResetModsContracts 8 (RoutineSummary.ldBImmediate state)
+  retOpcode : (iterateResetModsBlocks 8 (RoutineSummary.ldBImmediate state)).memory.read
+    (iterateResetModsBlocks 8 (RoutineSummary.ldBImmediate state)).registers.pc = 0xC9
+
+/-- Complete `ResetStatMods`, including count load and return. -/
+theorem resetMods_routine_exact (state : FunctionalState)
+    (contract : ResetModsRoutineContract state) :
+    (RoutineSummary.runSteps 26 state).state =
+      RoutineSummary.ret (iterateResetModsBlocks 8 (RoutineSummary.ldBImmediate state)) ∧
+    (RoutineSummary.runSteps 26 state).state.memory =
+      fillBytes 8 state.memory state.registers.hl state.registers.a := by
+  let loopInitial := RoutineSummary.ldBImmediate state
+  let loopFinal := iterateResetModsBlocks 8 loopInitial
+  have first := RoutineSummary.step_ldBImmediate state contract.quiet.1
+    contract.quiet.2.2 contract.quiet.2.1 contract.op06
+  have loops := (resetMods_eight_exact loopInitial contract.blocks).1
+  have qLoop := quiet_ldBImmediate state contract.quiet
+  have qFinal := quiet_iterateResetModsBlocks 8 loopInitial qLoop
+  have returns := RoutineSummary.step_ret loopFinal qFinal.1 qFinal.2.2 qFinal.2.1
+    contract.retOpcode
+  have composeLoops := RoutineSummary.runSteps_add 1 24 state
+  have composed25 : RoutineSummary.runSteps 25 state =
+      (let firstRun := RoutineSummary.runSteps 1 state
+       let secondRun := RoutineSummary.runSteps 24 firstRun.state
+       { state := secondRun.state, trace := firstRun.trace ++ secondRun.trace }) := by
+    simpa using composeLoops
+  have run25 : (RoutineSummary.runSteps 25 state).state = loopFinal := by
+    rw [composed25]
+    simp only
+    rw [show (RoutineSummary.runSteps 1 state).state = loopInitial by
+      simpa [RoutineSummary.runSteps, loopInitial] using first]
+    simpa [loopFinal] using loops
+  have composeReturn := RoutineSummary.runSteps_add 25 1 state
+  have composed26 : RoutineSummary.runSteps 26 state =
+      (let firstRun := RoutineSummary.runSteps 25 state
+       let secondRun := RoutineSummary.runSteps 1 firstRun.state
+       { state := secondRun.state, trace := firstRun.trace ++ secondRun.trace }) := by
+    simpa using composeReturn
+  have finalState : (RoutineSummary.runSteps 26 state).state = RoutineSummary.ret loopFinal := by
+    rw [composed26]
+    simp only
+    rw [run25]
+    simpa [RoutineSummary.runSteps] using returns
+  constructor
+  · simpa [loopFinal, loopInitial] using finalState
+  · rw [finalState]
+    change loopFinal.memory = _
+    simpa [loopFinal, loopInitial, RoutineSummary.ldBImmediate] using
+      iterateResetModsBlocks_memory 8 loopInitial
 
 structure RequiredHazeBytes (rom : Array Byte) : Prop where
   gameplayWindow : Tables.tableBytes rom
