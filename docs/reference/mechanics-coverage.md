@@ -161,8 +161,8 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [ ] item target legality
 - [x] switch target is living and not active (`Battle.Full.SideState.canSwitchTo_sound`)
 - [x] run legality and trainer prohibition (`Battle.Full.trainer_run_selectable`, `Battle.Full.Escape.trainer_prohibited`)
-- [ ] link action exchange values
-- [ ] Safari actions
+- [x] link action exchange values (`Battle.Full.Link.encodeAction`, `decodeAction`, `action_roundtrip`)
+- [x] Safari actions (`Battle.Full.Safari.Action`, `act`, `Battle.Full.Environment.resolveSafari`)
 - [ ] successful item consumes action
 - [ ] successful switch consumes action
 - [ ] failed wild run consumes action
@@ -174,8 +174,8 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [ ] ordinary player Mimic target-move request
 - [ ] item party/move target requests and cancellation
 - [ ] move-learning nested learn/forget/HM rejection/cancel/abandon-confirmation requests
-- [ ] capture nickname/default-name request for party and box destinations
-- [ ] post-battle evolution cancel request
+- [x] capture nickname/default-name request for party and box destinations (`Battle.Full.CaptureProtocol.Pending`, `NameResponse`, `finishName`)
+- [x] post-battle evolution cancel request (`Battle.Full.Evolution.Response.cancel`, `cancellation_advances_to_next_flagged_member`)
 
 ## Mechanics-visible selection layer
 
