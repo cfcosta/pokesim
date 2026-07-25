@@ -482,7 +482,7 @@ Exact transitions are catalogued in [Switch, faint, and participation flow](swit
 - [ ] Pay Day payout guarded exactly by `wBattleResult == 0`
 - [ ] post-battle evolution before cleanup while phase remains `ending`
 - [ ] low-health alarm state excluded or event-mapped
-- [ ] HP-derived recall-text arithmetic/timing, healed-enemy underflow, quotient low byte, and raw zero-divisor divergence
+- [x] HP-derived recall-text arithmetic, healed-enemy underflow, quotient low byte, and raw zero-divisor divergence (`Battle.Full.Recall.select`; presentation timing remains in the system checklist)
 
 ## Run and escape
 
@@ -745,7 +745,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] player faint clears party status but preserves fought flag; Revive can restore gain-EXP eligibility (`player_faint_clears_party_status`, `faint_preserves_fought_flags`, `revive_restores_fought_recipient`)
 - [x] EXP All counts fainted in-party members in the divisor but skips their awards (`exp_all_counts_full_party`, `fainted_recipient_skipped`)
 - [x] wild-faint run prompt uses party slot 1 Speed regardless of active/replacement (`Battle.Full.Environment.wild_faint_speed_uses_slot_one`)
-- [ ] healed-enemy recall-message underflow and zero-divisor raw divergence affect switch timing
+- [x] healed-enemy recall-message underflow and zero-divisor raw divergence (`Battle.Full.Recall.healed_enemy_good_text`, `nonzero_max_hp_can_diverge`); device-level switch timing remains separate
 - [x] transformed non-Ditto capture becomes Ditto (`Battle.Full.Capture.transformed_stores_ditto`)
 - [x] active status-cure whole-stat reset versus AI cure's retained penalized stats (`Battle.Full.Items.trainer_cure_retains_combat_stats`)
 - [x] disobedient replacement move charging the originally selected PP slot (`Battle.Full.Engine.disobedience_charges_original_slot`)

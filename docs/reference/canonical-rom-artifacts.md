@@ -180,6 +180,10 @@ obligation.
 from `DisplayBattleMenu.oldManName`. The eight-byte terminated `OLD MAN@` text
 is followed by opcode bytes `$FA,$2D,$CC`; the model restores the saved player
 name while deliberately retaining those encounter-alias bytes.
+`Battle.Full.Recall.RequiredRecallBytes` retains the complete `PlayerMon2Text`
+selection window. Its arithmetic model preserves wrapped healed-enemy
+subtraction, the stale high multiplicand byte, low-byte divisor/quotient
+truncation, and explicit zero-divisor divergence.
 
 `Battle.Rom.EffectRoutines.CanonicalLeafEffectsBytes` adds exact code-window
 witnesses for `HyperBeamEffect` (`0f:79c1`), shared `ClearHyperBeam`

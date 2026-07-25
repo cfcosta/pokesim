@@ -40,6 +40,7 @@ import Battle.Full.Capture
 import Battle.Full.CaptureProtocol
 import Battle.Full.Safari
 import Battle.Full.OldMan
+import Battle.Full.Recall
 import Battle.Full.Escape
 import Battle.Full.Disobedience
 import Battle.Full.Progression
