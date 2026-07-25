@@ -97,6 +97,39 @@ theorem step_legal_trace (state : FunctionalState) (opcode : Byte)
     (Functional.step state).trace = (legalResult state opcode shape).trace := by
   rw [step_legal state opcode shape running opcodeAtPc decoded]
 
+private theorem increment_bounded : ∀ address : Word, ∀ offset : Fin 8,
+    Word.ofNat ((Word.ofNat (address.toNat + offset.val)).toNat + 1) =
+      Word.ofNat (address.toNat + offset.val + 1) := by
+  native_decide
+
+@[simp] theorem increment_twice (address : Word) :
+    Word.ofNat ((Word.ofNat (address.toNat + 1)).toNat + 1) =
+      Word.ofNat (address.toNat + 2) := increment_bounded address ⟨1, by omega⟩
+
+@[simp] theorem increment_after_two (address : Word) :
+    Word.ofNat ((Word.ofNat (address.toNat + 2)).toNat + 1) =
+      Word.ofNat (address.toNat + 3) := increment_bounded address ⟨2, by omega⟩
+
+@[simp] theorem increment_after_three (address : Word) :
+    Word.ofNat ((Word.ofNat (address.toNat + 3)).toNat + 1) =
+      Word.ofNat (address.toNat + 4) := increment_bounded address ⟨3, by omega⟩
+
+@[simp] theorem increment_after_four (address : Word) :
+    Word.ofNat ((Word.ofNat (address.toNat + 4)).toNat + 1) =
+      Word.ofNat (address.toNat + 5) := increment_bounded address ⟨4, by omega⟩
+
+@[simp] theorem increment_after_five (address : Word) :
+    Word.ofNat ((Word.ofNat (address.toNat + 5)).toNat + 1) =
+      Word.ofNat (address.toNat + 6) := increment_bounded address ⟨5, by omega⟩
+
+@[simp] theorem increment_after_six (address : Word) :
+    Word.ofNat ((Word.ofNat (address.toNat + 6)).toNat + 1) =
+      Word.ofNat (address.toNat + 7) := increment_bounded address ⟨6, by omega⟩
+
+@[simp] theorem increment_after_seven (address : Word) :
+    Word.ofNat ((Word.ofNat (address.toNat + 7)).toNat + 1) =
+      Word.ofNat (address.toNat + 8) := increment_bounded address ⟨7, by omega⟩
+
 def advancePc (state : FunctionalState) : Registers :=
   { state.registers with pc := Word.ofNat (state.registers.pc.toNat + 1) }
 

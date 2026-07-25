@@ -242,6 +242,118 @@ theorem resetStats_block_effect (state : FunctionalState) (n : Nat) (bound : n <
       native_decide
   exact ⟨memoryAtTarget, hl, de, b, control⟩
 
+/-- One semantic block writes exactly the byte read at `HL` to `DE`. -/
+@[simp] theorem resetStatsBlock_memory (state : FunctionalState) :
+    (resetStatsBlock state).memory =
+      state.memory.write state.registers.de (state.memory.read state.registers.hl) := by
+  let mid := beforeJr state
+  have midFacts := beforeJr_exact state
+  have dataFacts := jrNz_data mid
+  rw [show (resetStatsBlock state).memory = mid.memory by
+    simpa [resetStatsBlock, beforeJr, mid] using dataFacts.1]
+  exact midFacts.1
+
+@[simp] theorem resetStatsBlock_hl (state : FunctionalState) :
+    (resetStatsBlock state).registers.hl = Word.ofNat (state.registers.hl.toNat + 1) := by
+  let mid := beforeJr state
+  have midFacts := beforeJr_exact state
+  have dataFacts := jrNz_data mid
+  rw [show (resetStatsBlock state).registers.hl = mid.registers.hl by
+    simpa [resetStatsBlock, beforeJr, mid] using dataFacts.2.1]
+  exact midFacts.2.1
+
+@[simp] theorem resetStatsBlock_de (state : FunctionalState) :
+    (resetStatsBlock state).registers.de = Word.ofNat (state.registers.de.toNat + 1) := by
+  let mid := beforeJr state
+  have midFacts := beforeJr_exact state
+  have dataFacts := jrNz_data mid
+  rw [show (resetStatsBlock state).registers.de = mid.registers.de by
+    simpa [resetStatsBlock, beforeJr, mid] using dataFacts.2.2.1]
+  exact midFacts.2.2.1
+
+/-- Pure byte-copy fold matching the data path of repeated `ResetStats` blocks. -/
+def copyBytes : Nat → FlatMemory → Word → Word → FlatMemory
+  | 0, memory, _, _ => memory
+  | count + 1, memory, source, destination =>
+      copyBytes count (memory.write destination (memory.read source))
+        (Word.ofNat (source.toNat + 1)) (Word.ofNat (destination.toNat + 1))
+
+/-- Repeated semantic loop blocks in execution order. -/
+def iterateResetStatsBlocks : Nat → FunctionalState → FunctionalState
+  | 0, state => state
+  | count + 1, state => iterateResetStatsBlocks count (resetStatsBlock state)
+
+/-- The local assumptions needed at one loop head. They are explicit so whole-
+routine callers must prove code-window stability and destination/code separation
+rather than receiving them from fuel execution. -/
+structure ResetStatsBlockContract (state : FunctionalState) : Prop where
+  quiet : RoutineSummary.Quiet state
+  pc : state.registers.pc = resetStatsLoop
+  op2a : state.memory.read 0x7A4C = 0x2A
+  op12 : state.memory.read 0x7A4D = 0x12
+  op13 : state.memory.read 0x7A4E = 0x13
+  op05 : state.memory.read 0x7A4F = 0x05
+  op20 : state.memory.read 0x7A50 = 0x20
+  safe13 : state.registers.de ≠ 0x7A4E
+  safe05 : state.registers.de ≠ 0x7A4F
+  safe20 : state.registers.de ≠ 0x7A50
+
+/-- Repeated blocks have exactly the pure copy-fold memory result. -/
+theorem iterateResetStatsBlocks_memory (count : Nat) (state : FunctionalState) :
+    (iterateResetStatsBlocks count state).memory =
+      copyBytes count state.memory state.registers.hl state.registers.de := by
+  induction count generalizing state with
+  | zero => rfl
+  | succ count induction =>
+      simp only [iterateResetStatsBlocks, copyBytes]
+      rw [induction, resetStatsBlock_memory, resetStatsBlock_hl, resetStatsBlock_de]
+
+/-- Every loop head up to `count` satisfies the local decoded block contract. -/
+def ResetStatsContracts (count : Nat) (initial : FunctionalState) : Prop :=
+  ∀ index, index < count → ResetStatsBlockContract (iterateResetStatsBlocks index initial)
+
+/-- Any finite sequence of contracted blocks is exactly the corresponding
+architectural execution. This is the scalable replacement for unfolding all 40
+loop instructions in one evaluator term. -/
+theorem resetStats_blocks_exact (count : Nat) (initial : FunctionalState)
+    (contracts : ResetStatsContracts count initial) :
+    (RoutineSummary.runSteps (5 * count) initial).state =
+      iterateResetStatsBlocks count initial := by
+  induction count generalizing initial with
+  | zero => rfl
+  | succ count induction =>
+      have head := contracts 0 (by omega)
+      have blockExact : (RoutineSummary.runSteps 5 initial).state = resetStatsBlock initial :=
+        resetStats_block_exact initial head.quiet head.pc
+          ⟨head.op2a, head.op12, head.op13, head.op05, head.op20⟩
+          ⟨head.safe13, head.safe05, head.safe20⟩
+      have tailContracts : ResetStatsContracts count (resetStatsBlock initial) := by
+        intro index bounded
+        simpa [iterateResetStatsBlocks] using contracts (index + 1) (by omega)
+      have tail := induction (resetStatsBlock initial) tailContracts
+      have composed := RoutineSummary.runSteps_add 5 (5 * count) initial
+      have stateComposed := congrArg RoutineSummary.Execution.state composed
+      rw [show 5 * (count + 1) = 5 + 5 * count by omega]
+      rw [stateComposed]
+      simp only
+      rw [blockExact, tail]
+      rfl
+
+/-- Complete eight-iteration `ResetStats` loop: forty architectural
+instructions produce exactly the eight-byte copy fold. The only assumptions are
+the explicit per-head code/stability contracts; source bytes remain arbitrary. -/
+theorem resetStats_eight_exact (initial : FunctionalState)
+    (contracts : ResetStatsContracts 8 initial) :
+    (RoutineSummary.runSteps 40 initial).state = iterateResetStatsBlocks 8 initial ∧
+    (RoutineSummary.runSteps 40 initial).state.memory =
+      copyBytes 8 initial.memory initial.registers.hl initial.registers.de := by
+  set_option maxRecDepth 10000 in
+    have states := resetStats_blocks_exact 8 initial contracts
+    constructor
+    · exact states
+    · rw [states]
+      exact iterateResetStatsBlocks_memory 8 initial
+
 structure RequiredHazeBytes (rom : Array Byte) : Prop where
   gameplayWindow : Tables.tableBytes rom
       (romOffset 0x04 (Word.ofNat hazeEntry.toNat)) hazeBytes.length =
