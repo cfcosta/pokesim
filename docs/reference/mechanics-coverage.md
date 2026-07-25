@@ -219,8 +219,8 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [ ] Toxic counter increments once for poison and again for Leech Seed on the same residual pass
 - [ ] trapping counter cleanup
 - [ ] loop back to selection
-- [ ] simultaneous-active-faint paths as event/order metadata, including nonterminal reserve continuation
-- [ ] terminal witness enters `ending`, not returned/done
+- [x] simultaneous-active-faint paths as event/order metadata, including nonterminal reserve continuation (`Battle.Full.Engine.recordSimultaneousFaint`, `simultaneous_with_reserves_is_nonterminal`)
+- [x] terminal witness enters `ending`, not returned/done (`simultaneous_player_exhausted_is_loss`, `simultaneous_enemy_exhausted_is_win`)
 - [ ] terminal trainer payout/end-text, raw-result-guarded Pay Day/evolution, cleanup, and outer return phases
 
 ## Status gate order
@@ -476,7 +476,7 @@ Exact transitions are catalogued in [Switch, faint, and participation flow](swit
 - [ ] link win/loss/run result
 - [ ] [terminal control-path witness](battle-outcomes.md) before cleanup; no final-memory-only outcome decoder
 - [ ] `EndOfBattle` erasure of escape/mode/opponent fields while preserving raw result
-- [ ] recoil/simultaneous-KO ordering
+- [x] recoil/simultaneous-KO ordering (`Battle.Full.Engine.recordSimultaneousFaint`; defender is recorded first and the second replacement is queued)
 - [ ] trainer BCD prize payout
 - [ ] `PrintEndBattleText` flag/name/dynamic-text/sprite writes and raw-result lose-text selection during simultaneous-faint victory
 - [ ] Pay Day payout guarded exactly by `wBattleResult == 0`
@@ -736,7 +736,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [ ] trainer/wild move slot selection's 63/64/63/66 initial bucket bias
 - [x] final WRAM cannot distinguish all zero-result terminal causes after cleanup (`Battle.Outcome.cleanup_erases_terminal_distinctions`)
 - [ ] simultaneous faint write order can produce trainer lose text and payout with raw result 1
-- [ ] simultaneous active faint can be nonterminal when reserves remain
+- [x] simultaneous active faint can be nonterminal when reserves remain (`Battle.Full.Engine.simultaneous_with_reserves_is_nonterminal`)
 - [x] two-stage stat effect at current stat 999/1 silently retains one stage despite failure text (`raise_attack_999_two_stage_residue`, `lower_attack_1_two_stage_residue`)
 - [x] capture naming and current-box slot-1 insertion/whole-array shift (`Battle.Full.CaptureProtocol.box_slot_one_exact`)
 - [ ] Old Man player-name restoration leaves aliased wild encounter bytes overwritten

@@ -24,6 +24,7 @@ structure State where
   playerBag : Items.Bag := []
   enemyBag : Items.Bag := []
   forcedReplacement : Option Side := none
+  queuedReplacement : Option Side := none
   playerLastMove : MoveId := 0
   enemyLastMove : MoveId := 0
   payDayMoney : Money.Bcd3 := Money.Bcd3.ofNat 0
@@ -482,6 +483,65 @@ private def recordFaint (state : State) (fainted : Side) : State × List Event :
     ({ state with forcedReplacement := some fainted },
       [.fainted fainted, .forcedReplacement fainted])
 
+/-- Resolve a simultaneous active faint in cartridge handler order. Terminal
+provenance records the side detected first. With reserves on both sides, player
+replacement is requested first and enemy replacement is queued rather than
+manufacturing a terminal result. -/
+def prepareSimultaneousFaint (state : State) : State :=
+  setSide state .player (clearPlayerFaintStatus (side state .player))
+
+def resolveSimultaneousPrepared (state : State) (detectedFirst : Side) : State × List Event :=
+  let playerOut := (side state .player).partyExhausted
+  let enemyOut := (side state .enemy).partyExhausted
+  let detectedSecond := detectedFirst.other
+  let faintEvents := [.fainted detectedFirst, .fainted detectedSecond]
+  if playerOut then
+    let terminal := Outcome.BattleTerminal.mk' (.partyExhausted .player)
+      state.battle.mode .player 1 0 (some detectedFirst)
+    let state := { state with battle := { state.battle with phase := .ending terminal } }
+    let state := { state with forcedReplacement := none }
+    ({ state with queuedReplacement := none }, faintEvents ++ [.terminal terminal])
+  else if enemyOut then
+    let terminal := Outcome.BattleTerminal.mk' (.partyExhausted .enemy)
+      state.battle.mode .player 0 0 (some detectedFirst)
+    let state := if state.battle.mode == .trainer then
+      { state with playerMoney := state.playerMoney.add state.trainerPrize }
+      else state
+    let state := { state with battle := { state.battle with phase := .ending terminal } }
+    let state := { state with forcedReplacement := none }
+    ({ state with queuedReplacement := none }, faintEvents ++ [.terminal terminal])
+  else
+    let state := { state with forcedReplacement := some .player }
+    ({ state with queuedReplacement := some .enemy },
+      faintEvents ++ [.forcedReplacement .player])
+
+def recordSimultaneousFaint (state : State) (detectedFirst : Side) : State × List Event :=
+  resolveSimultaneousPrepared (prepareSimultaneousFaint state) detectedFirst
+
+@[simp] theorem simultaneous_with_reserves_is_nonterminal (state : State)
+    (playerReserve : (side state .player).partyExhausted = false)
+    (enemyReserve : (side state .enemy).partyExhausted = false)
+    (first : Side) :
+    ((resolveSimultaneousPrepared state first).1.battle.phase = state.battle.phase ∧
+      (resolveSimultaneousPrepared state first).1.forcedReplacement = some .player ∧
+      (resolveSimultaneousPrepared state first).1.queuedReplacement = some .enemy) := by
+  simp [resolveSimultaneousPrepared, playerReserve, enemyReserve]
+
+theorem simultaneous_player_exhausted_is_loss (state : State) (first : Side)
+    (playerOut : (side state .player).partyExhausted = true) :
+    (resolveSimultaneousPrepared state first).1.battle.phase = .ending
+      (Outcome.BattleTerminal.mk' (.partyExhausted .player) state.battle.mode
+        .player 1 0 (some first)) := by
+  simp [resolveSimultaneousPrepared, playerOut]
+
+theorem simultaneous_enemy_exhausted_is_win (state : State) (first : Side)
+    (playerLives : (side state .player).partyExhausted = false)
+    (enemyOut : (side state .enemy).partyExhausted = true) :
+    (resolveSimultaneousPrepared state first).1.battle.phase = .ending
+      (Outcome.BattleTerminal.mk' (.partyExhausted .enemy) state.battle.mode
+        .player 0 0 (some first)) := by
+  simp [resolveSimultaneousPrepared, playerLives, enemyOut]
+
 private def applyResidual (state : State) (who : Side) : State × List Event :=
   let result := Status.applyResiduals (side state who).active (side state who.other).active
   let state := setSide state who { side state who with active := result.actor }
@@ -712,7 +772,11 @@ match damageResult with
           let events := critEvents ++ damageEvents ++ handlerGateEvents ++ accuracyEvents ++
             before.events.map .effect ++
             applied.events ++ extra.events ++ after.events.map .effect ++ lockEvents
-          if targetFainted then
+          let userFainted := (side state who).active.active.fainted
+          if targetFainted && userFainted then
+            let (state, faintEvents) := recordSimultaneousFaint state who.other
+            .transitioned state (events ++ faintEvents)
+          else if targetFainted then
             let (state, faintEvents) := recordFaint state who.other
             .transitioned state (events ++ faintEvents)
           else
@@ -793,15 +857,29 @@ def switchAiLayer (current : UInt8) (who : Side) (forced : Bool) : UInt8 :=
     switchAiLayer current .enemy false = current := by
   simp [switchAiLayer]
 
+def advanceReplacementQueue (current queued : Option Side) (who : Side) :
+    Option Side × Option Side :=
+  if current == some who then (queued, none) else (current, queued)
+
+@[simp] theorem simultaneous_player_replacement_advances_enemy :
+    advanceReplacementQueue (some .player) (some .enemy) .player = (some .enemy, none) := by
+  native_decide
+
+@[simp] theorem enemy_replacement_drains_queue :
+    advanceReplacementQueue (some .enemy) none .enemy = (none, none) := by
+  native_decide
+
 private def applySwitch (state : State) (who : Side) (target : Fin 6)
     (forced : Bool := false) : Option State :=
   match state.battle.switchTo who target.val with
   | none => none
   | some battle =>
       let state := { state with battle := battle }
+      let replacements := advanceReplacementQueue state.forcedReplacement
+        state.queuedReplacement who
       some { state with
-        forcedReplacement := if state.forcedReplacement == some who then none
-          else state.forcedReplacement
+        forcedReplacement := replacements.1
+        queuedReplacement := replacements.2
         aiLayer2Encouragement := switchAiLayer state.aiLayer2Encouragement who forced }
 
 private def applyItem (state : State) (who : Side) (request : Items.Request) : StepResult :=
