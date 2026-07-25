@@ -77,6 +77,40 @@ inductive SelectsMove (moves : Array MoveId) (disabled : MoveId) :
       (tail : SelectsMove moves disabled rng.next.2 slot final trace) :
       SelectsMove moves disabled rng slot final (rng.next.1 :: trace)
 
+inductive MovePhase where
+  | choosing
+  | selected (slot : Fin 4)
+  deriving Repr, DecidableEq
+
+structure MoveMachine where
+  moves : Array MoveId
+  disabled : MoveId
+  scores : Array Nat
+  rng : Rng.LinkRng
+  phase : MovePhase := .choosing
+  draws : List UInt8 := []
+  deriving Repr, DecidableEq
+
+private def minimumCandidateScore (machine : MoveMachine) : Nat :=
+  (Array.range 4).foldl (fun minimum slot =>
+    let move := machine.moves.getD slot 0
+    if move == 0 || move == machine.disabled then minimum
+    else min minimum (machine.scores.getD slot 0x50)) 0x50
+
+/-- One BattleRandom draw in the minimum-score rejection loop. -/
+def feedMove (machine : MoveMachine) : MoveMachine :=
+  match machine.phase with
+  | .selected _ => machine
+  | .choosing =>
+      let (raw, rng) := machine.rng.next
+      let slot := slotBucket raw
+      let move := machine.moves.getD slot.val 0
+      let accepted := move != 0 && move != machine.disabled &&
+        machine.scores.getD slot.val 0x50 == minimumCandidateScore machine
+      let machine := { machine with rng := rng }
+      let machine := { machine with draws := machine.draws ++ [raw] }
+      { machine with phase := if accepted then .selected slot else .choosing }
+
 /-- Move-layer score input. Type effectiveness is supplied by the already exact
 type fold; arrays are per-slot observations. -/
 structure ScoreInput where

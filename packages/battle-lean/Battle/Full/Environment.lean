@@ -5,6 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License").
 import Battle.Full.Engine
 import Battle.Full.Capture
 import Battle.Full.Evolution
+import Battle.Full.TrainerController
 import Battle.RL.DynamicGenerator
 
 /-!
@@ -30,6 +31,8 @@ structure State where
   gainExpFlags : UInt8 := 1
   foughtFlags : UInt8 := 1
   hasExpAll : Bool := false
+  trainerClass : UInt8 := 1
+  trainerActionsLeft : Option UInt8 := none
   pendingLearning : List (Nat × MoveId) := []
   lastEpilogue : Option Money.EpilogueResult := none
 
@@ -62,7 +65,8 @@ private def persistent (owner : UInt16) (mon : MonState) : Progression.Persisten
 
 /-- Reset from independent generator and battle streams. -/
 def reset (generatorRng battleRng : Rng.LinkRng)
-    (mode : BattleMode := .link) (playerBag enemyBag : Items.Bag := []) : State :=
+    (mode : BattleMode := .link) (playerBag enemyBag : Items.Bag := [])
+    (trainerClass : UInt8 := 1) : State :=
   let player := RL.DynamicGenerator.sample generatorRng
   let enemy := RL.DynamicGenerator.sample player.rng
   let playerParty : Full.Party := { mons := player.team.1 }
@@ -79,7 +83,8 @@ def reset (generatorRng battleRng : Rng.LinkRng)
     box := #[]
     playerProgression := player.team.1.map (persistent 0)
     enemyProgression := enemy.team.1.map (persistent 0xffff)
-    hasExpAll := playerBag.contains 0x4b }
+    hasExpAll := playerBag.contains 0x4b
+    trainerClass }
 
 /-- Done only after explicit cleanup settlement. -/
 def done (state : State) : Bool :=
@@ -220,6 +225,65 @@ def observe (state : State) : Observation :=
 def legalActions (state : State) (who : Side) : Array Full.Action :=
   Engine.legalActions state.engine who
 
+inductive TrainerPlan where
+  | choosingMove (state : State) (machine : TrainerController.MoveMachine)
+  | fight (state : State) (slot : Fin 4)
+  | item (state : State) (item : TrainerAI.Item)
+  | switch (state : State) (target : Fin 6)
+  | invalidClass (state : State)
+
+private def trainerContext (state : State) : TrainerAI.Context :=
+  let enemy := state.engine.battle.enemy
+  { currentHp := enemy.active.active.hp
+    maxHp := enemy.active.active.maxHp
+    hasSwitchReserve := !enemy.legalSwitches.isEmpty }
+
+/-- Consume the trainer action-AI direct-Random byte, then either commit an
+item/switch routine or enter minimum-score BattleRandom move selection. -/
+def prepareTrainer (state : State) (directRandom : UInt8)
+    (scoreInput : TrainerController.ScoreInput) : TrainerPlan :=
+  match TrainerController.classRow? state.trainerClass with
+  | none => .invalidClass state
+  | some row =>
+      let remaining := state.trainerActionsLeft.getD row.initialActions
+      let decision := if remaining == 0 then TrainerController.ActionDecision.normal
+        else TrainerController.decideAction row.routine directRandom (trainerContext state)
+          (state.engine.battle.enemy.active.active.status != 0)
+      let nextRemaining := (TrainerController.commitDecision { remaining } decision).remaining
+      let state := { state with trainerActionsLeft := some nextRemaining }
+      match decision with
+      | .item item => .item state item
+      | .switch =>
+          match state.engine.battle.enemy.legalSwitches[0]? with
+          | some target => .switch state target
+          | none =>
+              let input := { scoreInput with moves := state.engine.battle.enemy.active.active.moves }
+              let scores := TrainerController.scoreMoves row input
+              let machine : TrainerController.MoveMachine :=
+                { moves := input.moves
+                  disabled := state.engine.battle.enemy.active.volatile.disabledMoveNumber
+                  scores := scores
+                  rng := state.engine.battle.rng }
+              .choosingMove state machine
+      | .normal =>
+          let input := { scoreInput with moves := state.engine.battle.enemy.active.active.moves }
+          let scores := TrainerController.scoreMoves row input
+          let machine : TrainerController.MoveMachine :=
+            { moves := input.moves
+              disabled := state.engine.battle.enemy.active.volatile.disabledMoveNumber
+              scores := scores
+              rng := state.engine.battle.rng }
+          .choosingMove state machine
+
+/-- Advance one move-slot rejection draw and install the accepted RNG cursor. -/
+def resumeTrainerMove (state : State) (machine : TrainerController.MoveMachine) : TrainerPlan :=
+  let machine := TrainerController.feedMove machine
+  match machine.phase with
+  | .choosing => .choosingMove state machine
+  | .selected slot =>
+      let engine := { state.engine with battle := { state.engine.battle with rng := machine.rng } }
+      .fight { state with engine } slot
+
 inductive StepResult where
   | transitioned (state : State) (events : List Engine.Event)
   | invalidAction (state : State) (side : Side)
@@ -337,6 +401,28 @@ private def lift (outer : State) : Engine.StepResult → StepResult
 
 def step (state : State) (player enemy : Full.Action) : StepResult :=
   lift state (Engine.step state.engine player enemy)
+
+private def trainerItemId : TrainerAI.Item → UInt8
+  | .potion => 0x14
+  | .superPotion => 0x13
+  | .hyperPotion => 0x12
+  | .fullRestore => 0x10
+  | .fullHeal => 0x34
+  | .xAttack => 0x41
+  | .xDefend => 0x42
+  | .xSpeed => 0x43
+  | .guardSpec => 0x37
+
+/-- Execute a committed trainer-controller result against the player's already
+selected action. AI inventory is synthetic and not player-bag state. -/
+def executeTrainerPlan (player : Full.Action) : TrainerPlan → Option StepResult
+  | .fight state slot => some (step state player (.fight slot))
+  | .switch state target => some (step state player (.switch target))
+  | .item state item =>
+      let itemId := trainerItemId item
+      let engine := { state.engine with enemyBag := [{ item := itemId, count := 1 }] }
+      some (step { state with engine } player (.item { item := itemId }))
+  | .choosingMove _ _ | .invalidClass _ => none
 
 def resumeNested (state : State) (who : Side) (move : MoveId) : StepResult :=
   lift state (Engine.resumeNested state.engine who move)
