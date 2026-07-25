@@ -403,7 +403,7 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
             let mon := { context.defender.active with status := turns }
             ⟨withDefender { context with rng } { context.defender with active := mon },
               .continue, events ++ [.statusApplied turns]⟩
-  | .ohko => if context.attacker.active.speed ≥ context.defender.active.speed then
+  | .ohko => if hit && context.attacker.active.speed ≥ context.defender.active.speed then
       ⟨context, .oneHitKo, [.signal .oneHitKo]⟩ else ⟨context, .failed, []⟩
   | .charge invulnerable =>
       let bitStatus := setBit context.attacker.volatile.status1 Wram.BattleStatus1.chargingUp
@@ -660,6 +660,26 @@ theorem haze_incapacitated_cancels (context : Context)
     (hazeOutcome context).signal = .cancelTargetMove := by
   simp only [hazeOutcome]
   rw [if_pos incapacitated]
+
+/-- The cartridge's subtract-with-borrow accepts a Speed tie despite the source
+comment saying "higher": equal current Speeds produce the successful OHKO flag. -/
+theorem ohko_speed_tie_succeeds (context : Context)
+    (tie : context.attacker.active.speed = context.defender.active.speed) :
+    (applyBefore Data.Effect.ohko true context).signal = .oneHitKo := by
+  change (if true && context.attacker.active.speed ≥ context.defender.active.speed then
+    ⟨context, .oneHitKo, [.signal .oneHitKo]⟩ else
+    ⟨context, .failed, []⟩ : Outcome).signal = .oneHitKo
+  rw [tie]
+  simp
+
+/-- A failed ordinary accuracy test cannot be overridden by the OHKO handler's
+Speed comparison. -/
+theorem ohko_accuracy_miss_fails (context : Context) :
+    (applyBefore Data.Effect.ohko false context).signal = .failed := by
+  change (if false && context.attacker.active.speed ≥ context.defender.active.speed then
+    ⟨context, .oneHitKo, [.signal .oneHitKo]⟩ else
+    ⟨context, .failed, []⟩ : Outcome).signal = .failed
+  rfl
 
 /-- Hyper Beam recharge is skipped when its hit faints the target. -/
 theorem hyperBeam_faint_skips_recharge (context : Context) (damage : UInt16) :

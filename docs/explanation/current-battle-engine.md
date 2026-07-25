@@ -209,7 +209,7 @@ Intermediate flooring and byte extraction are semantic. Replacing the assembly w
 
 The scaling path can produce a zero defensive divisor. The original machine can freeze there. The model must preserve this as divergence rather than clamp defense to one.
 
-Counter still runs `CriticalHitTest` before its own handling, so it consumes that draw and may retain the critical flag/text even though its damage comes from doubled shared `wDamage`. A speed-eligible OHKO likewise reaches ordinary type adjustment, damage randomization, and then accuracy in source order; speed failure exits earlier. These paths need call-site traces rather than simplified “special damage” formulas.
+Counter still runs `CriticalHitTest` before its own handling, so it consumes that draw and may retain the critical flag/text even though its damage comes from doubled shared `wDamage`. A speed-eligible OHKO likewise reaches ordinary type adjustment, damage randomization, and then accuracy in source order; speed failure exits earlier. The executable effect requires both the ordinary hit result and current Speed greater than or equal to the target, preserving the cartridge's tie success while preventing a failed accuracy test from being overwritten. These paths still need call-site traces rather than simplified “special damage” formulas.
 
 ## Accuracy and critical hits
 
