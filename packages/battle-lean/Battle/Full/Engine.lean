@@ -213,18 +213,31 @@ private def drawPsywave : Nat → Side → UInt8 → Rng.LinkRng →
 private def initialDamage (mechanic : EffectPlan.Mechanic) (moveId : MoveId) (who : Side)
     (move : Step.ResolvedMove) (attacker defender : Battle.SideState) (critical : Bool)
     (rng : Rng.LinkRng) :
-    Except (DamageStats.Result × List Event) (UInt16 × Rng.LinkRng × List Event) :=
+    Except (DamageStats.Result × List Event)
+      (UInt16 × Rng.LinkRng × List Event × Bool) :=
   match Effects.specialDamage mechanic moveId attacker.active defender.active with
-  | .fixedDamage damage => .ok (damage, rng, [])
-  | .oneHitKo => .ok (0xFFFF, rng, [])
-  | .failed => .ok (0, rng, [])
+  | .fixedDamage damage => .ok (damage, rng, [], false)
+  | .oneHitKo =>
+      let typed := Damage.adjustDamageForType move.type attacker.active.type1
+        attacker.active.type2 defender.active.type1 defender.active.type2 0xFFFF
+      if typed < 2 then .ok (typed, rng, [], typed == 0)
+      else
+        match Ordinary.drawDamageFactor rng with
+        | none => .ok (0, rng, [], false)
+        | some (factor, rng, ordinaryEvents) =>
+            let events := ordinaryEvents.map fun event => match event with
+              | .rng site raw => Event.rng site raw
+              | _ => Event.rng "damage-factor" factor
+            .ok (Damage.randomizeDamage factor typed, rng, events, false)
+  | .failed => .ok (0, rng, [], false)
   | .psywave =>
       let bound := UInt8.ofNat (attacker.active.level.toNat + attacker.active.level.toNat / 2)
       match drawPsywave 2305 who bound rng with
-      | none => .ok (0, rng, [])
-      | some (damage, rng, events) => .ok (UInt16.ofNat damage.toNat, rng, events)
+      | none => .ok (0, rng, [], false)
+      | some (damage, rng, events) =>
+          .ok (UInt16.ofNat damage.toNat, rng, events, false)
   | _ =>
-      if move.power == 0 then .ok (0, rng, [])
+      if move.power == 0 then .ok (0, rng, [], false)
       else
         let special := TypeChart.isSpecial move.type
         let attack := offensiveStat attacker special critical
@@ -240,15 +253,15 @@ private def initialDamage (mechanic : EffectPlan.Mechanic) (moveId : MoveId) (wh
               (UInt16.ofNat stats.attack.toNat) (UInt16.ofNat defense.toNat)
             let typed := Damage.adjustDamageForType move.type attacker.active.type1 attacker.active.type2
               defender.active.type1 defender.active.type2 base
-            if typed < 2 then .ok (typed, rng, [])
+            if typed < 2 then .ok (typed, rng, [], typed == 0)
             else
               match Ordinary.drawDamageFactor rng with
-              | none => .ok (0, rng, [])
+              | none => .ok (0, rng, [], false)
               | some (factor, rng, ordinaryEvents) =>
                   let events := ordinaryEvents.map fun event => match event with
                     | .rng site raw => Event.rng site raw
                     | _ => Event.rng "damage-factor" factor
-                  .ok (Damage.randomizeDamage factor typed, rng, events)
+                  .ok (Damage.randomizeDamage factor typed, rng, events, false)
 
 private def effectsContext (state : State) (who : Side) (move : MoveId) (slot : Fin 4)
     (attacker defender : Battle.SideState) (rng : Rng.LinkRng) : Effects.Context :=
@@ -406,24 +419,26 @@ let (rng, critical, critEvents) :=
     (rng, critical, [.rng "critical" raw])
 let continuedBide := action == .noAction && mechanic == .bide
 let damageResult := if continuedBide then
-    .ok (UInt16.ofNat (min 0xffff (attacker.volatile.bideAccumulated.toNat * 2)), rng, [])
-  else if continuedTrap then .ok (lockedDamage state who, rng, [])
+    .ok (UInt16.ofNat (min 0xffff (attacker.volatile.bideAccumulated.toNat * 2)),
+      rng, [], false)
+  else if continuedTrap then .ok (lockedDamage state who, rng, [], false)
   else if moveId == 68 then
     let previous := selection state who.other
     let validType := previous.type == TypeChart.normal || previous.type == TypeChart.fighting
     let counter := if previous.power != 0 && validType then
       UInt16.ofNat (min 0xffff (state.sharedDamage.toNat * 2)) else 0
-    .ok (counter, rng, [])
+    .ok (counter, rng, [], false)
   else initialDamage mechanic moveId who move attacker defenderFull.active critical rng
 match damageResult with
 | .error _ => .divisionFreeze state critEvents
-| .ok (damage, rng, damageEvents) =>
-    let (hit, rng, accuracyEvents) :=
+| .ok (damage, rng, damageEvents, typeMiss) =>
+    let (accuracyHit, rng, accuracyEvents) :=
       if continuedTrap || (mechanic == .sleep && defenderFull.active.volatile.recharging) then
         (true, rng, [])
       else if requiresAccuracy mechanic move.power then
         resolveAccuracy mechanic move attacker defenderFull.active rng
       else (true, rng, [])
+    let hit := accuracyHit && !typeMiss
     let context := effectsContext state who moveId slot attacker defenderFull.active rng
     let before := if action == .noAction then
       match mechanic with

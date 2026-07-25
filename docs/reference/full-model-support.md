@@ -39,7 +39,7 @@ The certificate is independent of the external source tree.
 ```text
 episodes=100 finished=88 truncated=12 nested_open=0
 blocked=0 invalid=0 rng_stuck=0 division_freeze=0 other=0
-repaired=0 transitions=50819
+repaired=0 transitions=50820
 ```
 
 The 12 horizon-open runs are not terminal outcomes; status-heavy generated
