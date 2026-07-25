@@ -501,10 +501,10 @@ Exact transitions are catalogued in [Switch, faint, and participation flow](swit
 - [ ] move-based wild escape by Teleport/Roar/Whirlwind
 - [ ] automatic success at user level ≥ target level; otherwise level-sum rejection loop and target-level/4 comparison
 - [ ] trainer-battle Teleport failure versus Roar/Whirlwind unaffected text/control paths
-- [ ] Poke Doll/move escape `wEscapedFromBattle` versus run/link `wBattleResult` writes
+- [x] Poke Doll/move escape `wEscapedFromBattle` versus ordinary-run `wBattleResult` writes (`Battle.Outcome.escape_byte_channels_exact`)
 - [ ] raw result-code implications for EndOfBattle Pay Day/evolution guard
 - [ ] successful move escape synchronizes active player HP/status to party before setting escape
-- [ ] Poke Doll/move escape leave result zero and reach non-link Pay Day/evolution, unlike ordinary Run
+- [x] Poke Doll/move escape leave result zero unlike ordinary Run (`Battle.Outcome.escape_byte_channels_exact`); Pay Day/evolution control-flow composition remains open
 - [ ] level-based rejection sampling
 - [x] post-faint run response always uses stored party slot 1 Speed, excluding active paralysis/stage/badge changes (`Battle.Full.Environment.wildFaintRunSpeed`)
 

@@ -130,6 +130,15 @@ provenance must therefore be captured before this projection. -/
 def cleanupOutcomeBytes (_terminal : BattleTerminal) : CleanedOutcomeBytes :=
   { battleResult := 0, escapedFromBattle := 0 }
 
+theorem escape_byte_channels_exact (move : MoveId) :
+    let doll := BattleTerminal.mk' .pokeDollEscape .wild .player 0 1
+    let moveEscape := BattleTerminal.mk' (.moveEscape .player move) .wild .player 0 1
+    let run := BattleTerminal.mk' .ordinaryRun .wild .player 2
+    doll.rawResult = 0 ∧ doll.preCleanupEscaped = 1 ∧
+    moveEscape.rawResult = 0 ∧ moveEscape.preCleanupEscaped = 1 ∧
+    run.rawResult = 2 ∧ run.preCleanupEscaped = 0 := by
+  simp [BattleTerminal.mk']
+
 /-- Distinct defeat and escape causes become byte-identical after cleanup. -/
 theorem cleanup_erases_terminal_distinctions :
     let defeat := BattleTerminal.mk' (.partyExhausted .player) .wild .player 1
