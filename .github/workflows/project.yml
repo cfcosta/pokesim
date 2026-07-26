@@ -18,6 +18,7 @@ jobs:
           rom="$(mktemp --suffix=.gbc)"
           trap 'rm -f "$rom"' EXIT
           nix develop -c python3 tools/check-pokered-build.py --rebuild --jobs 4 --output-rom "$rom"
+          python3 tools/generate-pokered-reachability.py --rom "$rom"
           nix develop -c lake -d packages/battle-lean exe battleRomFixture "$rom"
       - name: Build battle and DMG-CPU B adapter proofs
         run: nix develop -c lake -d packages/battle-lean build Battle Battle.GameBoy Battle.Rom Battle.DriverInvariant

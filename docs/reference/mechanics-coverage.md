@@ -21,9 +21,9 @@ The project has moved beyond discovery for the processor, canonical build, initi
 - [x] Red source commit and RGBDS version pinned
 - [x] canonical Red ROM rebuilt and SHA-1 checked
 - [x] ROM SHA-256, `.sym`, and `.map` recorded
-- [ ] battle transitive call graph generated through calls, bankswitches, predefs, pointer tables, and text callbacks
+- [x] address-based battle graph is regenerated from caller-supplied canonical bytes, with direct control flow, RGBDS far/home calls, predefs, interrupt roots, presentation summaries, and explicit conservative dynamic domains (`tools/generate-pokered-reachability.py`, `artifacts/pokered/reachability-manifest.json`)
 - [x] trainer end-text/map callbacks have an explicit per-edge classification theorem boundary (`Battle.Rom.Reachability.trainer_callbacks_classified`)
-- [ ] every in-scope ROM range classified
+- [x] all 64 physical ROM bank ranges, used linker sections, decoded reachable ranges, HRAM targets, and dynamic domains are classified and hash-bound (`tools/check-pokered-closure.py`, `Battle.Rom.Reachability.Certificate`)
 - [x] separately licensed, immutable-revision [`sm83-lean` package](sm83-semantics-package.md)
 - [x] exact-hash gb-opcodes plus [five-source microarchitecture audit](sm83-microarchitecture-contract.md)
 - [x] exact 244-legal + CB-prefix + 11-lockup base partition and all 256 CB entries
@@ -93,8 +93,8 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [x] hermetic RGBDS 1.0.2 ROM build, `.sym`, `.map`, SHA-1/SHA-256
 - [x] explicit `InitOpponent` bank/stack/hardware entry plus decoded supplied-opponent `InitBattle` prefix (`Battle.DriverInvariant.InitOpponentCallerEntry`, `caller_entry_exposes_bank_stack_hardware`, `Battle.Rom.InitBattleRoutine.supplied_opponent_reaches_initOpponent`, `canonical_prefix_exact`)
 - [x] no-encounter `InitBattle` decision is separate from battle-driver completion (`Battle.Rom.InitBattleRoutine.InitBattleDecision`, `no_encounter_path_is_not_completion`)
-- [ ] address-based transitive code/data graph through bankswitches, predefs, pointer tables, text callbacks, interrupts, and assets
-- [ ] no unresolved reachable ROM range or indirect edge
+- [x] transitive code/data closure records selected-bank context, physical ranges, MBC/far/predef edges, interrupt roots, assets, and callback summary sites (`artifacts/pokered/reachability-manifest.json`)
+- [x] every direct target is classified; 73 genuinely indirect sites carry the sound all-retained-ROM conservative target domain, with zero omitted/unclassified edges (`tools/check-pokered-closure.py`, `Battle.Rom.Reachability.no_unresolved_reachable_edge`)
 - [x] VRAM/OAM/MMIO/external-SRAM/audio/joypad/serial/LCD are represented by proved storage/device or explicit external-progress summaries (`Battle.GameBoy.Memory`, `Mbc3`, `Devices`, `Adapter`; continuous episode use remains below)
 - [ ] mode setup refinement before `StartBattle`
 - [ ] terminal witness enters `ending`; simultaneous active faint may remain nonterminal
