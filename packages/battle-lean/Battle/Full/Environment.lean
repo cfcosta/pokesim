@@ -100,8 +100,8 @@ def reset (generatorRng battleRng : Rng.LinkRng)
     { player := playerSide, enemy := enemySide, rng := battleRng, turn := 0,
       mode, phase := .battling }
   let safari : Option Safari.State := if mode == .safari then
-    some (Safari.State.mk 30 enemySide.active.active.catchRate
-      enemySide.active.active.catchRate 0 0)
+    some (Safari.State.mk 30 enemySide.active.actualCatchRate
+      enemySide.active.actualCatchRate 0 0)
     else none
   { engine := { battle, playerBag, enemyBag }
     playerReset := player.team
@@ -370,6 +370,7 @@ def resumeTrainerMove (state : State) (machine : TrainerController.MoveMachine) 
 inductive StepResult where
   | transitioned (state : State) (events : List Engine.Event)
   | invalidAction (state : State) (side : Side)
+  | ineffectiveAction (state : State) (side : Side)
   | capturePending (state : State) (ball : UInt8) (events : List Engine.Event)
   | rngStuck (state : State) (events : List Engine.Event)
   | divisionFreeze (state : State) (events : List Engine.Event)
@@ -653,6 +654,7 @@ private def lift (outer : State) : Engine.StepResult → StepResult
   | .transitioned engine events =>
       .transitioned (applyProgressionEvents { outer with engine } events) events
   | .invalidAction engine side => .invalidAction { outer with engine } side
+  | .ineffectiveAction engine side => .ineffectiveAction { outer with engine } side
   | .capturePending engine ball events => .capturePending { outer with engine } ball events
   | .rngStuck engine events => .rngStuck { outer with engine } events
   | .divisionFreeze engine events => .divisionFreeze { outer with engine } events
@@ -831,7 +833,7 @@ def resolveCapture (state : State) (ball : Capture.Ball) (rand1 rand2 : UInt8)
       currentHp := enemy.hp
       maxHp := enemy.maxHp
       status := enemy.status
-      catchRate := enemy.catchRate
+      catchRate := state.engine.battle.enemy.active.actualCatchRate
       species := enemy.species
       transformed := bitSet state.engine.battle.enemy.active.volatile.status3
         Wram.BattleStatus3.transformed
@@ -892,8 +894,9 @@ def resolveSafariCapture (state : State) (rand1 rand2 escapeRaw : UInt8) :
   | none => (.rejectedCapacity, state)
   | some safari =>
       let enemySide := state.engine.battle.enemy
-      let enemyMon := { enemySide.active.active with catchRate := safari.catchRate }
-      let enemySide := { enemySide with active := { enemySide.active with active := enemyMon } }
+      let active := { enemySide.active with actualCatchRate := safari.catchRate }
+      let enemySide := { enemySide with active := active }
+      let enemyMon := enemySide.active.active
       let engine := { state.engine with battle := state.engine.battle.setSide .enemy enemySide }
       let (result, state) := resolveCapture { state with engine } .safari rand1 rand2
       match result with

@@ -125,12 +125,23 @@ structure StatStages where
   special : UInt8
   accuracy : UInt8
   evasion : UInt8
+  /-- Two skipped WRAM bytes included in `NUM_STAT_MODS`; load/reset writes 7. -/
+  padding0 : UInt8 := 7
+  padding1 : UInt8 := 7
   deriving Repr, DecidableEq, BEq
 
 /-- The neutral stages every mon starts a battle (and every switch-in) with:
     all six at `BASE_STAT_LEVEL = 7`. -/
 def StatStages.neutral : StatStages :=
-  { attack := 7, defense := 7, speed := 7, special := 7, accuracy := 7, evasion := 7 }
+  { attack := 7, defense := 7, speed := 7, special := 7, accuracy := 7, evasion := 7,
+    padding0 := 7, padding1 := 7 }
+
+@[simp] theorem neutral_resets_all_eight_bytes :
+    let stages := StatStages.neutral
+    stages.attack = 7 ∧ stages.defense = 7 ∧ stages.speed = 7 ∧
+      stages.special = 7 ∧ stages.accuracy = 7 ∧ stages.evasion = 7 ∧
+      stages.padding0 = 7 ∧ stages.padding1 = 7 := by
+  native_decide
 
 /-- Well-formed: every stage is within `1..MAX_STAT_LEVEL`. -/
 def StatStages.wf (s : StatStages) : Bool :=
@@ -164,13 +175,16 @@ structure Volatile where
   substituteHp : UInt8
   /-- `wPlayerBideAccumulatedDamage` (big-endian; unions with NumHits). -/
   bideAccumulated : UInt16
+  /-- Separate `w*MonMinimized` presentation-branch byte. -/
+  minimized : Bool := false
   deriving Repr, DecidableEq, BEq
 
 /-- Switch-in state: every volatile byte and counter cleared. -/
 def Volatile.clear : Volatile :=
   { status1 := 0, status2 := 0, status3 := 0, numAttacksLeft := 0,
     confusedCounter := 0, toxicCounter := 0, disabledMove := 0,
-    disabledMoveNumber := 0, substituteHp := 0, bideAccumulated := 0 }
+    disabledMoveNumber := 0, substituteHp := 0, bideAccumulated := 0,
+    minimized := false }
 
 /-- Confused (`BattleStatus1` bit 7). -/
 def Volatile.confused (v : Volatile) : Bool := bitSet v.status1 Wram.BattleStatus1.confused
@@ -211,6 +225,12 @@ structure SideState where
   unmodified : CombatStats
   stages : StatStages
   volatile : Volatile
+  /-- Immutable loaded identity (`w*MonSpecies2`) across Transform. -/
+  originalSpecies : SpeciesId := 0
+  /-- Active party-position byte, separate from controller-owned indexes. -/
+  partyPosition : UInt8 := 0
+  /-- Capture rate retained outside Transform-mutable active data. -/
+  actualCatchRate : UInt8 := 0
   deriving Repr, DecidableEq, BEq
 
 /-- Initial active combat stats include the cartridge's burn/paralysis
@@ -225,7 +245,8 @@ def MonState.withBattleStatusPenalties (mon : MonState) : MonState :=
 status-adjusted mutable stats, then reset stages and volatile state. -/
 def SideState.fresh (m : MonState) : SideState :=
   { active := m.withBattleStatusPenalties, unmodified := CombatStats.ofMon m,
-    stages := StatStages.neutral, volatile := Volatile.clear }
+    stages := StatStages.neutral, volatile := Volatile.clear,
+    originalSpecies := m.species, partyPosition := 0, actualCatchRate := m.catchRate }
 
 /-- The whole battle: both sides, the RNG cursor, the turn counter, the mode, and
     the episode phase. -/

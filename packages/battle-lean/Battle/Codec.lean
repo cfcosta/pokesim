@@ -182,6 +182,44 @@ theorem BattleMon.encode_decode {b : Bytes} {m : BattleMon}
   have hl : m.encodeList = b.toList := BattleMon.encodeList_decodeList h
   simp [BattleMon.encode, hl]
 
+/-! ## Exact party-member blocks -/
+
+/-- A lossless 44-byte `party_struct`. Semantic projections can be layered on
+this raw block without making malformed bytes unrepresentable. -/
+structure PartyMonBlock where
+  bytes : Bytes
+  exactLength : bytes.size = partyStructLength
+
+def PartyMonBlock.encode (mon : PartyMonBlock) : Bytes := mon.bytes
+
+def PartyMonBlock.decode (bytes : Bytes) : Option PartyMonBlock :=
+  if exact : bytes.size = partyStructLength then some ⟨bytes, exact⟩ else none
+
+@[simp] theorem PartyMonBlock.decode_encode (mon : PartyMonBlock) :
+    PartyMonBlock.decode mon.encode = some mon := by
+  cases mon with
+  | mk bytes exactLength => simp [PartyMonBlock.decode, PartyMonBlock.encode, exactLength]
+
+theorem PartyMonBlock.encode_decode {bytes : Bytes} {mon : PartyMonBlock}
+    (decoded : PartyMonBlock.decode bytes = some mon) : mon.encode = bytes := by
+  simp only [PartyMonBlock.decode] at decoded
+  split at decoded
+  · injection decoded with equality
+    exact congrArg PartyMonBlock.bytes equality.symm
+  · contradiction
+
+/-- Raw count/list framing used by both player and enemy parties. -/
+def partySpeciesFrameValid (count : UInt8) (species : Bytes) : Bool :=
+  count.toNat ≤ partyLength && species.size = count.toNat + 1 &&
+    species.getD count.toNat 0 = 0xFF
+
+@[simp] theorem party_species_frame_exact (count : UInt8) (species : Bytes)
+    (bounded : count.toNat ≤ partyLength)
+    (size : species.size = count.toNat + 1)
+    (terminator : species.getD count.toNat 0 = 0xFF) :
+    partySpeciesFrameValid count species = true := by
+  simp [partySpeciesFrameValid, bounded, size, terminator]
+
 /-! ## Bridge to the checkpoint trace
 
 A captured `Snapshot` of `wBattleMon`/`wEnemyMon` is exactly a serialized mon, so

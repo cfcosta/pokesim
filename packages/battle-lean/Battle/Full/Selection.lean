@@ -110,6 +110,37 @@ theorem swapMoves_exact (state : State) (first second : Fin 4) :
         remapDisabled state.side.active.volatile.disabledMove first second := by
   simp [swapMoves]
 
+/-- Cartridge SELECT swaps the loaded active arrays and the persistent party
+arrays independently. When transformed, this deliberately permutes two
+different move sets rather than synchronizing either one into the other. -/
+def swapActiveAndParty (side : Full.SideState) (first second : Fin 4) : Full.SideState :=
+  let activeMon := side.active.active
+  let activeMon := { activeMon with
+    moves := swapArray activeMon.moves first.val second.val
+    pp := swapArray activeMon.pp first.val second.val }
+  let volatile := { side.active.volatile with
+    disabledMove := remapDisabled side.active.volatile.disabledMove first second }
+  let active := { side.active with active := activeMon }
+  let active := { active with volatile := volatile }
+  let party := { mons := side.party.mons.modify side.activeIndex fun mon =>
+    let mon := { mon with moves := swapArray mon.moves first.val second.val }
+    { mon with pp := swapArray mon.pp first.val second.val } }
+  let side := { side with active := active }
+  { side with party := party }
+
+theorem swap_active_and_party_exact (side : Full.SideState) (first second : Fin 4)
+    (inBounds : side.activeIndex < side.party.mons.size) :
+    let after := swapActiveAndParty side first second
+    after.active.active.moves = swapArray side.active.active.moves first.val second.val ∧
+      after.active.active.pp = swapArray side.active.active.pp first.val second.val ∧
+      (after.party.mons.getD side.activeIndex side.active.active).moves =
+        swapArray (side.party.mons.getD side.activeIndex side.active.active).moves
+          first.val second.val ∧
+      (after.party.mons.getD side.activeIndex side.active.active).pp =
+        swapArray (side.party.mons.getD side.activeIndex side.active.active).pp
+          first.val second.val := by
+  simp [swapActiveAndParty, Array.getD, inBounds, Array.getElem_modify_self]
+
 /-- SELECT swaps complete ordered bag stack entries without consuming a turn. -/
 def swapBag (state : State) (first second : Nat) : State × Event :=
   ({ state with bag := swapArray state.bag.toArray first second |>.toList },

@@ -157,7 +157,7 @@ inductive Event where
 /-- Bounded executable search over the link recurrence. Fuel 2305 covers a full
 256-step orbit for each of the nine live bytes; exhaustion remains explicit for
 malformed RNG states rather than becoming a miss. -/
-private def drawAccepted : Nat → Rng.LinkRng → (UInt8 → Bool) → String →
+def drawAccepted : Nat → Rng.LinkRng → (UInt8 → Bool) → String →
     Option (UInt8 × Rng.LinkRng × List Event)
   | 0, _, _, _ => none
   | fuel + 1, rng, accepts, site =>
@@ -229,7 +229,7 @@ private def recalculateStat (side : Battle.SideState) (stat : Nat) (stage : UInt
     Battle.SideState :=
   setCurrentStat side stat (DamageStats.applyStage (originalStat side stat) stage)
 
-private def applyBadges (badges : UInt8) (side : Battle.SideState) : Battle.SideState :=
+def applyBadges (badges : UInt8) (side : Battle.SideState) : Battle.SideState :=
   let boost (bit stat : Nat) (side : Battle.SideState) :=
     if bitSet badges bit then setCurrentStat side stat
       (DamageStats.badgeBoost (currentStat side stat)) else side
@@ -238,13 +238,13 @@ private def applyBadges (badges : UInt8) (side : Battle.SideState) : Battle.Side
 /-- The assembly calls both helpers after every successful stat effect, regardless
 of which stat changed. Reapplication therefore stacks and can affect an unrelated
 opponent after a self stat-up. -/
-private def reapplyStatusPenalties (side : Battle.SideState) : Battle.SideState :=
+def reapplyStatusPenalties (side : Battle.SideState) : Battle.SideState :=
   let side := if side.active.paralyzed then
     setCurrentStat side 2 (UInt16.ofNat (side.active.speed.toNat / 4)) else side
   if side.active.burned then
     setCurrentStat side 0 (UInt16.ofNat (side.active.attack.toNat / 2)) else side
 
-private def raiseStage (context : Context) (stat amount : Nat) : Outcome :=
+def raiseStage (context : Context) (stat amount : Nat) : Outcome :=
   let old := getStage context.attacker.stages stat
   if old.toNat ≥ 13 then ⟨context, .failed, []⟩
   else
@@ -262,7 +262,7 @@ private def raiseStage (context : Context) (stat amount : Nat) : Outcome :=
       let context := withDefender (withAttacker context attacker) defender
       ⟨context, .continue, [.stageChanged context.attackerSide stat amount]⟩
 
-private def lowerStage (context : Context) (stat amount : Nat)
+def lowerStage (context : Context) (stat amount : Nat)
     (respectMist : Bool := true) : Outcome :=
   if context.defender.volatile.hasSubstitute ||
       (respectMist && bitSet context.defender.volatile.status2
@@ -286,14 +286,31 @@ private def lowerStage (context : Context) (stat amount : Nat)
         let context := withDefender context defender
         ⟨context, .continue, [.stageChanged context.attackerSide.other stat amount]⟩
 
+def enemyStatDownSideDraws (first second : UInt8) : Bool × Nat :=
+  if first < 64 then (false, 1) else (second < 85, 2)
+
+@[simp] theorem enemy_stat_down_side_draw_boundaries :
+    enemyStatDownSideDraws 63 0 = (false, 1) ∧
+      enemyStatDownSideDraws 64 84 = (true, 2) ∧
+      enemyStatDownSideDraws 64 85 = (false, 2) := by
+  native_decide
+
 private def sideChance (threshold : UInt8) (context : Context) : Bool × Context × Event :=
   let (raw, rng) := context.rng.next
   (raw < threshold, { context with rng }, .rawRng "side-effect" raw)
 
+def elementalSideEffectImmune (target : MonState) (moveType : UInt8) : Bool :=
+  target.type1 == moveType || target.type2 == moveType
+
+@[simp] theorem body_slam_normal_type_immunity (target : MonState)
+    (normalFirst : target.type1 = TypeChart.normal) :
+    elementalSideEffectImmune target TypeChart.normal = true := by
+  simp [elementalSideEffectImmune, normalFirst]
+
 private def applyMajorStatus (status : UInt8) (moveType : UInt8)
     (context : Context) : Outcome :=
   let target := context.defender.active
-  let typeImmune := target.type1 == moveType || target.type2 == moveType
+  let typeImmune := elementalSideEffectImmune target moveType
   if target.status != 0 || typeImmune then
     ⟨context, .failed, []⟩
   else
@@ -331,6 +348,11 @@ private def poison (toxic : Bool) (context : Context) : Outcome :=
           toxicCounter := 0 } }
       else defender
     ⟨withDefender context defender, .continue, [.statusApplied (mask Wram.Status.psn)]⟩
+
+@[simp] theorem flinch_thresholds_exact :
+    (plan Data.Effect.flinchSide1).mechanic = .flinchSide 26 ∧
+      (plan Data.Effect.flinchSide2).mechanic = .flinchSide 77 := by
+  native_decide
 
 def confusionDuration (raw : UInt8) : UInt8 := (raw &&& 3) + 2
 
@@ -483,7 +505,10 @@ private def hazeOutcome (context : Context) : Outcome :=
     let volatile := { volatile with status3 := side.volatile.status3 &&& 0xF8 }
     let volatile := { volatile with disabledMove := 0 }
     let volatile := { volatile with disabledMoveNumber := 0 }
-    { active, unmodified := side.unmodified, stages := StatStages.neutral, volatile }
+    let side := { side with active := active }
+    let side := { side with unmodified := side.unmodified }
+    let side := { side with stages := StatStages.neutral }
+    { side with volatile := volatile }
   let attacker := clearSide context.attacker
   let defender := clearSide context.defender
   let defender := { defender with active := { defender.active with status := 0 } }
@@ -491,6 +516,45 @@ private def hazeOutcome (context : Context) : Outcome :=
   if targetWasIncapacitated then
     ⟨context, .cancelTargetMove, [.signal .cancelTargetMove]⟩
   else { context := context }
+
+inductive EscapeFailureText where
+  | butItFailed
+  | didNotAffect
+  | isUnaffected
+  deriving Repr, DecidableEq, BEq
+
+def escapeFailureText (move : MoveId) (trainerPath : Bool) : EscapeFailureText :=
+  if move == 46 then .butItFailed
+  else if trainerPath then .isUnaffected else .didNotAffect
+
+@[simp] theorem teleport_roar_failure_texts :
+    escapeFailureText 46 false = .butItFailed ∧
+      escapeFailureText 46 true = .butItFailed ∧
+      escapeFailureText 18 false = .didNotAffect ∧
+      escapeFailureText 18 true = .isUnaffected := by
+  native_decide
+
+def escapeLevelBound (user target : UInt8) : UInt8 := user + target + 1
+
+def escapeLevelSucceeds (user target accepted : UInt8) : Bool :=
+  user ≥ target || accepted ≥ (target >>> 2)
+
+@[simp] theorem escape_level_boundaries :
+    escapeLevelSucceeds 50 50 0 = true ∧
+      escapeLevelBound 10 20 = 31 ∧
+      escapeLevelSucceeds 10 20 4 = false ∧
+      escapeLevelSucceeds 10 20 5 = true := by
+  native_decide
+
+def markMinimized (volatile : Battle.Volatile) : Battle.Volatile :=
+  { volatile with minimized := true }
+
+@[simp] theorem minimize_sets_only_separate_flag (volatile : Battle.Volatile) :
+    (markMinimized volatile).minimized = true ∧
+      (markMinimized volatile).status1 = volatile.status1 ∧
+      (markMinimized volatile).status2 = volatile.status2 ∧
+      (markMinimized volatile).status3 = volatile.status3 := by
+  simp [markMinimized]
 
 def metronomeAccepts (raw : UInt8) : Bool :=
   raw != 0 && raw < 165 && raw != 118
@@ -528,7 +592,14 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
       if context.defenderLastMove == 0 then ⟨context, .failed, []⟩
       else ⟨context, .callMove context.defenderLastMove,
         [.signal (.callMove context.defenderLastMove)]⟩
-  | .statUp stat amount => if hit then raiseStage context stat amount else ⟨context, .failed, []⟩
+  | .statUp stat amount =>
+      if !hit then ⟨context, .failed, []⟩
+      else
+        let outcome := raiseStage context stat amount
+        if context.move == 107 && outcome.signal == .continue then
+          let volatile := markMinimized outcome.context.attacker.volatile
+          { outcome with context := setAttackerVolatile outcome.context volatile }
+        else outcome
   | .statDown stat amount => if hit then lowerStage context stat amount else ⟨context, .failed, []⟩
   | .conversion =>
       if bitSet context.defender.volatile.status1 Wram.BattleStatus1.invulnerable then
@@ -555,11 +626,12 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
       else if context.attacker.active.level ≥ context.defender.active.level then
         ⟨context, .escaped, [.signal .escaped]⟩
       else
-        let bound := context.attacker.active.level + context.defender.active.level + 1
+        let bound := escapeLevelBound context.attacker.active.level context.defender.active.level
         match drawAccepted 2305 context.rng (fun raw => raw < bound) "move-escape" with
         | none => ⟨context, .rngStuck, [.signal .rngStuck]⟩
         | some (raw, rng, events) =>
-            if raw ≥ (context.defender.active.level >>> 2) then
+            if escapeLevelSucceeds context.attacker.active.level
+                context.defender.active.level raw then
               ⟨{ context with rng }, .escaped, events ++ [.signal .escaped]⟩
             else ⟨{ context with rng }, .failed, events⟩
   | .sleep =>
@@ -627,9 +699,10 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
         let mon := { mon with pp := target.moves.map (fun move => if move == 0 then 0 else 5) }
         let volatile := { context.attacker.volatile with
           status3 := setBit context.attacker.volatile.status3 Wram.BattleStatus3.transformed }
-        let attacker : Battle.SideState :=
-          { active := mon, unmodified := context.defender.unmodified,
-            stages := context.defender.stages, volatile }
+        let attacker := { context.attacker with active := mon }
+        let attacker := { attacker with unmodified := context.defender.unmodified }
+        let attacker := { attacker with stages := context.defender.stages }
+        let attacker := { attacker with volatile := volatile }
         ⟨withAttacker context attacker, .continue, [.transformed]⟩
   | .lightScreen => screen context true
   | .reflect => screen context false
@@ -699,8 +772,8 @@ def applyAfter (effect moveType : UInt8) (hit targetFainted : Bool)
           let mon := { context.defender.active with status := 0 }
           { context := withDefender context { context.defender with active := mon } }
         else { context := context }
-      else if context.defender.active.type1 == moveType ||
-          context.defender.active.type2 == moveType then { context := context }
+      else if elementalSideEffectImmune context.defender.active moveType then
+        { context := context }
       else
         let mechanic := (plan effect).mechanic
         let (success, context, event) := sideChance threshold context
@@ -884,6 +957,9 @@ theorem transform_copy_boundaries (context : Context) :
       (fun move => if move == 0 then 0 else 5) ∧
     outcome.context.attacker.unmodified = context.defender.unmodified ∧
     outcome.context.attacker.stages = context.defender.stages ∧
+    outcome.context.attacker.originalSpecies = context.attacker.originalSpecies ∧
+    outcome.context.attacker.partyPosition = context.attacker.partyPosition ∧
+    outcome.context.attacker.actualCatchRate = context.attacker.actualCatchRate ∧
     outcome.context.attacker.volatile.status3 =
       setBit context.attacker.volatile.status3 Wram.BattleStatus3.transformed := by
   have dispatch : (plan Data.Effect.transform).mechanic = .transform := by native_decide
@@ -1035,14 +1111,15 @@ theorem freeze_recharge_asymmetry (context : Context) (damage : UInt16)
     rw [show (EffectPlan.plan Data.Effect.freezeSide1).mechanic = .freezeSide 26 by
       native_decide]
     simp [side, playerSelf, freezeNotBurn, freezeNotParalyze, noSubstitute,
-      healthy, type1Ne, type2Ne, sideChance, success, applyMajorStatus,
-      withDefender, setDefenderVolatile, Volatile.recharging, recharge_clear_bit]
+      healthy, type1Ne, type2Ne, elementalSideEffectImmune, sideChance, success,
+      applyMajorStatus, withDefender, setDefenderVolatile, Volatile.recharging,
+      recharge_clear_bit]
   · unfold applyAfter
     rw [show (EffectPlan.plan Data.Effect.freezeSide1).mechanic = .freezeSide 26 by
       native_decide]
     simp [side, enemyPlayer, freezeNotBurn, freezeNotParalyze, noSubstitute,
-      healthy, type1Ne, type2Ne, sideChance, success, applyMajorStatus,
-      withDefender, Volatile.recharging]
+      healthy, type1Ne, type2Ne, elementalSideEffectImmune, sideChance, success,
+      applyMajorStatus, withDefender, Volatile.recharging]
 
 /-- A burn-capable Fire move defrosts an already frozen, unsubstituted target
 before consuming the side-effect probability byte. -/

@@ -4,6 +4,7 @@ Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.State
 import Battle.RL.LegalTeam
+import Battle.DamageStats
 
 /-!
 # Full party battle state and switching
@@ -44,6 +45,9 @@ def SideState.syncOutgoing (side : SideState) : SideState :=
   { side with party :=
       { mons := side.party.mons.modify side.activeIndex fun stored =>
           let stored := { stored with hp := live.hp }
+          -- The contiguous HP/party-position/status copy aliases party position
+          -- onto persistent `MON_BOX_LEVEL`.
+          let stored := { stored with boxLevel := side.activeIndex.toUInt8 }
           let stored := { stored with status := live.status }
           let stored := { stored with moves := if transformed then stored.moves else live.moves }
           { stored with pp := if transformed then stored.pp else live.pp } } }
@@ -65,13 +69,72 @@ inductive SwitchResult where
   | invalid (side : SideState)
   deriving Repr, DecidableEq
 
-/-- Voluntary or forced switch. Loading uses `SideState.fresh`, so all six stages
-and every switch-cleared volatile field reset together. -/
+def Volatile.sendOutReset (prior : Volatile) : Volatile :=
+  let prior := { prior with status1 := 0 }
+  let prior := { prior with status2 := 0 }
+  let prior := { prior with status3 := 0 }
+  let prior := { prior with disabledMove := 0 }
+  let prior := { prior with disabledMoveNumber := 0 }
+  { prior with minimized := false }
+
+def SideState.loadIncoming (prior : Battle.SideState) (incoming : MonState) : Battle.SideState :=
+  { active := incoming.withBattleStatusPenalties
+    unmodified := CombatStats.ofMon incoming
+    stages := StatStages.neutral
+    volatile := Volatile.sendOutReset prior.volatile
+    originalSpecies := incoming.species
+    partyPosition := prior.partyPosition
+    actualCatchRate := incoming.catchRate }
+
+def badgeBoostIf (badges : UInt8) (bit : Nat) (stat : UInt16) : UInt16 :=
+  if bitSet badges bit then DamageStats.badgeBoost stat else stat
+
+def applyPlayerSendOutBadges (mode : BattleMode) (badges : UInt8)
+    (side : Battle.SideState) : Battle.SideState :=
+  match mode with
+  | .link => side
+  | .wild | .trainer | .oldMan | .safari =>
+      let mon := side.active
+      let mon := { mon with attack := badgeBoostIf badges 0 mon.attack }
+      let mon := { mon with defense := badgeBoostIf badges 2 mon.defense }
+      let mon := { mon with speed := badgeBoostIf badges 4 mon.speed }
+      let mon := { mon with special := badgeBoostIf badges 6 mon.special }
+      { side with active := mon }
+
+@[simp] theorem wild_send_out_applies_badge_after_status (prior : Battle.SideState)
+    (incoming : MonState) (badges : UInt8) :
+    (applyPlayerSendOutBadges .wild badges
+      (SideState.loadIncoming prior incoming)).active.attack =
+        badgeBoostIf badges 0 incoming.withBattleStatusPenalties.attack ∧
+    (applyPlayerSendOutBadges .wild badges
+      (SideState.loadIncoming prior incoming)).active.speed =
+        badgeBoostIf badges 4 incoming.withBattleStatusPenalties.speed := by
+  exact ⟨rfl, rfl⟩
+
+@[simp] theorem link_send_out_skips_badges (badges : UInt8) (side : Battle.SideState) :
+    applyPlayerSendOutBadges .link badges side = side := by
+  rfl
+
+@[simp] theorem send_out_reset_preserves_stale_counters (prior : Volatile) :
+    let reset := Volatile.sendOutReset prior
+    reset.status1 = 0 ∧ reset.status2 = 0 ∧ reset.status3 = 0 ∧
+    reset.disabledMove = 0 ∧ reset.disabledMoveNumber = 0 ∧ reset.minimized = false ∧
+    reset.numAttacksLeft = prior.numAttacksLeft ∧
+    reset.confusedCounter = prior.confusedCounter ∧
+    reset.toxicCounter = prior.toxicCounter ∧
+    reset.substituteHp = prior.substituteHp ∧
+    reset.bideAccumulated = prior.bideAccumulated := by
+  simp [Volatile.sendOutReset]
+
+/-- Voluntary or forced switch. Incoming segmented fields are loaded from the
+party row; stages reset while inactive volatile counters remain stale. -/
 def SideState.switchTo (side : SideState) (target : Nat) : SwitchResult :=
   let synced := side.syncOutgoing
   if synced.canSwitchTo target then
     let incoming := synced.party.mons.getD target synced.active.active
-    .switched { synced with activeIndex := target, active := Battle.SideState.fresh incoming }
+    let loaded := loadIncoming synced.active incoming
+    let loaded := { loaded with partyPosition := target.toUInt8 }
+    .switched { synced with activeIndex := target, active := loaded }
   else .invalid synced
 
 /-- Living reserve indices, excluding the current active slot. -/
@@ -210,8 +273,9 @@ theorem switch_success_shape (side : SideState) (target : Nat)
     side.switchTo target = .switched
       { side.syncOutgoing with
         activeIndex := target
-        active := Battle.SideState.fresh
-          (side.syncOutgoing.party.mons.getD target side.syncOutgoing.active.active) } := by
+        active := { SideState.loadIncoming side.syncOutgoing.active
+          (side.syncOutgoing.party.mons.getD target side.syncOutgoing.active.active) with
+            partyPosition := target.toUInt8 } } := by
   simp [SideState.switchTo, legal]
 
 /-- Synchronization always copies HP/status. Move/PP copies are suppressed
@@ -221,7 +285,9 @@ theorem syncOutgoing_reads_active (side : SideState)
     let before := side.party.mons.getD side.activeIndex side.active.active
     let stored := side.syncOutgoing.party.mons.getD side.activeIndex side.active.active
     let transformed := bitSet side.active.volatile.status3 Wram.BattleStatus3.transformed
-    stored.hp = side.active.active.hp ∧ stored.status = side.active.active.status ∧
+    stored.hp = side.active.active.hp ∧
+      stored.boxLevel = side.activeIndex.toUInt8 ∧
+      stored.status = side.active.active.status ∧
       stored.moves = (if transformed then before.moves else side.active.active.moves) ∧
       stored.pp = (if transformed then before.pp else side.active.active.pp) := by
   simp only [SideState.syncOutgoing, Array.getD, Array.size_modify, oldInBounds,

@@ -30,6 +30,7 @@ import Battle.LinkBugs
 import Battle.BugCompatibility
 import Battle.BugWitnesses
 import Battle.Full.State
+import Battle.Full.Initialization
 import Battle.Full.Status
 import Battle.Full.Items
 import Battle.Full.EffectPlan

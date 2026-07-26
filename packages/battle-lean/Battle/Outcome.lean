@@ -57,6 +57,11 @@ def BattleVerdict.toRaw : BattleVerdict → UInt8
   | .loss => 1
   | .draw => 2
 
+@[simp] theorem raw_result_interpretation_exact :
+    verdictOfRaw 0 = some .win ∧ verdictOfRaw 1 = some .loss ∧
+      verdictOfRaw 2 = some .draw ∧ verdictOfRaw 3 = none := by
+  native_decide
+
 /-! ## Terminal cause
 
 Why the battle loop exited. Each constructor names a distinct exit path in the
@@ -123,12 +128,16 @@ def BattleTerminal.mk' (cause : TerminalCause) (mode : BattleMode)
 structure CleanedOutcomeBytes where
   battleResult : UInt8
   escapedFromBattle : UInt8
+  battleMode : UInt8
+  opponent : UInt8
   deriving Repr, DecidableEq, BEq
 
-/-- `EndOfBattle.resetVariables` erases both raw outcome bytes. Rich terminal
-provenance must therefore be captured before this projection. -/
-def cleanupOutcomeBytes (_terminal : BattleTerminal) : CleanedOutcomeBytes :=
-  { battleResult := 0, escapedFromBattle := 0 }
+/-- `EndOfBattle.resetVariables` preserves `wBattleResult`, but erases the escape,
+battle-mode, and current-opponent bytes. Rich cause provenance must still be
+captured before this projection. -/
+def cleanupOutcomeBytes (terminal : BattleTerminal) : CleanedOutcomeBytes :=
+  { battleResult := terminal.rawResult, escapedFromBattle := 0,
+    battleMode := 0, opponent := 0 }
 
 theorem escape_byte_channels_exact (move : MoveId) :
     let doll := BattleTerminal.mk' .pokeDollEscape .wild .player 0 1
@@ -139,13 +148,31 @@ theorem escape_byte_channels_exact (move : MoveId) :
     run.rawResult = 2 ∧ run.preCleanupEscaped = 0 := by
   simp [BattleTerminal.mk']
 
-/-- Distinct defeat and escape causes become byte-identical after cleanup. -/
+theorem cleanup_preserves_result_and_erases_context (terminal : BattleTerminal) :
+    let cleaned := cleanupOutcomeBytes terminal
+    cleaned.battleResult = terminal.rawResult ∧ cleaned.escapedFromBattle = 0 ∧
+      cleaned.battleMode = 0 ∧ cleaned.opponent = 0 := by
+  exact ⟨rfl, rfl, rfl, rfl⟩
+
+/-- Distinct zero-result escape causes become byte-identical after cleanup. -/
 theorem cleanup_erases_terminal_distinctions :
-    let defeat := BattleTerminal.mk' (.partyExhausted .player) .wild .player 1
-    let escape := BattleTerminal.mk' .ordinaryRun .wild .player 0 1
-    defeat.cause ≠ escape.cause ∧
-      cleanupOutcomeBytes defeat = cleanupOutcomeBytes escape := by
+    let doll := BattleTerminal.mk' .pokeDollEscape .wild .player 0 1
+    let moveEscape := BattleTerminal.mk' (.moveEscape .player 46) .wild .player 0 1
+    doll.cause ≠ moveEscape.cause ∧
+      cleanupOutcomeBytes doll = cleanupOutcomeBytes moveEscape := by
   native_decide
+
+def trainerVictoryControlReached (mode : BattleMode) (enemyPartyExhausted : Bool) : Bool :=
+  mode == .trainer && enemyPartyExhausted
+
+/-- The trainer-victory control path (which requests victory presentation) is
+selected from enemy exhaustion, not from the later raw result byte. Sound output
+itself remains a system/presentation observation. -/
+theorem simultaneous_victory_control_ignores_later_result (rawResult : UInt8) :
+    trainerVictoryControlReached .trainer true = true ∧
+      (BattleTerminal.mk' (.partyExhausted .enemy) .trainer .player rawResult).rawResult =
+        rawResult := by
+  exact ⟨rfl, rfl⟩
 
 /-! ## Episode result and phase -/
 

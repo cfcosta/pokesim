@@ -131,7 +131,7 @@ private def floorSqrt (value : Nat) : Nat :=
 
 private def effortTerm (value : UInt16) : Nat := floorSqrt value.toNat / 4
 
-private def statFormula (base dv : Nat) (effort : UInt16) (level : UInt8)
+def statFormula (base dv : Nat) (effort : UInt16) (level : UInt8)
     (hp : Bool) : UInt16 :=
   let scaled := ((2 * (base + dv) + effortTerm effort) * level.toNat) / 100
   let value := if hp then scaled + level.toNat + 10 else scaled + 5
@@ -141,9 +141,18 @@ private def atkDv (dvs : UInt16) : Nat := ((dvs >>> 12).toUInt8 &&& 0x0f).toNat
 private def defDv (dvs : UInt16) : Nat := ((dvs >>> 8).toUInt8 &&& 0x0f).toNat
 private def spdDv (dvs : UInt16) : Nat := ((dvs >>> 4).toUInt8 &&& 0x0f).toNat
 private def spcDv (dvs : UInt16) : Nat := (dvs.toUInt8 &&& 0x0f).toNat
-private def hpDv (dvs : UInt16) : Nat :=
+def hpDv (dvs : UInt16) : Nat :=
   ((atkDv dvs &&& 1) <<< 3) ||| ((defDv dvs &&& 1) <<< 2) |||
     ((spdDv dvs &&& 1) <<< 1) ||| (spcDv dvs &&& 1)
+
+@[simp] theorem hp_dv_derivation_witness :
+    hpDv 0x1234 = 10 ∧ hpDv 0xFFFF = 15 ∧ hpDv 0 = 0 := by
+  native_decide
+
+theorem non_hp_stat_capped (base dv : Nat) (effort : UInt16) (level : UInt8) :
+    (statFormula base dv effort level false).toNat ≤ 999 := by
+  simp [statFormula]
+  omega
 
 /-- Recalculate the five party stats, including HP-DV derivation, effort square
 roots, and the 999 non-HP cap. Existing current HP is increased by the Max-HP

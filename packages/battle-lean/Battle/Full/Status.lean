@@ -3,6 +3,7 @@ Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.Full.State
+import Std.Tactic.BVDecide
 import Battle.Step
 
 /-!
@@ -97,6 +98,20 @@ def tickDisable (volatile : Volatile) : Volatile :=
     simp [equal] at active
   simp [tickDisable, ne, last]
 
+def prepareConfusionSelfHit (volatile : Battle.Volatile) : Battle.Volatile :=
+  let onlyConfused := volatile.status1 &&& bitMask Wram.BattleStatus1.confused
+  clearInterruptedLocks { volatile with status1 := onlyConfused }
+
+@[simp] theorem confusion_self_hit_keeps_only_confused_status1
+    (volatile : Battle.Volatile) :
+    (prepareConfusionSelfHit volatile).status1 =
+      volatile.status1 &&& bitMask Wram.BattleStatus1.confused := by
+  simp only [prepareConfusionSelfHit, clearInterruptedLocks]
+  simp [bitMask, Wram.BattleStatus1.confused, Wram.BattleStatus1.storingEnergy,
+    Wram.BattleStatus1.thrashingAbout, Wram.BattleStatus1.chargingUp,
+    Wram.BattleStatus1.usingTrappingMove]
+  bv_decide
+
 /-- Exact pre-move status machine. `targetTrapping` is the opponent's trapping
 bit, which prevents this side from moving. -/
 def checkCanAct (side : Battle.SideState) (targetTrapping : Bool)
@@ -135,8 +150,7 @@ def checkCanAct (side : Battle.SideState) (targetTrapping : Bool)
         if raw < Step.speedTieThreshold then
           checkDisabledAndParalysis side selectedMove rng
         else
-          let onlyConfused := side.volatile.status1 &&& bitMask Wram.BattleStatus1.confused
-          let volatile := clearInterruptedLocks { side.volatile with status1 := onlyConfused }
+          let volatile := prepareConfusionSelfHit side.volatile
           .confusionHit (replaceVolatile side volatile) rng raw
     else checkDisabledAndParalysis side selectedMove rng
 where

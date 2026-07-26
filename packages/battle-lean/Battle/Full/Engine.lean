@@ -62,6 +62,7 @@ inductive Event where
 inductive StepResult where
   | transitioned (state : State) (events : List Event)
   | invalidAction (state : State) (side : Side)
+  | ineffectiveAction (state : State) (side : Side)
   | capturePending (state : State) (ball : UInt8) (events : List Event)
   | rngStuck (state : State) (events : List Event)
   | divisionFreeze (state : State) (events : List Event)
@@ -117,6 +118,16 @@ private def setSelection (state : State) : Side → Selection.MoveScratch → St
   | .player, scratch => { state with playerSelection := scratch }
   | .enemy, scratch => { state with enemySelection := scratch }
 
+def clearLoadedEffect (state : State) (who : Side) : State :=
+  let scratch := { selection state who with effect := 0 }
+  setSelection state who scratch
+
+@[simp] theorem clear_loaded_effect_is_side_local (state : State) (who : Side) :
+    (selection (clearLoadedEffect state who) who).effect = 0 ∧
+      (selection (clearLoadedEffect state who) who.other).effect =
+        (selection state who.other).effect := by
+  cases who <;> exact ⟨rfl, rfl⟩
+
 def clearBothLoadedEffects (state : State) : State :=
   let playerSelection := { state.playerSelection with effect := 0 }
   let enemySelection := { state.enemySelection with effect := 0 }
@@ -148,6 +159,14 @@ def commitSelection (state : State) (who : Side) (action : Full.Action) : State 
       setSelection state who scratch
   | _ => state
 
+@[simp] theorem locked_and_forced_selection_stays_stale (state : State) (who : Side)
+    (target : Fin 6) (request : Items.Request) :
+    selection (commitSelection state who .noAction) who = selection state who ∧
+      selection (commitSelection state who (.switch target)) who = selection state who ∧
+      selection (commitSelection state who (.item request)) who = selection state who ∧
+      selection (commitSelection state who .run) who = selection state who := by
+  exact ⟨rfl, rfl, rfl, rfl⟩
+
 private def lockedDamage (state : State) : Side → UInt16
   | .player => state.playerLockedDamage
   | .enemy => state.enemyLockedDamage
@@ -158,7 +177,8 @@ private def setLockedDamage (state : State) : Side → UInt16 → State
 
 private def actionContext (state : State) (who : Side) : Full.ActionContext :=
   { side := side state who, bag := bag state who, mode := state.battle.mode,
-    owner := who, forcedReplacement := state.forcedReplacement == some who }
+    owner := who, forcedReplacement := state.forcedReplacement == some who,
+    opponentTrapping := (side state who.other).active.volatile.trapping }
 
 private def currentPp (packed : UInt8) : UInt8 := packed &&& Wram.ppMask
 /-- Cartridge `dec [hl]` mutates the complete packed PP byte. Malformed
@@ -168,7 +188,7 @@ def decrementPp (packed : UInt8) : UInt8 := packed - 1
 @[simp] theorem decrement_zero_pp_underflows : decrementPp 0 = 0xff := by native_decide
 @[simp] theorem decrement_pp_up_only_deforms : decrementPp 0x40 = 0x3f := by native_decide
 
-private def moveOfAction (state : State) (who : Side) : Full.Action → Option (MoveId × Fin 4)
+def moveOfAction (state : State) (who : Side) : Full.Action → Option (MoveId × Fin 4)
   | .fight slot => some ((side state who).active.active.moves.getD slot.val 0, slot)
   | .struggle => some (165, 0)
   | .noAction =>
@@ -376,6 +396,28 @@ private def installEffectsContext (state : State) (who : Side)
   let state := setSide state who.other { side state who.other with active := context.defender }
   { state with battle := { state.battle with rng := context.rng }, payDayMoney := context.payDayMoney }
 
+def buildRageAfterDamage (state : State) (attacker : Side) : State :=
+  let targetSide := attacker.other
+  let target := side state targetSide
+  if !bitSet target.active.volatile.status2 Wram.BattleStatus2.usingRage ||
+      target.active.active.fainted then state
+  else
+    let context := effectsContext state targetSide 0 0 target.active
+      (side state attacker).active state.battle.rng
+    let outcome := Effects.raiseStage context 0 1
+    installEffectsContext state targetSide outcome.context
+
+theorem rage_builds_after_surviving_damage (state : State) (attacker : Side)
+    (rage : bitSet (side state attacker.other).active.volatile.status2
+      Wram.BattleStatus2.usingRage = true)
+    (living : (side state attacker.other).active.active.fainted = false) :
+    buildRageAfterDamage state attacker =
+      let target := side state attacker.other
+      let context := effectsContext state attacker.other 0 0 target.active
+        (side state attacker).active state.battle.rng
+      installEffectsContext state attacker.other (Effects.raiseStage context 0 1).context := by
+  simp [buildRageAfterDamage, rage, living]
+
 structure DamageApplied where
   state : State
   actualDamage : UInt16
@@ -414,8 +456,9 @@ def applyDamage (state : State) (who : Side) (damage : UInt16) : DamageApplied :
     let volatile := if bitSet volatile.status1 Wram.BattleStatus1.storingEnergy then
       { volatile with bideAccumulated := volatile.bideAccumulated + actualDamage }
       else volatile
-    { state := { (setSide state targetWho { target with active := { target.active with volatile } }) with
-        sharedDamage := damage },
+    let state := { (setSide state targetWho { target with active :=
+      { target.active with volatile := volatile } }) with sharedDamage := damage }
+    { state := buildRageAfterDamage state who,
       actualDamage, targetFainted := false, effectNullified := breaks,
       events := [.substituteDamage targetWho actual remaining] }
   else
@@ -426,10 +469,12 @@ def applyDamage (state : State) (who : Side) (damage : UInt16) : DamageApplied :
       { target.active.volatile with
         bideAccumulated := target.active.volatile.bideAccumulated + actual }
       else target.active.volatile
-    let target := { target with active := { target.active with active := mon, volatile := volatile } }
-    { state := { (setSide state targetWho target) with sharedDamage := actual },
+    let active := { target.active with active := mon }
+    let target := { target with active := { active with volatile := volatile } }
+    let state := { (setSide state targetWho target) with sharedDamage := actual }
+    { state := buildRageAfterDamage state who,
       actualDamage := actual, targetFainted := hp == 0,
-      events := [.damage who actual hp] }
+      events := [.damage targetWho actual hp] }
 
 /-- Three right shifts of zeroed miss damage, followed by the minimum-one
 fallback in `PrintMoveFailureText`. -/
@@ -525,13 +570,60 @@ theorem player_faint_clears_party_status (fullSide : Full.SideState)
   simp only [clearPlayerFaintStatus, Full.SideState.syncOutgoing]
   simp [Array.getD, inBounds, Array.getElem_modify_self]
 
-private def terminalFor (state : State) (fainted : Side) : Outcome.BattleTerminal :=
+def clearBideAfterEnemyFaint (accumulated : UInt16) : UInt16 :=
+  accumulated &&& 0x00FF
+
+def clearBideAfterPlayerFaint (_accumulated : UInt16) : UInt16 := 0
+
+@[simp] theorem bide_faint_clear_is_asymmetric :
+    clearBideAfterEnemyFaint 0x1234 = 0x0034 ∧
+      clearBideAfterPlayerFaint 0x1234 = 0 := by
+  native_decide
+
+def recordEnemyFaintSide (fullSide : Full.SideState) : Full.SideState :=
+  let party := { mons := fullSide.party.mons.modify fullSide.activeIndex fun stored =>
+    { stored with hp := 0 } }
+  let active := { fullSide.active with
+    volatile := Full.Volatile.sendOutReset fullSide.active.volatile }
+  { fullSide with party, active }
+
+@[simp] theorem enemy_faint_retains_party_status (fullSide : Full.SideState)
+    (inBounds : fullSide.activeIndex < fullSide.party.mons.size) :
+    ((recordEnemyFaintSide fullSide).party.mons.getD fullSide.activeIndex
+      fullSide.active.active).status =
+        (fullSide.party.mons.getD fullSide.activeIndex fullSide.active.active).status := by
+  simp [recordEnemyFaintSide, Array.getD, inBounds, Array.getElem_modify_self]
+
+private def applyFaintAsymmetry (state : State) (fainted : Side) : State :=
+  match fainted with
+  | .enemy =>
+      let player := side state .player
+      let bide := clearBideAfterEnemyFaint player.active.volatile.bideAccumulated
+      let volatile := { player.active.volatile with bideAccumulated := bide }
+      let player := { player with active := { player.active with volatile := volatile } }
+      setSide (setSide state .enemy (recordEnemyFaintSide (side state .enemy))) .player player
+  | .player =>
+      let enemy := side state .enemy
+      let bide := clearBideAfterPlayerFaint enemy.active.volatile.bideAccumulated
+      let volatile := { enemy.active.volatile with bideAccumulated := bide }
+      let enemy := { enemy with active := { enemy.active with volatile := volatile } }
+      setSide (setSide state .player (clearPlayerFaintStatus (side state .player))) .enemy enemy
+
+def terminalFor (state : State) (fainted : Side) : Outcome.BattleTerminal :=
   Outcome.BattleTerminal.mk' (.partyExhausted fainted) state.battle.mode .player
     (if fainted == .enemy then 0 else 1)
 
-private def recordFaint (state : State) (fainted : Side) : State × List Event :=
-  let state := if fainted == .player then
-    setSide state .player (clearPlayerFaintStatus (side state .player)) else state
+@[simp] theorem faint_terminal_channels (state : State) :
+    (terminalFor state .enemy).cause = .partyExhausted .enemy ∧
+      (terminalFor state .enemy).rawResult = 0 ∧
+      (terminalFor state .player).cause = .partyExhausted .player ∧
+      (terminalFor state .player).rawResult = 1 := by
+  have enemy : (Side.enemy == Side.enemy) = true := by native_decide
+  have player : (Side.player == Side.enemy) = false := by native_decide
+  simp [terminalFor, Outcome.BattleTerminal.mk', enemy, player]
+
+def recordFaint (state : State) (fainted : Side) : State × List Event :=
+  let state := applyFaintAsymmetry state fainted
   let fullSide := side state fainted
   if fullSide.partyExhausted then
     let terminal := terminalFor state fainted
@@ -549,7 +641,7 @@ provenance records the side detected first. With reserves on both sides, player
 replacement is requested first and enemy replacement is queued rather than
 manufacturing a terminal result. -/
 def prepareSimultaneousFaint (state : State) : State :=
-  setSide state .player (clearPlayerFaintStatus (side state .player))
+  applyFaintAsymmetry (applyFaintAsymmetry state .player) .enemy
 
 def resolveSimultaneousPrepared (state : State) (detectedFirst : Side) : State × List Event :=
   let playerOut := (side state .player).partyExhausted
@@ -819,6 +911,7 @@ match damageResult with
     | .charging _ => .transitioned state
         (critEvents ++ before.events.map .effect)
     | .escaped =>
+        let state := setSide state who (side state who).syncOutgoing
         let terminal := Outcome.BattleTerminal.mk' (.moveEscape who moveId)
           state.battle.mode .player (if who == .player then 0 else 1) 1
         .transitioned { state with battle := { state.battle with phase := .ending terminal } }
@@ -859,9 +952,10 @@ match damageResult with
             else extra.state
           let targetFainted := applied.targetFainted || extra.targetFainted
           let lastActual := if totalHits ≤ 1 then applied.actualDamage else extra.lastActual
+          let effectNullified := applied.effectNullified || extra.effectNullified
+          let finalState := if effectNullified then clearLoadedEffect finalState who else finalState
           let context := effectsContext finalState who moveId slot
             (side finalState who).active (side finalState who.other).active finalState.battle.rng
-          let effectNullified := applied.effectNullified || extra.effectNullified
           let after := if effectNullified then ({ context := context } : Effects.Outcome)
             else Effects.applyAfter effect move.type hit targetFainted lastActual context
           let state := installEffectsContext finalState who after.context
@@ -884,6 +978,12 @@ match damageResult with
           else
             let (state, residualEvents) := applyResidual state who
             .transitioned state (events ++ residualEvents)
+
+def confusionSelfHitPower : UInt8 := 40
+
+@[simp] theorem confusion_self_hit_is_typeless_fixed_protocol :
+    confusionSelfHitPower = 40 := by
+  rfl
 
 private def attack (state : State) (who : Side) (action : Full.Action)
     (overrideMove : Option MoveId := none) (skipStatus : Bool := false) : StepResult :=
@@ -912,7 +1012,7 @@ private def attack (state : State) (who : Side) (action : Full.Action)
           match selfStats with
           | .divisionFreeze _ => .divisionFreeze state [.rng "confusion" raw]
           | .ready stats =>
-              let damage := Damage.calcBaseDamage attacker.active.level false 40
+              let damage := Damage.calcBaseDamage attacker.active.level false confusionSelfHitPower
                 (UInt16.ofNat stats.attack.toNat) (UInt16.ofNat stats.defense.toNat)
               let state := setSide { state with battle := { state.battle with rng } } who
                 { attackerFull with active := attacker }
@@ -997,6 +1097,11 @@ private def applySwitch (state : State) (who : Side) (target : Fin 6)
   match state.battle.switchTo who target.val with
   | none => none
   | some battle =>
+      let battle := if who == .player then
+        let active := Full.applyPlayerSendOutBadges battle.mode state.badges
+          battle.player.active
+        battle.setSide .player { battle.player with active }
+        else battle
       let state := { state with battle := battle }
       let state := if who == .player then clearPlayerSelectionOnSendOut state else state
       let replacements := advanceReplacementQueue state.forcedReplacement
@@ -1013,7 +1118,7 @@ private def applyItem (state : State) (who : Side) (request : Items.Request) : S
   let result := if trainerOwned then Items.aiUse state.battle.mode user request
     else Items.use state.battle.mode user request
   match result with
-  | .rejected _ => .invalidAction state who
+  | .rejected _ => .ineffectiveAction state who
   | .capturePending user ball =>
       let state := setBag (setSide state who user.side) who user.bag
       .capturePending state ball [.item who [.captureRequested ball]]
@@ -1089,7 +1194,9 @@ private def executeCommitted (state : State) (who : Side) (action : Full.Action)
   else if isFight action then attack state who action
   else
     let (state, events) := applyResidual state who
-    .transitioned state events
+    if (side state who.other).active.volatile.trapping then
+      .transitioned state (.statusBlocked who .trapped :: events)
+    else .transitioned state events
 
 private def prependEvents (prior : List Event) : StepResult → StepResult
   | .transitioned state events => .transitioned state (prior ++ events)
@@ -1104,7 +1211,15 @@ private def prependEvents (prior : List Event) : StepResult → StepResult
   | .disobediencePending state machine next events =>
       .disobediencePending state machine next (prior ++ events)
   | .invalidAction state side => .invalidAction state side
+  | .ineffectiveAction state side => .ineffectiveAction state side
   | .inactive state => .inactive state
+
+def finishTurn (state : State) : State :=
+  { state with battle := { state.battle with turn := state.battle.turn + 1 } }
+
+@[simp] theorem finish_turn_increments (state : State) :
+    (finishTurn state).battle.turn = state.battle.turn + 1 := by
+  rfl
 
 private def executePair (state : State) (playerAction enemyAction : Full.Action)
     (prior : List Event := []) : StepResult :=
@@ -1124,8 +1239,7 @@ private def executePair (state : State) (playerAction enemyAction : Full.Action)
         let secondAction := if second == .player then playerAction else enemyAction
         match executeCommitted state second secondAction with
         | .transitioned state more =>
-            .transitioned { state with battle :=
-              { state.battle with turn := state.battle.turn + 1 } } (events ++ more)
+            .transitioned (finishTurn state) (events ++ more)
         | result => prependEvents events result
   | .disobediencePending state machine _ events =>
       let next := if first == .player then some enemyAction else none
@@ -1165,7 +1279,9 @@ def step (state : State) (playerAction enemyAction : Full.Action) : StepResult :
         else
           let processNonFight := fun (state : State) (who : Side) (action : Full.Action) =>
             match action with
-            | .switch target => applySwitch state who target
+            | .switch target =>
+                if (side state who.other).active.volatile.trapping then some state
+                else applySwitch state who target
             | _ => some state
           match processNonFight state .player playerAction with
           | none => .invalidAction state .player
@@ -1174,25 +1290,43 @@ def step (state : State) (playerAction enemyAction : Full.Action) : StepResult :
             | some state =>
                 match playerAction, enemyAction with
                 | .item playerRequest, .item enemyRequest =>
-                    match applyItem state .player playerRequest with
+                    let playerResult :=
+                      if (side state .enemy).active.volatile.trapping then
+                        StepResult.transitioned state []
+                      else applyItem state .player playerRequest
+                    match playerResult with
                     | .transitioned state playerEvents =>
-                        match applyItem state .enemy enemyRequest with
+                        let enemyResult :=
+                          if (side state .player).active.volatile.trapping then
+                            StepResult.transitioned state []
+                          else applyItem state .enemy enemyRequest
+                        match enemyResult with
                         | .transitioned state enemyEvents =>
                             executePair state playerAction enemyAction (playerEvents ++ enemyEvents)
                         | result => prependEvents playerEvents result
                     | result => result
                 | .item request, enemyAction =>
-                    match applyItem state .player request with
+                    let itemResult :=
+                      if (side state .enemy).active.volatile.trapping then
+                        StepResult.transitioned state []
+                      else applyItem state .player request
+                    match itemResult with
                     | .transitioned state itemEvents =>
                         executePair state playerAction enemyAction itemEvents
                     | result => result
                 | playerAction, .item request =>
-                    match applyItem state .enemy request with
+                    let itemResult :=
+                      if (side state .player).active.volatile.trapping then
+                        StepResult.transitioned state []
+                      else applyItem state .enemy request
+                    match itemResult with
                     | .transitioned state itemEvents =>
                         executePair state playerAction enemyAction itemEvents
                     | result => result
                 | .run, _ =>
-                    if state.battle.mode == .link then
+                    if (side state .enemy).active.volatile.trapping then
+                      executePair state playerAction enemyAction
+                    else if state.battle.mode == .link then
                       let terminal := Outcome.BattleTerminal.mk' (.linkRun .player)
                         state.battle.mode .player 1
                       .transitioned { state with battle := { state.battle with phase := .ending terminal } }
@@ -1200,7 +1334,9 @@ def step (state : State) (playerAction enemyAction : Full.Action) : StepResult :
                     else if state.battle.mode == .trainer then .transitioned state []
                     else .runPending state .player enemyAction []
                 | _, .run =>
-                    if state.battle.mode == .link then
+                    if (side state .player).active.volatile.trapping then
+                      executePair state playerAction enemyAction
+                    else if state.battle.mode == .link then
                       let terminal := Outcome.BattleTerminal.mk' (.linkRun .enemy)
                         state.battle.mode .player 0
                       .transitioned { state with battle := { state.battle with phase := .ending terminal } }
@@ -1281,8 +1417,15 @@ def resumeDisobedience (state : State) (machine : Disobedience.Machine)
 /-- Continue after a failed wild run; the opponent executes the action already
 selected for that turn. -/
 def resumeFailedRun (state : State) (runner : Side) (opponentAction : Full.Action) : StepResult :=
-  if isFight opponentAction then attack state runner.other opponentAction
-  else .transitioned state []
+  let result := if isFight opponentAction then attack state runner.other opponentAction
+    else .transitioned state []
+  match result with
+  | .transitioned state events => .transitioned (finishTurn state) events
+  | result => result
+
+@[simp] theorem failed_run_nonfight_finishes_turn (state : State) (runner : Side) :
+    resumeFailedRun state runner .noAction = .transitioned (finishTurn state) [] := by
+  simp [resumeFailedRun, isFight]
 
 /-- Complete the ordinary-player Mimic menu. The copied move replaces Mimic's
 selected slot without changing that slot's PP byte. Invalid/blank target slots

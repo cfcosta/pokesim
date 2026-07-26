@@ -29,6 +29,41 @@ structure Pair where
   right : Perspective
   deriving Repr, DecidableEq
 
+/-- Raw cable-party payloads remain separate for each perspective; neither
+remote mirror is promoted to the authoritative local party. -/
+structure PartyExchange where
+  leftParty : Array UInt8
+  rightParty : Array UInt8
+  leftNames : Array UInt8
+  rightNames : Array UInt8
+  deriving Repr, DecidableEq
+
+structure RngHandshake where
+  firstBlock : Array UInt8
+  secondBlock : Array UInt8
+  firstTen : firstBlock.size = 10
+  secondTen : secondBlock.size = 10
+  leftSeeds : Array UInt8
+  rightSeeds : Array UInt8
+  leftIndex : UInt8
+  rightIndex : UInt8
+  deriving Repr
+
+
+def RngHandshake.mk' (first second : Array UInt8)
+    (firstTen : first.size = 10) (secondTen : second.size = 10) : RngHandshake :=
+  { firstBlock := first, secondBlock := second, firstTen, secondTen,
+    leftSeeds := first.extract 0 9, rightSeeds := second.extract 0 9,
+    leftIndex := first.getD 9 0, rightIndex := second.getD 9 0 }
+
+@[simp] theorem handshake_uses_first_nine_and_index (first second : Array UInt8)
+    (firstTen : first.size = 10) (secondTen : second.size = 10) :
+    let handshake := RngHandshake.mk' first second firstTen secondTen
+    handshake.leftSeeds = first.extract 0 9 ∧
+      handshake.rightSeeds = second.extract 0 9 ∧
+      handshake.leftIndex = first.getD 9 0 ∧ handshake.rightIndex = second.getD 9 0 := by
+  exact ⟨rfl, rfl, rfl, rfl⟩
+
 /-- Canonical serial action values: move `$0..$3`, switch `$4..$9`, no-action
 `$D`, Struggle `$E`, run `$F`. Items have no link encoding. -/
 def encodeAction : Full.Action → Option UInt8
@@ -74,6 +109,28 @@ def externalSetupList (receivedBlock : Array UInt8) : Array UInt8 :=
   let tail := (receivedBlock.extract (firstExternalData receivedBlock) receivedBlock.size).toList
   (tail.filter (fun byte => byte != 0xff)).take 10 |>.toArray
 
+def mirrorCause : Outcome.TerminalCause → Option Outcome.TerminalCause
+  | .partyExhausted side => some (.partyExhausted side.other)
+  | .linkRun side => some (.linkRun side.other)
+  | _ => none
+
+def mirrorVerdict : Option Outcome.BattleVerdict → Option Outcome.BattleVerdict
+  | some .win => some .loss
+  | some .loss => some .win
+  | some .draw => some .draw
+  | none => none
+
+def terminalsAgree (left right : Outcome.BattleTerminal) : Bool :=
+  mirrorCause left.cause == some right.cause &&
+    mirrorVerdict left.verdict == right.verdict
+
+def phasesAgree (pair : Pair) : Bool :=
+  match pair.left.engine.battle.phase, pair.right.engine.battle.phase with
+  | .battling, .battling => true
+  | .ending left, .ending right => terminalsAgree left right
+  | .returned left, .returned right => terminalsAgree left.terminal right.terminal
+  | _, _ => false
+
 /-- Conditional shared-RNG invariant. Known asymmetric routines may break it. -/
 def mirroredRng (pair : Pair) : Bool :=
   pair.left.engine.battle.rng == pair.right.engine.battle.rng
@@ -109,6 +166,12 @@ private def knownCause (pair : Pair) (leftAction rightAction : Full.Action) : De
     .generatedTrappingWrapper
   else .stateMismatch
 
+def classifyPairedResult (pair : Pair) (cause : DesyncCause)
+    (leftEvents rightEvents : List Engine.Event) : StepResult :=
+  if mirroredActive pair && mirroredRng pair && phasesAgree pair then
+    .synchronized pair leftEvents rightEvents
+  else .desynchronized pair cause leftEvents rightEvents
+
 /-- Exchange both action bytes and execute each cartridge from its own
 perspective. Any nontransition continuation remains paired and explicit. -/
 def step (pair : Pair) (leftWire rightWire : UInt8) : StepResult :=
@@ -120,11 +183,42 @@ def step (pair : Pair) (leftWire rightWire : UInt8) : StepResult :=
       | .transitioned left leftEvents, .transitioned right rightEvents =>
           let pair := { pair with left := { pair.left with engine := left } }
           let pair := { pair with right := { pair.right with engine := right } }
-          if mirroredActive pair && mirroredRng pair then
-            .synchronized pair leftEvents rightEvents
-          else .desynchronized pair (knownCause pair leftAction rightAction) leftEvents rightEvents
+          classifyPairedResult pair (knownCause pair leftAction rightAction)
+            leftEvents rightEvents
       | _, _ => .pending pair leftResult rightResult
   | _, _ => .invalidWire
+
+/-- A synchronized classification carries active-state, RNG, and terminal
+agreement; known divergences use the explicit desynchronized constructor. -/
+theorem synchronized_preserves_relations {pair output : Pair} {cause : DesyncCause}
+    {leftEvents rightEvents : List Engine.Event}
+    (result : classifyPairedResult pair cause leftEvents rightEvents =
+      .synchronized output leftEvents rightEvents) :
+    mirroredActive output = true ∧ mirroredRng output = true ∧ phasesAgree output = true := by
+  unfold classifyPairedResult at result
+  split at result
+  · rename_i condition
+    injection result with pairEquality
+    subst output
+    simp only [Bool.and_eq_true] at condition
+    exact ⟨condition.1.1, condition.1.2, condition.2⟩
+  · contradiction
+
+/-- Link `EndOfBattle` writes the mirrored active enemy status into its disposable
+party row but deliberately leaves that row's HP untouched. -/
+def copyRemoteStatusOnly (remote : Full.SideState) : Full.SideState :=
+  let status := remote.active.active.status
+  let party := { mons := remote.party.mons.modify remote.activeIndex fun mon =>
+    { mon with status := status } }
+  { remote with party := party }
+
+@[simp] theorem remote_cleanup_preserves_party_hp (remote : Full.SideState)
+    (inBounds : remote.activeIndex < remote.party.mons.size) :
+    let before := remote.party.mons.getD remote.activeIndex remote.active.active
+    let after := (copyRemoteStatusOnly remote).party.mons.getD remote.activeIndex
+      remote.active.active
+    after.status = remote.active.active.status ∧ after.hp = before.hp := by
+  simp [copyRemoteStatusOnly, Array.getD, inBounds, Array.getElem_modify_self]
 
 /-- Every encodable action round-trips. -/
 theorem action_roundtrip (action : Full.Action) (encoded : (encodeAction action).isSome = true) :

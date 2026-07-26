@@ -48,11 +48,15 @@ structure Storage where
   owned : Array SpeciesId
   deriving Repr, DecidableEq
 
-private def initialMoves (species : SpeciesId) : Array MoveId :=
+def initialMoves (species : SpeciesId) : Array MoveId :=
   let moves := Data.Progression.initialMoves.getD species.toNat #[]
   #[moves.getD 0 0, moves.getD 1 0, moves.getD 2 0, moves.getD 3 0]
 
-private def initialPp (moves : Array MoveId) : Array UInt8 :=
+@[simp] theorem initial_moves_have_four_slots (species : SpeciesId) :
+    (initialMoves species).size = 4 := by
+  simp [initialMoves]
+
+def initialPp (moves : Array MoveId) : Array UInt8 :=
   moves.map fun move => if move == 0 then 0 else (Data.moveData move).pp
 
 /-- Rebuild captured base identity/moves/stats while retaining wild DVs, HP,

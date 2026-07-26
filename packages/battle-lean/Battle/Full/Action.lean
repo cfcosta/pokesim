@@ -30,6 +30,7 @@ structure ActionContext where
   mode : BattleMode
   owner : Side := .player
   forcedReplacement : Bool := false
+  opponentTrapping : Bool := false
   deriving Repr, DecidableEq
 
 private def currentPp (packed : UInt8) : UInt8 := packed &&& Wram.ppMask
@@ -68,6 +69,15 @@ def itemSelectable (context : ActionContext) (request : Items.Request) : Bool :=
     Items.disposition request.item != .battleReject &&
     Items.disposition request.item != .outOfRange
 
+def fullMenuBypass (side : Full.SideState) : Bool :=
+  side.active.volatile.recharging || side.active.volatile.chargingUp ||
+    bitSet side.active.volatile.status1 Wram.BattleStatus1.thrashingAbout ||
+    bitSet side.active.volatile.status2 Wram.BattleStatus2.usingRage
+
+def fightSkipsMoveMenu (side : Full.SideState) (opponentTrapping : Bool) : Bool :=
+  side.active.active.asleep || side.active.active.frozen || opponentTrapping ||
+    bitSet side.active.volatile.status1 Wram.BattleStatus1.storingEnergy
+
 /-- Exact action validity at a choice boundary. -/
 def legal (context : ActionContext) (action : Action) : Bool :=
   if context.forcedReplacement then
@@ -88,15 +98,11 @@ def legal (context : ActionContext) (action : Action) : Bool :=
         match action with
         | .fight slot => !mustStruggle context.side && usableMoveSlot context.side slot.val
         | .struggle => mustStruggle context.side
-        | .switch target =>
-            !context.side.active.volatile.trapping && context.side.canSwitchTo target.val
+        | .switch target => context.side.canSwitchTo target.val
         | .item request => itemSelectable context request
         | .run => true
-        | .noAction => context.side.active.volatile.recharging ||
-            context.side.active.volatile.chargingUp || context.side.active.volatile.trapping ||
-            bitSet context.side.active.volatile.status1 Wram.BattleStatus1.storingEnergy ||
-            bitSet context.side.active.volatile.status1 Wram.BattleStatus1.thrashingAbout ||
-            bitSet context.side.active.volatile.status2 Wram.BattleStatus2.usingRage
+        | .noAction => fullMenuBypass context.side ||
+            fightSkipsMoveMenu context.side context.opponentTrapping
 
 /-- Finite legal-action vector for policies. -/
 def legalActions (context : ActionContext) : Array Action :=
@@ -114,6 +120,16 @@ def legalActions (context : ActionContext) : Array Action :=
   fights ++ switches ++ special
 
 /-! ## Legality theorems -/
+
+@[simp] theorem automatic_and_post_fight_locks_are_separate (side : Full.SideState) :
+    fullMenuBypass side =
+      (side.active.volatile.recharging || side.active.volatile.chargingUp ||
+        bitSet side.active.volatile.status1 Wram.BattleStatus1.thrashingAbout ||
+        bitSet side.active.volatile.status2 Wram.BattleStatus2.usingRage) ∧
+    fightSkipsMoveMenu side true =
+      (side.active.active.asleep || side.active.active.frozen || true ||
+        bitSet side.active.volatile.status1 Wram.BattleStatus1.storingEnergy) := by
+  exact ⟨rfl, rfl⟩
 
 /-- At a forced-replacement boundary, switch legality is exactly the
 party-state switch predicate. -/
@@ -141,6 +157,17 @@ theorem ordinary_fight_exact (context : ActionContext) (slot : Fin 4)
     rw [notForced]
     simp only [Bool.false_eq_true, if_false]
     rw [mode]
+
+theorem trapped_switch_remains_protocol_selectable (context : ActionContext)
+    (target : Fin 6) (ordinary : context.mode = .wild ∨ context.mode = .trainer ∨
+      context.mode = .link) (notForced : context.forcedReplacement = false) :
+    legal context (.switch target) = context.side.canSwitchTo target.val := by
+  rcases ordinary with ordinary | ordinary | ordinary
+  all_goals
+    unfold legal
+    rw [notForced]
+    simp only [Bool.false_eq_true, if_false]
+    rw [ordinary]
 
 @[simp] theorem trainer_run_selectable (side : Full.SideState) (bag : Items.Bag) :
     legal { side, bag, mode := .trainer } .run = true := rfl

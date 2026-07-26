@@ -140,7 +140,7 @@ def rawDispatch (item : UInt8) : RawDispatch :=
   | 0x16 => .safariRockAlias
   | id => if id < 1 || id > 0x53 then .beyondTable else .ordinary (disposition item)
 
-private def updateMon (side : Full.SideState) (target : Nat)
+def updateMon (side : Full.SideState) (target : Nat)
     (update : MonState → MonState) : Option Full.SideState :=
   let side := side.syncOutgoing
   if target < side.party.mons.size then
@@ -151,7 +151,7 @@ private def updateMon (side : Full.SideState) (target : Nat)
     some { side with party, active }
   else none
 
-private def mapTarget (state : UserState) (target : Nat)
+def mapTarget (state : UserState) (target : Nat)
     (update : MonState → Option MonState) : Option UserState :=
   let synced := state.side.syncOutgoing
   if target < synced.party.mons.size then
@@ -164,7 +164,12 @@ private def mapTarget (state : UserState) (target : Nat)
         | some side => some { state with side }
   else none
 
-private def consume (state : UserState) (item : UInt8) : UserState :=
+@[simp] theorem out_of_range_target_rejected (state : UserState)
+    (update : MonState → Option MonState) :
+    mapTarget state state.side.party.mons.size update = none := by
+  simp [mapTarget, Full.SideState.syncOutgoing]
+
+def consume (state : UserState) (item : UInt8) : UserState :=
   { state with bag := state.bag.removeOne item }
 
 private def healAmount (item : UInt8) : Option Nat :=
@@ -314,6 +319,15 @@ private def usePpRestore (state : UserState) (request : Request) (all maximum : 
   | none => .rejected state
   | some next => .committed (consume next request.item)
       [.ppRestored request.partyTarget request.moveSlot]
+
+/-- The report scan reads six fixed party-status slots regardless of represented
+party count. Callers provide raw bytes for malformed/out-of-array slots. -/
+def fluteRawSixSlotScan (statusAt : Fin 6 → UInt8) : Bool :=
+  (List.finRange 6).any fun slot => statusAt slot &&& Wram.Status.slpMask != 0
+
+@[simp] theorem flute_raw_scan_observes_sixth_slot :
+    fluteRawSixSlotScan (fun slot => if slot.val = 5 then 1 else 0) = true := by
+  native_decide
 
 def wakeMon (mon : MonState) : MonState :=
   { mon with status := mon.status &&& ~~~Wram.Status.slpMask }

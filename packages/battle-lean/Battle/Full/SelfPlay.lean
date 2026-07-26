@@ -50,6 +50,7 @@ inductive StopReason where
   | nestedOpen
   | blocked (side : Side)
   | invalidAction (side : Side)
+  | ineffectiveAction (side : Side)
   | capturePending
   | rngStuck
   | divisionFreeze
@@ -72,6 +73,7 @@ private def handleResult : Nat → Environment.StepResult →
       let settled := Environment.settle state
       (settled, events, if returned settled then .finished else .inactive)
   | _, .invalidAction state side => (state, [], .invalidAction side)
+  | _, .ineffectiveAction state side => (state, [], .ineffectiveAction side)
   | _, .capturePending state _ events => (state, events, .capturePending)
   | _, .rngStuck state events => (state, events, .rngStuck)
   | _, .divisionFreeze state events => (state, events, .divisionFreeze)
