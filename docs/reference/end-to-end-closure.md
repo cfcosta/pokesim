@@ -4,7 +4,7 @@
 
 **Baseline:** `pret/pokered` commit `405b6246372d7e5a2cb029cbb65219b13286b8c9`.
 
-This page defines what “end-to-end” means for the battle project and lists every layer that must close before a 1:1/formally verified claim is made. The standalone processor package, canonical ROM build identity, retained symbol/map artifacts, conservative closure, and initial DMG-CPU B adapter now exist. A proof-carrying continuous driver monitor now has a discharged establish/preserve/use theorem for finite and whole behaviors, but canonical checkpoint reachability from `InitOpponent` through outer return, battle refinement, and benchmarking remain open. The processor artifact does not close any battle-level claim by itself.
+This page defines what “end-to-end” means for the battle project and lists every layer that must close before a 1:1/formally verified claim is made. The standalone processor package, canonical ROM build identity, retained symbol/map artifacts, address-based conservative reachability graph, and DMG-CPU B adapter now exist. `Battle.Rom.DriverClosure` supplies a conditional proof-carrying theorem from `InitOpponent` through outer return: its certificate contains actual adapter cycles with explicit external responses, concrete phase checkpoints, exact byte/table/graph witnesses, and an independent returned transcript. Because the ROM is not vendored, the repository does not claim an in-tree inhabitant of that certificate or unconditional continuous cartridge equivalence. The processor artifact does not close any battle-level claim by itself.
 
 ## Three claim boundaries
 
@@ -169,7 +169,7 @@ These are persistent driver mutations. A tutorial theorem that models only the s
 
 ## Transitive code closure
 
-M0 generates a symbol/range graph from the ROM and source metadata. Roots include:
+`tools/generate-pokered-reachability.py` generates a selected-bank-aware symbol/range graph from caller-supplied canonical ROM bytes and retained linker metadata. Direct edges are decoded; genuinely dynamic transfers remain explicit and use the sound all-retained-ROM conservative domain rather than guessed targets. Roots include:
 
 - `InitBattle`, `InitOpponent`, `InitBattleCommon`, `_InitBattleCommon`;
 - `StartBattle`, `MainInBattleLoop`, every terminal edge;
@@ -326,14 +326,14 @@ Each fixture asserts terminal provenance, projected random call-site sequence, f
 ## Remaining gaps
 
 - Canonical Red now rebuilds under the pinned RGBDS derivation; deterministic `.sym`/`.map` files and exact ROM hashes are retained. The ROM itself is not checked in.
-- A conservative whole-machine range manifest covers every CPU address, ROM bank, and external RAM bank. A narrowed transitive call/predef/text/data graph for the first episode is still absent.
+- The conservative whole-machine manifest covers every CPU address, ROM bank, and external RAM bank. `reachability-manifest.json` adds 66,798 decoded instruction starts, 11,944 retained control edges, selected-bank context, predef/far/home-call recognition, interrupt roots, and 73 explicit conservative dynamic sites; CI regenerates it from a temporary canonical ROM.
 - `packages/battle-lean` now supplies the WRAM contract, active-mon codec, differential comparator, ROM closure, and initial DMG-CPU B adapter. No complete battle transition or episode refinement theorem exists.
 - `packages/sm83-lean` provides the standalone processor candidate, independent architectural dispatch, executable architectural/physical layers, retirement monitor, whole-behavior simulation framework, profile relations, and conformance gates. Universal local flat-block theorems now cover all 242 ordinary legal base entries and all 256 CB entries, with proof-relevant decoder closure, successor-lock projection, and a direct block-to-instruction simulation. Continuous fetched-IR M-cycle composition, HALT/STOP/interrupt lifting, and immutable external release remain open.
-- The Pokémon adapter proves eight-edge processor composition and models MBC3, mapped memory, divider/timer, basic PPU/VBlank, joypad, serial, and DMA. The canonical `AtInitOpponentReady` witness fixes byte `$FA`, `LD A,(a16)`, next PC, schedule, latches, and boundary PC. Continuous execution now spans the first three complete instructions: it consumes `$59 $D0`, reads supplied opponent `$D059`, commits `$CF91` and `$CFD8` on their unique T3R edges, and installs canonical `JR $1A` at `$6F21` without bootstrap reinitialization. The tracked driver matches every proof-carrying safe physical cycle and justified battle/turn/terminal/epilogue/return marker to the independent episode protocol, with distinct M-cycle and retirement counters. The live jump consumes `$1A` and proves its successor intent targets `InitBattleCommon` at `$6F3D`; fetching and executing from that target through all later canonical checkpoints remains open. Detailed OAM, presentation, audio, and full device-timing refinements remain.
+- The Pokémon adapter proves eight-edge processor composition and models MBC3, mapped memory, divider/timer, basic PPU/VBlank, joypad, serial, and DMA. The canonical `AtInitOpponentReady` witness fixes byte `$FA`, `LD A,(a16)`, next PC, schedule, latches, and boundary PC. Local continuous execution spans the first three complete instructions and the live jump intent to `InitBattleCommon`. Whole-driver composition is represented by `DriverClosure.Certificate`, whose segments permit only actual adapter cycles after explicit joypad/serial/HALT external responses and preserve immutable ROM bytes. Supplying those segments remains a caller proof obligation, not an in-tree cartridge execution claim. Detailed OAM, presentation, audio, and full device-timing refinements remain qualified by the certificate's explicit summaries and responses.
 - No low/high trace runner or SameBoy/`gb-research` trace adapter exists; the oracle revisions and distrust boundary are selected.
 - No presentation summary has a frame/timing theorem.
 - A supplied-wild reset predicate is encoded, but no canonical boot/reset execution theorem establishes it.
-- No canonical-ROM `InitOpponent`-to-outer-return fixture executes.
+- `OneMemberWildFixture` and `one_member_wild_initOpponent_to_return` state the exact non-vendored theorem boundary. No in-tree inhabitant is claimed: callers must supply canonical hash, all byte/table/graph proofs, concrete adapter-cycle segments, and independent replay evidence.
 - Nix, Lean 4.30.0, and the source-hashed RGBDS `v1.0.2+hotfix` derivation are now locked and checked in CI.
 - The processor package is Apache-2.0 clean-room code. License status for reusing `gameboy-pokered-verify` remains unresolved.
 

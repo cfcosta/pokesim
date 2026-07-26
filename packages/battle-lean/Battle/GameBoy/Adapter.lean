@@ -167,6 +167,53 @@ theorem runEdges_length (intent : CycleIntent) (pins : List PinIntent)
       simp [runEdges, induction]
       omega
 
+/-- No bus/device/DMA half-edge can mutate immutable cartridge ROM bytes;
+MBC control writes only change mapping or external RAM. -/
+@[simp] theorem stepEdge_preserves_rom (memory : Memory.State)
+    (intent : CycleIntent) (pin : PinIntent) :
+    (stepEdge memory intent pin).1.cartridge.rom = memory.cartridge.rom := by
+  let written := if isT3R pin.halfEdge && intent.control = .write then
+    match pin.address, pin.data with
+    | some address, .driven value => Memory.write memory address value
+    | _, _ => memory
+    else memory
+  have writtenRom : written.cartridge.rom = memory.cartridge.rom := by
+    by_cases commit : isT3R pin.halfEdge && intent.control = .write
+    · simp [written, commit]
+      split <;> simp
+    · simp [written, commit]
+  let ticked := if isRising pin.halfEdge && intent.clocks.oscillator then
+    { written with devices := Devices.tickT written.devices }
+    else written
+  have tickedRom : ticked.cartridge.rom = memory.cartridge.rom := by
+    cases rising : isRising pin.halfEdge <;>
+      cases oscillator : intent.clocks.oscillator <;>
+      simp [ticked, rising, oscillator, writtenRom]
+  let dmaed := if isT4R pin.halfEdge && intent.clocks.machine then
+    Memory.stepDma ticked else ticked
+  have dmaedRom : dmaed.cartridge.rom = memory.cartridge.rom := by
+    cases t4 : isT4R pin.halfEdge <;>
+      cases machineClock : intent.clocks.machine <;>
+      simp [dmaed, t4, machineClock, tickedRom]
+  simpa [stepEdge, written, ticked, dmaed] using dmaedRom
+
+@[simp] theorem runEdges_preserves_rom (intent : CycleIntent)
+    (pins : List PinIntent) (memory : Memory.State)
+    (drives : List (Option Byte)) (observations : List EdgeObservation) :
+    (runEdges intent pins memory drives observations).memory.cartridge.rom =
+      memory.cartridge.rom := by
+  induction pins generalizing memory drives observations with
+  | nil => rfl
+  | cons pin pins induction =>
+      simp only [runEdges]
+      rw [induction]
+      exact stepEdge_preserves_rom memory intent pin
+
+@[simp] theorem stepMachineCycle_preserves_rom (machine : Machine) (wake : Bool) :
+    (stepMachineCycle machine wake).machine.memory.cartridge.rom =
+      machine.memory.cartridge.rom := by
+  simp [stepMachineCycle]
+
 /-- Read cycles cannot mutate cartridge banking/storage at any half-edge. -/
 @[simp] theorem stepEdge_read_preserves_cartridge (memory : Memory.State)
     (intent : CycleIntent) (pin : PinIntent) (read : intent.control = .read) :

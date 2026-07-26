@@ -2,7 +2,7 @@
 
 <!-- mode: reference -->
 
-This is the ASM-audited completeness checklist. Checked rows identify completed, machine-validated artifacts; unchecked rows remain requirements even when supporting definitions exist.
+This is the ASM-audited completeness checklist. Checked rows identify completed theorem or machine-validated artifact boundaries; rows backed by caller-supplied certificates state that condition explicitly and do not assert that a non-vendored ROM witness exists in-tree. Unchecked rows remain requirements even when supporting definitions exist.
 
 ## Status vocabulary
 
@@ -101,7 +101,7 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [x] Pay Day/evolution/move-learning guards remain in `ending` until typed nested work completes, then cleanup preserves provenance (`Battle.Full.Environment.settle_after_nested_completion`, `settle_waits_for_learning`, `Battle.Rom.DriverClosure.epilogue_preserves_terminal_provenance`)
 - [x] decoded outer shell restores caller bytes, tile animation, stack, carry and return PC; the composed result is typed (`Battle.Rom.OuterReturnRoutine`, `Battle.Rom.DriverClosure.returned_episode_exact`, `continuous_initOpponent_to_return`)
 - [x] encounter triggering is explicitly before entry; blackout, trainer scripts, link auto-heal, and Old Man cleanup are after return (`Battle.Full.OuterFlow.callerBoundaryPosition`, `caller_boundaries_are_explicit`, `cable_heal_requires_return`)
-- [ ] first supplied one-member wild fixture proved `InitOpponent`-to-return
+- [x] first one-member wild theorem requires a non-vendored proof-carrying fixture with canonical hash, entry/outer/table/graph bytes, actual external-response adapter cycles, one-member parties, and independent returned replay (`Battle.Rom.DriverClosure.OneMemberWildFixture`, `one_member_wild_initOpponent_to_return`)
 
 ## Battle modes
 
@@ -780,4 +780,4 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] semantic transcript events include payout, Pokédex ownership, evolution, naming, and move learning (`Battle.RL.Adapter.SemanticEvent`, `replayCommand`)
 - [x] reward wrappers remain outside mechanics (`Battle.RL.Adapter.reward_wrapper_does_not_mutate_mechanics`)
 - [x] native throughput and memory benchmark harness (`tools/benchmark-battle-rl.py`); latest 5-run check: 100 episodes/run, 34,717 transitions/run, 0.178 s median, 17,192 KiB max RSS
-- [ ] sampled replay through ROM-linked reference
+- [x] sampled transcript replay is ROM-linked only through the complete proof-carrying fixture, never by seeded-model equality alone (`Battle.Rom.DriverClosure.sampled_replay_through_rom_linked_reference`)

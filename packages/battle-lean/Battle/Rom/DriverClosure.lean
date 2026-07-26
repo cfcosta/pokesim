@@ -5,6 +5,8 @@ Licensed under the Apache License, Version 2.0.
 import Battle.DriverInvariant
 import Battle.Full.Environment
 import Battle.Full.OuterFlow
+import Battle.RL.Adapter
+import Battle.Rom.AllTables
 import Battle.Rom.OuterReturnRoutine
 import Battle.Rom.Reachability
 
@@ -23,16 +25,61 @@ open Sm83 Battle Battle.Full
 
 abbrev Machine := DriverInvariant.Machine
 
-inductive MachineCycles : Machine → List Bool → Machine → Prop where
+structure MachineInput where
+  external : GameBoy.Devices.ExternalResponses
+  deriving Repr, DecidableEq
+
+
+def applyExternal (machine : Machine) (input : MachineInput) : Machine :=
+  let devices := GameBoy.Devices.applyExternal machine.memory.devices input.external
+  let memory := { machine.memory with devices := devices }
+  { machine with memory := memory }
+
+
+def cycle (machine : Machine) (input : MachineInput) : Machine :=
+  (GameBoy.Adapter.stepMachineCycle (applyExternal machine input)
+    input.external.haltWake).machine
+
+@[simp] theorem applyExternal_preserves_rom (machine : Machine) (input : MachineInput) :
+    (applyExternal machine input).memory.cartridge.rom = machine.memory.cartridge.rom := by
+  rfl
+
+@[simp] theorem cycle_preserves_rom (machine : Machine) (input : MachineInput) :
+    (cycle machine input).memory.cartridge.rom = machine.memory.cartridge.rom := by
+  simp [cycle]
+
+inductive MachineCycles : Machine → List MachineInput → Machine → Prop where
   | nil (machine) : MachineCycles machine [] machine
-  | cons {before middle after wake wakes}
-      (equation : (GameBoy.Adapter.stepMachineCycle before wake).machine = middle)
-      (rest : MachineCycles middle wakes after) :
-      MachineCycles before (wake :: wakes) after
+  | cons {before middle after input inputs}
+      (equation : cycle before input = middle)
+      (rest : MachineCycles middle inputs after) :
+      MachineCycles before (input :: inputs) after
+
+
+def runCycles : List MachineInput → Machine → Machine
+  | [], machine => machine
+  | input :: inputs, machine => runCycles inputs (cycle machine input)
+
+
+theorem runCycles_sound (inputs : List MachineInput) (machine : Machine) :
+    MachineCycles machine inputs (runCycles inputs machine) := by
+  induction inputs generalizing machine with
+  | nil => exact .nil machine
+  | cons input inputs induction =>
+      exact .cons rfl (induction (cycle machine input))
+
+
+theorem MachineCycles.preserves_rom {first final : Machine} {inputs : List MachineInput}
+    (execution : MachineCycles first inputs final) :
+    final.memory.cartridge.rom = first.memory.cartridge.rom := by
+  induction execution with
+  | nil => rfl
+  | cons equation rest induction =>
+      exact induction.trans (by rw [← equation]; exact cycle_preserves_rom _ _)
 
 
 theorem MachineCycles.append {first middle final : Machine}
-    {left right : List Bool}
+    {left right : List MachineInput}
     (before : MachineCycles first left middle)
     (after : MachineCycles middle right final) :
     MachineCycles first (left ++ right) final := by
@@ -117,10 +164,10 @@ structure Certificate (initial modeSetup terminalState epilogue returned : Machi
     (outerBytes : OuterReturnRoutine.RequiredOuterReturnBytes
       initial.memory.cartridge.rom) where
   entry : DriverInvariant.AtInitOpponentReady initial entryBytes
-  setupCycles : List Bool
-  battleCycles : List Bool
-  epilogueCycles : List Bool
-  returnCycles : List Bool
+  setupCycles : List MachineInput
+  battleCycles : List MachineInput
+  epilogueCycles : List MachineInput
+  returnCycles : List MachineInput
   toSetup : MachineCycles initial setupCycles modeSetup
   setup : ModeSetupCheckpoint modeSetup mode
   toTerminal : MachineCycles modeSetup battleCycles terminalState
@@ -210,5 +257,66 @@ theorem continuous_initOpponent_to_return
   simpa [List.append_assoc] using certificate.toSetup.append
     (certificate.toTerminal.append
       (certificate.toEpilogue.append certificate.toReturn))
+
+def machineRom (machine : Machine) : Closure.CanonicalRom :=
+  ⟨machine.memory.cartridge.rom⟩
+
+/-- Proof-carrying, non-vendored first fixture. The caller supplies canonical
+hash/byte/table/graph witnesses and an actual adapter-cycle certificate. Thus an
+IO fixture or a hash assertion alone cannot inhabit this type. -/
+structure OneMemberWildFixture (sha256 : Closure.Sha256) where
+  initial : Machine
+  modeSetup : Machine
+  terminalState : Machine
+  epilogue : Machine
+  returned : Machine
+  terminal : Outcome.BattleTerminal
+  caller : Full.OuterFlow.CallerFrame
+  returnAddress : Word
+  entryBytes : Closure.RequiredEntryBytes initial.memory.cartridge.rom
+  outerBytes : OuterReturnRoutine.RequiredOuterReturnBytes initial.memory.cartridge.rom
+  validRom : (machineRom initial).Valid sha256
+  allTables : AllTables.RequiredAllTableBytes (machineRom initial)
+  reachableGraph : Reachability.Certificate (machineRom initial)
+  reset : DriverInvariant.SuppliedWildReset initial.memory
+  driver : Certificate initial modeSetup terminalState epilogue returned .wild terminal
+    caller returnAddress entryBytes outerBytes
+  transcript : Battle.RL.Adapter.TranscriptState
+  commands : List Battle.RL.Adapter.TranscriptCommand
+  playerOneMember : transcript.state.engine.battle.player.party.mons.size = 1
+  enemyOneMember : transcript.state.engine.battle.enemy.party.mons.size = 1
+  replayReturned :
+    (Battle.RL.Adapter.replay transcript commands).state.engine.battle.phase =
+      .returned ⟨terminal⟩
+
+/-- The first fixture theorem contains a continuous physical path and the
+independently replayed returned episode. Completion cannot be manufactured by a
+budget: both conclusions are fields/proofs of the supplied canonical fixture. -/
+theorem one_member_wild_initOpponent_to_return
+    {sha256 : Closure.Sha256} (fixture : OneMemberWildFixture sha256) :
+    MachineCycles fixture.initial
+      (fixture.driver.setupCycles ++ fixture.driver.battleCycles ++
+        fixture.driver.epilogueCycles ++ fixture.driver.returnCycles)
+      fixture.returned ∧
+    (Battle.RL.Adapter.replay fixture.transcript fixture.commands).state.engine.battle.phase =
+      .returned ⟨fixture.terminal⟩ ∧
+    (machineRom fixture.initial).Valid sha256 ∧
+    fixture.returned.memory.cartridge.rom =
+      fixture.initial.memory.cartridge.rom := by
+  have execution := continuous_initOpponent_to_return fixture.driver
+  exact ⟨execution, fixture.replayReturned, fixture.validRom,
+    execution.preserves_rom⟩
+
+/-- A sampled high-level transcript is ROM-linked only through a complete
+proof-carrying fixture; pure model replay alone is insufficient. -/
+theorem sampled_replay_through_rom_linked_reference
+    {sha256 : Closure.Sha256} (fixture : OneMemberWildFixture sha256) :
+    let replayed := Battle.RL.Adapter.replay fixture.transcript fixture.commands
+    replayed.state.engine.battle.phase = .returned ⟨fixture.terminal⟩ ∧
+      MachineCycles fixture.initial
+        (fixture.driver.setupCycles ++ fixture.driver.battleCycles ++
+          fixture.driver.epilogueCycles ++ fixture.driver.returnCycles)
+        fixture.returned := by
+  exact ⟨fixture.replayReturned, continuous_initOpponent_to_return fixture.driver⟩
 
 end Battle.Rom.DriverClosure
