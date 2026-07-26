@@ -32,6 +32,7 @@ import Battle.BugWitnesses
 import Battle.Full.State
 import Battle.Full.Initialization
 import Battle.Full.EndFlow
+import Battle.Full.OuterFlow
 import Battle.Full.Status
 import Battle.Full.Items
 import Battle.Full.EffectPlan

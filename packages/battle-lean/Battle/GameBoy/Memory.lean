@@ -152,6 +152,35 @@ def stepDma (state : State) : State :=
   have notCart : ¬address.toNat < 0xC000 := by omega
   simp [write, notRom0, notVram, notCart, high]
 
+@[simp] theorem write_hram (state : State) (address : Word) (value : Byte)
+    (low : 0xFF80 ≤ address.toNat) (high : address.toNat < 0xFFFF) :
+    (write state address value).hram =
+      Mbc3.writeArray state.hram (address.toNat - 0xFF80) value := by
+  have not8000 : ¬ address.toNat < 0x8000 := by omega
+  have notA000 : ¬ address.toNat < 0xA000 := by omega
+  have notC000 : ¬ address.toNat < 0xC000 := by omega
+  have notE000 : ¬ address.toNat < 0xE000 := by omega
+  have notFE00 : ¬ address.toNat < 0xFE00 := by omega
+  have notFEA0 : ¬ address.toNat < 0xFEA0 := by omega
+  have notFF00 : ¬ address.toNat < 0xFF00 := by omega
+  have notFF80 : ¬ address.toNat < 0xFF80 := by omega
+  simp [write, not8000, notA000, notC000, notE000, notFE00, notFEA0,
+    notFF00, notFF80, high]
+
+@[simp] theorem read_hram (state : State) (address : Word)
+    (low : 0xFF80 ≤ address.toNat) (high : address.toNat < 0xFFFF) :
+    read state address = Mbc3.readArray state.hram (address.toNat - 0xFF80) := by
+  have not8000 : ¬ address.toNat < 0x8000 := by omega
+  have notA000 : ¬ address.toNat < 0xA000 := by omega
+  have notC000 : ¬ address.toNat < 0xC000 := by omega
+  have notE000 : ¬ address.toNat < 0xE000 := by omega
+  have notFE00 : ¬ address.toNat < 0xFE00 := by omega
+  have notFEA0 : ¬ address.toNat < 0xFEA0 := by omega
+  have notFF00 : ¬ address.toNat < 0xFF00 := by omega
+  have notFF80 : ¬ address.toNat < 0xFF80 := by omega
+  simp [read, not8000, notA000, notC000, notE000, notFE00, notFEA0,
+    notFF00, notFF80, high]
+
 @[simp] theorem read_wram (state : State) (address : Word)
     (low : 0xC000 ≤ address.toNat) (high : address.toNat < 0xE000) :
     read state address = Mbc3.readArray state.wram (address.toNat - 0xC000) := by

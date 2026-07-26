@@ -8,6 +8,9 @@ import Battle.Rom.Tables
 import Battle.Rom.Effects
 import Battle.Rom.CombatTables
 import Battle.Rom.Mechanics
+import Battle.Rom.AllTables
+import Battle.Rom.Reachability
+import Battle.Rom.MathRoutines
 import Battle.Rom.EffectRoutines
 import Battle.Rom.EffectPrefixes
 import Battle.Rom.ExplodeRoutine

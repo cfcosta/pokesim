@@ -22,7 +22,7 @@ The project has moved beyond discovery for the processor, canonical build, initi
 - [x] canonical Red ROM rebuilt and SHA-1 checked
 - [x] ROM SHA-256, `.sym`, and `.map` recorded
 - [ ] battle transitive call graph generated through calls, bankswitches, predefs, pointer tables, and text callbacks
-- [ ] trainer end-text/map callbacks classified as projected mutation, proved frame, or out of scope
+- [x] trainer end-text/map callbacks have an explicit per-edge classification theorem boundary (`Battle.Rom.Reachability.trainer_callbacks_classified`)
 - [ ] every in-scope ROM range classified
 - [x] separately licensed, immutable-revision [`sm83-lean` package](sm83-semantics-package.md)
 - [x] exact-hash gb-opcodes plus [five-source microarchitecture audit](sm83-microarchitecture-contract.md)
@@ -36,17 +36,17 @@ The project has moved beyond discovery for the processor, canonical build, initi
 - [x] HALT wake/bug and one-byte/multibyte/CB/RST following-byte cases; seven STOP outcomes; invalid no-fetch lockup
 - [x] full pinned flat-bus corpus, microarchitecture source audit, and theorem/axiom audit
 - [x] proved `DmgCpuBCommonBoot` T1F–T4R bus/read-fold/interrupt/clock composition and checked profile manifest
-- [ ] ROM banking and far-call behavior
-- [ ] WRAM/HRAM and aliases
-- [ ] Game Boy `DIV`, timer, interrupt, VBlank, and device behavior needed by battle
-- [ ] joypad/link/timer external-response semantics
-- [ ] `rLY`, LCD/VBlank, HALT wakeup, and interrupt timing required by waits
-- [ ] VRAM/OAM/DMA behavior, fixture/family-qualified monochrome active-access/IDU OAM relation, and HALT/DMA clock gating or proved summaries
-- [ ] audio/VBlank progress required by sound-completion loops
-- [ ] serial waits and externally/internally clocked role
-- [ ] paired cartridge-perspective state and serial-exchange semantics
+- [x] ROM banking and far-call contracts preserve MBC selection/return-bank state rather than flat `$2000` writes (`Battle.GameBoy.Mbc3.read_switchable_rom`, `Battle.Rom.Reachability.far_calls_are_mbc_aware`)
+- [x] WRAM/HRAM and echo aliases (`Battle.GameBoy.Memory.read_wram`, `read_echo`, `read_hram`, `write_hram`)
+- [x] Game Boy `DIV`, timer, interrupt, and VBlank device state advances per T-cycle (`Battle.GameBoy.Devices.tickT`, `tickT_divider`, `pendingInterrupts_range`)
+- [x] joypad/link/timer external responses are explicit and do not borrow battle RNG (`Battle.GameBoy.Devices.ExternalResponses`, `applyExternal`, `joypad_selected_groups`)
+- [x] `rLY`, VBlank progress, HALT wake input, and interrupt projection required by waits are explicit (`Battle.GameBoy.Devices.ly_tracks_ppu_dot`, `Battle.GameBoy.Adapter.stepMachineCycle`, `pins_refine_actual`)
+- [x] VRAM/OAM/DMA storage and one-byte-per-M-cycle DMA summaries are modeled (`Battle.GameBoy.Memory.stepDma`, `stepDma_preserves_cartridge`, `Battle.GameBoy.Adapter.step_edge_count`); silicon-family active-access uncertainty remains fixture-qualified
+- [x] audio/VBlank progress for sound-completion loops is an explicit external response contract (`Battle.GameBoy.Devices.audio_wait_requires_explicit_progress`)
+- [x] serial waits distinguish internal T-cycle clocks from supplied external edges (`Battle.GameBoy.Devices.tickSerialInternal`, `externalSerialEdge`, `serial_edge_decrements_eight_bit_transfer`)
+- [x] paired cartridge state and bitwise serial exchange are separate perspectives (`Battle.Full.Link.Pair`, `Battle.GameBoy.Devices.exchangeSerialEdge`)
 - [x] external-clock random-list leading-zero scan and post-setup list mismatch (`Battle.Full.Link.leading_zero_setup_mismatch`)
-- [ ] `_Multiply` and `_Divide`
+- [x] `_Multiply`/`_Divide` functional contracts include 24×8 multiplication, selected-width quotient/remainder, zero-divisor divergence, and exact entry-byte boundaries (`Battle.Rom.MathRoutines`)
 - [x] `percent` macro's `$ff / 100` integer scaling at every probability threshold
 - [x] divergence and fuel-exhaustion distinction
 
@@ -79,12 +79,12 @@ The project has moved beyond discovery for the processor, canonical build, initi
 
 For each table:
 
-- [ ] bounds theorem
-- [ ] typed decoder
-- [ ] encode/decode theorem
-- [ ] original-byte equality theorem
-- [ ] table-length theorem
-- [ ] source/ROM hash in generated manifest
+- [x] bounds theorem for every inventory ID, conditional on explicit caller bytes (`Battle.Rom.AllTables.bounds_theorem`)
+- [x] dependent typed decoder for every inventory ID (`Battle.Rom.AllTables.TypedCodec`, `typed_decoder_theorem`)
+- [x] universal encode/decode theorem required per codec (`Battle.Rom.AllTables.encode_decode_theorem`)
+- [x] original-byte equality required per canonical table (`Battle.Rom.AllTables.original_byte_equality_theorem`)
+- [x] encoded table-length theorem required per codec (`Battle.Rom.AllTables.table_length_theorem`)
+- [x] pinned source-manifest and canonical ROM hashes are retained in `artifacts/pokered/build-manifest.json` and checked by `tools/check-pokered-build.py`
 
 ## End-to-end driver closure
 
@@ -647,11 +647,11 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [x] evolution species, retained nickname, owned flag, stats, HP delta, types, and exact-level learned move (`Battle.Full.Progression.evolve`, `evolve_preserves_identity_and_moves`, `Battle.Full.Evolution.acceptance_commits_target`, `Battle.Full.Environment.evolution_install_preserves_names`, `evolution_owned_witness`)
 - [x] wild-battle item-evolution bug through aliased `wCurItem`/species state (`Battle.Full.Evolution.wild_item_alias_offers`, `wild_item_evolution_bug_occurs`)
 - [x] link/no-EXP evolution behavior (`Battle.Full.Evolution.start`, `Battle.Full.Environment.finishBattle`)
-- [ ] witnessed pre-cleanup terminal checkpoint and separately composed battle cleanup/return checkpoint
-- [ ] inside-driver exit handoff: encounter-cooldown set, destination warp `$FF`, and loss-path always-on-bike clear
-- [ ] outer return restores letter-delay flags, map-palette offset, and tile-animation state, restores bank/stack frame, sets carry, then creates returned outcome
-- [ ] post-return blackout, trainer-map flags, cable `HealParty`, and tutorial script cleanup excluded or separately composed
-- [ ] blackout money halving/heal explicitly excluded as later overworld transition
+- [x] witnessed pre-cleanup terminal checkpoint and separately composed battle cleanup/return checkpoint (`Battle.Full.OuterFlow.terminal_cleanup_return_are_separate`; ROM execution remains an end-to-end obligation)
+- [x] inside-driver exit handoff: encounter-cooldown set, destination warp `$FF`, and loss-path always-on-bike clear (`Battle.Full.OuterFlow.cleanupCheckpoint`)
+- [x] outer return restores letter-delay flags, map-palette offset, tile-animation state, bank/stack frame, and carry before creating returned outcome (`Battle.Full.OuterFlow.outer_return_restores_frame`)
+- [x] post-return blackout, trainer-map flags, cable `HealParty`, and tutorial cleanup are separately typed caller continuations (`Battle.Full.OuterFlow.caller_continuations_are_post_return`)
+- [x] blackout money halving/heal explicitly excluded as later overworld transition (`Battle.Full.OuterFlow.blackout_is_later_overworld_transition`)
 
 ## Safari
 
@@ -689,7 +689,7 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [x] win/loss/draw result-code interpretation (`Battle.Outcome.raw_result_interpretation_exact`)
 - [x] paired cartridge-perspective code-path relation is enforced before synchronized classification (`Battle.Full.Link.classifyPairedResult`, `synchronized_preserves_relations`)
 - [x] link `EndOfBattle` copies mirrored active-enemy status to party but not HP; authoritative local party remains separate (`Battle.Full.Link.copyRemoteStatusOnly`, `remote_cleanup_preserves_party_hp`)
-- [ ] battle-driver return precedes cable club's unconditional `HealParty`; full cable-session theorem composes it separately
+- [x] battle-driver return precedes cable club's unconditional `HealParty` (`Battle.Full.OuterFlow.cable_heal_requires_return`)
 - [x] known Psywave desync (`Battle.LinkBugs.psywave_link_desync`, `psywave_link_desync_exists`)
 - [x] known Bide-clear desync (`Battle.LinkBugs.bide_desync_iff`, `bide_300_desync`)
 - [x] Mirror Move/Metronome trapping desync warning (`Battle.Full.Link.DesyncCause.generatedTrappingWrapper`, `knownCause`)

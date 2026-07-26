@@ -23,6 +23,7 @@ structure Serial where
   data : Byte := 0
   control : Byte := 0
   bitsRemaining : Nat := 0
+  clockDivider : Nat := 0
   deriving Repr, DecidableEq
 
 structure State where
@@ -70,6 +71,28 @@ private def incrementTimer (state : State) : State :=
     { state with tima := 0, timerReloadDelay := some 4 }
   else { state with tima := Byte.ofNat (state.tima.toNat + 1) }
 
+def serialClockEdge (state : State) (incoming : Bool) : State :=
+  if state.serial.bitsRemaining = 0 then state
+  else
+    let data := (state.serial.data <<< 1) ||| if incoming then 1 else 0
+    let remaining := state.serial.bitsRemaining - 1
+    let serial := { state.serial with data := data }
+    let serial := { serial with bitsRemaining := remaining }
+    let serial := { serial with clockDivider := 0 }
+    let state := { state with serial := serial }
+    if remaining = 0 then requestInterrupt state 3 else state
+
+def tickSerialInternal (state : State) : State :=
+  if state.serial.bitsRemaining = 0 || state.serial.control &&& 1 = 0 then state
+  else if state.serial.clockDivider = 511 then serialClockEdge state true
+  else { state with serial := { state.serial with
+    clockDivider := state.serial.clockDivider + 1 } }
+
+/-- One externally supplied serial clock edge. Externally clocked transfers never
+advance merely from `tickT`; the caller supplies each edge and input bit. -/
+def externalSerialEdge (state : State) (incoming : Bool) : State :=
+  if state.serial.control &&& 1 != 0 then state else serialClockEdge state incoming
+
 @[simp] private theorem advanceReload_divider (state : State) :
     (advanceReload state).divider = state.divider := by
   cases reload : state.timerReloadDelay with
@@ -87,6 +110,7 @@ def tickT (state : State) : State :=
   let ppuDot := (oldDot + 1) % 70224
   let next := { next with ppuDot }
   let next := if oldDot = 144 * 456 - 1 then requestInterrupt next 0 else next
+  let next := tickSerialInternal next
   { next with divider }
 
 @[inline] def ly (state : State) : Byte := Byte.ofNat (state.ppuDot / 456)
@@ -127,7 +151,8 @@ def write (state : State) (address : Word) (value : Byte) : State :=
   | 0xFF02 => { state with serial := {
       state.serial with
       control := value &&& 0x81
-      bitsRemaining := if value.toNat / 128 = 1 then 8 else state.serial.bitsRemaining } }
+      bitsRemaining := if value.toNat / 128 = 1 then 8 else state.serial.bitsRemaining
+      clockDivider := 0 } }
   | 0xFF04 => { state with divider := 0 }
   | 0xFF05 => { state with tima := value, timerReloadDelay := none }
   | 0xFF06 => { state with tma := value }
@@ -140,9 +165,64 @@ def write (state : State) (address : Word) (value : Byte) : State :=
   | 0xFFFF => { state with interruptEnable := value }
   | _ => state
 
+def serialOutputBit (state : State) : Bool := state.serial.data &&& 0x80 != 0
+
+/-- One cable edge shifts both cartridge perspectives from the pre-edge output
+bits. Clock-role policy decides when this function is called. -/
+def exchangeSerialEdge (left right : State) : State × State :=
+  let leftBit := serialOutputBit left
+  let rightBit := serialOutputBit right
+  (serialClockEdge left rightBit, serialClockEdge right leftBit)
+
+@[simp] theorem serial_edge_decrements_eight_bit_transfer (state : State)
+    (active : state.serial.bitsRemaining = 8) (incoming : Bool) :
+    (serialClockEdge state incoming).serial.bitsRemaining = 7 := by
+  simp [serialClockEdge, active]
+
+inductive AudioWaitStep where
+  | waiting
+  | completed
+  deriving Repr, DecidableEq, BEq
+
+def audioWaitStep (response : Bool) : AudioWaitStep :=
+  if response then .completed else .waiting
+
+@[simp] theorem audio_wait_requires_explicit_progress :
+    audioWaitStep false = .waiting ∧ audioWaitStep true = .completed := by
+  native_decide
+
+structure ExternalResponses where
+  joypad : Joypad
+  serialBit : Option Bool
+  haltWake : Bool
+  audioProgress : Bool
+  deriving Repr, DecidableEq
+
+/-- External inputs are explicit state updates, not values synthesized from the
+battle RNG. -/
+def applyExternal (state : State) (response : ExternalResponses) : State :=
+  let state := { state with joypad := response.joypad }
+  match response.serialBit with
+  | none => state
+  | some bit => externalSerialEdge state bit
+
+@[simp] theorem no_external_serial_edge_stutters_clocked_input (state : State)
+    (response : ExternalResponses) (none : response.serialBit = none) :
+    (applyExternal state response).serial.bitsRemaining = state.serial.bitsRemaining := by
+  simp [applyExternal, none]
+
 /-- Five maskable interrupt lines visible to the SM83. -/
 @[inline] def pendingInterrupts (state : State) : Byte :=
   (state.interruptEnable &&& state.interruptFlags) &&& 0x1F
+
+@[simp] theorem joypad_selected_groups (directions buttons : Byte) :
+    readJoypad { directions, buttons, select := 0 } =
+      0xC0 ||| (directions &&& buttons &&& 0x0F) := by
+  simp [readJoypad]
+
+@[simp] theorem ly_tracks_ppu_dot (state : State) :
+    (ly state).toNat = (state.ppuDot / 456) % 256 := by
+  simp [ly, Byte.ofNat]
 
 @[simp] theorem tickT_divider (state : State) :
     (tickT state).divider = (state.divider + 1) % 0x10000 := by
