@@ -126,6 +126,14 @@ def critHits (threshold rand : UInt8) : Bool := Critical.occurs threshold rand
 def saturatingSub (hp dmg : UInt16) : UInt16 :=
   if hp ≤ dmg then 0 else hp - dmg
 
+@[simp] theorem saturatingSub_overkill (hp dmg : UInt16) (overkill : hp ≤ dmg) :
+    saturatingSub hp dmg = 0 := by
+  simp [saturatingSub, overkill]
+
+@[simp] theorem saturatingSub_exact (hp dmg : UInt16) (below : ¬hp ≤ dmg) :
+    saturatingSub hp dmg = hp - dmg := by
+  simp [saturatingSub, below]
+
 /-! ## Turn order (`core.asm:370-412`) -/
 
 /-- Speed comparison and its `BattleRandom` tie-break. Returns the first mover,

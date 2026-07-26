@@ -185,16 +185,16 @@ def decrementMovePp (state : State) (who : Side) (slot : Fin 4)
 private def effectiveSpeed (fullSide : Full.SideState) : UInt16 :=
   fullSide.active.active.speed
 
-private def screenUp (defender : Battle.SideState) (special : Bool) : Bool :=
+def screenUp (defender : Battle.SideState) (special : Bool) : Bool :=
   bitSet defender.volatile.status3
     (if special then Wram.BattleStatus3.hasLightScreenUp else Wram.BattleStatus3.hasReflectUp)
 
-private def offensiveStat (attacker : Battle.SideState) (special critical : Bool) : UInt16 :=
+def offensiveStat (attacker : Battle.SideState) (special critical : Bool) : UInt16 :=
   if critical then
     if special then attacker.unmodified.special else attacker.unmodified.attack
   else if special then attacker.active.special else attacker.active.attack
 
-private def defensiveStat (defender : Battle.SideState) (special critical : Bool) : UInt16 :=
+def defensiveStat (defender : Battle.SideState) (special critical : Bool) : UInt16 :=
   if critical then
     if special then defender.unmodified.special else defender.unmodified.defense
   else if special then defender.active.special else defender.active.defense
@@ -206,13 +206,13 @@ def requiresAccuracy (mechanic : EffectPlan.Mechanic) (power : UInt8) : Bool :=
     | .mimic | .leechSeed | .disable => true
     | _ => false
 
-private def bypassesAccuracy (mechanic : EffectPlan.Mechanic)
+def bypassesAccuracy (mechanic : EffectPlan.Mechanic)
     (attacker : Battle.SideState) : Bool :=
   mechanic == .swift || bitSet attacker.volatile.status2 Wram.BattleStatus2.usingXAccuracy
 
 /-- Eligibility gates executed by ResidualEffects1 handlers before their own
 `MoveHitTest` call. Rejection here consumes no accuracy byte. -/
-private def rejectsBeforeAccuracy (mechanic : EffectPlan.Mechanic)
+def rejectsBeforeAccuracy (mechanic : EffectPlan.Mechanic)
     (move : Step.ResolvedMove) (defender : Battle.SideState) : Bool :=
   match mechanic with
   | .sleep => !defender.volatile.recharging && defender.active.status != 0
@@ -228,6 +228,23 @@ private def rejectsBeforeAccuracy (mechanic : EffectPlan.Mechanic)
       bitSet defender.volatile.status2 Wram.BattleStatus2.protectedByMist
   | _ => false
 
+@[simp] theorem critical_uses_unmodified_stats (side : Battle.SideState) :
+    offensiveStat side false true = side.unmodified.attack ∧
+    offensiveStat side true true = side.unmodified.special ∧
+    defensiveStat side false true = side.unmodified.defense ∧
+    defensiveStat side true true = side.unmodified.special := by
+  simp [offensiveStat, defensiveStat]
+
+@[simp] theorem substitute_mist_dream_gates (move : Step.ResolvedMove)
+    (defender : Battle.SideState)
+    (substitute : defender.volatile.hasSubstitute = true)
+    (mist : bitSet defender.volatile.status2 Wram.BattleStatus2.protectedByMist = true)
+    (awake : defender.active.asleep = false) :
+    rejectsBeforeAccuracy .confusion move defender = true ∧
+    rejectsBeforeAccuracy (.statDown 0 1) move defender = true ∧
+    rejectsBeforeAccuracy .dreamEater move defender = true := by
+  simp [rejectsBeforeAccuracy, substitute, mist, awake]
+
 def resolveAccuracy (mechanic : EffectPlan.Mechanic) (move : Step.ResolvedMove)
     (attacker defender : Battle.SideState) (rng : Rng.LinkRng) : Bool × Rng.LinkRng × List Event :=
   if mechanic == .swift then (true, rng, [])
@@ -237,6 +254,26 @@ def resolveAccuracy (mechanic : EffectPlan.Mechanic) (move : Step.ResolvedMove)
     let effective := Accuracy.calcHitChance move.accuracy attacker.stages.accuracy defender.stages.evasion
     let (raw, rng) := rng.next
     (Accuracy.hits effective raw, rng, [.rng "accuracy" raw])
+
+theorem invulnerability_precedes_x_accuracy (move : Step.ResolvedMove)
+    (attacker defender : Battle.SideState) (rng : Rng.LinkRng)
+    (invulnerable : bitSet defender.volatile.status1
+      Wram.BattleStatus1.invulnerable = true) :
+    resolveAccuracy .ordinary move attacker defender rng = (false, rng, []) := by
+  have ordinary : (EffectPlan.Mechanic.ordinary == EffectPlan.Mechanic.swift) = false := by
+    native_decide
+  simp [resolveAccuracy, ordinary, invulnerable]
+
+theorem x_accuracy_bypasses_stages_and_random (move : Step.ResolvedMove)
+    (attacker defender : Battle.SideState) (rng : Rng.LinkRng)
+    (visible : bitSet defender.volatile.status1 Wram.BattleStatus1.invulnerable = false)
+    (xAccuracy : bitSet attacker.volatile.status2 Wram.BattleStatus2.usingXAccuracy = true) :
+    resolveAccuracy .ordinary move attacker defender rng = (true, rng, []) := by
+  have ordinary : (EffectPlan.Mechanic.ordinary == EffectPlan.Mechanic.swift) = false := by
+    native_decide
+  have bypass : bypassesAccuracy .ordinary attacker = true := by
+    simp [bypassesAccuracy, xAccuracy]
+  simp [resolveAccuracy, ordinary, visible, bypass]
 
 /-- Swift returns before invulnerability, Substitute/Mist policy, X Accuracy, and
 the final random draw. -/
@@ -324,7 +361,7 @@ private def installEffectsContext (state : State) (who : Side)
   let state := setSide state who.other { side state who.other with active := context.defender }
   { state with battle := { state.battle with rng := context.rng }, payDayMoney := context.payDayMoney }
 
-private structure DamageApplied where
+structure DamageApplied where
   state : State
   actualDamage : UInt16
   targetFainted : Bool
@@ -336,13 +373,17 @@ any nonzero damage high byte breaks immediately. -/
 def substituteBreaks (substituteHp : UInt8) (damage : UInt16) : Bool :=
   damage.toNat > 255 || substituteHp.toNat < damage.toNat
 
+@[simp] theorem substitute_high_byte_breaks (hp : UInt8) :
+    substituteBreaks hp 0x0100 = true := by
+  simp [substituteBreaks]
+
 @[simp] theorem substitute_exact_damage_survives (hp : UInt8) :
     substituteBreaks hp (UInt16.ofNat hp.toNat) = false := by
   have bounded := UInt8.toNat_lt hp
   simp [substituteBreaks]
   omega
 
-private def applyDamage (state : State) (who : Side) (damage : UInt16) : DamageApplied :=
+def applyDamage (state : State) (who : Side) (damage : UInt16) : DamageApplied :=
   let targetWho := who.other
   let target := side state targetWho
   if target.active.volatile.hasSubstitute then

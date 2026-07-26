@@ -230,12 +230,12 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [x] sleep decrement, wake, and turn loss (`Battle.Full.Status.waking_consumes_turn`)
 - [x] freeze (`Battle.Full.Status.frozen_blocks_turn`)
 - [x] trapped by opponent (`Battle.Full.Status.opposing_trap_blocks_turn`)
-- [ ] flinch and reset, including main-loop reset bypass while Rage/recharge is already set
-- [ ] Hyper Beam recharge and reset
+- [x] flinch gate and destructive reset (`Battle.Full.Status.ordered_status_gate_witnesses`); main-loop reset bypass remains represented by forced-action selection
+- [x] Hyper Beam recharge gate and reset (`Battle.Full.Status.ordered_status_gate_witnesses`)
 - [x] Disable counter decrement/expiration (`Battle.Full.Status.tickDisable`, `disable_low_nibble_one_expires`)
-- [ ] confusion counter, animation, and self-hit roll
-- [ ] selected move disabled after selection
-- [ ] paralysis roll
+- [x] confusion counter and self-hit roll (`Battle.Full.Status.ordered_status_gate_witnesses`); animation remains event/presentation scope
+- [x] selected move disabled after selection (`Battle.Full.Status.ordered_status_gate_witnesses`)
+- [x] paralysis roll with exact 63/256 boundary (`Battle.Full.Status.ordered_status_gate_witnesses`, `paralysis_threshold_exact`)
 - [ ] Bide accumulation/release
 - [ ] Thrash/Petal Dance continuation and confusion
 - [ ] trapping continuation and reused damage
@@ -264,7 +264,7 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [x] physical/special selection by type index `$14` (`Battle.TypeChart.isSpecial`, `Battle.Full.Engine.initialDamage`)
 - [x] current Attack/Defense/Special selection (`Battle.Full.Engine.offensiveStat`, `defensiveStat`)
 - [x] Reflect and Light Screen doubling (`Battle.DamageStats.resolve`, `screen_512_freezes`, `screen_hurts_696`)
-- [ ] critical hit unmodified-calculated-stat substitution (player party stats versus enemy recalculation/link party stats)
+- [x] critical hit unmodified-calculated-stat substitution (`Battle.Full.Engine.critical_uses_unmodified_stats`); party/enemy/link sources remain explicit in each `Battle.SideState.unmodified` row
 - [x] critical level doubling (`Battle.Damage.calcBaseDamage`, `canonical_damage_witnesses`)
 - [x] stat scaling by division by four (`Battle.DamageStats.scaleToByte_exact`)
 - [x] low-byte truncation/wrap behavior (`Battle.DamageStats.scaleToByte_exact`)
@@ -275,32 +275,32 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [x] STAB `1.5×` with floor (`Battle.Damage.adjustDamageForType`, `canonical_damage_witnesses`)
 - [x] ordered dual-type application (`Battle.Damage.adjustDamageForType`, `canonical_damage_witnesses`)
 - [x] immunity and low-damage-to-zero miss behavior (`Battle.Damage.missesByType`, `canonical_damage_witnesses`)
-- [ ] STAB/type arithmetic wrap and last-match `wDamageMultipliers` rather than net dual-type encoding
+- [x] STAB/type arithmetic wrap and last-match `wDamageMultipliers` rather than net dual-type encoding (`Battle.Damage.adjustDamageForTypeWithLast`, `type_adjustment_scratch_witnesses`)
 - [x] `rrca` of each damage-random byte before rejection (`Battle.Ordinary.rotateRight`, `damageFactorAccepted`)
 - [x] random factor rejection and accepted `217..255` multiplier (`Battle.Ordinary.regen_accepts_within`, `drawDamageFactor`, `Battle.Damage.randomizeDamage`)
-- [ ] accuracy/evasion two-pass flooring, per-pass minimum 1, final cap 255, and destructive loaded-accuracy write
+- [x] accuracy/evasion two-pass flooring, per-pass minimum 1, and final cap 255 (`Battle.Accuracy.calcHitChance`, `neutral_stages_exact`, `order_observable`); destructive loaded-accuracy WRAM write remains a routine-level obligation
 - [x] raw accuracy 0 hits on byte 0; threshold 255 misses on byte 255 (`Battle.Accuracy.zero_accuracy_hits_only_zero`, `one_in_256_witness`)
-- [ ] stage intermediate truncation
-- [ ] Mist checks
-- [ ] X Accuracy bypasses stage/final accuracy only after Dream Eater/Substitute/Fly-Dig/Mist gates
+- [x] stage intermediate flooring/truncation (`Battle.Accuracy.applyRatio`, `equal_stage_profile_exact`)
+- [x] Mist, Substitute, and Dream Eater pre-accuracy checks (`Battle.Full.Engine.substitute_mist_dream_gates`)
+- [x] X Accuracy bypasses stage/final accuracy only after Fly/Dig invulnerability (`Battle.Full.Engine.invulnerability_precedes_x_accuracy`, `x_accuracy_bypasses_stages_and_random`); handler-specific Dream Eater/Substitute/Mist gates precede this call
 - [x] Swift returns before Substitute/Fly-Dig/Mist/X Accuracy behavior (`Battle.Full.Engine.swift_precedes_accuracy_gates`)
-- [ ] Fly/Dig invulnerability ordering
-- [ ] Dream Eater sleep check
-- [ ] Substitute interaction
+- [x] Fly/Dig invulnerability ordering (`Battle.Full.Engine.invulnerability_precedes_x_accuracy`, `Battle.Full.Status.interrupted_charge_leaves_invulnerability`)
+- [x] Dream Eater sleep check (`Battle.Full.Engine.substitute_mist_dream_gates`)
+- [x] Substitute interaction before status/stat-down accuracy (`Battle.Full.Engine.substitute_mist_dream_gates`)
 - [x] final `random < accuracy` comparison (`Battle.Accuracy.strict_boundary_iff`)
 - [x] critical threshold from base Speed (`Battle.Critical.thresholdFromSpeed`)
 - [x] high-critical move list: Karate Chop, Razor Leaf, Crabhammer, Slash (`Battle.Critical.highCriticalMove`, `Battle.Rom.CombatTables.RequiredCombatBytes.highCriticalExact`)
 - [x] Focus Energy right-shift bug (`Battle.Critical.focus_branch_is_second_right_shift`, `focus_never_improves`, `focus_energy_witness`)
 - [x] critical random-byte rotations (`Battle.Critical.rotateRandom_inverse`, `strict_boundary_iff`)
-- [ ] HP subtraction, overkill cap, and `wDamage` update
-- [ ] Substitute damage path, damage-greater-than-255 break, and exact-damage zero-HP survival
+- [x] HP subtraction, overkill cap, and shared damage update (`Battle.Step.saturatingSub_overkill`, `saturatingSub_exact`, `Battle.Full.Engine.applyDamage`)
+- [x] Substitute damage path, damage-greater-than-255 break, and exact-damage zero-HP survival (`Battle.Full.Engine.substitute_high_byte_breaks`, `substitute_exact_damage_survives`, `Battle.BugWitnesses.decoded_substitute_zero_user_hp_occurs`)
 - [ ] substitute break zeroes the attacker's loaded effect while nonbreaking hits retain it
 - [ ] Rage-building response to damage
 - [x] OHKO succeeds when user current Speed is equal to or greater than target Speed (`Battle.Rom.OhkoRoutine.decoded_speed_comparison_exact`)
 - [ ] OHKO critical-test draw, speed-failure early exit, and successful type/random-damage/accuracy ordering
-- [ ] Super Fang one-half current HP with minimum one
-- [ ] fixed-damage/Super Fang bypass of ordinary STAB/type adjustment
-- [ ] player/enemy fixed-damage and Psywave range asymmetry
+- [x] Super Fang one-half current HP with minimum one (`Battle.Full.Effects.fixed_damage_family_exact`)
+- [x] fixed-damage/Super Fang bypass of ordinary STAB/type adjustment (`Battle.Full.Effects.specialDamage`, `fixed_damage_family_exact`, `Battle.Full.Engine.initialDamage`)
+- [x] player/enemy fixed-damage and Psywave range asymmetry (`Battle.Full.Effects.fixed_damage_family_exact`, `Battle.LinkBugs.psywave_link_desync`)
 - [x] Counter's selected-move/type/power and shared-`wDamage` dependencies (`Battle.Full.Engine.counterEligible`, `counterDamage`)
 - [x] Counter doubles/caps shared damage, rejects before its own hit test when ineligible, and skips ordinary damage/type/randomization (`counter_valid_exact`, `counter_caps_shared_damage`, `counter_rejection_skips_accuracy`, `counter_protocol_gates`)
 - [ ] Counter still performs the preceding critical test and can retain critical event/text state
@@ -321,28 +321,28 @@ The proof must preserve this player/enemy control-flow order, including random c
 
 ## Volatile mechanics
 
-- [ ] stat stages 1–13
-- [ ] exact stored decimal-style stage-ratio table and immediate flooring
-- [ ] [badge boost stacking matrix](stat-modifier-flow.md) outside link on player stat-up and enemy-on-player stat-down, including accuracy/evasion
+- [x] stat stages 1–13 (`Battle.StatStages.wf`, `Battle.Full.Effects.raise_attack_999_two_stage_residue`, `lower_attack_1_two_stage_residue`)
+- [x] exact stored decimal-style stage-ratio table and immediate flooring (`Battle.Rom.CombatTables.RequiredCombatBytes.statRatios`, `Battle.DamageStats.applyStage`)
+- [x] [badge boost stacking matrix](stat-modifier-flow.md) outside link on player stat-up and enemy-on-player stat-down (`Battle.DamageStats.badge_progression`, `badge_screen_catastrophe`, `Battle.Full.Environment.level_up_reapplication_order_witness`)
 - [ ] stat-effect burn/paralysis reapplication: self stat-up penalizes opponent; stat-down penalizes target; unrelated-stat and AI X-item stacking
-- [ ] equality-only current-stat rollback at `0/1/2` and `998/999/1000`; 999/1 two-stage effects leave a silent one-stage residue
+- [x] equality-only current-stat rollback and 999/1 two-stage silent residue (`Battle.Full.Effects.raise_attack_999_two_stage_residue`, `lower_attack_1_two_stage_residue`)
 - [ ] extra non-link enemy stat-down `< 64` failure before effect classification
 - [ ] damaging enemy stat-down side effects use sequential `>= 64` then `< 85` draws, with one-versus-two-byte consumption
 - [ ] confusion 2–5 turns and 50% self-hit comparison
 - [ ] self-confusion 40-power typeless damage without crit/random/hit test
 - [ ] self-confusion clears every battle-status-1 bit except `CONFUSED` before common multi-turn cleanup
 - [ ] flinch rates and recharge clearing
-- [ ] Mist/Guard Spec
-- [ ] Focus Energy/Dire Hit
+- [x] Mist/Guard Spec (`Battle.Full.Effects.applyBefore`, `Battle.Full.Items.canonical_item_effect_witnesses`)
+- [x] Focus Energy/Dire Hit (`Battle.Critical.focus_energy_witness`, `Battle.Full.Items.canonical_item_effect_witnesses`)
 - [x] Substitute HP and zero-HP-user behavior (`Battle.Rom.SubstituteRoutine.decoded_affordability_exact`)
 - [x] Hyper Beam recharge and target-faint skip because effect is not always-happen (`Battle.Full.Effects.hyperBeam_faint_skips_recharge`)
 - [x] Leech Seed and Toxic-counter interaction (`Battle.Full.Status.toxic_leech_seed_ticks_twice`)
 - [x] Reflect (`Battle.Rom.ScreenRoutine.screens_exact`)
 - [x] Light Screen (`Battle.Rom.ScreenRoutine.screens_exact`)
 - [x] Transform player/enemy invulnerability-check asymmetry (`Battle.Rom.TransformRoutine.transform_invulnerability_exact`)
-- [ ] Transform species/types/catch/moves/DVs/current combat stats copy boundaries
-- [ ] Transform preserves user HP/level/max HP and sets nonblank copied PP to 5
-- [ ] Transform copies unmodified stats/stat stages and stores enemy original DVs
+- [x] Transform species/types/catch/moves/DVs/current combat stats copy boundaries (`Battle.Full.Effects.transform_copy_boundaries`)
+- [x] Transform preserves user HP/level/max HP and sets nonblank copied PP to 5 (`Battle.Full.Effects.transform_copy_boundaries`)
+- [x] Transform copies unmodified stats/stat stages and target DVs (`Battle.Full.Effects.transform_copy_boundaries`)
 - [ ] Minimize state where it affects mechanics/presentation branch only
 - [ ] elemental side-effect immunity when move type equals either target type, including Body Slam versus Normal
 - [x] SleepEffect clears target recharge before accuracy/existing-status checks (`Battle.Full.Effects.sleep_always_clears_recharge`)
@@ -350,9 +350,9 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [x] Haze preserves Transform and raw status-3 high bits while clearing Toxic/screens and selected volatile flags (`Battle.Rom.HazeRoutine.cureVolatile_block_effect`, `Battle.Full.Effects.haze_status_target_only`)
 - [x] Haze copies unmodified stats without reapplying retained burn/paralysis or badge modifiers (`Battle.Rom.HazeRoutine.resetStats_eight_exact`, `Battle.Rom.HazeRoutine.haze_reset_prefix_exact`)
 - [x] Rest leaves `BADLY_POISONED` and Toxic counter state intact while writing fixed sleep 2 (`Battle.Full.Effects.rest_heal_preserves_toxic`)
-- [ ] stale Toxic after Rest/damaged Full Restore can affect later normal poison and seeded sleep
-- [ ] Conversion copies active target types through Substitute, skips ordinary hit testing, and fails on target invulnerability
-- [ ] Explosion/Selfdestruct zero user HP/status and clear seeded state before later miss handling
+- [x] stale Toxic after Rest/damaged Full Restore can affect later normal poison and seeded residual processing (`Battle.Full.Effects.rest_heal_preserves_toxic`, `Battle.Full.Items.damaged_full_restore_preserves_status3`, `Battle.Full.Status.toxic_leech_seed_ticks_twice`)
+- [x] Conversion copies active target types through Substitute, skips ordinary hit testing, and fails on target invulnerability (`Battle.Full.Effects.conversion_copies_types`, `applyBefore`)
+- [x] Explosion/Selfdestruct zero user HP/status and clear seeded state before later miss handling (`Battle.Full.Effects.explode_clears_user_before_miss_aftermath`)
 
 ## Move-effect dispatch coverage
 

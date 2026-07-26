@@ -26,6 +26,16 @@ private def mask (index : Nat) : UInt8 := (1 <<< index).toUInt8
 private def setBit (byte : UInt8) (index : Nat) : UInt8 := byte ||| mask index
 private def clearBit (byte : UInt8) (index : Nat) : UInt8 := byte &&& ~~~(mask index)
 
+private theorem seeded_clear_bit (byte : UInt8) :
+    bitSet (clearBit byte Wram.BattleStatus2.seeded) Wram.BattleStatus2.seeded = false := by
+  have checked : (List.range 256).all (fun n =>
+      bitSet (clearBit n.toUInt8 Wram.BattleStatus2.seeded)
+        Wram.BattleStatus2.seeded = false) = true := by
+    native_decide
+  have atByte := (List.all_eq_true.mp checked) byte.toNat
+    (List.mem_range.mpr (UInt8.toNat_lt byte))
+  simpa using atByte
+
 private theorem recharge_clear_bit (byte : UInt8) :
     bitSet (clearBit byte Wram.BattleStatus2.needsToRecharge)
       Wram.BattleStatus2.needsToRecharge = false := by
@@ -683,6 +693,61 @@ def specialDamage (mechanic : Mechanic) (move : MoveId)
   | _ => .continue
 
 /-! ## Coverage/integration theorems -/
+
+theorem transform_copy_boundaries (context : Context) :
+    let prepared := { context with attackerSide := Side.enemy }
+    let outcome := applyBefore Data.Effect.transform true prepared
+    outcome.context.attacker.active.species = context.defender.active.species ∧
+    outcome.context.attacker.active.type1 = context.defender.active.type1 ∧
+    outcome.context.attacker.active.type2 = context.defender.active.type2 ∧
+    outcome.context.attacker.active.catchRate = context.defender.active.catchRate ∧
+    outcome.context.attacker.active.moves = context.defender.active.moves ∧
+    outcome.context.attacker.active.dvs = context.defender.active.dvs ∧
+    outcome.context.attacker.active.attack = context.defender.active.attack ∧
+    outcome.context.attacker.active.defense = context.defender.active.defense ∧
+    outcome.context.attacker.active.speed = context.defender.active.speed ∧
+    outcome.context.attacker.active.special = context.defender.active.special ∧
+    outcome.context.attacker.active.hp = context.attacker.active.hp ∧
+    outcome.context.attacker.active.level = context.attacker.active.level ∧
+    outcome.context.attacker.active.maxHp = context.attacker.active.maxHp ∧
+    outcome.context.attacker.active.pp = context.defender.active.moves.map
+      (fun move => if move == 0 then 0 else 5) ∧
+    outcome.context.attacker.unmodified = context.defender.unmodified ∧
+    outcome.context.attacker.stages = context.defender.stages ∧
+    outcome.context.attacker.volatile.status3 =
+      setBit context.attacker.volatile.status3 Wram.BattleStatus3.transformed := by
+  have dispatch : (plan Data.Effect.transform).mechanic = .transform := by native_decide
+  have side : (Side.enemy == Side.player) = false := by native_decide
+  simp [applyBefore, dispatch, side, withAttacker]
+
+@[simp] theorem conversion_copies_types (context : Context)
+    (visible : bitSet context.defender.volatile.status1
+      Wram.BattleStatus1.invulnerable = false) :
+    let outcome := applyBefore Data.Effect.conversion true context
+    outcome.context.attacker.active.type1 = context.defender.active.type1 ∧
+      outcome.context.attacker.active.type2 = context.defender.active.type2 := by
+  have dispatch : (plan Data.Effect.conversion).mechanic = .conversion := by native_decide
+  simp [applyBefore, dispatch, visible, withAttacker]
+
+@[simp] theorem explode_clears_user_before_miss_aftermath
+    (context : Context) (hit targetFainted : Bool) (damage : UInt16) :
+    let outcome := applyAfter Data.Effect.explode 0 hit targetFainted damage context
+    outcome.context.attacker.active.hp = 0 ∧
+      outcome.context.attacker.active.status = 0 ∧
+      outcome.context.attacker.volatile.seeded = false := by
+  have dispatch : (plan Data.Effect.explode).mechanic = .explode := by native_decide
+  simp [applyAfter, dispatch, withAttacker, Volatile.seeded, seeded_clear_bit]
+
+@[simp] theorem fixed_damage_family_exact (attacker defender : MonState) :
+    specialDamage .superFang 162 attacker defender =
+      .fixedDamage (UInt16.ofNat (max 1 (defender.hp.toNat / 2))) ∧
+    specialDamage .specialDamage 69 attacker defender =
+      .fixedDamage (UInt16.ofNat attacker.level.toNat) ∧
+    specialDamage .specialDamage 101 attacker defender =
+      .fixedDamage (UInt16.ofNat attacker.level.toNat) ∧
+    specialDamage .specialDamage 49 attacker defender = .fixedDamage 20 ∧
+    specialDamage .specialDamage 82 attacker defender = .fixedDamage 40 := by
+  simp [specialDamage]
 
 /-- Every supported effect produces an Outcome rather than an unsupported branch. -/
 theorem applyBefore_total (effect : UInt8) (_bounded : effect.toNat ≤ 0x56)

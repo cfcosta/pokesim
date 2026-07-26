@@ -212,6 +212,52 @@ def applyResiduals (actor opponent : Battle.SideState) : ResidualResult :=
       poisonOrBurnDamage := first.actualDamage,
       leechSeedDamage := 0, leechSeedHealing := 0 }
 
+def CheckResult.reason? : CheckResult → Option CannotActReason
+  | .cannotAct reason _ _ => some reason
+  | .confusionHit .. => some .confusionSelfHit
+  | .canAct .. => none
+
+def CheckResult.side : CheckResult → Battle.SideState
+  | .canAct side _ | .cannotAct _ side _ | .confusionHit side _ _ => side
+
+private def statusTestMon (status : UInt8 := 0) : MonState :=
+  { species := 1, hp := 100, boxLevel := 50, status,
+    type1 := 0, type2 := 0, catchRate := 45, moves := #[1, 2, 3, 4], dvs := 0,
+    level := 50, maxHp := 100, attack := 100, defense := 100, speed := 100,
+    special := 100, pp := #[1, 1, 1, 1] }
+
+private def statusTestSide (status : UInt8 := 0) : Battle.SideState :=
+  Battle.SideState.fresh (statusTestMon status)
+
+private def highRng : Rng.LinkRng :=
+  { list := #[255, 0, 0, 0, 0, 0, 0, 0, 0, 0], index := 0 }
+
+/-- Exact witnesses expose the post-sleep status order, destructive flag resets,
+confusion comparison, selected Disable check, and the 63/256 paralysis gate. -/
+theorem ordered_status_gate_witnesses :
+    let flinched := { (statusTestSide).volatile with
+      status1 := (1 <<< Wram.BattleStatus1.flinched).toUInt8 }
+    let flinchSide := { statusTestSide with volatile := flinched }
+    let recharge := { (statusTestSide).volatile with
+      status2 := (1 <<< Wram.BattleStatus2.needsToRecharge).toUInt8 }
+    let rechargeSide := { statusTestSide with volatile := recharge }
+    let confused := { (statusTestSide).volatile with
+      status1 := (1 <<< Wram.BattleStatus1.confused).toUInt8 }
+    let confused := { confused with confusedCounter := 2 }
+    let confusedSide := { statusTestSide with volatile := confused }
+    let disabled := { (statusTestSide).volatile with disabledMove := 0x12 }
+    let disabled := { disabled with disabledMoveNumber := 2 }
+    let disabledSide := { statusTestSide with volatile := disabled }
+    (checkCanAct flinchSide false 1 Rng.seed0).reason? = some .flinched ∧
+    (checkCanAct flinchSide false 1 Rng.seed0).side.volatile.flinched = false ∧
+    (checkCanAct rechargeSide false 1 Rng.seed0).reason? = some .recharge ∧
+    (checkCanAct rechargeSide false 1 Rng.seed0).side.volatile.recharging = false ∧
+    (checkCanAct confusedSide false 1 highRng).reason? = some .confusionSelfHit ∧
+    (checkCanAct confusedSide false 1 highRng).side.volatile.confusedCounter = 1 ∧
+    (checkCanAct disabledSide false 2 Rng.seed0).reason? = some .selectedMoveDisabled ∧
+    (checkCanAct (statusTestSide 0x40) false 1 Rng.seed0).reason? = some .fullyParalyzed := by
+  native_decide
+
 /-! ## Status compatibility theorems -/
 
 theorem frozen_blocks_turn (side : Battle.SideState) (trapped : Bool)

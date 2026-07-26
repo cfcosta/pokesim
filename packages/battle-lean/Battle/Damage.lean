@@ -110,21 +110,32 @@ def calcBaseDamage (level : UInt8) (crit : Bool) (power : UInt8)
 
     When the result reaches 0 (a `NO_EFFECT` row, or a `¼×` rounding a 2–3 damage
     hit down to nothing) the ROM makes the move miss; see `missesByType`. -/
-def adjustDamageForType (moveType atkType1 atkType2 defType1 defType2 : UInt8)
-    (damage : UInt16) : UInt16 :=
+structure TypeAdjustment where
+  damage : UInt16
+  /-- Last matching table factor, mirroring `wDamageMultipliers`; this is not a
+  net encoding of both defender types. -/
+  lastFactor : UInt8
+  deriving Repr, DecidableEq, BEq
+
+def adjustDamageForTypeWithLast (moveType atkType1 atkType2 defType1 defType2 : UInt8)
+    (damage : UInt16) : TypeAdjustment :=
   let stabbed : UInt16 :=
     if moveType == atkType1 || moveType == atkType2 then
       damage + (damage >>> 1)
     else
       damage
   TypeChart.typeEffects.foldl
-    (fun d entry =>
+    (fun result entry =>
       let (atk, defTy, factor) := entry
       if moveType == atk && (defTy == defType1 || defTy == defType2) then
-        UInt16.ofNat (d.toNat * factor.toNat / 10)
-      else
-        d)
-    stabbed
+        { damage := UInt16.ofNat (result.damage.toNat * factor.toNat / 10),
+          lastFactor := factor }
+      else result)
+    { damage := stabbed, lastFactor := 10 }
+
+def adjustDamageForType (moveType atkType1 atkType2 defType1 defType2 : UInt8)
+    (damage : UInt16) : UInt16 :=
+  (adjustDamageForTypeWithLast moveType atkType1 atkType2 defType1 defType2 damage).damage
 
 /-- True when the type interaction zeroes a would-be-nonzero hit — i.e. the move
     misses by immunity or by a `¼×` roll-to-zero. -/
@@ -190,6 +201,15 @@ def computeDamage (a : Attack) (rand : UInt8) : UInt16 :=
   simp [randomizeDamage]
 
 @[simp] theorem randomize_one (rand : UInt8) : randomizeDamage rand 1 = 1 := rfl
+
+theorem type_adjustment_scratch_witnesses :
+    adjustDamageForTypeWithLast TypeChart.normal TypeChart.normal TypeChart.normal
+      TypeChart.water TypeChart.water 0xffff =
+        { damage := 0x7ffe, lastFactor := 10 } ∧
+    adjustDamageForTypeWithLast TypeChart.rock TypeChart.rock TypeChart.rock
+      TypeChart.fire TypeChart.flying 20 =
+        { damage := 120, lastFactor := TypeChart.superEffective } := by
+  native_decide
 
 /-- Named exact examples exercise each arithmetic stage, STAB, effectiveness,
 immunity, dual-type stacking, and the accepted random-roll endpoints. -/
