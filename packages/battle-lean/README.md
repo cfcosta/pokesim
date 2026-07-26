@@ -58,8 +58,22 @@ nix develop -c lake -d packages/battle-lean exe battleSelfPlay
 ```
 
 This profile is suitable for restricted RL experiments. It is not yet a claim
-that status moves, additional effects, switching, items, or full six-mon Gen-1
-battles are implemented.
+of whole-cartridge equivalence.
+
+## Generate Pokémon Showdown teams
+
+Generate two progression-witnessed teams as directly importable Showdown export
+sections. The optional arguments are the deterministic seed and party size
+(`1..6`):
+
+```sh
+nix develop -c lake -d packages/battle-lean exe battleGenerateTeams 1037 6 > teams.txt
+```
+
+Diagnostics go to stderr, leaving stdout as team-list text. Species, levels,
+Generation-I DVs (encoded as Showdown IVs), and moves are preserved. Showdown
+has no team-text field for packed current PP or PP-Up counts, so those are not
+exported.
 
 ## Build
 

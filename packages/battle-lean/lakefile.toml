@@ -30,3 +30,8 @@ root = "Battle.RL.SelfPlayMain"
 [[lean_exe]]
 name = "battleFullSelfPlay"
 root = "Battle.Full.SelfPlayMain"
+
+# Emit two progression-witnessed teams in Pokémon Showdown import format.
+[[lean_exe]]
+name = "battleGenerateTeams"
+root = "Battle.RL.TeamGeneratorMain"
