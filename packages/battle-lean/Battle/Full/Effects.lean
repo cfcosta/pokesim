@@ -26,6 +26,72 @@ private def mask (index : Nat) : UInt8 := (1 <<< index).toUInt8
 private def setBit (byte : UInt8) (index : Nat) : UInt8 := byte ||| mask index
 private def clearBit (byte : UInt8) (index : Nat) : UInt8 := byte &&& ~~~(mask index)
 
+private theorem storing_set_bit (byte : UInt8) :
+    bitSet (setBit byte Wram.BattleStatus1.storingEnergy)
+      Wram.BattleStatus1.storingEnergy = true := by
+  have checked : (List.range 256).all (fun n =>
+      bitSet (setBit n.toUInt8 Wram.BattleStatus1.storingEnergy)
+        Wram.BattleStatus1.storingEnergy = true) = true := by native_decide
+  have item := (List.all_eq_true.mp checked) byte.toNat
+    (List.mem_range.mpr (UInt8.toNat_lt byte))
+  simpa using item
+
+private theorem thrashing_set_bit (byte : UInt8) :
+    bitSet (setBit byte Wram.BattleStatus1.thrashingAbout)
+      Wram.BattleStatus1.thrashingAbout = true := by
+  have checked : (List.range 256).all (fun n =>
+      bitSet (setBit n.toUInt8 Wram.BattleStatus1.thrashingAbout)
+        Wram.BattleStatus1.thrashingAbout = true) = true := by native_decide
+  have item := (List.all_eq_true.mp checked) byte.toNat
+    (List.mem_range.mpr (UInt8.toNat_lt byte))
+  simpa using item
+
+private theorem charging_set_bit (byte : UInt8) :
+    bitSet (setBit byte Wram.BattleStatus1.chargingUp)
+      Wram.BattleStatus1.chargingUp = true := by
+  have checked : (List.range 256).all (fun n =>
+      bitSet (setBit n.toUInt8 Wram.BattleStatus1.chargingUp)
+        Wram.BattleStatus1.chargingUp = true) = true := by native_decide
+  have item := (List.all_eq_true.mp checked) byte.toNat
+    (List.mem_range.mpr (UInt8.toNat_lt byte))
+  simpa using item
+
+private theorem invulnerable_set_bit (byte : UInt8) :
+    bitSet (setBit byte Wram.BattleStatus1.invulnerable)
+      Wram.BattleStatus1.invulnerable = true := by
+  have checked : (List.range 256).all (fun n =>
+      bitSet (setBit n.toUInt8 Wram.BattleStatus1.invulnerable)
+        Wram.BattleStatus1.invulnerable = true) = true := by native_decide
+  have item := (List.all_eq_true.mp checked) byte.toNat
+    (List.mem_range.mpr (UInt8.toNat_lt byte))
+  simpa using item
+
+private theorem invulnerable_preserves_charging (byte : UInt8) :
+    bitSet (setBit byte Wram.BattleStatus1.invulnerable) Wram.BattleStatus1.chargingUp =
+      bitSet byte Wram.BattleStatus1.chargingUp := by
+  have checked : (List.range 256).all (fun n =>
+      bitSet (setBit n.toUInt8 Wram.BattleStatus1.invulnerable)
+        Wram.BattleStatus1.chargingUp ==
+      bitSet n.toUInt8 Wram.BattleStatus1.chargingUp) = true := by native_decide
+  have item := (List.all_eq_true.mp checked) byte.toNat
+    (List.mem_range.mpr (UInt8.toNat_lt byte))
+  have round : byte.toNat.toUInt8 = byte := by apply UInt8.toNat.inj; simp
+  apply LawfulBEq.eq_of_beq
+  simpa [round] using item
+
+private theorem charging_preserves_invulnerable (byte : UInt8) :
+    bitSet (setBit byte Wram.BattleStatus1.chargingUp) Wram.BattleStatus1.invulnerable =
+      bitSet byte Wram.BattleStatus1.invulnerable := by
+  have checked : (List.range 256).all (fun n =>
+      bitSet (setBit n.toUInt8 Wram.BattleStatus1.chargingUp)
+        Wram.BattleStatus1.invulnerable ==
+      bitSet n.toUInt8 Wram.BattleStatus1.invulnerable) = true := by native_decide
+  have item := (List.all_eq_true.mp checked) byte.toNat
+    (List.mem_range.mpr (UInt8.toNat_lt byte))
+  have round : byte.toNat.toUInt8 = byte := by apply UInt8.toNat.inj; simp
+  apply LawfulBEq.eq_of_beq
+  simpa [round] using item
+
 private theorem seeded_clear_bit (byte : UInt8) :
     bitSet (clearBit byte Wram.BattleStatus2.seeded) Wram.BattleStatus2.seeded = false := by
   have checked : (List.range 256).all (fun n =>
@@ -266,12 +332,18 @@ private def poison (toxic : Bool) (context : Context) : Outcome :=
       else defender
     ⟨withDefender context defender, .continue, [.statusApplied (mask Wram.Status.psn)]⟩
 
-private def confuse (context : Context) : Outcome :=
-  if context.defender.volatile.hasSubstitute || context.defender.volatile.confused then
+def confusionDuration (raw : UInt8) : UInt8 := (raw &&& 3) + 2
+
+@[simp] theorem confusion_duration_boundaries :
+    confusionDuration 0 = 2 ∧ confusionDuration 3 = 5 := by native_decide
+
+private def confuse (context : Context) (respectSubstitute : Bool := true) : Outcome :=
+  if (respectSubstitute && context.defender.volatile.hasSubstitute) ||
+      context.defender.volatile.confused then
     ⟨context, .failed, []⟩
   else
     let (raw, rng) := context.rng.next
-    let turns := (raw &&& 3) + 2
+    let turns := confusionDuration raw
     let volatile := { context.defender.volatile with
       status1 := setBit context.defender.volatile.status1 Wram.BattleStatus1.confused
       confusedCounter := turns }
@@ -317,22 +389,46 @@ private def screen (context : Context) (light : Bool) : Outcome :=
       status3 := setBit context.attacker.volatile.status3 index }
     ⟨setAttackerVolatile context volatile, .continue, [.screen]⟩
 
-private def startLock (context : Context) (bit : Nat) (turns : UInt8) : Context :=
+def clearTargetRecharge (context : Context) : Context :=
+  let volatile := { context.defender.volatile with
+    status2 := clearBit context.defender.volatile.status2
+      Wram.BattleStatus2.needsToRecharge }
+  setDefenderVolatile context volatile
+
+@[simp] theorem clear_target_recharge_exact (context : Context) :
+    (clearTargetRecharge context).defender.volatile.recharging = false := by
+  simp [clearTargetRecharge, setDefenderVolatile, withDefender,
+    Volatile.recharging, recharge_clear_bit]
+
+def startLock (context : Context) (bit : Nat) (turns : UInt8) : Context :=
   let volatile := { context.attacker.volatile with
     status1 := setBit context.attacker.volatile.status1 bit
     numAttacksLeft := turns }
   setAttackerVolatile context volatile
 
-private def multiHitCount (context : Context) : UInt8 × Context × List Event :=
+def multiHitCountValue (first second : UInt8) : UInt8 :=
+  let masked := first &&& 3
+  if masked < 2 then masked + 2 else (second &&& 3).add 2
+
+def multiHitDrawCount (first : UInt8) : Nat :=
+  if first &&& 3 < 2 then 1 else 2
+
+def multiHitCount (context : Context) : UInt8 × Context × List Event :=
   let (first, rng) := context.rng.next
   let masked := first &&& 3
-  if masked < 2 then (masked + 2, { context with rng }, [.rawRng "multi-hit" first])
+  if masked < 2 then
+    (multiHitCountValue first 0, { context with rng }, [.rawRng "multi-hit" first])
   else
     let (second, rng) := rng.next
-    (second &&& 3 |>.add 2, { context with rng },
+    (multiHitCountValue first second, { context with rng },
       [.rawRng "multi-hit" first, .rawRng "multi-hit-reroll" second])
 
-private def disable (context : Context) : Outcome :=
+def disableCandidateHasPp (packed : UInt8) : Bool := packed != 0
+
+@[simp] theorem disable_pp_up_only_candidate : disableCandidateHasPp 0x40 = true := by
+  native_decide
+
+def disable (context : Context) : Outcome :=
   if context.defender.volatile.disabledMove != 0 then ⟨context, .failed, []⟩
   else
     let nonblank := fun raw =>
@@ -347,13 +443,15 @@ private def disable (context : Context) : Outcome :=
         if limitedPp && !anyPp then
           ⟨{ context with rng := firstRng }, .failed, firstEvents⟩
         else
-          let selectedHasPp :=
-            (context.defender.active.pp.getD firstSlot 0 &&& Wram.ppMask) != 0
+          -- The per-candidate retry tests the complete packed PP byte, unlike
+          -- the preceding all-moves OR which masks after combining.
+          let selectedHasPp := disableCandidateHasPp
+            (context.defender.active.pp.getD firstSlot 0)
           let picked := if limitedPp && !selectedHasPp then
             drawAccepted 2305 firstRng (fun raw =>
               let slot := (raw &&& 3).toNat
               context.defender.active.moves.getD slot 0 != 0 &&
-                (context.defender.active.pp.getD slot 0 &&& Wram.ppMask) != 0)
+                disableCandidateHasPp (context.defender.active.pp.getD slot 0))
               "disable-slot"
             else some (firstRaw, firstRng, [])
           match picked with
@@ -393,6 +491,23 @@ private def hazeOutcome (context : Context) : Outcome :=
   if targetWasIncapacitated then
     ⟨context, .cancelTargetMove, [.signal .cancelTargetMove]⟩
   else { context := context }
+
+def metronomeAccepts (raw : UInt8) : Bool :=
+  raw != 0 && raw < 165 && raw != 118
+
+def mimicReplace (mon : MonState) (slot : Fin 4) (move : MoveId) : MonState :=
+  { mon with moves := mon.moves.modify slot.val (fun _ => move) }
+
+theorem metronome_eligibility_boundaries :
+    metronomeAccepts 0 = false ∧ metronomeAccepts 1 = true ∧
+    metronomeAccepts 117 = true ∧ metronomeAccepts 118 = false ∧
+    metronomeAccepts 164 = true ∧ metronomeAccepts 165 = false ∧
+    metronomeAccepts 255 = false := by
+  native_decide
+
+@[simp] theorem mimic_replace_preserves_pp (mon : MonState) (slot : Fin 4)
+    (move : MoveId) : (mimicReplace mon slot move).pp = mon.pp := by
+  rfl
 
 /-- Pre/standalone effect phase. `hit` is the already-resolved hit test for
 routines that call `MoveHitTest`; direct setup effects ignore it where the ROM
@@ -472,6 +587,8 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
       ⟨setAttackerVolatile context volatile, .charging invulnerable,
         [.signal (.charging invulnerable)]⟩
   | .trapping =>
+      -- The trapping handler clears target recharge before the first hit test.
+      let context := clearTargetRecharge context
       let (count, context, events) := multiHitCount context
       let context := startLock context Wram.BattleStatus1.usingTrappingMove count
       ⟨context, .continue, events⟩
@@ -531,14 +648,12 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
         | none => ⟨context, .rngStuck, [.signal .rngStuck]⟩
         | some (raw, rng, events) =>
             let copied := context.defender.active.moves.getD (raw &&& 3).toNat 0
-            let moves := context.attacker.active.moves.modify context.moveSlot.val
-              (fun _ => copied)
-            let mon := { context.attacker.active with moves := moves }
+            let mon := mimicReplace context.attacker.active context.moveSlot copied
             let attacker := { context.attacker with active := mon }
             ⟨withAttacker { context with rng } attacker, .continue, events⟩
   | .metronome =>
       match drawAccepted 2305 context.rng
-          (fun raw => raw != 0 && raw < 165 && raw != 118) "metronome" with
+          metronomeAccepts "metronome" with
       | none => ⟨context, .rngStuck, [.signal .rngStuck]⟩
       | some (move, rng, events) =>
           ⟨{ context with rng }, .callMove move, events ++ [.signal (.callMove move)]⟩
@@ -648,7 +763,7 @@ def applyAfter (effect moveType : UInt8) (hit targetFainted : Bool)
       else
         let (success, context, event) := sideChance 25 context
         if success then
-          let out := confuse context
+          let out := confuse context false
           { out with events := event :: out.events }
         else ⟨context, .continue, [event]⟩
   | .statDownSide stat =>
@@ -693,6 +808,61 @@ def specialDamage (mechanic : Mechanic) (move : MoveId)
   | _ => .continue
 
 /-! ## Coverage/integration theorems -/
+
+private def multiHitRng (first second : UInt8) : Rng.LinkRng :=
+  { list := #[first, second, 0, 0, 0, 0, 0, 0, 0, 0], index := 0 }
+
+/-- The cartridge distribution uses one draw for low buckets and a second draw
+for the upper half, yielding counts 2/3 with probability 3/8 and 4/5 with 1/8. -/
+theorem multi_hit_count_witnesses :
+    multiHitCountValue 0 0 = 2 ∧ multiHitCountValue 1 0 = 3 ∧
+    multiHitCountValue 2 2 = 4 ∧ multiHitCountValue 3 3 = 5 ∧
+    multiHitDrawCount 0 = 1 ∧ multiHitDrawCount 2 = 2 := by
+  native_decide
+
+theorem multi_hit_distribution_exact :
+    let pairs := (List.range 256).flatMap fun first =>
+      (List.range 256).map fun second => multiHitCountValue first.toUInt8 second.toUInt8
+    (pairs.filter (· == 2)).length = 24576 ∧
+    (pairs.filter (· == 3)).length = 24576 ∧
+    (pairs.filter (· == 4)).length = 8192 ∧
+    (pairs.filter (· == 5)).length = 8192 := by
+  native_decide
+
+/-- Bide and Thrash select two or three executions from the low random bit and
+install their counters before later hit processing. -/
+theorem bide_thrash_lock_witnesses (context : Context) :
+    let seeded := { context with rng := multiHitRng 0 0 }
+    let bide := applyBefore Data.Effect.bide true seeded
+    let thrash := applyBefore Data.Effect.thrashPetalDance true seeded
+    bitSet bide.context.attacker.volatile.status1 Wram.BattleStatus1.storingEnergy = true ∧
+    bide.context.attacker.volatile.numAttacksLeft = 2 ∧
+    bide.context.attacker.volatile.bideAccumulated = 0 ∧
+    bitSet thrash.context.attacker.volatile.status1 Wram.BattleStatus1.thrashingAbout = true ∧
+    thrash.context.attacker.volatile.numAttacksLeft = 2 := by
+  have bideDispatch : (plan Data.Effect.bide).mechanic = .bide := by native_decide
+  have thrashDispatch : (plan Data.Effect.thrashPetalDance).mechanic = .thrash := by
+    native_decide
+  simp [applyBefore, bideDispatch, thrashDispatch, multiHitRng, Rng.LinkRng.next,
+    startLock, setAttackerVolatile, withAttacker, storing_set_bit, thrashing_set_bit,
+    Wram.rnsConsumed]
+
+/-- Fly/Dig charge setup sets both charging and invulnerability; ordinary charge
+sets only charging. -/
+theorem charge_invulnerability_witnesses (context : Context) :
+    let fly := applyBefore Data.Effect.fly true context
+    let charge := applyBefore Data.Effect.charge true context
+    fly.signal = .charging true ∧
+    bitSet fly.context.attacker.volatile.status1 Wram.BattleStatus1.chargingUp = true ∧
+    bitSet fly.context.attacker.volatile.status1 Wram.BattleStatus1.invulnerable = true ∧
+    charge.signal = .charging false ∧
+    bitSet charge.context.attacker.volatile.status1 Wram.BattleStatus1.invulnerable =
+      bitSet context.attacker.volatile.status1 Wram.BattleStatus1.invulnerable := by
+  have flyDispatch : (plan Data.Effect.fly).mechanic = .charge true := by native_decide
+  have chargeDispatch : (plan Data.Effect.charge).mechanic = .charge false := by native_decide
+  simp [applyBefore, flyDispatch, chargeDispatch, setAttackerVolatile, withAttacker,
+    charging_set_bit, invulnerable_set_bit, invulnerable_preserves_charging,
+    charging_preserves_invulnerable]
 
 theorem transform_copy_boundaries (context : Context) :
     let prepared := { context with attackerSide := Side.enemy }

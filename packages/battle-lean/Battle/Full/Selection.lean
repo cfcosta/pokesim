@@ -21,6 +21,7 @@ structure MoveScratch where
   /-- `wPlayerMoveNum`, adjacent loaded-record identity cleared on send-out. -/
   loadedMove : MoveId := 0
   highlightedSlot : UInt8 := 0
+  effect : UInt8 := 0
   power : UInt8 := 0
   type : UInt8 := 0
   accuracy : UInt8 := 0
@@ -62,6 +63,7 @@ def highlight (state : State) (slot : Fin 4) : State × Event :=
     let data := Data.moveData move
     let scratch := { scratch with selectedMove := move }
     let scratch := { scratch with loadedMove := move }
+    let scratch := { scratch with effect := data.effect }
     let scratch := { scratch with power := data.power }
     let scratch := { scratch with type := data.type }
     let scratch := { scratch with accuracy := data.accuracy }
@@ -124,6 +126,7 @@ theorem enabled_highlight_loads (state : State) (slot : Fin 4)
     let move := state.side.active.active.moves.getD slot.val 0
     after.scratch.selectedMove = move ∧
     after.scratch.loadedMove = move ∧
+    after.scratch.effect = (Data.moveData move).effect ∧
     after.scratch.power = (Data.moveData move).power ∧
     after.scratch.type = (Data.moveData move).type ∧
     after.scratch.accuracy = (Data.moveData move).accuracy ∧
@@ -149,6 +152,7 @@ theorem disabled_highlight_preserves_record (state : State) (slot : Fin 4)
     let after := (highlight state slot).1.scratch
     after.selectedMove = state.scratch.selectedMove ∧
     after.loadedMove = state.scratch.loadedMove ∧
+    after.effect = state.scratch.effect ∧
     after.power = state.scratch.power ∧ after.type = state.scratch.type ∧
     after.accuracy = state.scratch.accuracy ∧ after.pp = state.scratch.pp := by
   simp [highlight, disabled]

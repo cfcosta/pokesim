@@ -104,7 +104,10 @@ def generatedMoveIdentity (wrapper executed : MoveId) (generated : Bool) : MoveI
 
 private def recordExecutedMove (state : State) (who : Side) (move : MoveId)
     (generated : Bool) : State :=
-  setLastMove state who (generatedMoveIdentity (lastMove state who) move generated)
+  let wrapper := match who with
+    | .player => state.playerSelection.selectedMove
+    | .enemy => state.enemySelection.selectedMove
+  setLastMove state who (generatedMoveIdentity wrapper move generated)
 
 private def selection (state : State) : Side → Selection.MoveScratch
   | .player => state.playerSelection
@@ -113,6 +116,16 @@ private def selection (state : State) : Side → Selection.MoveScratch
 private def setSelection (state : State) : Side → Selection.MoveScratch → State
   | .player, scratch => { state with playerSelection := scratch }
   | .enemy, scratch => { state with enemySelection := scratch }
+
+def clearBothLoadedEffects (state : State) : State :=
+  let playerSelection := { state.playerSelection with effect := 0 }
+  let enemySelection := { state.enemySelection with effect := 0 }
+  { state with playerSelection := playerSelection, enemySelection := enemySelection }
+
+@[simp] theorem bide_clears_both_loaded_effects (state : State) :
+    (clearBothLoadedEffects state).playerSelection.effect = 0 ∧
+      (clearBothLoadedEffects state).enemySelection.effect = 0 := by
+  exact ⟨rfl, rfl⟩
 
 def commitSelection (state : State) (who : Side) (action : Full.Action) : State :=
   match action with
@@ -129,6 +142,7 @@ def commitSelection (state : State) (who : Side) (action : Full.Action) : State 
       let data := Data.moveData 165
       let scratch := { selection state who with selectedMove := 165 }
       let scratch := { scratch with loadedMove := 165 }
+      let scratch := { scratch with effect := data.effect }
       let scratch := { scratch with power := data.power }
       let scratch := { scratch with type := data.type }
       setSelection state who scratch
@@ -163,7 +177,8 @@ private def moveOfAction (state : State) (who : Side) : Full.Action → Option (
           bitSet volatile.status1 Wram.BattleStatus1.storingEnergy ||
           bitSet volatile.status1 Wram.BattleStatus1.thrashingAbout ||
           bitSet volatile.status2 Wram.BattleStatus2.usingRage then
-        some (lastMove state who, 0)
+        let value := (selection state who).highlightedSlot.toNat % 4
+        some ((selection state who).loadedMove, ⟨value, Nat.mod_lt _ (by omega)⟩)
       else none
   | _ => none
 
@@ -614,7 +629,7 @@ private def applyResidual (state : State) (who : Side) : State × List Event :=
   let state := setSide state who.other { side state who.other with active := result.opponent }
   if result.actor.active.fainted then recordFaint state who else (state, [])
 
-private def clearTrappingLock (state : State) (who : Side) : State :=
+def clearTrappingLock (state : State) (who : Side) : State :=
   let current := side state who
   let volatile := { current.active.volatile with
     status1 := current.active.volatile.status1 &&&
@@ -625,7 +640,7 @@ private def clearTrappingLock (state : State) (who : Side) : State :=
 
 /-- Consume the current execution from Bide/Thrash/trapping counters. Thrash
 completion samples its confusion duration at the lock-release boundary. -/
-private def advanceMoveLock (state : State) (who : Side) : State × List Event :=
+def advanceMoveLock (state : State) (who : Side) : State × List Event :=
   let current := side state who
   let volatile := current.active.volatile
   let lockMask := (1 <<< Wram.BattleStatus1.storingEnergy).toUInt8 |||
@@ -645,7 +660,7 @@ private def advanceMoveLock (state : State) (who : Side) : State × List Event :
       let volatile := { volatile with status1 := volatile.status1 &&& ~~~lockMask }
       if wasThrashing then
         let (raw, rng) := state.battle.rng.next
-        let turns := (raw &&& 3) + 2
+        let turns := Effects.confusionDuration raw
         let volatile := { volatile with
           status1 := volatile.status1 ||| (1 <<< Wram.BattleStatus1.confused).toUInt8 }
         let volatile := { volatile with confusedCounter := turns }
@@ -719,17 +734,38 @@ type adjustment, and randomization. -/
       (resolveMove 68).power = true := by
   native_decide
 
+def bideReleaseDamage (accumulated : UInt16) : Option UInt16 :=
+  if accumulated == 0 then none
+  else some (UInt16.ofNat (min 0xffff (accumulated.toNat * 2)))
+
+@[simp] theorem bide_zero_misses : bideReleaseDamage 0 = none := by native_decide
+@[simp] theorem bide_release_doubles : bideReleaseDamage 100 = some 200 := by native_decide
+@[simp] theorem bide_release_caps : bideReleaseDamage 0x9000 = some 0xffff := by native_decide
+
+def decrementsPpNow (mechanic : EffectPlan.Mechanic) (action : Full.Action) : Bool :=
+  if action == .struggle then false
+  else match mechanic with
+  | .charge _ => action == .noAction
+  | _ => action != .noAction
+
+@[simp] theorem charge_pp_is_deferred :
+    decrementsPpNow (.charge true) (.fight 0) = false ∧
+      decrementsPpNow (.charge true) .noAction = true := by
+  native_decide
+
 private def executeMove (state : State) (who : Side) (action : Full.Action)
     (moveId : MoveId) (slot : Fin 4) (attacker : Battle.SideState)
     (attackerFull defenderFull : Full.SideState) (rng : Rng.LinkRng)
     (generated : Bool := false) : StepResult :=
 let state := setSide { state with battle := { state.battle with rng } } who
   { attackerFull with active := attacker }
-let state := decrementMovePp state who slot
-  (action == .struggle || action == .noAction)
 let move := resolveMove moveId
 let effect := (Data.moveData moveId).effect
 let mechanic := (EffectPlan.plan effect).mechanic
+let state := if mechanic == .bide && action != .noAction then
+  clearBothLoadedEffects state else state
+let state := if decrementsPpNow mechanic action then
+  decrementMovePp state who slot false else state
 let continuedTrap := action == .noAction && mechanic == .trapping
 let (rng, critical, critEvents) :=
   if move.power == 0 || continuedTrap then (state.battle.rng, false, [])
@@ -740,9 +776,9 @@ let (rng, critical, critEvents) :=
     (rng, critical, [.rng "critical" raw])
 let continuedBide := action == .noAction && mechanic == .bide
 let counterRejected := counterRejected moveId (selection state who.other) state.sharedDamage
+let emptyBide := continuedBide && (bideReleaseDamage attacker.volatile.bideAccumulated).isNone
 let damageResult := if continuedBide then
-    .ok (UInt16.ofNat (min 0xffff (attacker.volatile.bideAccumulated.toNat * 2)),
-      rng, [], false)
+    .ok ((bideReleaseDamage attacker.volatile.bideAccumulated).getD 0, rng, [], false)
   else if continuedTrap then .ok (lockedDamage state who, rng, [], false)
   else if moveId == 68 then
     .ok (counterDamage (selection state who.other) state.sharedDamage, rng, [], false)
@@ -759,7 +795,7 @@ match damageResult with
         | _ => (true, rng, [])
       else (true, rng, [])
     let (accuracyHit, rng, accuracyEvents) :=
-      if counterRejected || !handlerGateHit ||
+      if counterRejected || emptyBide || !handlerGateHit ||
           rejectsBeforeAccuracy mechanic move defenderFull.active then
         (false, rng, [])
       else if continuedTrap || (mechanic == .sleep && defenderFull.active.volatile.recharging) then
@@ -780,7 +816,7 @@ match damageResult with
     match before.signal with
     | .rngStuck => .rngStuck state (critEvents ++ damageEvents ++ handlerGateEvents ++
         accuracyEvents ++ before.events.map .effect)
-    | .charging _ => .transitioned (recordExecutedMove state who moveId generated)
+    | .charging _ => .transitioned state
         (critEvents ++ before.events.map .effect)
     | .escaped =>
         let terminal := Outcome.BattleTerminal.mk' (.moveEscape who moveId)
@@ -907,8 +943,11 @@ private def attack (state : State) (who : Side) (action : Full.Action)
             match machine.phase with
             | .done _ => executeMove state who action moveId slot attacker attackerFull defenderFull rng false
             | _ => .disobediencePending installed machine none []
-          else executeMove state who action moveId slot attacker attackerFull defenderFull rng
-            overrideMove.isSome
+          else
+            let generatedContinuation := action == .noAction &&
+              (selection state who).loadedMove != (selection state who).selectedMove
+            executeMove state who action moveId slot attacker attackerFull defenderFull rng
+              (overrideMove.isSome || generatedContinuation)
 
 
 def switchAiLayer (current : UInt8) (who : Side) (forced : Bool) : UInt8 :=
@@ -946,6 +985,7 @@ def clearPlayerSelectionOnSendOut (state : State) : State :=
 @[simp] theorem send_out_clears_move_but_retains_record (scratch : Selection.MoveScratch) :
     (clearPlayerMoveOnSendOut scratch).loadedMove = 0 ∧
     (clearPlayerMoveOnSendOut scratch).selectedMove = scratch.selectedMove ∧
+    (clearPlayerMoveOnSendOut scratch).effect = scratch.effect ∧
     (clearPlayerMoveOnSendOut scratch).power = scratch.power ∧
     (clearPlayerMoveOnSendOut scratch).type = scratch.type ∧
     (clearPlayerMoveOnSendOut scratch).accuracy = scratch.accuracy ∧
@@ -1253,8 +1293,7 @@ def resumeMimic (state : State) (who : Side) (sourceSlot targetSlot : Fin 4)
   if copied == 0 then .invalidAction state who
   else
     let actor := side state who
-    let moves := actor.active.active.moves.modify sourceSlot.val (fun _ => copied)
-    let mon := { actor.active.active with moves := moves }
+    let mon := Effects.mimicReplace actor.active.active sourceSlot copied
     let actor := { actor with active := { actor.active with active := mon } }
     let state := setLastMove (setSide state who actor) who 102
     let (state, residualEvents) := applyResidual state who
@@ -1287,12 +1326,24 @@ the generated move's later decrement applies only to loaded copied PP. -/
 theorem transformed_nested_party_pp_increment (packed : UInt8) :
     nestedPartyPp packed = packed + 1 := rfl
 
+def installGeneratedLoadedMove (state : State) (who : Side) (move : MoveId) : State :=
+  let scratch := { selection state who with loadedMove := move }
+  setSelection state who scratch
+
+@[simp] theorem generated_move_retains_wrapper (state : State) (who : Side)
+    (move : MoveId) :
+    (selection (installGeneratedLoadedMove state who move) who).selectedMove =
+        (selection state who).selectedMove ∧
+      (selection (installGeneratedLoadedMove state who move) who).loadedMove = move := by
+  cases who <;> simp [installGeneratedLoadedMove, selection, setSelection]
+
 /-- Continue a Mirror Move or Metronome request in the same action. Status gating
 is not repeated. The wrapper increment and generated decrement remain separate;
 another nested signal is an explicit continuation, so recursive Metronome is not
 fuel-bounded. -/
 def resumeNested (state : State) (who : Side) (move : MoveId) : StepResult :=
-  attack (incrementNestedPp state who) who (.fight 0) (some move) true
+  let state := installGeneratedLoadedMove (incrementNestedPp state who) who move
+  attack state who (.fight 0) (some move) true
 
 /-- Legal actions are exposed directly from the engine state. -/
 def legalActions (state : State) (who : Side) : Array Full.Action :=

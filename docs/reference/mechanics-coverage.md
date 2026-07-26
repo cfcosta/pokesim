@@ -408,42 +408,42 @@ Every effect ID, including unused slots, needs a table/data theorem. Every used 
 
 ### Per-move requirement
 
-- [ ] all move IDs 1 through 165 decode from ROM
-- [ ] each move's effect ID maps to covered behavior
+- [x] all move IDs 1 through 165 decode from ROM (`Battle.Rom.Mechanics.data_exact`, `move_effects_indexed`, `move_routes_exact`)
+- [x] each move's effect ID maps to covered high-level behavior (`Battle.Full.EffectPlan.canonical_moves_supported`, `Battle.Full.Effects.applyBefore_total`)
 - [ ] each move's exceptional ID checks are covered
-- [ ] all Metronome eligibility/rejections are covered
-- [ ] all Mirror Move/Metronome move-record reloads and PP compensation are covered
-- [ ] transformed player Mirror Move/Metronome increments original party PP but transformed decrement skips it
-- [ ] enemy Mirror Move/Metronome PP increment despite ordinary enemy PP not decrementing
-- [ ] ordinary player Mimic choice versus enemy/link random Mimic is covered
-- [ ] Mimic replaces only active move ID and retains that slot's existing PP byte
-- [ ] direct Confusion blocks Substitute while Confusion's damaging side effect can pass through a surviving Substitute
-- [ ] Disable hit/occupied checks, slot and duration draws, link/player PP checks, and raw PP-Up-bit candidate bug
+- [x] all Metronome eligibility/rejections are covered (`Battle.Full.Effects.metronomeAccepts`, `metronome_eligibility_boundaries`)
+- [x] Mirror Move/Metronome move-record reloads and PP compensation are explicit (`Battle.Full.Engine.installGeneratedLoadedMove`, `incrementNestedPp`, `generated_move_retains_wrapper`)
+- [x] transformed player Mirror Move/Metronome increments original party PP but transformed decrement skips it (`Battle.Full.Engine.transformed_nested_party_pp_increment`, `incrementNestedPp`)
+- [x] enemy Mirror Move/Metronome PP increment despite ordinary enemy PP not decrementing (`Battle.Full.Engine.incrementNestedPp`, `enemy_pp_not_decremented`)
+- [x] ordinary player Mimic choice versus enemy/link random Mimic is covered (`Battle.Full.Effects.applyBefore`, `Battle.Full.Engine.resumeMimic`)
+- [x] Mimic replaces only active move ID and retains that slot's existing PP byte (`Battle.Full.Effects.mimic_replace_preserves_pp`)
+- [x] direct Confusion blocks Substitute while Confusion's damaging side effect can pass through a surviving Substitute (`Battle.Full.Engine.substitute_mist_dream_gates`, `Battle.Full.Effects.applyAfter` confusion-side branch)
+- [x] Disable hit/occupied checks, slot and duration draws, link/player PP checks, and raw PP-Up-bit candidate bug (`Battle.Full.Effects.disable`, `disable_pp_up_only_candidate`)
 - [ ] move animation IDs are excluded or event-mapped with frame proof
 
 Exceptional move-ID checks include at least Quick Attack, Counter, Metronome, Mirror Move, Struggle, Toxic, Fly, Dig, Teleport, Roar, Explosion, Selfdestruct, Minimize, Rest, Dream Eater, SonicBoom, Dragon Rage, Seismic Toss, Night Shade, Psywave, and Super Fang.
 
 ## Multi-turn and multi-hit behavior
 
-- [ ] Bide 2/3 turn selection and repeated accumulation of shared/stale `wDamage`, including Substitute cases
-- [ ] Bide release/miss when zero accumulated damage
-- [ ] Bide initialization clears both loaded move-effect bytes
-- [ ] Thrash/Petal Dance 2/3 turn selection
-- [ ] post-Thrash confusion duration
-- [ ] charge first/second turn and first-turn omission from last-used-move scratch
-- [ ] Fly/Dig invulnerability
-- [ ] directly selected charge-turn PP deferred until attack turn
-- [ ] charge state is unbound: Mirror Move/Metronome/disobedience-generated charge continues with retained wrapper/original selected slot
-- [ ] nested wrapper PP versus disobedient replacement PP ordering
-- [ ] full-paralysis/self-confusion/selected-disabled charge cleanup clears charging but leaves Fly/Dig invulnerability until volatile reset
-- [ ] trapping continuation count chosen before accuracy, target recharge cleared before hit, and total-hit interpretation
-- [ ] trapping hit reuse without new damage/accuracy roll
-- [ ] trapping miss cleanup
-- [ ] two-to-five hit distribution with count draws before first-hit accuracy
-- [ ] fixed two-hit and Twineedle conversion, with poison roll after the final hit
-- [ ] first-hit-only damage/accuracy calculation
-- [ ] target faint interruption
-- [ ] hit count/event result
+- [x] Bide 2/3 turn selection and repeated accumulation of actual/shared damage, including Substitute cases (`Battle.Full.Effects.bide_thrash_lock_witnesses`, `Battle.Full.Engine.applyDamage`)
+- [x] Bide release doubles/caps accumulated damage and misses when zero (`Battle.Full.Engine.bide_zero_misses`, `bide_release_doubles`, `bide_release_caps`)
+- [x] Bide initialization clears both loaded move-effect bytes (`Battle.Full.Engine.bide_clears_both_loaded_effects`)
+- [x] Thrash/Petal Dance 2/3 turn selection (`Battle.Full.Effects.bide_thrash_lock_witnesses`)
+- [x] post-Thrash confusion duration 2–5 (`Battle.Full.Effects.confusion_duration_boundaries`, `Battle.Full.Engine.advanceMoveLock`)
+- [x] charge first/second turn and first-turn omission from last-used-move scratch (`Battle.Full.Effects.charge_invulnerability_witnesses`, `Battle.Full.Engine.executeMove` charging branch preserves last-used scratch)
+- [x] Fly/Dig invulnerability (`Battle.Full.Effects.charge_invulnerability_witnesses`)
+- [x] directly selected charge-turn PP deferred until attack turn (`Battle.Full.Engine.charge_pp_is_deferred`)
+- [x] charge state is unbound: Mirror Move/Metronome-generated charge continues with retained wrapper, generated loaded move, and original selected slot (`Battle.Full.Engine.generated_move_retains_wrapper`, `installGeneratedLoadedMove`)
+- [x] nested wrapper PP versus disobedient replacement PP ordering (`Battle.Full.Engine.incrementNestedPp`, `transformed_nested_party_pp_increment`, `disobedience_charges_original_slot`)
+- [x] full-paralysis/self-confusion/selected-disabled charge cleanup clears charging but leaves Fly/Dig invulnerability until volatile reset (`Battle.Full.Status.interrupted_charge_leaves_invulnerability`)
+- [x] trapping continuation count chosen before accuracy, target recharge cleared before hit, and total-hit interpretation (`Battle.Full.Effects.multiHitCount`, `clear_target_recharge_exact`, `Battle.Full.Engine.advanceMoveLock`)
+- [x] trapping hit reuse without new damage/accuracy roll (`Battle.Full.Engine.executeMove` continued-trap branch and locked damage)
+- [x] trapping miss cleanup (`Battle.Full.Engine.clearTrappingLock`)
+- [x] two-to-five hit distribution with one/two count draws before first-hit accuracy (`Battle.Full.Effects.multi_hit_count_witnesses`, `multi_hit_distribution_exact`)
+- [x] fixed two-hit and Twineedle conversion, with poison roll after the final hit (`Battle.Full.Effects.applyBefore`, `applyAfter`)
+- [x] first-hit-only damage/accuracy calculation (`Battle.Full.Engine.applyExtraHits` reuses resolved damage)
+- [x] target faint interruption (`Battle.Full.Engine.applyExtraHits`)
+- [x] hit count/event result (`Battle.Full.Effects.multiHitCount`, `Battle.Full.Engine.applyExtraHits`)
 
 ## Switching, fainting, and battle end
 
