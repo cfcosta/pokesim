@@ -95,7 +95,7 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [x] no-encounter `InitBattle` decision is separate from battle-driver completion (`Battle.Rom.InitBattleRoutine.InitBattleDecision`, `no_encounter_path_is_not_completion`)
 - [ ] address-based transitive code/data graph through bankswitches, predefs, pointer tables, text callbacks, interrupts, and assets
 - [ ] no unresolved reachable ROM range or indirect edge
-- [ ] VRAM/OAM/MMIO/external-SRAM/audio/joypad/serial/LCD support or proved summaries
+- [x] VRAM/OAM/MMIO/external-SRAM/audio/joypad/serial/LCD are represented by proved storage/device or explicit external-progress summaries (`Battle.GameBoy.Memory`, `Mbc3`, `Devices`, `Adapter`; continuous episode use remains below)
 - [ ] mode setup refinement before `StartBattle`
 - [ ] terminal witness enters `ending`; simultaneous active faint may remain nonterminal
 - [ ] Pay Day/evolution/move-learning/cleanup refinement after terminal witness
