@@ -14,6 +14,7 @@ These documents record twelve codebase, processor, and proof-architecture review
 
 - [Battle source map](reference/battle-source-map.md) — files, labels, tables, and scope ownership.
 - [Canonical ROM artifacts](reference/canonical-rom-artifacts.md) — pinned RGBDS derivation, ROM hashes, retained symbol/map files, exact addresses, and conservative whole-machine closure.
+- [Pokémon Red minimum obtainable levels](reference/pokemon-red-minimum-levels.md) — all 151 species, minimum normal-play level or Red-only unavailability, acquisition route, and exact ROM-byte provenance.
 - [Battle state model](reference/battle-state-model.md) — persistent, active, volatile, and shared state.
 - [Mechanics coverage](reference/mechanics-coverage.md) — checklist the implementation and proofs must close.
 - [Full-model support](reference/full-model-support.md) — executable module/domain coverage, smoke results, and exact claim boundaries.
