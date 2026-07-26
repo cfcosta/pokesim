@@ -91,8 +91,8 @@ For each table:
 The complete gate list is [End-to-end verification closure](end-to-end-closure.md).
 
 - [x] hermetic RGBDS 1.0.2 ROM build, `.sym`, `.map`, SHA-1/SHA-256
-- [ ] explicit `InitOpponent` bank/stack/hardware entry and supplied-opponent `InitBattle` prefix theorem
-- [ ] no-encounter `InitBattle` paths separated from battle-driver completion
+- [x] explicit `InitOpponent` bank/stack/hardware entry plus decoded supplied-opponent `InitBattle` prefix (`Battle.DriverInvariant.InitOpponentCallerEntry`, `caller_entry_exposes_bank_stack_hardware`, `Battle.Rom.InitBattleRoutine.supplied_opponent_reaches_initOpponent`, `canonical_prefix_exact`)
+- [x] no-encounter `InitBattle` decision is separate from battle-driver completion (`Battle.Rom.InitBattleRoutine.InitBattleDecision`, `no_encounter_path_is_not_completion`)
 - [ ] address-based transitive code/data graph through bankswitches, predefs, pointer tables, text callbacks, interrupts, and assets
 - [ ] no unresolved reachable ROM range or indirect edge
 - [ ] VRAM/OAM/MMIO/external-SRAM/audio/joypad/serial/LCD support or proved summaries

@@ -11,6 +11,7 @@ import Battle.Rom.Mechanics
 import Battle.Rom.AllTables
 import Battle.Rom.Reachability
 import Battle.Rom.MathRoutines
+import Battle.Rom.InitBattleRoutine
 import Battle.Rom.EffectRoutines
 import Battle.Rom.EffectPrefixes
 import Battle.Rom.ExplodeRoutine

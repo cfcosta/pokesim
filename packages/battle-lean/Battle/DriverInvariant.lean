@@ -122,6 +122,23 @@ def AtInitOpponent (machine : Machine) : Prop :=
       | _ => none
     | none => none
 
+structure InitOpponentCallerEntry (machine : Machine) : Prop where
+  fetched : AtInitOpponent machine
+  supplied : SuppliedWildReset machine.memory
+  stackInHram : 0xFF80 ≤ machine.core.registers.sp.toNat
+  stackBelowIe : machine.core.registers.sp.toNat < 0xFFFF
+  noScheduledIme : machine.core.scheduledImeEnable = false
+
+
+theorem caller_entry_exposes_bank_stack_hardware {machine : Machine}
+    (entry : InitOpponentCallerEntry machine) :
+    GameBoy.Mbc3.selectedRomBank machine.memory.cartridge = 0x0F ∧
+      0xFF80 ≤ machine.core.registers.sp.toNat ∧
+      machine.core.registers.sp.toNat < 0xFFFF ∧
+      machine.memory.bootMapped = false := by
+  exact ⟨entry.fetched.2.1, entry.stackInHram, entry.stackBelowIe,
+    entry.fetched.1⟩
+
 /-- The fetched `InitOpponent` byte is tied to the canonical physical ROM
 offset under the live MBC3 mapping, not merely to a linker label. -/
 theorem atInitOpponent_canonical_byte {machine : Machine}
