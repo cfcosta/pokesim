@@ -145,6 +145,22 @@ def settle (state : State) : State :=
         { state with engine, lastEpilogue := some result }
   | _ => state
 
+@[simp] theorem settle_after_nested_completion (state : State)
+    (terminal : Outcome.BattleTerminal)
+    (phase : state.engine.battle.phase = .ending terminal)
+    (learningDone : state.pendingLearning = [])
+    (evolutionDone : state.canEvolveFlags = 0) :
+    (settle state).engine.battle.phase = .returned ⟨terminal⟩ := by
+  simp [settle, phase, learningDone, evolutionDone]
+
+@[simp] theorem settle_waits_for_learning (state : State)
+    (terminal : Outcome.BattleTerminal)
+    (phase : state.engine.battle.phase = .ending terminal)
+    (head : Nat × MoveId) (tail : List (Nat × MoveId))
+    (pending : state.pendingLearning = head :: tail) :
+    settle state = state := by
+  simp [settle, phase, pending]
+
 private def currentParty (state : State) (who : Side) : Array MonState :=
   (state.engine.battle.side who).syncOutgoing.party.mons
 

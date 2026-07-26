@@ -96,11 +96,11 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [x] transitive code/data closure records selected-bank context, physical ranges, MBC/far/predef edges, interrupt roots, assets, and callback summary sites (`artifacts/pokered/reachability-manifest.json`)
 - [x] every direct target is classified; 73 genuinely indirect sites carry the sound all-retained-ROM conservative target domain, with zero omitted/unclassified edges (`tools/check-pokered-closure.py`, `Battle.Rom.Reachability.no_unresolved_reachable_edge`)
 - [x] VRAM/OAM/MMIO/external-SRAM/audio/joypad/serial/LCD are represented by proved storage/device or explicit external-progress summaries (`Battle.GameBoy.Memory`, `Mbc3`, `Devices`, `Adapter`; continuous episode use remains below)
-- [ ] mode setup refinement before `StartBattle`
-- [ ] terminal witness enters `ending`; simultaneous active faint may remain nonterminal
-- [ ] Pay Day/evolution/move-learning/cleanup refinement after terminal witness
-- [ ] restored caller fields, bank/stack, carry, and returned `EpisodeResult`
-- [ ] caller boundaries explicit for encounter triggering, blackout, trainer scripts, link auto-heal, and Old Man script cleanup
+- [x] mode bytes, selected bank, fetched `StartBattle` IR, next PC, and CALL frame form the pre-kernel refinement checkpoint (`Battle.Rom.DriverClosure.ModeSetupCheckpoint`, `mode_setup_precedes_startBattle`)
+- [x] terminal provenance is captured before cleanup and enters `ending`; simultaneous faint with reserves remains nonterminal (`Battle.Rom.DriverClosure.terminal_enters_ending_before_cleanup`, `Battle.Full.Engine.simultaneous_with_reserves_is_nonterminal`)
+- [x] Pay Day/evolution/move-learning guards remain in `ending` until typed nested work completes, then cleanup preserves provenance (`Battle.Full.Environment.settle_after_nested_completion`, `settle_waits_for_learning`, `Battle.Rom.DriverClosure.epilogue_preserves_terminal_provenance`)
+- [x] decoded outer shell restores caller bytes, tile animation, stack, carry and return PC; the composed result is typed (`Battle.Rom.OuterReturnRoutine`, `Battle.Rom.DriverClosure.returned_episode_exact`, `continuous_initOpponent_to_return`)
+- [x] encounter triggering is explicitly before entry; blackout, trainer scripts, link auto-heal, and Old Man cleanup are after return (`Battle.Full.OuterFlow.callerBoundaryPosition`, `caller_boundaries_are_explicit`, `cable_heal_requires_return`)
 - [ ] first supplied one-member wild fixture proved `InitOpponent`-to-return
 
 ## Battle modes

@@ -99,18 +99,30 @@ def outerReturn (state : ExitState) (saved : CallerFrame) : ExitState :=
   simp [terminalCheckpoint, cleanupCheckpoint, outerReturn]
 
 inductive CallerContinuation where
+  | encounterTrigger
   | blackoutMoneyAndHeal
   | trainerMapFlags
   | cableHealParty
   | oldManScriptCleanup
   deriving Repr, DecidableEq, BEq
 
-/-- These transitions occur only after the battle driver has returned. -/
-def postReturnOnly (_continuation : CallerContinuation) : Bool := true
+inductive CallerBoundaryPosition where
+  | beforeEntry
+  | afterReturn
+  deriving Repr, DecidableEq, BEq
 
-@[simp] theorem caller_continuations_are_post_return :
-    [CallerContinuation.blackoutMoneyAndHeal, .trainerMapFlags, .cableHealParty,
-      .oldManScriptCleanup].all postReturnOnly = true := by
+/-- Encounter selection precedes the explicit supplied-battle entry. All other
+caller integrations occur after the battle driver has returned. -/
+def callerBoundaryPosition : CallerContinuation → CallerBoundaryPosition
+  | .encounterTrigger => .beforeEntry
+  | .blackoutMoneyAndHeal | .trainerMapFlags | .cableHealParty |
+      .oldManScriptCleanup => .afterReturn
+
+@[simp] theorem caller_boundaries_are_explicit :
+    callerBoundaryPosition .encounterTrigger = .beforeEntry ∧
+      [CallerContinuation.blackoutMoneyAndHeal, .trainerMapFlags,
+        .cableHealParty, .oldManScriptCleanup].all
+          (callerBoundaryPosition · == .afterReturn) = true := by
   native_decide
 
 /-- Cable Club's unconditional `HealParty` is a caller transition: it restores
