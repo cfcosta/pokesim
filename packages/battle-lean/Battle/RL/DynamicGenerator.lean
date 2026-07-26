@@ -3,6 +3,7 @@ Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.RL.MoveHistory
+import Battle.Data.MinimumLevels
 
 /-!
 # Total progression-witnessed legal-team generator
@@ -12,6 +13,10 @@ pool. Each mon starts with the exact moves `WriteMonMoves` gives it at level 100
 then replays compatible machine teachings and PP Ups. One shared caller-supplied
 ledger enforces one-use TM copies across the party, reusable owned HMs, and a
 finite PP Up budget.
+
+Species are sampled across all 151 real entries. Each level is sampled from the
+ROM-derived minimum obtainable level through 100. Species unavailable through
+normal Red acquisition use the explicit policy fallback level 5.
 
 Every `Sample` carries two independent proofs:
 
@@ -100,14 +105,54 @@ private def applyPpPattern (pattern : UInt8)
       applyPpUps count slot state
     else state) state
 
-/-- Ten draws select species, four DVs, machine count/order/replacement slots,
-and per-slot PP Up counts. Level is constructively fixed at 100 so all ordered
-level-up offers have occurred; unlike the old sampler, declining/replacement is
-represented by the actual final history rather than an unordered pool slice. -/
+/-- Map one entropy byte onto the inclusive generation interval
+`[generationFloor species, 100]`. Modulo reduction retains the explicit bias
+when the interval width does not divide 256. -/
+def sampledLevel (species : SpeciesId) (raw : UInt8) : UInt8 :=
+  let floor := Data.MinimumLevels.generationFloor species
+  let width := 101 - floor.toNat
+  (floor.toNat + raw.toNat % width).toUInt8
+
+/-- Every sampled level respects the species floor and never exceeds 100. -/
+theorem sampledLevel_bounds (species : SpeciesId) (raw : UInt8) :
+    (Data.MinimumLevels.generationFloor species).toNat ≤ (sampledLevel species raw).toNat ∧
+      (sampledLevel species raw).toNat ≤ 100 := by
+  have checked : (List.range 256).all (fun speciesValue =>
+      (List.range 256).all (fun rawValue =>
+        (Data.MinimumLevels.generationFloor speciesValue.toUInt8).toNat ≤
+            (sampledLevel speciesValue.toUInt8 rawValue.toUInt8).toNat &&
+          (sampledLevel speciesValue.toUInt8 rawValue.toUInt8).toNat ≤ 100)) = true := by
+    native_decide
+  have speciesItem := (List.all_eq_true.mp checked) species.toNat
+    (List.mem_range.mpr species.toNat_lt)
+  have rawItem := (List.all_eq_true.mp speciesItem) raw.toNat
+    (List.mem_range.mpr raw.toNat_lt)
+  have round (value : UInt8) : value.toNat.toUInt8 = value := by
+    apply UInt8.toNat.inj
+    simp
+  simpa only [Bool.and_eq_true, decide_eq_true_eq, round] using rawItem
+
+/-- Executable support check: for every internal species byte, every level from
+its generation floor through 100 is produced by at least one entropy byte. -/
+def everyAdmissibleLevelSampled : Bool :=
+  (List.range 256).all fun speciesValue =>
+    let species := speciesValue.toUInt8
+    let floor := Data.MinimumLevels.generationFloor species
+    (List.range (101 - floor.toNat)).all fun delta =>
+      (List.range 256).any fun rawValue =>
+        sampledLevel species rawValue.toUInt8 == (floor.toNat + delta).toUInt8
+
+/-- The one-byte level map has full support over every declared interval. -/
+theorem every_admissible_level_sampled : everyAdmissibleLevelSampled = true := by
+  native_decide
+
+/-- Ten draws select species, level, four DVs, machine count/order/replacement
+slots, and per-slot PP Up counts. Acquisition replays exact `WriteMonMoves` at
+the sampled level before machine teachings and PP Ups. -/
 def sampleMon (ledger : ResourceLedger) (rng : Rng.LinkRng) :
     MonPlan × MonState × ResourceLedger × Rng.LinkRng :=
   let (speciesByte, rng) := draw rng
-  let (_, rng) := draw rng
+  let (levelByte, rng) := draw rng
   let (atkByte, rng) := draw rng
   let (defByte, rng) := draw rng
   let (spdByte, rng) := draw rng
@@ -118,7 +163,7 @@ def sampleMon (ledger : ResourceLedger) (rng : Rng.LinkRng) :
   let (ppPattern, rng) := draw rng
   let entry := entryOf speciesByte.toNat
   let origin : Origin :=
-    { species := entry.speciesId, level := 100
+    { species := entry.speciesId, level := sampledLevel entry.speciesId levelByte
       atkDv := atkByte, defDv := defByte, spdDv := spdByte, spcDv := spcByte }
   let mon := acquire origin
   let candidates := rotatedCandidates origin.species ledger machineStartByte.toNat

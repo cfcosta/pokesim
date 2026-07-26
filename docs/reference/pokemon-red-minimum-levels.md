@@ -19,6 +19,10 @@ Decoded inventory: 570 wild slots, 34 fishing slots, 24 fixed/prize acquisitions
 
 This generated document is reproducible runtime evidence, not a Lean theorem and not a whole-cartridge reachability proof.
 
+## Team-generation policy
+
+`Battle.Data.MinimumLevels.minimumObtainableLevel` mirrors this table in Lean. `Battle.RL.DynamicGenerator.sampledLevel` maps one entropy byte into the inclusive interval from the species floor through level 100. The 12 unavailable species use the explicit fallback floor 5. The modulo mapping preserves its finite-byte bias rather than claiming a uniform distribution.
+
 ## Minimum-level table
 
 | Dex | Pokémon | Lowest level | Minimum route | ROM evidence |

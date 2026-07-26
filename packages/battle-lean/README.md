@@ -71,9 +71,13 @@ nix develop -c lake -d packages/battle-lean exe battleGenerateTeams 1037 6 > tea
 ```
 
 Diagnostics go to stderr, leaving stdout as team-list text. Species, levels,
-Generation-I DVs (encoded as Showdown IVs), and moves are preserved. Showdown
-has no team-text field for packed current PP or PP-Up counts, so those are not
-exported.
+Generation-I DVs (encoded as Showdown IVs), and moves are preserved. Each level
+is sampled from the inclusive range between that species' [ROM-derived minimum
+obtainable level](../../docs/reference/pokemon-red-minimum-levels.md) and 100.
+The twelve species unavailable through normal Red acquisition use an explicit
+level-5 generation floor. Link-evolved species retain their derived Red-owned
+minimums. Showdown has no team-text field for packed current PP or PP-Up counts,
+so those are not exported.
 
 Run one deterministic model match and emit Pokémon Showdown's newline-and-pipe
 simulator protocol. Arguments select the episode seed index, decision budget,

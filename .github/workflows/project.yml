@@ -19,7 +19,9 @@ jobs:
           trap 'rm -f "$rom"' EXIT
           nix develop -c python3 tools/check-pokered-build.py --rebuild --jobs 4 --output-rom "$rom"
           python3 tools/generate-pokered-reachability.py --rom "$rom"
-          python3 tools/generate-pokered-min-levels.py --rom "$rom" --check docs/reference/pokemon-red-minimum-levels.md
+          python3 tools/generate-pokered-min-levels.py --rom "$rom" \
+            --check docs/reference/pokemon-red-minimum-levels.md \
+            --check-lean packages/battle-lean/Battle/Data/MinimumLevels.lean
           nix develop -c lake -d packages/battle-lean exe battleRomFixture "$rom"
       - name: Build battle and DMG-CPU B adapter proofs
         run: nix develop -c lake -d packages/battle-lean build Battle Battle.GameBoy Battle.Rom Battle.DriverInvariant
