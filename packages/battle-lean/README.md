@@ -75,6 +75,18 @@ Generation-I DVs (encoded as Showdown IVs), and moves are preserved. Showdown
 has no team-text field for packed current PP or PP-Up counts, so those are not
 exported.
 
+Run one deterministic model match and emit Pokémon Showdown's newline-and-pipe
+simulator protocol. Arguments select the episode seed index and decision budget:
+
+```sh
+nix develop -c lake -d packages/battle-lean exe battleSelfPlayLog 9 4096 > battle.log
+```
+
+The log contains team preview, switches, ordered moves, HP/status changes,
+Transform, recoil, fainting, and the winner. Internal RNG observations are not
+Showdown protocol events and are omitted; effects without a lossless protocol
+mapping are retained as `|-message|` records.
+
 ## Build
 
 From the repository root:

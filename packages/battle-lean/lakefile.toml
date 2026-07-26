@@ -35,3 +35,8 @@ root = "Battle.Full.SelfPlayMain"
 [[lean_exe]]
 name = "battleGenerateTeams"
 root = "Battle.RL.TeamGeneratorMain"
+
+# Run one generated match and emit Pokémon Showdown simulator protocol.
+[[lean_exe]]
+name = "battleSelfPlayLog"
+root = "Battle.Full.SelfPlayLogMain"

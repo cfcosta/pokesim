@@ -1187,11 +1187,27 @@ def beginEnemyExecution (state : State) : State :=
     (beginEnemyExecution state).aiLayer2Encouragement =
       state.aiLayer2Encouragement + 1 := rfl
 
+private def prependAction (who : Side) (action : Full.Action) : StepResult → StepResult
+  | .transitioned state events => .transitioned state (.action who action :: events)
+  | .capturePending state ball events => .capturePending state ball (.action who action :: events)
+  | .rngStuck state events => .rngStuck state (.action who action :: events)
+  | .divisionFreeze state events => .divisionFreeze state (.action who action :: events)
+  | .nestedMove state side move events => .nestedMove state side move (.action who action :: events)
+  | .mimicPending state side slot next events =>
+      .mimicPending state side slot next (.action who action :: events)
+  | .runPending state side next events => .runPending state side next (.action who action :: events)
+  | .wildFaintRunPending state events => .wildFaintRunPending state (.action who action :: events)
+  | .disobediencePending state machine next events =>
+      .disobediencePending state machine next (.action who action :: events)
+  | .invalidAction state side => .invalidAction state side
+  | .ineffectiveAction state side => .ineffectiveAction state side
+  | .inactive state => .inactive state
+
 private def executeCommitted (state : State) (who : Side) (action : Full.Action) : StepResult :=
   let state := if who == .enemy && isFight action then beginEnemyExecution state else state
   if state.canceledAction == some who then
     .transitioned { state with canceledAction := none } []
-  else if isFight action then attack state who action
+  else if isFight action then prependAction who action (attack state who action)
   else
     let (state, events) := applyResidual state who
     if (side state who.other).active.volatile.trapping then
