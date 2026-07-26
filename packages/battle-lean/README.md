@@ -75,9 +75,12 @@ Generation-I DVs (encoded as Showdown IVs), and moves are preserved. Each level
 is sampled from the inclusive range between that species' [ROM-derived minimum
 obtainable level](../../docs/reference/pokemon-red-minimum-levels.md) and 100.
 The twelve species unavailable through normal Red acquisition use an explicit
-level-5 generation floor. Link-evolved species retain their derived Red-owned
-minimums. Showdown has no team-text field for packed current PP or PP-Up counts,
-so those are not exported.
+level-5 generation floor. After level selection, each eligible level/item
+stage evolves on 8 of 10 decimal roll residues. Trade stages instead retain the
+pre-trade species on 6 of 10 residues (and evolve on 4), so a successfully
+evolved Abra is more likely to stop at Kadabra than continue to Alakazam. The
+finite-byte modulo bias is retained explicitly. Showdown has no team-text field
+for packed current PP or PP-Up counts, so those are not exported.
 
 Run one deterministic model match and emit Pokémon Showdown's newline-and-pipe
 simulator protocol. Arguments select the episode seed index, decision budget,

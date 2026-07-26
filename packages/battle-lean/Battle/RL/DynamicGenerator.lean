@@ -16,7 +16,9 @@ finite PP Up budget.
 
 Species are sampled across all 151 real entries. Each level is sampled from the
 ROM-derived minimum obtainable level through 100. Species unavailable through
-normal Red acquisition use the explicit policy fallback level 5.
+normal Red acquisition use the explicit policy fallback level 5. Eligible
+level/item stages usually evolve (8/10 roll residues); trade stages usually
+retain the pre-trade species (6/10), preserving Kadabra over Alakazam more often.
 
 Every `Sample` carries two independent proofs:
 
@@ -146,13 +148,113 @@ def everyAdmissibleLevelSampled : Bool :=
 theorem every_admissible_level_sampled : everyAdmissibleLevelSampled = true := by
   native_decide
 
-/-- Ten draws select species, level, four DVs, machine count/order/replacement
-slots, and per-slot PP Up counts. Acquisition replays exact `WriteMonMoves` at
-the sampled level before machine teachings and PP Ups. -/
+/-- An evolution is available only when its encoded minimum level has been
+reached. Item and trade records retain their cartridge minimum-level fields. -/
+def evolutionEligible (level : UInt8) (evolution : Data.Progression.Evolution) : Bool :=
+  match evolution.method with
+  | .level required => required ≤ level
+  | .item _ minimum => minimum ≤ level
+  | .trade minimum => minimum ≤ level
+
+/-- Canonical eligible outgoing edges for one species and sampled level. -/
+def eligibleEvolutions (species : SpeciesId) (level : UInt8) :
+    Array Data.Progression.Evolution :=
+  let row := Data.Progression.rows.getD species.toNat
+    { evolutions := #[], levelMoves := #[] }
+  row.evolutions.filter (evolutionEligible level)
+
+/-- Ordinary level/item evolution accepts residues `0..7` (8 in 10). Trade
+ evolution accepts `0..3`, so residues `4..9` retain the pre-trade species
+(6 in 10), making Kadabra more likely than Alakazam after Abra evolves. -/
+def evolutionRollAccepts (method : Data.Progression.EvolutionMethod) (roll : UInt8) : Bool :=
+  match method with
+  | .trade _ => roll.toNat % 10 < 4
+  | _ => roll.toNat % 10 < 8
+
+/-- Choose one eligible branch, then apply the method-specific evolution roll. -/
+def evolveOnce (species : SpeciesId) (level decision branch : UInt8) : Option SpeciesId :=
+  let eligible := eligibleEvolutions species level
+  match eligible[branch.toNat % eligible.size]? with
+  | none => none
+  | some evolution =>
+      if evolutionRollAccepts evolution.method decision then some evolution.target else none
+
+/-- Gen-I has at most two successive evolution edges. A failed edge stops rather
+than receiving another roll; a successful first edge receives an independent
+second-stage decision and branch byte. -/
+def promoteSpecies (species : SpeciesId) (level : UInt8)
+    (firstDecision firstBranch secondDecision secondBranch : UInt8) : SpeciesId :=
+  match evolveOnce species level firstDecision firstBranch with
+  | none => species
+  | some first => (evolveOnce first level secondDecision secondBranch).getD first
+
+/-- Closed graph check that no canonical Gen-I evolution path needs a third
+edge, justifying the two explicit stages in `promoteSpecies`. -/
+def evolutionDepthAtMostTwo : Bool :=
+  Data.Progression.rows.all fun row =>
+    row.evolutions.all fun first =>
+      let firstRow := Data.Progression.rows.getD first.target.toNat
+        { evolutions := #[], levelMoves := #[] }
+      firstRow.evolutions.all fun second =>
+        let secondRow := Data.Progression.rows.getD second.target.toNat
+          { evolutions := #[], levelMoves := #[] }
+        secondRow.evolutions.isEmpty
+
+@[simp] theorem evolution_depth_at_most_two : evolutionDepthAtMostTwo = true := by
+  native_decide
+
+/-- Every eligible canonical edge preserves the generation-floor invariant:
+once the source floor has been reached, an accepted target is also valid at that
+same level. -/
+def evolutionEdgesRespectFloors : Bool :=
+  (List.range 256).all fun speciesValue =>
+    let species := speciesValue.toUInt8
+    let row := Data.Progression.rows.getD species.toNat
+      { evolutions := #[], levelMoves := #[] }
+    row.evolutions.all fun evolution =>
+      (List.range 101).all fun levelValue =>
+        let level := levelValue.toUInt8
+        !(Data.MinimumLevels.generationFloor species ≤ level &&
+            evolutionEligible level evolution) ||
+          Data.MinimumLevels.generationFloor evolution.target ≤ level
+
+@[simp] theorem evolution_edges_respect_floors : evolutionEdgesRespectFloors = true := by
+  native_decide
+
+/-- Byte-level weighting retains modulo bias explicitly: ordinary methods evolve
+for 206/256 byte values; trade methods evolve for 104/256 and retain for 152/256. -/
+def ordinaryEvolutionAcceptCount : Nat :=
+  (List.range 256).countP fun value => evolutionRollAccepts (.level 1) value.toUInt8
+
+def tradeEvolutionAcceptCount : Nat :=
+  (List.range 256).countP fun value => evolutionRollAccepts (.trade 1) value.toUInt8
+
+@[simp] theorem evolution_roll_cardinalities :
+    ordinaryEvolutionAcceptCount = 206 ∧ tradeEvolutionAcceptCount = 104 ∧
+      256 - tradeEvolutionAcceptCount = 152 := by
+  native_decide
+
+/-- At level 100, an Abra roll can remain Abra, stop at Kadabra after rejecting
+trade evolution, or reach Alakazam. Below level 16 it cannot become Kadabra. -/
+@[simp] theorem abra_evolution_weighting_examples :
+    promoteSpecies 0x94 100 8 0 0 0 = 0x94 ∧
+    promoteSpecies 0x94 100 0 0 6 0 = 0x26 ∧
+    promoteSpecies 0x94 100 0 0 0 0 = 0x95 ∧
+    evolveOnce 0x94 15 0 0 = none := by
+  native_decide
+
+/-- Fourteen fixed draws select species, level, two evolution decisions/branches,
+four DVs, machine count/order/replacement slots, and per-slot PP Up counts.
+Acquisition replays exact `WriteMonMoves` for the promoted species at the sampled
+level before machine teachings and PP Ups. -/
 def sampleMon (ledger : ResourceLedger) (rng : Rng.LinkRng) :
     MonPlan × MonState × ResourceLedger × Rng.LinkRng :=
   let (speciesByte, rng) := draw rng
   let (levelByte, rng) := draw rng
+  let (firstEvolutionDecision, rng) := draw rng
+  let (firstEvolutionBranch, rng) := draw rng
+  let (secondEvolutionDecision, rng) := draw rng
+  let (secondEvolutionBranch, rng) := draw rng
   let (atkByte, rng) := draw rng
   let (defByte, rng) := draw rng
   let (spdByte, rng) := draw rng
@@ -162,8 +264,11 @@ def sampleMon (ledger : ResourceLedger) (rng : Rng.LinkRng) :
   let (replacementBits, rng) := draw rng
   let (ppPattern, rng) := draw rng
   let entry := entryOf speciesByte.toNat
+  let level := sampledLevel entry.speciesId levelByte
+  let species := promoteSpecies entry.speciesId level
+    firstEvolutionDecision firstEvolutionBranch secondEvolutionDecision secondEvolutionBranch
   let origin : Origin :=
-    { species := entry.speciesId, level := sampledLevel entry.speciesId levelByte
+    { species, level
       atkDv := atkByte, defDv := defByte, spdDv := spdByte, spcDv := spcByte }
   let mon := acquire origin
   let candidates := rotatedCandidates origin.species ledger machineStartByte.toNat
