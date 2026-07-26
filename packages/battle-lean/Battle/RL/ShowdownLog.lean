@@ -292,7 +292,9 @@ def format (initial : Environment.State) (run : SelfPlay.Run) : String :=
       enemy := initial.engine.battle.enemy.party.mons }
   let firstObservation := Environment.observe initial
   let initialLines := previewLines context ++ initialSwitchLines context firstObservation
-  let (_, lines) := run.transitions.foldl (fun (active, lines) transition =>
+  let (_, lines) := run.transitions.foldl (fun (cursor, lines) transition =>
+    let active := cursor.1
+    let displayTurn := cursor.2
     let start : RenderState :=
       { playerActive := active.1, enemyActive := active.2
         playerStatus := transition.before.playerStatus
@@ -306,12 +308,13 @@ def format (initial : Environment.State) (run : SelfPlay.Run) : String :=
       | .action _ _ => true
       | _ => false
     let upkeep := if hasAction && !transition.after.terminalWitnessed then ["|upkeep"] else []
-    let heading := if hasAction then [s!"|turn|{transition.before.turn + 1}"] else []
+    let heading := if hasAction then [s!"|turn|{displayTurn}"] else []
     let turnLines := heading ++ rendered.lines ++
       statusDelta rendered transition.after .player ++
       statusDelta rendered transition.after .enemy ++ upkeep
-    ((transition.after.playerActive, transition.after.enemyActive), lines ++ turnLines))
-    ((firstObservation.playerActive, firstObservation.enemyActive), initialLines)
+    let nextTurn := if hasAction then displayTurn + 1 else displayTurn
+    (((transition.after.playerActive, transition.after.enemyActive), nextTurn), lines ++ turnLines))
+    (((firstObservation.playerActive, firstObservation.enemyActive), 1), initialLines)
   String.intercalate "\n" (lines ++ [winnerLine run])
 
 end Battle.RL.ShowdownLog

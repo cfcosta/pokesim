@@ -76,10 +76,12 @@ has no team-text field for packed current PP or PP-Up counts, so those are not
 exported.
 
 Run one deterministic model match and emit Pokémon Showdown's newline-and-pipe
-simulator protocol. Arguments select the episode seed index and decision budget:
+simulator protocol. Arguments select the episode seed index, decision budget,
+and optional equal party size. Size `0` keeps dynamic 1–6 generation; `6`
+requests a full six-on-six match:
 
 ```sh
-nix develop -c lake -d packages/battle-lean exe battleSelfPlayLog 9 4096 > battle.log
+nix develop -c lake -d packages/battle-lean exe battleSelfPlayLog 9 4096 6 > battle.log
 ```
 
 The log contains team preview, switches, ordered moves, HP/status changes,

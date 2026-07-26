@@ -86,12 +86,9 @@ private def persistent (owner : UInt16) (mon : MonState) : Progression.Persisten
 def beginOldManTutorial (state : State) (playerName grassAlias : List UInt8) : State :=
   { state with oldManScratch := some (OldMan.beginTutorial { playerName, grassAlias }) }
 
-/-- Reset from independent generator and battle streams. -/
-def reset (generatorRng battleRng : Rng.LinkRng)
-    (mode : BattleMode := .link) (playerBag enemyBag : Items.Bag := [])
-    (trainerClass : UInt8 := 1) : State :=
-  let player := RL.DynamicGenerator.sample generatorRng
-  let enemy := RL.DynamicGenerator.sample player.rng
+private def resetFromSamples (player enemy : RL.DynamicGenerator.Sample)
+    (battleRng : Rng.LinkRng) (mode : BattleMode)
+    (playerBag enemyBag : Items.Bag) (trainerClass : UInt8) : State :=
   let playerParty : Full.Party := { mons := player.team.1 }
   let enemyParty : Full.Party := { mons := enemy.team.1 }
   let playerSide := Full.SideState.fromParty playerParty fallbackMon
@@ -120,6 +117,23 @@ def reset (generatorRng battleRng : Rng.LinkRng)
     hasExpAll := playerBag.contains 0x4b
     trainerClass := trainerClass
     safari := safari }
+
+/-- Reset from independent generator and battle streams. -/
+def reset (generatorRng battleRng : Rng.LinkRng)
+    (mode : BattleMode := .link) (playerBag enemyBag : Items.Bag := [])
+    (trainerClass : UInt8 := 1) : State :=
+  let player := RL.DynamicGenerator.sample generatorRng
+  let enemy := RL.DynamicGenerator.sample player.rng
+  resetFromSamples player enemy battleRng mode playerBag enemyBag trainerClass
+
+/-- Reset with both progression-witnessed parties clamped to the requested
+size. Generator and battle entropy remain independent. -/
+def resetSized (requested : Nat) (generatorRng battleRng : Rng.LinkRng)
+    (mode : BattleMode := .link) (playerBag enemyBag : Items.Bag := [])
+    (trainerClass : UInt8 := 1) : State :=
+  let player := RL.DynamicGenerator.sampleSized requested generatorRng
+  let enemy := RL.DynamicGenerator.sampleSized requested player.rng
+  resetFromSamples player enemy battleRng mode playerBag enemyBag trainerClass
 
 /-- Done only after explicit cleanup settlement. -/
 def done (state : State) : Bool :=
