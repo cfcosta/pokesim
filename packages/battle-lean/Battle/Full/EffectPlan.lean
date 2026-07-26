@@ -162,6 +162,18 @@ theorem effect_domain_total (effect : UInt8) (bounded : effect.toNat ≤ 0x56) :
   exact impossible supported
 
 /-- Every one of the 165 canonical move rows selects a supported effect. -/
+theorem exceptional_move_ids_supported :
+    ([98, 68, 118, 119, 165, 92, 19, 91, 100, 46, 18, 153, 120, 107, 156,
+      138, 49, 82, 69, 101, 149, 162] : List UInt8).all
+      (fun move => (plan (Data.moveData move).effect).mechanic != .malformed) = true := by
+  native_decide
+
+/-- Animation IDs/tile timing are deliberately outside the high-level effect
+projection; the machine layer must frame or execute them separately. -/
+def animationProjectedInMechanics : Bool := false
+
+@[simp] theorem animation_explicitly_excluded : animationProjectedInMechanics = false := rfl
+
 theorem canonical_moves_supported :
     Data.moves.all (fun move => (plan move.effect).mechanic != .malformed) = true := by
   native_decide

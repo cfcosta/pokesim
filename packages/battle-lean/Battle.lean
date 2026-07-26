@@ -31,6 +31,7 @@ import Battle.BugCompatibility
 import Battle.BugWitnesses
 import Battle.Full.State
 import Battle.Full.Initialization
+import Battle.Full.EndFlow
 import Battle.Full.Status
 import Battle.Full.Items
 import Battle.Full.EffectPlan
@@ -84,4 +85,5 @@ import Battle.RL.GeneratorSafe
 import Battle.RL.DynamicGenerator
 import Battle.RL.MoveHistory
 import Battle.RL.Environment
+import Battle.RL.Adapter
 import Battle.RL.SelfPlay

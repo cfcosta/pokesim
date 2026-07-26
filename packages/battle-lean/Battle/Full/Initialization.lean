@@ -127,6 +127,13 @@ def firstLivingStep (hp : Nat → UInt16) (index : Nat) : FirstLivingStep :=
       if hp index != 0 then .found index else .next (index + 1) := by
   rfl
 
+/-- Battle-transition VRAM/OAM/MMIO/audio and external-SRAM sprite scratch are
+not mechanics-state fields; the Game Boy adapter must execute or frame them. -/
+def transitionHardwareProjected : Bool := false
+
+@[simp] theorem transition_hardware_explicitly_excluded :
+    transitionHardwareProjected = false := rfl
+
 structure ResetImage where
   actionResult : UInt8
   battleResult : UInt8

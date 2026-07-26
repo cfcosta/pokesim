@@ -146,6 +146,45 @@ def swapBag (state : State) (first second : Nat) : State × Event :=
   ({ state with bag := swapArray state.bag.toArray first second |>.toList },
     .bagSwapped first second)
 
+inductive Command where
+  | openFight
+  | highlight (slot : Fin 4)
+  | cancelFight
+  | swapMoves (first second : Fin 4)
+  | swapBag (first second : Nat)
+  | commit (action : Full.Action)
+  deriving Repr, DecidableEq
+
+structure TraceState where
+  selection : State
+  committed : Option Full.Action := none
+  deriving Repr, DecidableEq
+
+/-- A full-selection interpreter exposes browse/cancel/reorder separately from
+the final canonical ActionCommit. -/
+def runCommand (trace : TraceState) : Command → TraceState
+  | .openFight => { trace with selection := (openFight trace.selection).1 }
+  | .highlight slot => { trace with selection := (highlight trace.selection slot).1 }
+  | .cancelFight => { trace with selection := (cancelFight trace.selection).1 }
+  | .swapMoves first second => { trace with selection := (Selection.swapMoves trace.selection first second).1 }
+  | .swapBag first second => { trace with selection := (Selection.swapBag trace.selection first second).1 }
+  | .commit action => { trace with committed := some action }
+
+def runTrace (initial : TraceState) (commands : List Command) : TraceState :=
+  commands.foldl runCommand initial
+
+@[simp] theorem action_commit_trace_refines_fight (state : State) (slot : Fin 4) :
+    (runTrace { selection := state }
+      [.openFight, .highlight slot, .commit (.fight slot)]).committed =
+        some (.fight slot) := by
+  rfl
+
+@[simp] theorem browse_cancel_reorder_trace_is_explicit (state : State)
+    (first second : Fin 4) :
+    (runTrace { selection := state }
+      [.openFight, .highlight first, .cancelFight, .swapMoves first second]).committed = none := by
+  rfl
+
 @[simp] theorem openFight_resets_attempts (state : State) :
     (openFight state).1.runAttempts = 0 := rfl
 

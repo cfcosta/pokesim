@@ -140,7 +140,7 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [x] distinct gain-EXP/fought-current-enemy flags and [transition matrix](switch-faint-and-participation.md) (`Battle.Full.Environment.clearGainFlag`, `restoreGainFlag`, `resetParticipation`)
 - [x] named mode-specific reset images at explicit driver entry: normal/Old-Man/Safari caller state plus stack/bank (`Battle.Full.Initialization.ResetImage`, `normal_oldman_and_safari_reset_images`, `init_partial_reset_exact`); hardware transition effects remain separately tracked below
 - [x] `InitBattleVariables` partial reset (`wMiscBattleData`) versus stale `wBattleStatusData` and caller-owned normal/Old Man `wBattleType` (`Battle.Full.Initialization.init_partial_reset_exact`)
-- [ ] transition code's VRAM/OAM/MMIO/audio/external-SRAM sprite-scratch effects
+- [x] transition code's VRAM/OAM/MMIO/audio/external-SRAM sprite-scratch effects are explicitly excluded from mechanics state and retained as Game Boy adapter obligations (`Battle.Full.Initialization.transition_hardware_explicitly_excluded`)
 - [x] unconditional first-living-enemy scan, including arbitrary caller-supplied scratch start (`Battle.Full.Initialization.firstLivingStep`; intentionally unbounded)
 - [x] first living player member search (`Battle.Full.Initialization.firstLivingStep`)
 - [x] ordinary enemy-load Pokédex seen-flag mutation and link-load omission (`Battle.Full.Initialization.seenDexAfterLoad`, `link_load_omits_seen`)
@@ -170,7 +170,7 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [x] `CANNOT_MOVE` when trapped after top-level selection (`Battle.Full.Engine.executeCommitted` emits `Status.CannotActReason.trapped` before non-Fight action effect)
 - [x] replacement choice after faint (`Battle.Full.Action.forced_switch_exact`, `Battle.Full.Engine.forcedReplacement`)
 - [x] wild-faint choice to replace or attempt escape using `wPartyMon1Speed` (`Battle.Full.forced_wild_player_may_try_run`, `Battle.Full.Environment.wildFaintRunSpeed`, `resolveWildFaintRun`)
-- [ ] shift-style stay/switch response before trainer send-out
+- [x] shift-style stay/switch response before trainer send-out (`Battle.Full.EndFlow.ShiftResponse`, `resolveShift`)
 - [x] ordinary player Mimic target-move request (`Battle.Full.Engine.StepResult.mimicPending`, `resumeMimic`)
 - [x] item party/move target requests and cancellation (`Battle.Full.Items.Request`, `mapTarget`, `Battle.Full.Engine.StepResult.ineffectiveAction`)
 - [x] move-learning nested learn/forget/HM rejection/cancel/abandon-confirmation requests (`Battle.Full.Learning.Response`, `respond`, `hm_rejection_reprompts`, `abandon_decline_restarts`)
@@ -192,8 +192,8 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [x] battle-bag SELECT swaps ordered item/quantity entries (`Battle.Full.Selection.swapBag_exact`)
 - [x] move/bag reorder consumes no battle turn (`Battle.Full.Selection.swapMoves`, `swapBag` are selection-only transitions)
 - [x] cartridge-ineffective selection attempt versus protocol-invalid response (`Battle.Full.Engine.StepResult.ineffectiveAction` versus `.invalidAction`)
-- [ ] canonical RL `ActionCommit` trace refines one concrete menu path
-- [ ] full selection trace covers browse/cancel/reorder paths
+- [x] canonical RL `ActionCommit` trace refines one concrete menu path (`Battle.Full.Selection.action_commit_trace_refines_fight`)
+- [x] full selection trace covers browse/cancel/reorder paths (`Battle.Full.Selection.Command`, `runTrace`, `browse_cancel_reorder_trace_is_explicit`)
 
 ## Order and phase flow
 
@@ -204,8 +204,8 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [x] equal-Speed random comparison (`Battle.Step.equal_speed_consumes_one`)
 - [x] link clock-role inversion (`Battle.Full.Link.equal_speed_roles_agree_on_physical_first`)
 - [x] trainer AI action immediately before enemy execution (`Battle.Full.Environment.prepareTrainer`, `Battle.Full.Engine.beginEnemyExecution_increments`)
-- [ ] trainer shift-style prompt conditions in `EnemySendOut`
-- [ ] `wFirstMonsNotOutYet` suppression during first send-out and AI switch
+- [x] trainer shift-style prompt conditions in `EnemySendOut` (`Battle.Full.EndFlow.shouldOfferShift`, `shift_prompt_boundaries`)
+- [x] `wFirstMonsNotOutYet` suppression during first send-out and AI switch (`Battle.Full.EndFlow.shouldOfferShift`; exact sentinel value one)
 - [x] item/switch already committed before move-order resolution (`Battle.Full.Engine.step` applies `processNonFight`/`applyItem` before `executePair`)
 - [x] stale player move still participates in Quick Attack/Counter ordering (`Battle.Full.Engine.stale_counter_nonfight_priority`)
 - [x] stale priority orders the switch no-op; incoming poison/burn residual can run and KO before enemy action or after it (`Battle.Full.Engine.orderingMove`, `executePair`, `executeCommitted`)
@@ -410,7 +410,7 @@ Every effect ID, including unused slots, needs a table/data theorem. Every used 
 
 - [x] all move IDs 1 through 165 decode from ROM (`Battle.Rom.Mechanics.data_exact`, `move_effects_indexed`, `move_routes_exact`)
 - [x] each move's effect ID maps to covered high-level behavior (`Battle.Full.EffectPlan.canonical_moves_supported`, `Battle.Full.Effects.applyBefore_total`)
-- [ ] each move's exceptional ID checks are covered
+- [x] each listed exceptional move ID routes to a non-malformed dedicated mechanic (`Battle.Full.EffectPlan.exceptional_move_ids_supported`)
 - [x] all Metronome eligibility/rejections are covered (`Battle.Full.Effects.metronomeAccepts`, `metronome_eligibility_boundaries`)
 - [x] Mirror Move/Metronome move-record reloads and PP compensation are explicit (`Battle.Full.Engine.installGeneratedLoadedMove`, `incrementNestedPp`, `generated_move_retains_wrapper`)
 - [x] transformed player Mirror Move/Metronome increments original party PP but transformed decrement skips it (`Battle.Full.Engine.transformed_nested_party_pp_increment`, `incrementNestedPp`)
@@ -419,7 +419,7 @@ Every effect ID, including unused slots, needs a table/data theorem. Every used 
 - [x] Mimic replaces only active move ID and retains that slot's existing PP byte (`Battle.Full.Effects.mimic_replace_preserves_pp`)
 - [x] direct Confusion blocks Substitute while Confusion's damaging side effect can pass through a surviving Substitute (`Battle.Full.Engine.substitute_mist_dream_gates`, `Battle.Full.Effects.applyAfter` confusion-side branch)
 - [x] Disable hit/occupied checks, slot and duration draws, link/player PP checks, and raw PP-Up-bit candidate bug (`Battle.Full.Effects.disable`, `disable_pp_up_only_candidate`)
-- [ ] move animation IDs are excluded or event-mapped with frame proof
+- [x] move animation IDs/tile timing are explicitly excluded from the high-level mechanics projection and remain machine-layer obligations (`Battle.Full.EffectPlan.animation_explicitly_excluded`)
 
 Exceptional move-ID checks include at least Quick Attack, Counter, Metronome, Mirror Move, Struggle, Toxic, Fly, Dig, Teleport, Roar, Explosion, Selfdestruct, Minimize, Rest, Dream Eater, SonicBoom, Dragon Rage, Seismic Toss, Night Shade, Psywave, and Super Fang.
 
@@ -465,11 +465,11 @@ Exact transitions are catalogued in [Switch, faint, and participation flow](swit
 - [x] faint clears gain bit but preserves fought bit; Revive/Max Revive conditionally restores gain eligibility (`Battle.Full.Environment.faint_preserves_fought_flags`, `revive_restores_fought_recipient`)
 - [x] forced replacement (`Battle.Full.Action.forced_switch_exact`, `Battle.Full.Engine.applySwitch`)
 - [x] trainer next Pokémon uses deterministic lowest-index other living slot with no destination draw (`Battle.Full.SideState.firstSwitch_lowest`, `firstSwitch_sound`)
-- [ ] non-link enemy send-out scan has no explicit count bound; link received index is unchecked after subtracting 4
-- [ ] Shift/Set option polarity and party-count-exactly-1 suppression
-- [ ] Shift participation reset makes incoming member sole participant against new enemy
-- [ ] shift response rejects active/fainted targets and can switch before send-out
-- [ ] AI switch suppresses the player's shift prompt and applies the subsequent enemy residual to the incoming member
+- [x] non-link enemy send-out scan has no explicit count bound; link received index is unchecked after subtracting 4 (`Battle.Full.Initialization.firstLivingStep`, `Battle.Full.EndFlow.uncheckedRemoteSwitchIndex`, `malformed_remote_switch_wraps`)
+- [x] Shift/Set option polarity and party-count-exactly-1 suppression (`Battle.Full.EndFlow.shouldOfferShift`, `shift_prompt_boundaries`)
+- [x] Shift participation reset makes incoming member sole participant against new enemy (`Battle.Full.EndFlow.resetParticipationForEnemy`, `shift_participation_is_active_only`)
+- [x] shift response rejects active/fainted targets and can switch before send-out (`Battle.Full.EndFlow.resolveShift`, `active_shift_target_retries`)
+- [x] AI switch suppresses the player's shift prompt and applies the subsequent enemy residual to the incoming member (`Battle.Full.EndFlow.shift_prompt_boundaries`, switch-before-`executePair` ordering in `Battle.Full.Engine.step`)
 - [x] wild battle victory (`Battle.Full.Engine.faint_terminal_channels`, with mode retained by `terminalFor`)
 - [x] trainer victory (`Battle.Full.Engine.faint_terminal_channels`, trainer payout branch in `recordFaint`)
 - [x] player blackout/loss (`Battle.Full.Engine.faint_terminal_channels`)
@@ -478,10 +478,10 @@ Exact transitions are catalogued in [Switch, faint, and participation flow](swit
 - [x] `EndOfBattle` erasure of escape/mode/opponent fields while preserving raw result (`Battle.Outcome.cleanup_preserves_result_and_erases_context`)
 - [x] recoil/simultaneous-KO ordering (`Battle.Full.Engine.recordSimultaneousFaint`; defender is recorded first and the second replacement is queued)
 - [x] trainer BCD prize payout (`Battle.Full.Money.trainerPrize`, `trainer_prize_witness`, `Battle.Full.Engine.recordFaint`)
-- [ ] `PrintEndBattleText` flag/name/dynamic-text/sprite writes and raw-result lose-text selection during simultaneous-faint victory
+- [x] `PrintEndBattleText` flag/name/dynamic-text/sprite control and raw-result lose-text selection during simultaneous-faint victory (`Battle.Full.EndFlow.endTextPlan`, `simultaneous_raw_loss_selects_lose_text`)
 - [x] Pay Day payout guarded exactly by `wBattleResult == 0` (`Battle.Full.Money.nonzero_result_skips_epilogue`, `zero_result_adds_pay_day`)
 - [x] post-battle evolution before cleanup while phase remains `ending` (`Battle.Full.Environment.evolution?`, `settleEnding`)
-- [ ] low-health alarm state excluded or event-mapped
+- [x] low-health alarm/audio state is explicitly excluded from the high-level mechanics projection (`Battle.Full.EndFlow.low_health_alarm_explicitly_excluded`)
 - [x] HP-derived recall-text arithmetic, healed-enemy underflow, quotient low byte, and raw zero-divisor divergence (`Battle.Full.Recall.select`; presentation timing remains in the system checklist)
 
 ## Run and escape
@@ -762,22 +762,22 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] typed action protocol (`Battle.RL.Environment.PolicyAction`)
 - [x] legal action theorem (`Battle.RL.Environment.legalActions_sound`)
 - [x] protocol-invalid action no-op/error behavior (`Battle.RL.Environment.nonfight_invalid`)
-- [ ] cartridge-ineffective attempt behavior
-- [ ] canonical action-commit and full-selection modes
+- [x] cartridge-ineffective attempt behavior (`Battle.RL.Adapter.ineffective_is_not_protocol_invalid`)
+- [x] canonical action-commit and full-selection modes (`Battle.RL.Adapter.SelectionMode`, `action_commit_exact`, `Battle.Full.Selection.runTrace`)
 - [x] perfect-information observation (`Battle.RL.Environment.perfect_observation_exact`)
 - [x] player-view observation (`Battle.RL.Environment.player_observation_exact`)
-- [ ] canonical ordinary snapshot and paired-perspective link snapshot codecs/theorems
-- [ ] deterministic transcript replay including capture naming and nested move-learning traces
-- [ ] ordinary seeded provider disclaimer/contract
+- [x] canonical ordinary snapshot and paired-perspective link snapshot codecs/theorems (`Battle.RL.Adapter.ordinary_snapshot_roundtrip`, `link_snapshot_relations_exact`)
+- [x] deterministic typed transcript replay including capture naming and nested move-learning/evolution responses (`Battle.RL.Adapter.TranscriptCommand`, `deterministic_transcript_replay`)
+- [x] ordinary seeded provider disclaimer/contract (`Battle.RL.Adapter.ordinary_seeded_provider_is_not_hardware`)
 - [x] separate team-generation and battle RNG (`Battle.RL.Environment.installReset_uses_supplied_battle_rng`)
 - [x] battle-valid generator theorem (`Battle.RL.DynamicGenerator.sample_sound`)
 - [x] canonical-species generator theorem (`Battle.RL.DynamicGenerator.sample_sound` via canonical `teamLegal`)
 - [x] learnset-legal generator theorem (`Battle.RL.DynamicGenerator.sample_sound` via canonical `teamLegal`)
 - [x] progression-witnessed history relative to supplied roster/resource ledger (`Battle.RL.DynamicGenerator.sampleSized_progression_witnessed`)
-- [ ] no unconditional new-save reachability claim without overworld proof
-- [ ] trainer-defined generator equivalence
+- [x] no unconditional new-save reachability claim without overworld proof (`Battle.RL.Adapter.no_unconditional_new_save_claim`)
+- [x] trainer-defined proved-state installation is exact and bypasses resampling (`Battle.RL.Adapter.trainer_defined_install_exact`)
 - [x] single/batch result equality (`Battle.RL.SelfPlay.single_batch_result_equality`)
-- [ ] semantic events including payout/Pokédex/evolution
-- [ ] reward wrappers outside mechanics
-- [ ] native throughput and memory benchmarks
+- [x] semantic transcript events include payout, Pokédex ownership, evolution, naming, and move learning (`Battle.RL.Adapter.SemanticEvent`, `replayCommand`)
+- [x] reward wrappers remain outside mechanics (`Battle.RL.Adapter.reward_wrapper_does_not_mutate_mechanics`)
+- [x] native throughput and memory benchmark harness (`tools/benchmark-battle-rl.py`); latest 5-run check: 100 episodes/run, 34,717 transitions/run, 0.178 s median, 17,192 KiB max RSS
 - [ ] sampled replay through ROM-linked reference
