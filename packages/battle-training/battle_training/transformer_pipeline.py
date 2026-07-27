@@ -16,7 +16,13 @@ import torch
 from torch import Tensor
 
 from . import ENTROPY, FULL_PARTY_SIZE, FULL_PROFILE, FULL_SCHEMA
-from .arena import ArenaConfig, run_traced_arena, write_arena_report
+from .arena import (
+    ArenaConfig,
+    run_paired_arena,
+    run_traced_arena,
+    skill_probe_report,
+    write_arena_report,
+)
 from .artifacts import build_manifest, sha256, verify_manifest, write_json, write_new
 from .joint_search import BatchedJointRegretSearch, JointSearchConfig, SearchResult
 from .native import NativeRequestTimeout, SearchServer, build_search_server
@@ -50,8 +56,12 @@ class TransformerPipelineConfig:
     opponent_checkpoints: tuple[str, ...] = ()
     opponent_fraction: float = 0.5
     historical_window: int = 4
-    promotion_games: int = 64
-    minimum_anchor_score: float = 0.40
+    promotion_games: int = 1024
+    promotion_seed_count: int = 8
+    probe_games: int = 256
+    probe_seed_count: int = 8
+    minimum_promotion_score: float = 0.50
+    enforce_quality_gate: bool = True
     chance_samples_per_joint: int = 1
     regret_iterations: int = 256
     inference_batch_size: int = 96
@@ -548,11 +558,31 @@ def _parameter_distance(before: BattleTransformer, after: BattleTransformer) -> 
     return float(torch.sqrt(total).detach().cpu())
 
 
+def _collection_quality(
+    metrics: dict[str, Any], config: TransformerPipelineConfig
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    episodes = config.selfplay_episodes
+    if metrics["truncated"] / episodes > 0.01:
+        reasons.append("horizon-truncation-rate-above-1pct")
+    if metrics["semantic_divergences"] / episodes > 0.01:
+        reasons.append("semantic-divergence-rate-above-1pct")
+    if metrics["voluntary_switch_rate"] > 0.20:
+        reasons.append("voluntary-switch-rate-above-20pct")
+    if metrics["mean_decisions"] > 96:
+        reasons.append("mean-battle-length-above-96")
+    if metrics["finished"] / episodes < 0.98:
+        reasons.append("finished-rate-below-98pct")
+    return {"pass": not reasons, "reasons": reasons}
+
+
 def run_transformer_pipeline(
     root: Path, config: TransformerPipelineConfig
 ) -> dict[str, Any]:
     if root.exists() and any(root.iterdir()):
         raise FileExistsError(f"output directory is not empty: {root}")
+    if config.arena_episodes < 4 or config.arena_episodes % 2:
+        raise ValueError("arena_episodes must be an even number of at least four")
     root.mkdir(parents=True, exist_ok=True)
     if config.search_every < 1:
         raise ValueError("search_every must be positive")
@@ -564,10 +594,27 @@ def run_transformer_pipeline(
         raise ValueError("replay_window must be positive")
     if config.historical_window < 0:
         raise ValueError("historical_window must be nonnegative")
-    if config.promotion_games < 2:
-        raise ValueError("promotion_games must be at least two")
-    if not 0.0 <= config.minimum_anchor_score <= 1.0:
-        raise ValueError("minimum_anchor_score must be in [0, 1]")
+    if config.promotion_games < 2 or config.promotion_games % 2:
+        raise ValueError("promotion_games must be an even number of at least two")
+    if config.probe_games < 2 or config.probe_games % 2:
+        raise ValueError("probe_games must be an even number of at least two")
+    if config.promotion_seed_count < 2 or config.probe_seed_count < 2:
+        raise ValueError("promotion and probe arenas require multiple seeds")
+    if config.promotion_games < 2 * config.promotion_seed_count:
+        raise ValueError("promotion games must cover every promotion seed")
+    if config.probe_games < 2 * config.probe_seed_count:
+        raise ValueError("probe games must cover every probe seed")
+    if not 0.0 <= config.minimum_promotion_score <= 1.0:
+        raise ValueError("minimum_promotion_score must be in [0, 1]")
+    if config.enforce_quality_gate:
+        if config.promotion_games < 1024:
+            raise ValueError(
+                "quality-gated training requires at least 1024 promotion games"
+            )
+        if config.minimum_promotion_score < 0.50:
+            raise ValueError(
+                "quality-gated training requires a promotion score of at least 50%"
+            )
     if not 0.0 <= config.opponent_fraction <= 1.0:
         raise ValueError("opponent_fraction must be in [0, 1]")
     build_search_server()
@@ -661,34 +708,65 @@ def run_transformer_pipeline(
                 },
             )
             raise
+        collection_quality = _collection_quality(collection_metrics, config)
+        collection_metrics["quality"] = collection_quality
         shards.append(shard)
         collection.append(collection_metrics)
         training_shards = shards[-config.replay_window :]
+        incumbent = network.detached_copy(device)
         incumbent_state = copy.deepcopy(network.state_dict())
         optimizer_state = copy.deepcopy(optimizer.state_dict())
         training_metrics = _train_network(
             network, optimizer, training_shards, config, iteration
         )
-        promotion = run_traced_arena(
+        promotion = run_paired_arena(
             network,
-            initial_anchor,
+            incumbent,
+            config.promotion_games,
+            config.episode_budget,
+            config.seed + 70_000_000 + iteration * 10_007,
+            config.promotion_seed_count,
+        )
+        probe_arena = run_traced_arena(
+            network,
+            incumbent,
             ArenaConfig(
-                games=config.promotion_games,
+                games=config.probe_games,
                 budget=config.episode_budget,
-                seed=config.seed + 70_000_000,
+                seed=config.seed + 80_000_000 + iteration * 10_009,
                 replay_games=0,
+                seed_count=config.probe_seed_count,
             ),
         )
-        promotion_score = (
-            promotion["wins"] + 0.5 * promotion["draws"]
-        ) / config.promotion_games
-        accepted = (
-            promotion["data_quality_pass"]
-            and promotion_score >= config.minimum_anchor_score
+        probes = skill_probe_report(probe_arena)
+        promotion_score = promotion["score_with_nonfinishes_as_losses"]
+        confidence_low = promotion["paired_score_ci95"][0]
+        statistically_superior = (
+            promotion_score >= config.minimum_promotion_score and confidence_low >= 0.50
         )
-        promotion["score_with_truncations_as_losses"] = promotion_score
+        if config.enforce_quality_gate:
+            accepted = (
+                collection_quality["pass"]
+                and promotion["data_quality_pass"]
+                and promotion["quality_pass"]
+                and probe_arena["data_quality_pass"]
+                and probe_arena["quality_pass"]
+                and statistically_superior
+                and probes["pass"]
+            )
+        else:
+            accepted = (
+                promotion["data_quality_pass"]
+                and promotion["quality_pass"]
+                and probe_arena["data_quality_pass"]
+                and probe_arena["quality_pass"]
+                and promotion_score >= config.minimum_promotion_score
+            )
+        promotion["statistically_superior"] = statistically_superior
+        promotion["minimum_score"] = config.minimum_promotion_score
+        promotion["held_out_probes"] = probes
+        promotion["probe_arena"] = probe_arena
         promotion["accepted"] = accepted
-        promotion["minimum_anchor_score"] = config.minimum_anchor_score
         if not accepted:
             network.load_state_dict(incumbent_state)
             optimizer.load_state_dict(optimizer_state)
@@ -722,8 +800,6 @@ def run_transformer_pipeline(
             },
         )
     distance = _parameter_distance(initial, network)
-    if distance == 0.0:
-        raise ValueError("transformer parameters did not update")
     arena_config = ArenaConfig(
         games=config.arena_episodes,
         budget=config.episode_budget,
@@ -734,6 +810,7 @@ def run_transformer_pipeline(
         max_actions_per_side=13,
         seed=config.seed,
         replay_games=min(3, config.arena_episodes),
+        seed_count=min(8, config.arena_episodes // 2),
     )
     arena = write_arena_report(
         root / "arena" / "final-vs-initial", network, initial, arena_config
@@ -769,6 +846,35 @@ def run_transformer_pipeline(
         "sha256": replay_metrics["sha256"],
         "byte_identical": True,
     }
+    accepted_updates = sum(item["promotion"]["accepted"] for item in training)
+    collection_quality_pass = all(item["quality"]["pass"] for item in collection)
+    evaluation_data_quality_pass = (
+        arena["data_quality_pass"]
+        and all(item["data_quality_pass"] for item in opponent_arenas)
+        and all(item["promotion"]["data_quality_pass"] for item in training)
+        and all(
+            item["promotion"]["probe_arena"]["data_quality_pass"] for item in training
+        )
+    )
+    evaluation_quality_pass = (
+        arena["quality_pass"]
+        and all(item["quality_pass"] for item in opponent_arenas)
+        and all(item["promotion"]["quality_pass"] for item in training)
+        and all(item["promotion"]["probe_arena"]["quality_pass"] for item in training)
+    )
+    data_quality_pass = evaluation_data_quality_pass
+    model_quality_pass = accepted_updates > 0 and all(
+        item["promotion"]["statistically_superior"]
+        and item["promotion"]["held_out_probes"]["pass"]
+        for item in training
+        if item["promotion"]["accepted"]
+    )
+    quality_gate_pass = (
+        data_quality_pass
+        and collection_quality_pass
+        and evaluation_quality_pass
+        and (model_quality_pass or not config.enforce_quality_gate)
+    )
     summary = {
         "pipeline": _pipeline_id(),
         "device": str(device),
@@ -784,16 +890,38 @@ def run_transformer_pipeline(
         "final_checkpoint_sha256": sha256(
             root / "checkpoints" / f"policy-{config.iterations:03d}.pt"
         ),
-        "accepted_updates": sum(item["promotion"]["accepted"] for item in training),
+        "accepted_updates": accepted_updates,
         "final_training_loss": training[-1]["history"][-1],
         "arena": arena,
         "opponent_arenas": opponent_arenas,
         "opponents": opponent_metadata,
-        "data_quality_pass": (
-            arena["data_quality_pass"]
-            and all(item["data_quality_pass"] for item in opponent_arenas)
-            and all(item["promotion"]["data_quality_pass"] for item in training)
-        ),
+        "data_quality_pass": data_quality_pass,
+        "model_quality_pass": model_quality_pass,
+        "quality_gate": {
+            "pass": quality_gate_pass,
+            "collection_quality_pass": collection_quality_pass,
+            "evaluation_data_quality_pass": evaluation_data_quality_pass,
+            "evaluation_nonfinish_quality_pass": evaluation_quality_pass,
+            "at_least_one_promoted_update": accepted_updates > 0,
+            "accepted_updates_passed_paired_confidence": (
+                accepted_updates > 0
+                and all(
+                    item["promotion"]["statistically_superior"]
+                    for item in training
+                    if item["promotion"]["accepted"]
+                )
+            ),
+            "accepted_updates_passed_skill_probes": (
+                accepted_updates > 0
+                and all(
+                    item["promotion"]["held_out_probes"]["pass"]
+                    for item in training
+                    if item["promotion"]["accepted"]
+                )
+            ),
+            "semantic_cycles_scored_as_losses": True,
+            "deterministic_replay": True,
+        },
         "deterministic_replay": replay,
     }
     write_json(root / "summary.json", summary)
@@ -811,10 +939,14 @@ def verify_transformer_run(root: Path) -> dict[str, Any]:
     if errors:
         raise ValueError("artifact verification failed: " + "; ".join(errors))
     summary = json.loads((root / "summary.json").read_text())
-    if not summary.get("data_quality_pass", False):
-        raise ValueError("training run failed the mechanics-timeout data-quality gate")
     run = json.loads((root / "run.json").read_text())
     config = TransformerPipelineConfig(**run["config"])
+    if not summary.get("data_quality_pass", False):
+        raise ValueError("training run failed the expanded data-quality gate")
+    if config.enforce_quality_gate and not summary.get("quality_gate", {}).get(
+        "pass", False
+    ):
+        raise ValueError("training run did not promote a statistically supported model")
     configure_determinism(config.seed)
     device = choose_device(config.device)
     initial_path = root / "checkpoints" / "policy-000.pt"

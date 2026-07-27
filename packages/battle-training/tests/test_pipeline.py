@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
+from battle_training.arena import _mean_ci95, _paired_coordinates, skill_probe_report
 from battle_training.artifacts import build_manifest, verify_manifest, write_json
 from battle_training.joint_search import (
     _cap_switch_mass,
@@ -115,6 +116,34 @@ class TransformerTests(unittest.TestCase):
         self.assertGreater(player[0], 0.99)
         self.assertGreater(enemy[1], 0.99)
         self.assertLess(exploitability, 0.01)
+
+    def test_paired_arena_reuses_resets_and_spans_seeds(self) -> None:
+        self.assertEqual(_paired_coordinates(100, 8, 0), _paired_coordinates(100, 8, 1))
+        self.assertNotEqual(
+            _paired_coordinates(100, 8, 0), _paired_coordinates(100, 8, 2)
+        )
+        low, high = _mean_ci95([1.0] * 512)
+        self.assertEqual((low, high), (1.0, 1.0))
+
+    def test_skill_probes_reject_switch_churn(self) -> None:
+        skills = {
+            "damaging_moves": 200,
+            "mean_move_effectiveness_vs_best": 0.7,
+            "status_uses": 100,
+            "status_success_rate": 0.5,
+            "status_wasted": 40,
+            "voluntary_switches": 40,
+            "voluntary_switch_rate": 0.1,
+            "switch_completion_rate": 1.0,
+            "matchup_improvement_rate": 0.55,
+        }
+        candidate = dict(skills)
+        candidate["voluntary_switch_rate"] = 0.47
+        report = skill_probe_report(
+            {"candidate_skills": candidate, "baseline_skills": skills}
+        )
+        self.assertFalse(report["switch"]["pass"])
+        self.assertFalse(report["pass"])
 
     def test_fixed_opponent_schedule_is_exact_and_periodic(self) -> None:
         schedule = [_scheduled_for_opponent(episode, 0.5) for episode in range(1000)]

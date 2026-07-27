@@ -58,8 +58,13 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--opponent-checkpoint", type=Path, action="append", default=[])
     parser.add_argument("--opponent-fraction", type=float, default=0.5)
     parser.add_argument("--historical-window", type=int, default=4)
-    parser.add_argument("--promotion-games", type=int, default=64)
-    parser.add_argument("--minimum-anchor-score", type=float, default=0.40)
+    parser.add_argument("--promotion-games", type=int, default=16 if smoke else 1024)
+    parser.add_argument("--promotion-seed-count", type=int, default=2 if smoke else 8)
+    parser.add_argument("--probe-games", type=int, default=16 if smoke else 256)
+    parser.add_argument("--probe-seed-count", type=int, default=2 if smoke else 8)
+    parser.add_argument(
+        "--minimum-promotion-score", type=float, default=0.0 if smoke else 0.50
+    )
 
 
 def parser() -> argparse.ArgumentParser:
@@ -83,6 +88,7 @@ def parser() -> argparse.ArgumentParser:
     arena.add_argument("--device", default="auto")
     arena.add_argument("--replay-games", type=int, default=3)
     arena.add_argument("--search-every", type=int, default=0)
+    arena.add_argument("--seed-count", type=int, default=8)
     verify = subparsers.add_parser("verify")
     verify.add_argument("run", type=Path)
     return result
@@ -109,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
                 seed=arguments.seed,
                 replay_games=arguments.replay_games,
                 search_every=arguments.search_every,
+                seed_count=arguments.seed_count,
             ),
         )
     elif arguments.command == "verify":
@@ -146,7 +153,11 @@ def main(argv: list[str] | None = None) -> int:
             opponent_fraction=arguments.opponent_fraction,
             historical_window=arguments.historical_window,
             promotion_games=arguments.promotion_games,
-            minimum_anchor_score=arguments.minimum_anchor_score,
+            promotion_seed_count=arguments.promotion_seed_count,
+            probe_games=arguments.probe_games,
+            probe_seed_count=arguments.probe_seed_count,
+            minimum_promotion_score=arguments.minimum_promotion_score,
+            enforce_quality_gate=arguments.command == "transformer-train",
             chance_samples_per_joint=arguments.chance_samples_per_joint,
             regret_iterations=arguments.regret_iterations,
             inference_batch_size=arguments.inference_batch_size,

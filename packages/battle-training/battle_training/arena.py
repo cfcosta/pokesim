@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -36,6 +37,7 @@ class ArenaConfig:
     seed: int = 0
     replay_games: int = 3
     search_every: int = 0
+    seed_count: int = 8
 
 
 @dataclass
@@ -48,6 +50,7 @@ class SkillMetrics:
     status_successes: int = 0
     status_failures: int = 0
     status_wasted: int = 0
+    ordinary_actions: int = 0
     voluntary_switches: int = 0
     completed_voluntary_switches: int = 0
     matchup_improving_switches: int = 0
@@ -66,6 +69,11 @@ class SkillMetrics:
         )
         result["status_success_rate"] = (
             self.status_successes / self.status_uses if self.status_uses else None
+        )
+        result["voluntary_switch_rate"] = (
+            self.voluntary_switches / self.ordinary_actions
+            if self.ordinary_actions
+            else None
         )
         result["switch_completion_rate"] = (
             self.completed_voluntary_switches / self.voluntary_switches
@@ -103,23 +111,37 @@ def _sample_policy(probabilities: list[float], rng: random.Random) -> int:
     )
 
 
-def _network_actions(
+def _network_actions_split(
     player: BattleTransformer,
     enemy: BattleTransformer,
     snapshot: Any,
-    rng: random.Random,
+    player_rng: random.Random,
+    enemy_rng: random.Random,
 ) -> tuple[int, int]:
     if player is enemy:
         policies, _ = player.evaluate(
             [snapshot.player_features, snapshot.enemy_features],
             [snapshot.player_mask, snapshot.enemy_mask],
         )
-        return _sample_policy(policies[0], rng), _sample_policy(policies[1], rng)
+        return _sample_policy(policies[0], player_rng), _sample_policy(
+            policies[1], enemy_rng
+        )
     player_policy, _ = player.evaluate(
         [snapshot.player_features], [snapshot.player_mask]
     )
     enemy_policy, _ = enemy.evaluate([snapshot.enemy_features], [snapshot.enemy_mask])
-    return _sample_policy(player_policy[0], rng), _sample_policy(enemy_policy[0], rng)
+    return _sample_policy(player_policy[0], player_rng), _sample_policy(
+        enemy_policy[0], enemy_rng
+    )
+
+
+def _network_actions(
+    player: BattleTransformer,
+    enemy: BattleTransformer,
+    snapshot: Any,
+    rng: random.Random,
+) -> tuple[int, int]:
+    return _network_actions_split(player, enemy, snapshot, rng, rng)
 
 
 def _legal(mask: int, action: int) -> bool:
@@ -183,6 +205,8 @@ def _update_side_metrics(
 ) -> None:
     side_name = "player" if side_index == 0 else "enemy"
     mask = before[f"{side_name}_mask"]
+    if request == "battle":
+        metrics.ordinary_actions += 1
     if request == "battle" and 0 <= action < 4:
         move = before[side_name]["moves"][action]
         if int(move["power"]) > 0:
@@ -313,12 +337,142 @@ def _event_lines(
             replay.add(f"|-message|{kind} resolved.")
 
 
+def _paired_coordinates(seed: int, seed_count: int, game: int) -> tuple[int, int]:
+    pair = game // 2
+    seed_index = pair % seed_count
+    sample_index = pair // seed_count
+    return seed + 90_000_000 + seed_index * 1_000_003, sample_index
+
+
+def _mean_ci95(values: list[float]) -> tuple[float, float]:
+    mean = sum(values) / len(values)
+    if len(values) < 2:
+        return mean, mean
+    variance = sum((value - mean) ** 2 for value in values) / (len(values) - 1)
+    radius = 1.96 * math.sqrt(variance / len(values))
+    return max(0.0, mean - radius), min(1.0, mean + radius)
+
+
+def run_paired_arena(
+    candidate: BattleTransformer,
+    baseline: BattleTransformer,
+    games: int,
+    budget: int,
+    seed: int,
+    seed_count: int = 8,
+) -> dict[str, Any]:
+    """Fast paired, side-swapped evaluation with nonfinishes scored as losses."""
+    if games < 2 or games % 2:
+        raise ValueError("paired arena games must be a positive even number")
+    if seed_count < 2 or games < 2 * seed_count:
+        raise ValueError(
+            "paired arena requires at least two seeds and one pair per seed"
+        )
+    wins = losses = draws = truncated = semantic_divergences = mechanics_timeouts = 0
+    game_scores: list[float] = []
+    pair_scores: list[float] = []
+    pair_score: list[float] = []
+    server = SearchServer()
+    try:
+        for game in range(games):
+            pair = game // 2
+            candidate_player = game % 2 == 0
+            player = candidate if candidate_player else baseline
+            enemy = baseline if candidate_player else candidate
+            candidate_rng = random.Random(seed + 30_000_019 + pair * 2_000_003)
+            baseline_rng = random.Random(seed + 40_000_033 + pair * 2_000_003)
+            player_rng = candidate_rng if candidate_player else baseline_rng
+            enemy_rng = baseline_rng if candidate_player else candidate_rng
+            root_seed, episode = _paired_coordinates(seed, seed_count, game)
+            result: int | None = None
+            stop = "truncated"
+            try:
+                snapshot = server.reset(root_seed, episode)
+                for _ in range(budget):
+                    player_action, enemy_action = _network_actions_split(
+                        player, enemy, snapshot, player_rng, enemy_rng
+                    )
+                    snapshot = server.episode_step(
+                        snapshot.handle, player_action, enemy_action
+                    )
+                    if snapshot.divergence is not None:
+                        stop = "semantic-divergence"
+                        break
+                    if snapshot.done:
+                        result = snapshot.terminal_return
+                        stop = "finished"
+                        break
+                    snapshot = server.compact(snapshot.handle)
+            except NativeRequestTimeout:
+                stop = "mechanics-timeout"
+                server.close()
+                server = SearchServer()
+            candidate_result = result if candidate_player or result is None else -result
+            if stop == "mechanics-timeout":
+                mechanics_timeouts += 1
+                score = 0.0
+            elif stop == "semantic-divergence":
+                semantic_divergences += 1
+                score = 0.0
+            elif candidate_result == 1:
+                wins += 1
+                score = 1.0
+            elif candidate_result == -1:
+                losses += 1
+                score = 0.0
+            elif candidate_result == 0:
+                draws += 1
+                score = 0.5
+            else:
+                truncated += 1
+                score = 0.0
+            game_scores.append(score)
+            pair_score.append(score)
+            if len(pair_score) == 2:
+                pair_scores.append(sum(pair_score) / 2)
+                pair_score = []
+    finally:
+        server.close()
+    robust_score = sum(game_scores) / games
+    ci_low, ci_high = _mean_ci95(pair_scores)
+    finished = wins + losses + draws
+    return {
+        "games": games,
+        "pairs": games // 2,
+        "seed_count": seed_count,
+        "pairing": "same-reset-model-side-swap-v1",
+        "wins": wins,
+        "losses": losses,
+        "draws": draws,
+        "truncated": truncated,
+        "semantic_divergences": semantic_divergences,
+        "mechanics_timeouts": mechanics_timeouts,
+        "finished": finished,
+        "score": (wins + 0.5 * draws) / finished if finished else None,
+        "score_with_nonfinishes_as_losses": robust_score,
+        "paired_score_ci95": [ci_low, ci_high],
+        "data_quality_pass": mechanics_timeouts == 0,
+        "quality_pass": (
+            mechanics_timeouts == 0
+            and truncated + semantic_divergences <= max(1, math.floor(0.02 * games))
+        ),
+    }
+
+
 def run_traced_arena(
     candidate: BattleTransformer,
     baseline: BattleTransformer,
     config: ArenaConfig,
     replay_dir: Path | None = None,
 ) -> dict[str, Any]:
+    if (
+        config.games % 2
+        or config.seed_count < 2
+        or config.games < 2 * config.seed_count
+    ):
+        raise ValueError(
+            "traced arena requires even games and at least one pair for each seed"
+        )
     selection_rng = random.Random(config.seed + 0xA7E9A)
     chance_rng = random.Random(config.seed + 0xA7E9B)
     search_config = JointSearchConfig(
@@ -331,12 +485,18 @@ def run_traced_arena(
     candidate_metrics = SkillMetrics()
     baseline_metrics = SkillMetrics()
     wins = losses = draws = truncated = semantic_divergences = mechanics_timeouts = 0
+    game_scores: list[float] = []
     if replay_dir is not None:
         replay_dir.mkdir(parents=True, exist_ok=True)
     for episode in range(config.games):
         candidate_player = episode % 2 == 0
         player = candidate if candidate_player else baseline
         enemy = baseline if candidate_player else candidate
+        pair = episode // 2
+        candidate_rng = random.Random(config.seed + 30_000_019 + pair * 2_000_003)
+        baseline_rng = random.Random(config.seed + 40_000_033 + pair * 2_000_003)
+        player_rng = candidate_rng if candidate_player else baseline_rng
+        enemy_rng = baseline_rng if candidate_player else candidate_rng
         replay = Replay() if episode < config.replay_games else None
         replay_path = (
             replay_dir / f"game-{episode:05d}.log"
@@ -350,7 +510,10 @@ def run_traced_arena(
             # A fresh process makes a timed-out mechanics state disposable; no
             # opaque native handle is ever reconstructed or mislabeled.
             with SearchServer() as server:
-                snapshot = server.reset(config.seed + 90_000_000, episode)
+                root_seed, reset_episode = _paired_coordinates(
+                    config.seed, config.seed_count, episode
+                )
+                snapshot = server.reset(root_seed, reset_episode)
                 initial = server.inspect(snapshot.handle)
                 initial["player_mask"] = snapshot.player_mask
                 initial["enemy_mask"] = snapshot.enemy_mask
@@ -375,8 +538,8 @@ def run_traced_arena(
                         player_action = result.player_action
                         enemy_action = result.enemy_action
                     else:
-                        player_action, enemy_action = _network_actions(
-                            player, enemy, snapshot, selection_rng
+                        player_action, enemy_action = _network_actions_split(
+                            player, enemy, snapshot, player_rng, enemy_rng
                         )
                     if replay is not None:
                         replay.add(f"|turn|{decision + 1}")
@@ -441,15 +604,20 @@ def run_traced_arena(
             result_value if candidate_player or result_value is None else -result_value
         )
         if timed_out or semantic_divergence:
-            pass
+            score = 0.0
         elif candidate_result == 1:
             wins += 1
+            score = 1.0
         elif candidate_result == -1:
             losses += 1
+            score = 0.0
         elif candidate_result == 0:
             draws += 1
+            score = 0.5
         else:
             truncated += 1
+            score = 0.0
+        game_scores.append(score)
         if (
             replay is not None
             and replay_path is not None
@@ -466,6 +634,11 @@ def run_traced_arena(
                 replay.add("|message|Battle truncated without a terminal result.")
             replay_path.write_text(replay.text())
     finished = wins + losses + draws
+    pair_scores = [
+        (game_scores[index] + game_scores[index + 1]) / 2
+        for index in range(0, len(game_scores), 2)
+    ]
+    ci_low, ci_high = _mean_ci95(pair_scores)
     return {
         "profile": "full-link-6v6-perfect-v1",
         "party_size": 6,
@@ -477,11 +650,96 @@ def run_traced_arena(
         "semantic_divergences": semantic_divergences,
         "mechanics_timeouts": mechanics_timeouts,
         "data_quality_pass": mechanics_timeouts == 0,
+        "quality_pass": (
+            mechanics_timeouts == 0
+            and truncated + semantic_divergences
+            <= max(1, math.floor(0.02 * config.games))
+        ),
         "finished": finished,
         "score": (wins + 0.5 * draws) / finished if finished else None,
+        "score_with_nonfinishes_as_losses": sum(game_scores) / config.games,
+        "paired_score_ci95": [ci_low, ci_high],
         "candidate_skills": candidate_metrics.report(),
         "baseline_skills": baseline_metrics.report(),
         "config": asdict(config),
+    }
+
+
+def skill_probe_report(arena: dict[str, Any]) -> dict[str, Any]:
+    """Turn a held-out traced arena into explicit type/status/switch gates."""
+    candidate = arena["candidate_skills"]
+    baseline = arena["baseline_skills"]
+
+    def difference(name: str) -> float | None:
+        left = candidate.get(name)
+        right = baseline.get(name)
+        return None if left is None or right is None else float(left) - float(right)
+
+    type_delta = difference("mean_move_effectiveness_vs_best")
+    status_delta = difference("status_success_rate")
+    switch_delta = difference("matchup_improvement_rate")
+    candidate_waste_rate = (
+        candidate["status_wasted"] / candidate["status_uses"]
+        if candidate["status_uses"]
+        else None
+    )
+    baseline_waste_rate = (
+        baseline["status_wasted"] / baseline["status_uses"]
+        if baseline["status_uses"]
+        else None
+    )
+    type_pass = (
+        candidate["damaging_moves"] >= 100
+        and baseline["damaging_moves"] >= 100
+        and type_delta is not None
+        and type_delta >= -0.02
+    )
+    status_pass = (
+        candidate["status_uses"] >= 50
+        and baseline["status_uses"] >= 50
+        and status_delta is not None
+        and status_delta >= -0.05
+        and candidate_waste_rate is not None
+        and baseline_waste_rate is not None
+        and candidate_waste_rate <= baseline_waste_rate + 0.05
+    )
+    switch_pass = (
+        candidate["voluntary_switches"] >= 20
+        and candidate["voluntary_switch_rate"] is not None
+        and candidate["voluntary_switch_rate"] <= 0.20
+        and candidate["switch_completion_rate"] is not None
+        and candidate["switch_completion_rate"] >= 0.98
+        and switch_delta is not None
+        and switch_delta >= -0.05
+    )
+    return {
+        "type": {
+            "pass": type_pass,
+            "candidate_mean_effectiveness_ratio": candidate[
+                "mean_move_effectiveness_vs_best"
+            ],
+            "baseline_mean_effectiveness_ratio": baseline[
+                "mean_move_effectiveness_vs_best"
+            ],
+            "delta": type_delta,
+        },
+        "status": {
+            "pass": status_pass,
+            "candidate_success_rate": candidate["status_success_rate"],
+            "baseline_success_rate": baseline["status_success_rate"],
+            "success_rate_delta": status_delta,
+            "candidate_waste_rate": candidate_waste_rate,
+            "baseline_waste_rate": baseline_waste_rate,
+        },
+        "switch": {
+            "pass": switch_pass,
+            "candidate_request_rate": candidate["voluntary_switch_rate"],
+            "candidate_completion_rate": candidate["switch_completion_rate"],
+            "candidate_matchup_improvement_rate": candidate["matchup_improvement_rate"],
+            "baseline_matchup_improvement_rate": baseline["matchup_improvement_rate"],
+            "matchup_improvement_delta": switch_delta,
+        },
+        "pass": type_pass and status_pass and switch_pass,
     }
 
 
