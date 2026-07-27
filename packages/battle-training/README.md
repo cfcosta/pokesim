@@ -50,6 +50,23 @@ environment is generated from `uv.lock`; on supported Linux hosts it includes
 the CUDA PyTorch wheel and the NixOS runtime-library fixes required to use the
 GPU.
 
+A run can mix mirror self-play with a hash-recorded fixed checkpoint. For a
+50/50 mixture, the candidate alternates cartridge sides in the fixed-opponent
+battles, and only the candidate side contributes examples from those battles:
+
+```sh
+nix develop -c python packages/battle-training/train.py transformer-train \
+  --output artifacts/training/fixed-opponent-run \
+  --opponent-checkpoint artifacts/training/baseline.pt \
+  --opponent-fraction 0.5
+```
+
+The pipeline copies the fixed checkpoint into the immutable run, records its
+SHA-256 identity in every shard, evaluates the final candidate against both its
+scratch initialization and the fixed opponent, and includes the opponent in
+deterministic shard regeneration. AdamW state now persists across collection
+iterations instead of being reset after every shard.
+
 ## Model
 
 Each mechanics scalar is encoded as low- and high-byte embeddings plus a learned

@@ -12,6 +12,7 @@ import torch
 from battle_training.artifacts import build_manifest, verify_manifest, write_json
 from battle_training.model import MoveValueModel
 from battle_training.network import BattleTransformer, TransformerConfig
+from battle_training.transformer_pipeline import _scheduled_for_opponent
 
 
 class MoveValueModelTests(unittest.TestCase):
@@ -71,6 +72,11 @@ class MoveValueModelTests(unittest.TestCase):
 
 
 class TransformerTests(unittest.TestCase):
+    def test_fixed_opponent_schedule_is_exact_and_periodic(self) -> None:
+        schedule = [_scheduled_for_opponent(episode, 0.5) for episode in range(1000)]
+        self.assertEqual(sum(schedule), 500)
+        self.assertEqual(schedule[:6], [False, True, False, True, False, True])
+
     def test_policy_masks_and_value_bounds(self) -> None:
         torch.manual_seed(7)
         network = BattleTransformer(

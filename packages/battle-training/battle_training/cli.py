@@ -48,6 +48,8 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--heads", type=int, default=4 if smoke else 8)
     parser.add_argument("--layers", type=int, default=2 if smoke else 4)
     parser.add_argument("--feedforward", type=int, default=192 if smoke else 512)
+    parser.add_argument("--opponent-checkpoint", type=Path)
+    parser.add_argument("--opponent-fraction", type=float, default=0.0)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -94,6 +96,12 @@ def main(argv: list[str] | None = None) -> int:
             heads=arguments.heads,
             layers=arguments.layers,
             feedforward=arguments.feedforward,
+            opponent_checkpoint=(
+                str(arguments.opponent_checkpoint.resolve())
+                if arguments.opponent_checkpoint is not None
+                else None
+            ),
+            opponent_fraction=arguments.opponent_fraction,
         )
         report = run_transformer_pipeline(arguments.output.resolve(), config)
     else:

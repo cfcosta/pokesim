@@ -69,7 +69,8 @@ rows remain required before the corresponding profile can be called complete.
 
 ## M5 — population and evaluation
 
-- [ ] Sample latest, historical, exploiter, and fixed-baseline opponents.
+- [x] Mix mirror self-play with a hash-identified fixed-checkpoint opponent.
+- [ ] Sample latest, historical, exploiter, and multi-baseline opponents.
 - [ ] Retain held-out teams and seeds outside actor sampling.
 - [ ] Produce checkpoint payoff matrices and Nash-mixture estimates.
 - [ ] Gate promotion on paired evaluation with confidence intervals.

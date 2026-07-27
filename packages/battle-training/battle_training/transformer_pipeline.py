@@ -46,6 +46,13 @@ class TransformerPipelineConfig:
     heads: int
     layers: int
     feedforward: int
+    opponent_checkpoint: str | None = None
+    opponent_fraction: float = 0.0
+
+
+def _scheduled_for_opponent(episode: int, fraction: float) -> bool:
+    """Periodic deterministic mixture with an exact count for rational fractions."""
+    return math.floor((episode + 1) * fraction) > math.floor(episode * fraction)
 
 
 def _jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
@@ -61,62 +68,99 @@ def _collect_rows(
     network: BattleTransformer,
     config: TransformerPipelineConfig,
     iteration: int,
+    opponent: BattleTransformer | None = None,
+    opponent_sha256: str | None = None,
 ) -> dict[str, Any]:
     search_config = SearchConfig(config.simulations, config.search_depth)
     selection_rng = random.Random(config.seed + iteration * 1_000_003)
     chance_rng = random.Random(config.seed + iteration * 1_000_033 + 17)
-    rows: list[dict[str, Any]] = [
-        {
-            "type": "meta",
-            "format": "mcts-policy-value-jsonl-v1",
-            "profile": PROFILE,
-            "schema": SCHEMA,
-            "entropy": ENTROPY,
-            "chance": "fresh-root-v1",
-            "solver": "simultaneous-exp3-mcts-v1",
-            "iteration": iteration,
-            "episodes": config.selfplay_episodes,
-            "simulations": config.simulations,
-            "depth": config.search_depth,
-            "seed": config.seed,
+    meta: dict[str, Any] = {
+        "type": "meta",
+        "format": "mcts-policy-value-jsonl-v1",
+        "profile": PROFILE,
+        "schema": SCHEMA,
+        "entropy": ENTROPY,
+        "chance": "fresh-root-v1",
+        "solver": "simultaneous-exp3-mcts-v1",
+        "iteration": iteration,
+        "episodes": config.selfplay_episodes,
+        "simulations": config.simulations,
+        "depth": config.search_depth,
+        "seed": config.seed,
+    }
+    if opponent is not None:
+        meta["opponent"] = {
+            "kind": "fixed-checkpoint",
+            "sha256": opponent_sha256,
+            "fraction": config.opponent_fraction,
+            "schedule": "balanced-periodic-v1",
         }
-    ]
+    rows: list[dict[str, Any]] = [meta]
     finished = truncated = examples = transitions = 0
+    mirror_episodes = opponent_episodes = 0
+    candidate_player_episodes = candidate_enemy_episodes = 0
     with SearchServer() as server:
         for episode in range(config.selfplay_episodes):
+            versus_opponent = opponent is not None and _scheduled_for_opponent(
+                episode, config.opponent_fraction
+            )
+            if versus_opponent:
+                candidate_player = opponent_episodes % 2 == 0
+                player_network = network if candidate_player else opponent
+                enemy_network = opponent if candidate_player else network
+                episode_kind = "fixed-opponent"
+                opponent_episodes += 1
+                if candidate_player:
+                    candidate_player_episodes += 1
+                else:
+                    candidate_enemy_episodes += 1
+            else:
+                candidate_player = True
+                player_network = network
+                enemy_network = network
+                episode_kind = "mirror"
+                mirror_episodes += 1
             snapshot = server.reset(config.seed + iteration * 10_000, episode)
             pending: list[dict[str, Any]] = []
             for decision in range(config.episode_budget):
                 search = SimultaneousMCTS(
-                    server, network, network, search_config, selection_rng, chance_rng
+                    server,
+                    player_network,
+                    enemy_network,
+                    search_config,
+                    selection_rng,
+                    chance_rng,
                 )
                 result = search.search(snapshot, sample_actions=True)
-                pending.extend(
-                    [
-                        {
-                            "type": "example",
-                            "episode": episode,
-                            "decision": decision,
-                            "side": "player",
-                            "state_hash": snapshot.player_hash,
-                            "features": list(snapshot.player_features),
-                            "policy": list(result.player_policy),
-                            "search_value": result.root_value,
-                            "action": result.player_action,
-                        },
-                        {
-                            "type": "example",
-                            "episode": episode,
-                            "decision": decision,
-                            "side": "enemy",
-                            "state_hash": snapshot.enemy_hash,
-                            "features": list(snapshot.enemy_features),
-                            "policy": list(result.enemy_policy),
-                            "search_value": -result.root_value,
-                            "action": result.enemy_action,
-                        },
-                    ]
-                )
+                player_row = {
+                    "type": "example",
+                    "episode": episode,
+                    "decision": decision,
+                    "side": "player",
+                    "state_hash": snapshot.player_hash,
+                    "features": list(snapshot.player_features),
+                    "policy": list(result.player_policy),
+                    "search_value": result.root_value,
+                    "action": result.player_action,
+                }
+                enemy_row = {
+                    "type": "example",
+                    "episode": episode,
+                    "decision": decision,
+                    "side": "enemy",
+                    "state_hash": snapshot.enemy_hash,
+                    "features": list(snapshot.enemy_features),
+                    "policy": list(result.enemy_policy),
+                    "search_value": -result.root_value,
+                    "action": result.enemy_action,
+                }
+                if opponent is not None:
+                    player_row["episode_kind"] = episode_kind
+                    enemy_row["episode_kind"] = episode_kind
+                if not versus_opponent or candidate_player:
+                    pending.append(player_row)
+                if not versus_opponent or not candidate_player:
+                    pending.append(enemy_row)
                 snapshot = server.episode_step(
                     snapshot.handle, result.player_action, result.enemy_action
                 )
@@ -158,6 +202,10 @@ def _collect_rows(
         "truncated": truncated,
         "examples": examples,
         "transitions": transitions,
+        "mirror_episodes": mirror_episodes,
+        "opponent_episodes": opponent_episodes,
+        "candidate_player_episodes": candidate_player_episodes,
+        "candidate_enemy_episodes": candidate_enemy_episodes,
         "sha256": sha256(path),
         "bytes": path.stat().st_size,
     }
@@ -185,15 +233,13 @@ def _load_examples(paths: list[Path]) -> tuple[Tensor, Tensor, Tensor]:
 
 def _train_network(
     network: BattleTransformer,
+    optimizer: torch.optim.Optimizer,
     shards: list[Path],
     config: TransformerPipelineConfig,
     iteration: int,
-) -> tuple[torch.optim.Optimizer, dict[str, Any]]:
+) -> dict[str, Any]:
     device = next(network.parameters()).device
     features, target_policy, target_value = _load_examples(shards)
-    optimizer = torch.optim.AdamW(
-        network.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
-    )
     generator = torch.Generator(device="cpu").manual_seed(config.seed + iteration)
     network.train()
     history: list[dict[str, float]] = []
@@ -229,7 +275,7 @@ def _train_network(
             }
         )
     network.eval()
-    return optimizer, {
+    return {
         "examples": len(features),
         "epochs": config.epochs,
         "batches_per_epoch": math.ceil(len(features) / config.batch_size),
@@ -324,9 +370,31 @@ def run_transformer_pipeline(
     if root.exists() and any(root.iterdir()):
         raise FileExistsError(f"output directory is not empty: {root}")
     root.mkdir(parents=True, exist_ok=True)
+    if not 0.0 <= config.opponent_fraction <= 1.0:
+        raise ValueError("opponent_fraction must be in [0, 1]")
+    if (config.opponent_checkpoint is None) != (config.opponent_fraction == 0.0):
+        raise ValueError(
+            "opponent_checkpoint and a positive opponent_fraction must be supplied together"
+        )
     build_search_server()
     configure_determinism(config.seed)
     device = choose_device(config.device)
+    opponent: BattleTransformer | None = None
+    opponent_sha: str | None = None
+    opponent_metadata: dict[str, Any] | None = None
+    if config.opponent_checkpoint is not None:
+        opponent_source = Path(config.opponent_checkpoint).resolve()
+        opponent_sha = sha256(opponent_source)
+        opponent_copy = root / "opponents" / "fixed-checkpoint.pt"
+        write_new(opponent_copy, opponent_source.read_bytes())
+        opponent = load_network(opponent_copy, device)
+        opponent_metadata = {
+            "kind": "fixed-checkpoint",
+            "checkpoint": opponent_copy.relative_to(root).as_posix(),
+            "sha256": opponent_sha,
+            "fraction": config.opponent_fraction,
+            "schedule": "balanced-periodic-v1",
+        }
     model_config = TransformerConfig(
         d_model=config.d_model,
         heads=config.heads,
@@ -345,6 +413,10 @@ def run_transformer_pipeline(
             "chance": "fresh-root-v1",
             "config": asdict(config),
             "network": asdict(model_config),
+            "parameter_count": sum(
+                parameter.numel() for parameter in network.parameters()
+            ),
+            "opponent": opponent_metadata,
             "torch": torch.__version__,
             "device": str(device),
             "device_name": torch.cuda.get_device_name(device)
@@ -357,12 +429,17 @@ def run_transformer_pipeline(
     shards: list[Path] = []
     collection: list[dict[str, Any]] = []
     training: list[dict[str, Any]] = []
+    optimizer = torch.optim.AdamW(
+        network.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
+    )
     for iteration in range(1, config.iterations + 1):
         shard = root / "shards" / f"iteration-{iteration:03d}.jsonl"
-        collection_metrics = _collect_rows(shard, network, config, iteration)
+        collection_metrics = _collect_rows(
+            shard, network, config, iteration, opponent, opponent_sha
+        )
         shards.append(shard)
         collection.append(collection_metrics)
-        optimizer, training_metrics = _train_network(network, shards, config, iteration)
+        training_metrics = _train_network(network, optimizer, shards, config, iteration)
         training.append(training_metrics)
         checkpoint = root / "checkpoints" / f"policy-{iteration:03d}.pt"
         save_network(
@@ -385,11 +462,16 @@ def run_transformer_pipeline(
         raise ValueError("transformer parameters did not update")
     arena = _arena(network, initial, config)
     write_json(root / "arena" / "final-vs-initial.json", arena)
+    opponent_arena = _arena(network, opponent, config) if opponent is not None else None
+    if opponent_arena is not None:
+        write_json(root / "arena" / "final-vs-fixed-opponent.json", opponent_arena)
 
     with tempfile.TemporaryDirectory(prefix="battle-transformer-replay-") as temporary:
         replay_path = Path(temporary) / "replay.jsonl"
         replay_network = load_network(initial_checkpoint, device)
-        replay_metrics = _collect_rows(replay_path, replay_network, config, 1)
+        replay_metrics = _collect_rows(
+            replay_path, replay_network, config, 1, opponent, opponent_sha
+        )
         replay_identical = replay_path.read_bytes() == shards[0].read_bytes()
         if not replay_identical:
             raise ValueError("MCTS self-play shard failed deterministic replay")
@@ -402,6 +484,10 @@ def run_transformer_pipeline(
         "pipeline": "transformer-simultaneous-exp3-mcts-v1",
         "device": str(device),
         "iterations": config.iterations,
+        "selfplay_battles": config.iterations * config.selfplay_episodes,
+        "mirror_battles": sum(item["mirror_episodes"] for item in collection),
+        "opponent_battles": sum(item["opponent_episodes"] for item in collection),
+        "parameter_count": sum(parameter.numel() for parameter in network.parameters()),
         "examples": sum(item["examples"] for item in collection),
         "parameter_l2_delta": distance,
         "initial_checkpoint_sha256": sha256(initial_checkpoint),
@@ -411,6 +497,8 @@ def run_transformer_pipeline(
         ),
         "final_training_loss": training[-1]["history"][-1],
         "arena": arena,
+        "opponent_arena": opponent_arena,
+        "opponent": opponent_metadata,
         "deterministic_replay": replay,
     }
     write_json(root / "summary.json", summary)
@@ -432,10 +520,19 @@ def verify_transformer_run(root: Path) -> dict[str, Any]:
     configure_determinism(config.seed)
     device = choose_device(config.device)
     network = load_network(root / "checkpoints" / "policy-000.pt", device)
+    opponent_metadata = run.get("opponent")
+    opponent = None
+    opponent_sha = None
+    if opponent_metadata is not None:
+        opponent_path = root / opponent_metadata["checkpoint"]
+        opponent_sha = sha256(opponent_path)
+        if opponent_sha != opponent_metadata["sha256"]:
+            raise ValueError("fixed opponent checkpoint hash mismatch")
+        opponent = load_network(opponent_path, device)
     shard = root / "shards" / "iteration-001.jsonl"
     with tempfile.TemporaryDirectory(prefix="battle-transformer-verify-") as temporary:
         replay = Path(temporary) / "replay.jsonl"
-        metrics = _collect_rows(replay, network, config, 1)
+        metrics = _collect_rows(replay, network, config, 1, opponent, opponent_sha)
         if replay.read_bytes() != shard.read_bytes():
             raise ValueError("MCTS self-play shard failed deterministic verification")
     return {
