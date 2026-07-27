@@ -21,8 +21,19 @@ open Battle Battle.Full
 
 
 def profileVersion : String := "full-link-6v6-perfect-v1"
-def schemaVersion : String := "full-link-6v6-state-v2"
+def schemaVersion : String := "full-link-6v6-state-v3"
 def actionCount : Nat := 13
+
+/-- State restrictions under which omitted inventory, capture, trainer, and
+progression fields are mechanics-inert for the full-link training profile. The
+future link RNG is intentionally treated as latent chance rather than policy
+input. -/
+def profileInvariant (state : Full.Environment.State) : Bool :=
+  state.engine.battle.mode == .link &&
+    state.engine.playerBag.isEmpty && state.engine.enemyBag.isEmpty &&
+    state.pendingCapture.isNone && state.safari.isNone && state.oldManScratch.isNone &&
+    state.pendingLearning.isEmpty && state.canEvolveFlags == 0 &&
+    state.trainerActionsLeft.isNone
 
 /-! ## Action dictionary -/
 
@@ -77,6 +88,13 @@ private def sideRelative (view value : Side) : Nat := if view == value then 1 el
 private def optionSide (view : Side) : Option Side → Nat
   | none => 0
   | some value => sideRelative view value
+
+/-- Collision-free encoding for the pending continuation retained by typed
+nested requests. Zero means no continuation; encodable link actions use their
+stable action ID plus one. Item continuations are outside this profile. -/
+def continuationId : Option Full.Action → Nat
+  | none => 0
+  | some action => (actionId action).map (· + 1) |>.getD 14
 
 private def modeId : BattleMode → Nat
   | .wild => 0
@@ -192,9 +210,11 @@ private def selection (state : Full.Environment.State) : Side → Full.Selection
   | .enemy => state.engine.enemySelection
 
 /-- `requestActor` is present only for a typed one-side Mimic target request.
-`sourceSlot` records the slot whose move will be replaced. -/
+`sourceSlot` records the slot whose move will be replaced and `continuation`
+records the already-committed opposing action resumed after the menu response. -/
 def featureVector (state : Full.Environment.State) (view : Side)
-    (requestActor : Option Side := none) (sourceSlot : Nat := 0) : Array Nat :=
+    (requestActor : Option Side := none) (sourceSlot : Nat := 0)
+    (continuation : Option Full.Action := none) : Array Nat :=
   let own := sideState state view
   let opponent := sideState state view.other
   let battle := state.engine.battle
@@ -209,7 +229,7 @@ def featureVector (state : Full.Environment.State) (view : Side)
      engine.playerId.toNat, engine.badges.toNat, engine.runAttempts.toNat,
      optionSide view engine.canceledAction, engine.aiLayer2Encouragement.toNat,
      boolNat engine.trainerAiItem,
-     optionSide view requestActor, sourceSlot,
+     optionSide view requestActor, sourceSlot, continuationId continuation,
      state.canEvolveFlags.toNat, state.gainExpFlags.toNat,
      state.foughtFlags.toNat, boolNat state.hasExpAll,
      state.pendingLearning.length]
@@ -234,8 +254,9 @@ private def hashNat (hash : UInt64) (value : Nat) : UInt64 :=
     (hash ^^^ byte.toUInt64) * fnvPrime) hash
 
 def fingerprint (state : Full.Environment.State) (view : Side)
-    (requestActor : Option Side := none) (sourceSlot : Nat := 0) : UInt64 :=
-  (featureVector state view requestActor sourceSlot).foldl hashNat fnvOffset
+    (requestActor : Option Side := none) (sourceSlot : Nat := 0)
+    (continuation : Option Full.Action := none) : UInt64 :=
+  (featureVector state view requestActor sourceSlot continuation).foldl hashNat fnvOffset
 
 private def sampleState : Full.Environment.State :=
   Full.Environment.resetSized Wram.partyLength
@@ -244,9 +265,23 @@ private def sampleState : Full.Environment.State :=
 
 def featureCount : Nat := (featureVector sampleState .player).size
 
+@[simp] theorem sampled_link_reset_satisfies_profile
+    (player enemy : RL.DynamicGenerator.Sample) (battleRng : Rng.LinkRng) :
+    profileInvariant
+      (Full.Environment.linkResetFromSamples player enemy battleRng) = true := by
+  have fields := Full.Environment.linkResetFromSamples_profile_fields
+    player enemy battleRng
+  have linkSelf : (BattleMode.link == BattleMode.link) = true := by decide
+  simp [profileInvariant, fields, linkSelf]
+
 #guard sampleState.playerReset.1.size == Wram.partyLength
 #guard sampleState.enemyReset.1.size == Wram.partyLength
 #guard actionCount == 13
-#guard featureCount == 477
+#guard continuationId none == 0
+#guard continuationId (some (.fight 0)) == 1
+#guard continuationId (some .noAction) == 11
+#guard featureVector sampleState .player (some .player) 0 none !=
+  featureVector sampleState .player (some .player) 0 (some .noAction)
+#guard featureCount == 478
 
 end Battle.RL.FullTraining

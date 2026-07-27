@@ -178,6 +178,18 @@ class SearchServer:
             self._request(f"step|{handle}|{player_action}|{enemy_action}|episode|0")
         )
 
+    def episode_steps(self, requests: list[tuple[int, int, int]]) -> list[Snapshot]:
+        if not requests:
+            return []
+        payload = ";".join(
+            f"{handle},{player},{enemy},0" for handle, player, enemy in requests
+        )
+        response = self._request(f"batch-episode|{payload}")
+        snapshots = [self._snapshot(row) for row in response["snapshots"]]
+        if len(snapshots) != len(requests):
+            raise RuntimeError("native episode batch response length mismatch")
+        return snapshots
+
     def inspect(self, handle: int) -> dict[str, Any]:
         return self._request(f"inspect|{handle}")
 

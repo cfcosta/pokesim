@@ -49,9 +49,19 @@ jobs:
               assert [state.handle for state in compact] == [0, 1]
               assert compact[0].player_hash == second.player_hash
               assert compact[1].player_hash == first.player_hash
+              def first_action(mask):
+                  return next(action for action in range(13) if mask & (1 << action))
+              stepped = server.episode_steps([
+                  (state.handle, first_action(state.player_mask),
+                   first_action(state.enemy_mask))
+                  for state in compact
+              ])
+              assert len(stepped) == 2
           PY
       - name: Check canonical address/range closure
         run: python3 tools/check-pokered-closure.py
+      - name: Check full training-state field audit
+        run: python3 tools/audit-full-training-state.py
       - name: Check documentation against nested source
         run: python3 tools/validate-docs.py
       - name: Compile Python tooling

@@ -25,7 +25,7 @@ from .arena import (
 )
 from .artifacts import build_manifest, sha256, verify_manifest, write_json, write_new
 from .joint_search import JointSearchConfig, SearchResult, SimultaneousTreeSearch
-from .native import NativeRequestTimeout, SearchServer, build_search_server
+from .native import NativeRequestTimeout, SearchServer, Snapshot, build_search_server
 from .network import (
     BattleTransformer,
     TransformerConfig,
@@ -76,10 +76,25 @@ class TransformerPipelineConfig:
     tree_minimum_budget: int = 192
     tree_convergence_tolerance: float = 0.005
     tree_convergence_patience: int = 8
+    actor_batch_size: int = 16
+
+
+@dataclass
+class _ActorEpisode:
+    episode: int
+    player_network: BattleTransformer
+    enemy_network: BattleTransformer
+    episode_kind: str
+    opponent_identity: str | None
+    candidate_player: bool
+    snapshot: Snapshot
+    pending: list[dict[str, Any]]
+    selection_rng: random.Random
+    chance_rng: random.Random
 
 
 def _pipeline_id() -> str:
-    return "transformer-full6v6-simultaneous-tree-v3"
+    return "transformer-full6v6-cross-root-tree-v4"
 
 
 def _scheduled_for_opponent(episode: int, fraction: float) -> bool:
@@ -131,41 +146,69 @@ def _sample_policy(probabilities: list[float], rng: random.Random) -> int:
     )
 
 
+def _policy_rollout_many(
+    player: BattleTransformer,
+    enemy: BattleTransformer,
+    snapshots: list[Snapshot],
+    rngs: list[random.Random],
+) -> list[SearchResult]:
+    if not snapshots:
+        return []
+    if len(rngs) != len(snapshots):
+        raise ValueError("policy rollout requires one RNG per snapshot")
+    if player is enemy:
+        policies, values = player.evaluate(
+            [snapshot.player_features for snapshot in snapshots]
+            + [snapshot.enemy_features for snapshot in snapshots],
+            [snapshot.player_mask for snapshot in snapshots]
+            + [snapshot.enemy_mask for snapshot in snapshots],
+        )
+        count = len(snapshots)
+        player_policies, enemy_policies = policies[:count], policies[count:]
+        player_values, enemy_values = values[:count], values[count:]
+    else:
+        player_policies, player_values = player.evaluate(
+            [snapshot.player_features for snapshot in snapshots],
+            [snapshot.player_mask for snapshot in snapshots],
+        )
+        enemy_policies, enemy_values = enemy.evaluate(
+            [snapshot.enemy_features for snapshot in snapshots],
+            [snapshot.enemy_mask for snapshot in snapshots],
+        )
+    results: list[SearchResult] = []
+    for player_policy, enemy_policy, player_value, enemy_value, rng in zip(
+        player_policies,
+        enemy_policies,
+        player_values,
+        enemy_values,
+        rngs,
+        strict=True,
+    ):
+        value = max(-1.0, min(1.0, (player_value - enemy_value) / 2.0))
+        results.append(
+            SearchResult(
+                tuple(player_policy),
+                tuple(enemy_policy),
+                _sample_policy(player_policy, rng),
+                _sample_policy(enemy_policy, rng),
+                value,
+                0,
+                "network-policy-rollout-v1",
+                None,
+                None,
+                None,
+            )
+        )
+    return results
+
+
 def _policy_rollout(
     player: BattleTransformer,
     enemy: BattleTransformer,
-    snapshot: Any,
+    snapshot: Snapshot,
     rng: random.Random,
 ) -> SearchResult:
-    if player is enemy:
-        policies, values = player.evaluate(
-            [snapshot.player_features, snapshot.enemy_features],
-            [snapshot.player_mask, snapshot.enemy_mask],
-        )
-        player_policy, enemy_policy = policies
-        player_value, enemy_value = values
-    else:
-        player_policies, player_values = player.evaluate(
-            [snapshot.player_features], [snapshot.player_mask]
-        )
-        enemy_policies, enemy_values = enemy.evaluate(
-            [snapshot.enemy_features], [snapshot.enemy_mask]
-        )
-        player_policy, enemy_policy = player_policies[0], enemy_policies[0]
-        player_value, enemy_value = player_values[0], enemy_values[0]
-    value = max(-1.0, min(1.0, (player_value - enemy_value) / 2.0))
-    return SearchResult(
-        tuple(player_policy),
-        tuple(enemy_policy),
-        _sample_policy(player_policy, rng),
-        _sample_policy(enemy_policy, rng),
-        value,
-        0,
-        "network-policy-rollout-v1",
-        None,
-        None,
-        None,
-    )
+    return _policy_rollout_many(player, enemy, [snapshot], [rng])[0]
 
 
 def _policy_entropy(policy: list[float]) -> float:
@@ -189,8 +232,6 @@ def _collect_rows(
     iteration: int,
     opponents: list[tuple[BattleTransformer, str]] | None = None,
 ) -> dict[str, Any]:
-    selection_rng = random.Random(config.seed + iteration * 1_000_003)
-    chance_rng = random.Random(config.seed + iteration * 1_000_033 + 17)
     meta: dict[str, Any] = {
         "type": "meta",
         "format": "full6v6-joint-regret-policy-value-jsonl-v1",
@@ -217,6 +258,7 @@ def _collect_rows(
         "tree_minimum_budget": config.tree_minimum_budget,
         "tree_convergence_tolerance": config.tree_convergence_tolerance,
         "tree_convergence_patience": config.tree_convergence_patience,
+        "actor_batch_size": config.actor_batch_size,
     }
     opponents = opponents or []
     if opponents:
@@ -232,140 +274,209 @@ def _collect_rows(
     candidate_player_episodes = candidate_enemy_episodes = 0
     opponent_counts = {identity: 0 for _, identity in opponents}
     with SearchServer() as server:
-        for episode in range(config.selfplay_episodes):
-            versus_opponent = bool(opponents) and _scheduled_for_opponent(
-                episode, config.opponent_fraction
+        for batch_start in range(0, config.selfplay_episodes, config.actor_batch_size):
+            batch_stop = min(
+                config.selfplay_episodes, batch_start + config.actor_batch_size
             )
-            opponent_identity: str | None = None
-            if versus_opponent:
-                opponent_index = opponent_episodes % len(opponents)
-                opponent_round = opponent_episodes // len(opponents)
-                opponent, opponent_identity = opponents[opponent_index]
-                candidate_player = opponent_round % 2 == 0
-                player_network = network if candidate_player else opponent
-                enemy_network = opponent if candidate_player else network
-                episode_kind = "fixed-opponent"
-                opponent_episodes += 1
-                opponent_counts[opponent_identity] += 1
-                if candidate_player:
-                    candidate_player_episodes += 1
+            active: list[_ActorEpisode] = []
+            for offset, episode in enumerate(range(batch_start, batch_stop)):
+                versus_opponent = bool(opponents) and _scheduled_for_opponent(
+                    episode, config.opponent_fraction
+                )
+                opponent_identity: str | None = None
+                if versus_opponent:
+                    opponent_index = opponent_episodes % len(opponents)
+                    opponent_round = opponent_episodes // len(opponents)
+                    opponent, opponent_identity = opponents[opponent_index]
+                    candidate_player = opponent_round % 2 == 0
+                    player_network = network if candidate_player else opponent
+                    enemy_network = opponent if candidate_player else network
+                    episode_kind = "fixed-opponent"
+                    opponent_episodes += 1
+                    opponent_counts[opponent_identity] += 1
+                    if candidate_player:
+                        candidate_player_episodes += 1
+                    else:
+                        candidate_enemy_episodes += 1
                 else:
-                    candidate_enemy_episodes += 1
-            else:
-                candidate_player = True
-                player_network = network
-                enemy_network = network
-                episode_kind = "mirror"
-                mirror_episodes += 1
-            snapshot = server.reset(config.seed + iteration * 10_000, episode)
-            pending: list[dict[str, Any]] = []
+                    candidate_player = True
+                    player_network = network
+                    enemy_network = network
+                    episode_kind = "mirror"
+                    mirror_episodes += 1
+                reset_seed = config.seed + iteration * 10_000
+                snapshot = (
+                    server.reset(reset_seed, episode)
+                    if offset == 0
+                    else server.reset_append(reset_seed, episode)
+                )
+                active.append(
+                    _ActorEpisode(
+                        episode=episode,
+                        player_network=player_network,
+                        enemy_network=enemy_network,
+                        episode_kind=episode_kind,
+                        opponent_identity=opponent_identity,
+                        candidate_player=candidate_player,
+                        snapshot=snapshot,
+                        pending=[],
+                        selection_rng=random.Random(
+                            config.seed + iteration * 1_000_003 + episode * 10_007
+                        ),
+                        chance_rng=random.Random(
+                            config.seed + iteration * 1_000_033 + episode * 10_009 + 17
+                        ),
+                    )
+                )
             for decision in range(config.episode_budget):
                 searched = decision % config.search_every == 0
-                if searched:
-                    search = _new_search(
-                        server,
-                        player_network,
-                        enemy_network,
-                        config,
-                        selection_rng,
-                        chance_rng,
-                    )
-                    result = search.search(snapshot, sample_actions=True)
-                else:
-                    result = _policy_rollout(
-                        player_network, enemy_network, snapshot, selection_rng
-                    )
-                valid_search_target = searched and result.payoff_matrix is not None
-                player_row = {
-                    "type": "example",
-                    "episode": episode,
-                    "decision": decision,
-                    "side": "player",
-                    "state_hash": snapshot.player_hash,
-                    "features": list(snapshot.player_features),
-                    "policy": list(result.player_policy),
-                    "search_value": result.root_value,
-                    "action": result.player_action,
-                    "target_kind": (
-                        "joint-regret" if valid_search_target else "policy-rollout"
-                    ),
-                }
-                enemy_row = {
-                    "type": "example",
-                    "episode": episode,
-                    "decision": decision,
-                    "side": "enemy",
-                    "state_hash": snapshot.enemy_hash,
-                    "features": list(snapshot.enemy_features),
-                    "policy": list(result.enemy_policy),
-                    "search_value": -result.root_value,
-                    "action": result.enemy_action,
-                    "target_kind": (
-                        "joint-regret" if valid_search_target else "policy-rollout"
-                    ),
-                }
-                player_row["legal_mask"] = snapshot.player_mask
-                enemy_row["legal_mask"] = snapshot.enemy_mask
-                player_row["request"] = snapshot.request
-                enemy_row["request"] = snapshot.request
-                if result.exploitability is not None:
-                    player_row["search_exploitability"] = result.exploitability
-                    enemy_row["search_exploitability"] = result.exploitability
-                    player_row["payoff_spread"] = result.payoff_spread
-                    enemy_row["payoff_spread"] = result.payoff_spread
-                if result.diagnostics is not None:
-                    for name, value in result.diagnostics.items():
-                        player_row[name] = value
-                        enemy_row[name] = value
-                if opponents:
-                    player_row["episode_kind"] = episode_kind
-                    enemy_row["episode_kind"] = episode_kind
-                    player_row["opponent_sha256"] = opponent_identity
-                    enemy_row["opponent_sha256"] = opponent_identity
-                if not versus_opponent or candidate_player:
-                    pending.append(player_row)
-                if not versus_opponent or not candidate_player:
-                    pending.append(enemy_row)
-                snapshot = server.episode_step(
-                    snapshot.handle, result.player_action, result.enemy_action
+                grouped: dict[tuple[int, int], list[_ActorEpisode]] = {}
+                for actor in active:
+                    key = (id(actor.player_network), id(actor.enemy_network))
+                    grouped.setdefault(key, []).append(actor)
+                results: dict[int, SearchResult] = {}
+                for actors in grouped.values():
+                    player_network = actors[0].player_network
+                    enemy_network = actors[0].enemy_network
+                    if searched:
+                        searches = [
+                            _new_search(
+                                server,
+                                player_network,
+                                enemy_network,
+                                config,
+                                actor.selection_rng,
+                                actor.chance_rng,
+                            )
+                            for actor in actors
+                        ]
+                        actor_results = SimultaneousTreeSearch.search_many(
+                            searches,
+                            [actor.snapshot for actor in actors],
+                            sample_actions=True,
+                        )
+                    else:
+                        actor_results = _policy_rollout_many(
+                            player_network,
+                            enemy_network,
+                            [actor.snapshot for actor in actors],
+                            [actor.selection_rng for actor in actors],
+                        )
+                    for actor, result in zip(actors, actor_results, strict=True):
+                        results[actor.episode] = result
+                for actor in active:
+                    result = results[actor.episode]
+                    snapshot = actor.snapshot
+                    valid_search_target = searched and result.payoff_matrix is not None
+                    player_row = {
+                        "type": "example",
+                        "episode": actor.episode,
+                        "decision": decision,
+                        "side": "player",
+                        "state_hash": snapshot.player_hash,
+                        "features": list(snapshot.player_features),
+                        "policy": list(result.player_policy),
+                        "search_value": result.root_value,
+                        "action": result.player_action,
+                        "target_kind": (
+                            "joint-regret" if valid_search_target else "policy-rollout"
+                        ),
+                        "legal_mask": snapshot.player_mask,
+                        "request": snapshot.request,
+                    }
+                    enemy_row = {
+                        "type": "example",
+                        "episode": actor.episode,
+                        "decision": decision,
+                        "side": "enemy",
+                        "state_hash": snapshot.enemy_hash,
+                        "features": list(snapshot.enemy_features),
+                        "policy": list(result.enemy_policy),
+                        "search_value": -result.root_value,
+                        "action": result.enemy_action,
+                        "target_kind": (
+                            "joint-regret" if valid_search_target else "policy-rollout"
+                        ),
+                        "legal_mask": snapshot.enemy_mask,
+                        "request": snapshot.request,
+                    }
+                    if result.exploitability is not None:
+                        player_row["search_exploitability"] = result.exploitability
+                        enemy_row["search_exploitability"] = result.exploitability
+                        player_row["payoff_spread"] = result.payoff_spread
+                        enemy_row["payoff_spread"] = result.payoff_spread
+                    if result.diagnostics is not None:
+                        for name, value in result.diagnostics.items():
+                            player_row[name] = value
+                            enemy_row[name] = value
+                    if opponents:
+                        player_row["episode_kind"] = actor.episode_kind
+                        enemy_row["episode_kind"] = actor.episode_kind
+                        player_row["opponent_sha256"] = actor.opponent_identity
+                        enemy_row["opponent_sha256"] = actor.opponent_identity
+                    if actor.episode_kind == "mirror" or actor.candidate_player:
+                        actor.pending.append(player_row)
+                    if actor.episode_kind == "mirror" or not actor.candidate_player:
+                        actor.pending.append(enemy_row)
+                next_snapshots = server.episode_steps(
+                    [
+                        (
+                            actor.snapshot.handle,
+                            results[actor.episode].player_action,
+                            results[actor.episode].enemy_action,
+                        )
+                        for actor in active
+                    ]
                 )
-                transitions += 1
-                if snapshot.divergence is not None:
-                    rows.append(
-                        {
-                            "type": "episode",
-                            "episode": episode,
-                            "stop": "semantic-divergence",
-                            "reason": snapshot.divergence,
-                            "return": None,
-                            "decisions": decision + 1,
-                        }
-                    )
-                    semantic_divergences += 1
+                transitions += len(active)
+                survivors: list[_ActorEpisode] = []
+                for actor, snapshot in zip(active, next_snapshots, strict=True):
+                    if snapshot.divergence is not None:
+                        rows.append(
+                            {
+                                "type": "episode",
+                                "episode": actor.episode,
+                                "stop": "semantic-divergence",
+                                "reason": snapshot.divergence,
+                                "return": None,
+                                "decisions": decision + 1,
+                            }
+                        )
+                        semantic_divergences += 1
+                    elif snapshot.done:
+                        reward = int(snapshot.terminal_return or 0)
+                        for row in actor.pending:
+                            row["value"] = (
+                                reward if row["side"] == "player" else -reward
+                            )
+                        rows.extend(actor.pending)
+                        examples += len(actor.pending)
+                        rows.append(
+                            {
+                                "type": "episode",
+                                "episode": actor.episode,
+                                "stop": "finished",
+                                "return": reward,
+                                "decisions": decision + 1,
+                            }
+                        )
+                        finished += 1
+                    else:
+                        actor.snapshot = snapshot
+                        survivors.append(actor)
+                active = survivors
+                if not active:
                     break
-                if snapshot.done:
-                    reward = int(snapshot.terminal_return or 0)
-                    for row in pending:
-                        row["value"] = reward if row["side"] == "player" else -reward
-                    rows.extend(pending)
-                    examples += len(pending)
-                    rows.append(
-                        {
-                            "type": "episode",
-                            "episode": episode,
-                            "stop": "finished",
-                            "return": reward,
-                            "decisions": decision + 1,
-                        }
-                    )
-                    finished += 1
-                    break
-                snapshot = server.compact(snapshot.handle)
-            else:
+                compacted = server.compact_many(
+                    [actor.snapshot.handle for actor in active]
+                )
+                for actor, snapshot in zip(active, compacted, strict=True):
+                    actor.snapshot = snapshot
+            for actor in active:
                 rows.append(
                     {
                         "type": "episode",
-                        "episode": episode,
+                        "episode": actor.episode,
                         "stop": "truncated",
                         "return": None,
                         "decisions": config.episode_budget,
@@ -433,6 +544,16 @@ def _collect_rows(
         ),
         "tree_convergence_rate": (
             sum(row["tree_converged"] for row in tree_rows) / len(tree_rows)
+            if tree_rows
+            else None
+        ),
+        "mean_cross_root_batch_size": (
+            sum(row["cross_root_batch_size"] for row in tree_rows) / len(tree_rows)
+            if tree_rows
+            else None
+        ),
+        "mean_cross_root_root_leaves": (
+            sum(row["cross_root_root_leaves"] for row in tree_rows) / len(tree_rows)
             if tree_rows
             else None
         ),
@@ -661,6 +782,8 @@ def run_transformer_pipeline(
         raise ValueError("tree_convergence_tolerance must be nonnegative")
     if config.tree_convergence_patience < 1:
         raise ValueError("tree_convergence_patience must be positive")
+    if config.actor_batch_size < 1:
+        raise ValueError("actor_batch_size must be positive")
     if config.max_actions_per_side < 13:
         raise ValueError(
             "full-party training must consider the complete action dictionary"

@@ -28,7 +28,7 @@ from battle_training.transformer_pipeline import _load_examples, _scheduled_for_
 
 
 def _toy_features() -> tuple[int, ...]:
-    features = [0] * 477
+    features = [0] * 478
     for side in (0, 181):
         for slot in range(6):
             base = side + slot * 22
@@ -40,9 +40,13 @@ def _toy_features() -> tuple[int, ...]:
 class _ToyNetwork:
     config = SimpleNamespace(action_count=2)
 
+    def __init__(self) -> None:
+        self.batches: list[int] = []
+
     def evaluate(
         self, features: object, masks: list[int]
     ) -> tuple[list[list[float]], list[float]]:
+        self.batches.append(len(masks))
         policies = []
         for mask in masks:
             legal = [action for action in range(2) if mask & (1 << action)]
@@ -225,6 +229,67 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(result.diagnostics["root_joint_actions"], 4)
         self.assertEqual(result.diagnostics["sampled_joint_coverage"], 1.0)
 
+    def test_cross_root_search_batches_root_inference(self) -> None:
+        server = _ToyServer()
+        server.states[100] = (0, 0)
+        network = _ToyNetwork()
+        config = JointSearchConfig(
+            chance_samples_per_joint=1,
+            max_depth=2,
+            regret_iterations=64,
+            inference_batch_size=32,
+            max_actions_per_side=2,
+            expansion_budget=32,
+            exploration=0.2,
+            chance_resample=1.0,
+            regret_iterations_per_update=8,
+            deeper_joint_rotations=2,
+            minimum_expansion_budget=4,
+        )
+        searches = [
+            SimultaneousTreeSearch(
+                server,  # type: ignore[arg-type]
+                network,  # type: ignore[arg-type]
+                network,  # type: ignore[arg-type]
+                config,
+                random.Random(seed),
+                random.Random(seed + 100),
+            )
+            for seed in (1, 2)
+        ]
+        results = SimultaneousTreeSearch.search_many(
+            searches, [server._snapshot(0), server._snapshot(100)]
+        )
+        scalar_results = []
+        for seed in (1, 2):
+            scalar_server = _ToyServer()
+            scalar_search = SimultaneousTreeSearch(
+                scalar_server,  # type: ignore[arg-type]
+                network,  # type: ignore[arg-type]
+                network,  # type: ignore[arg-type]
+                config,
+                random.Random(seed),
+                random.Random(seed + 100),
+            )
+            scalar_results.append(scalar_search.search(scalar_server._snapshot(0)))
+        self.assertEqual(len(results), 2)
+        self.assertEqual(
+            [result.player_policy for result in results],
+            [result.player_policy for result in scalar_results],
+        )
+        self.assertEqual(
+            [result.enemy_policy for result in results],
+            [result.enemy_policy for result in scalar_results],
+        )
+        self.assertEqual(
+            [result.root_value for result in results],
+            [result.root_value for result in scalar_results],
+        )
+        self.assertTrue(
+            all(result.diagnostics["cross_root_batch_size"] == 2 for result in results)
+        )
+        self.assertGreaterEqual(max(network.batches), 16)
+
     def test_production_defaults_are_safe_overnight_configuration(self) -> None:
         arguments = training_parser().parse_args(
             ["transformer-train", "--output", "/tmp/overnight"]
@@ -244,6 +309,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.tree_deeper_joint_rotations, 2)
         self.assertEqual(arguments.tree_minimum_budget, 192)
         self.assertEqual(arguments.tree_convergence_patience, 8)
+        self.assertEqual(arguments.actor_batch_size, 16)
 
     def test_paired_arena_reuses_resets_and_spans_seeds(self) -> None:
         self.assertEqual(_paired_coordinates(100, 8, 0), _paired_coordinates(100, 8, 1))
@@ -300,7 +366,7 @@ class TransformerTests(unittest.TestCase):
     def test_full_party_models_stay_under_one_million_parameters(self) -> None:
         configs = [
             TransformerConfig(
-                feature_count=477,
+                feature_count=478,
                 action_count=13,
                 d_model=64,
                 heads=4,
@@ -308,7 +374,7 @@ class TransformerTests(unittest.TestCase):
                 feedforward=192,
             ),
             TransformerConfig(
-                feature_count=477,
+                feature_count=478,
                 action_count=13,
                 d_model=96,
                 heads=4,
@@ -316,7 +382,7 @@ class TransformerTests(unittest.TestCase):
                 feedforward=384,
             ),
             TransformerConfig(
-                feature_count=477,
+                feature_count=478,
                 action_count=13,
                 d_model=128,
                 heads=8,
@@ -331,7 +397,7 @@ class TransformerTests(unittest.TestCase):
             )
             for config in configs
         ]
-        self.assertEqual(counts, [152078, 441518, 938510])
+        self.assertEqual(counts, [152142, 441614, 938638])
         self.assertTrue(all(count <= 1_000_000 for count in counts))
 
     def test_switch_cap_preserves_all_legal_actions(self) -> None:
@@ -342,7 +408,7 @@ class TransformerTests(unittest.TestCase):
         self.assertTrue(all(capped[action] > 0 for action in range(10)))
 
     def test_tactical_potential_rewards_hp_and_status_advantage(self) -> None:
-        features = [0] * 477
+        features = [0] * 478
         for side in (0, 181):
             for slot in range(6):
                 base = side + slot * 22

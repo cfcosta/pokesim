@@ -602,6 +602,8 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._max_depth_reached = 0
         self._sampled_joint_pairs = 0
         self._possible_joint_pairs = 0
+        self._cross_root_batch_size = 1
+        self._cross_root_root_leaves = 0
 
     def _legal_from_priors(self, mask: int, priors: list[float]) -> list[int]:
         actions = legal_actions(mask, self.action_count)
@@ -810,7 +812,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     pairs.append(pair)
         return pairs
 
-    def _expand(self, node: _TreeNode, full_matrix: bool = False) -> int:
+    def _expansion_spec(
+        self, node: _TreeNode, full_matrix: bool
+    ) -> tuple[list[tuple[int, int, int]], list[tuple[int, int, int, int]]]:
         pairs = self._expansion_pairs(node, full_matrix)
         samples = [
             (player, enemy, sample)
@@ -825,8 +829,16 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             (node.snapshot.handle, player, enemy, chance[sample])
             for player, enemy, sample in samples
         ]
-        successors = self.server.search_steps(requests)
-        evaluated = self._evaluate_successors(successors)
+        return samples, requests
+
+    def _install_expansion(
+        self,
+        node: _TreeNode,
+        samples: list[tuple[int, int, int]],
+        successors: list[Snapshot],
+        evaluated: list[tuple[float, float]],
+    ) -> int:
+        pairs = list(dict.fromkeys((player, enemy) for player, enemy, _ in samples))
         parent_potential = _tactical_potential(node.snapshot.player_features)
         for sample, successor, evaluation in zip(
             samples, successors, evaluated, strict=True
@@ -853,6 +865,12 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._chance_outcomes += len(successors)
         self._solve_node(node)
         return len(successors)
+
+    def _expand(self, node: _TreeNode, full_matrix: bool = False) -> int:
+        samples, requests = self._expansion_spec(node, full_matrix)
+        successors = self.server.search_steps(requests)
+        evaluated = self._evaluate_successors(successors)
+        return self._install_expansion(node, samples, successors, evaluated)
 
     def _mixed_policy(
         self, policy: tuple[float, ...], legal: list[int], visits: int
@@ -971,20 +989,67 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             return fallback
         return tuple(value / solves for value in strategy_sum)
 
-    def search(self, snapshot: Snapshot, sample_actions: bool = True) -> SearchResult:
-        if snapshot.done:
-            raise ValueError("cannot search a terminal state")
-        players, enemies, values = self._evaluate_many([snapshot])
-        root_evaluation = (players[0], enemies[0], values[0])
-        root = self._make_node(snapshot, root_evaluation)
-        transitions = 0
+    def _diagnostics(
+        self, simulations: int, converged: bool, root: _TreeNode | None
+    ) -> dict[str, float | int]:
+        diagnostics: dict[str, float | int] = {
+            "tree_nodes": self._expanded_nodes,
+            "tree_simulations": simulations,
+            "tree_max_depth": self._max_depth_reached,
+            "chance_outcomes": self._chance_outcomes,
+            "sampled_joint_coverage": (
+                self._sampled_joint_pairs / self._possible_joint_pairs
+                if self._possible_joint_pairs
+                else 0.0
+            ),
+            "tree_converged": int(converged),
+            "cross_root_batch_size": self._cross_root_batch_size,
+            "cross_root_root_leaves": self._cross_root_root_leaves,
+        }
+        if root is not None:
+            diagnostics["root_joint_actions"] = len(root.player_legal) * len(
+                root.enemy_legal
+            )
+            diagnostics["root_solves"] = root.solve_count
+        return diagnostics
+
+    def _fallback(
+        self,
+        player_policy: list[float],
+        enemy_policy: list[float],
+        value: float,
+        transitions: int,
+        simulations: int,
+    ) -> SearchResult:
+        return SearchResult(
+            tuple(player_policy),
+            tuple(enemy_policy),
+            _sample(player_policy, self.selection_rng),
+            _sample(enemy_policy, self.selection_rng),
+            value,
+            transitions,
+            "network-fallback-on-semantic-divergence-v1",
+            None,
+            None,
+            None,
+            self._diagnostics(simulations, False, None),
+        )
+
+    def _finish_root(
+        self,
+        root: _TreeNode,
+        player_prior: list[float],
+        enemy_prior: list[float],
+        prior_value: float,
+        transitions: int,
+        sample_actions: bool,
+    ) -> SearchResult:
         simulations = 0
         converged = False
         previous_player: tuple[float, ...] | None = None
         previous_enemy: tuple[float, ...] | None = None
         stable_updates = 0
         try:
-            transitions += self._expand(root, True)
             attempts_without_learning = 0
             while transitions < self.config.expansion_budget:
                 _, cost, learned = self._simulate(
@@ -1035,31 +1100,12 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     if attempts_without_learning >= 64:
                         break
         except _TreeDivergence:
-            player_policy = players[0]
-            enemy_policy = enemies[0]
-            return SearchResult(
-                tuple(player_policy),
-                tuple(enemy_policy),
-                _sample(player_policy, self.selection_rng),
-                _sample(enemy_policy, self.selection_rng),
-                values[0],
+            return self._fallback(
+                player_prior,
+                enemy_prior,
+                prior_value,
                 transitions,
-                "network-fallback-on-semantic-divergence-v1",
-                None,
-                None,
-                None,
-                {
-                    "tree_nodes": self._expanded_nodes,
-                    "tree_simulations": simulations,
-                    "tree_max_depth": self._max_depth_reached,
-                    "chance_outcomes": self._chance_outcomes,
-                    "sampled_joint_coverage": (
-                        self._sampled_joint_pairs / self._possible_joint_pairs
-                        if self._possible_joint_pairs
-                        else 0.0
-                    ),
-                    "tree_converged": int(converged),
-                },
+                simulations,
             )
         player_policy = self._average_policy(
             root.player_strategy_sum, root.solve_count, root.player_policy
@@ -1107,18 +1153,137 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             exploitability,
             max(legal_payoffs) - min(legal_payoffs),
             tuple(tuple(row) for row in root.payoff),
-            {
-                "tree_nodes": self._expanded_nodes,
-                "tree_simulations": simulations,
-                "tree_max_depth": self._max_depth_reached,
-                "chance_outcomes": self._chance_outcomes,
-                "root_joint_actions": len(root.player_legal) * len(root.enemy_legal),
-                "root_solves": root.solve_count,
-                "sampled_joint_coverage": (
-                    self._sampled_joint_pairs / self._possible_joint_pairs
-                    if self._possible_joint_pairs
-                    else 0.0
-                ),
-                "tree_converged": int(converged),
-            },
+            self._diagnostics(simulations, converged, root),
         )
+
+    def search(self, snapshot: Snapshot, sample_actions: bool = True) -> SearchResult:
+        if snapshot.done:
+            raise ValueError("cannot search a terminal state")
+        players, enemies, values = self._evaluate_many([snapshot])
+        root = self._make_node(snapshot, (players[0], enemies[0], values[0]))
+        try:
+            transitions = self._expand(root, True)
+        except _TreeDivergence:
+            return self._fallback(players[0], enemies[0], values[0], 0, 0)
+        self._cross_root_root_leaves = transitions
+        return self._finish_root(
+            root,
+            players[0],
+            enemies[0],
+            values[0],
+            transitions,
+            sample_actions,
+        )
+
+    @classmethod
+    def search_many(
+        cls,
+        searches: list[SimultaneousTreeSearch],
+        snapshots: list[Snapshot],
+        sample_actions: bool = True,
+    ) -> list[SearchResult]:
+        """Batch root transitions and inference across independent live roots."""
+        if not searches or len(searches) != len(snapshots):
+            raise ValueError("search_many requires one search per snapshot")
+        first = searches[0]
+        if any(snapshot.done for snapshot in snapshots):
+            raise ValueError("cannot search a terminal state")
+        if any(
+            search.server is not first.server
+            or search.player_network is not first.player_network
+            or search.enemy_network is not first.enemy_network
+            or search.config != first.config
+            for search in searches[1:]
+        ):
+            raise ValueError(
+                "cross-root batches require one server, model pair, and config"
+            )
+        player_priors, enemy_priors, prior_values = first._evaluate_many(snapshots)
+        roots = [
+            search._make_node(snapshot, evaluation)
+            for search, snapshot, evaluation in zip(
+                searches,
+                snapshots,
+                zip(player_priors, enemy_priors, prior_values, strict=True),
+                strict=True,
+            )
+        ]
+        specs = [
+            search._expansion_spec(root, True)
+            for search, root in zip(searches, roots, strict=True)
+        ]
+        requests = [request for _, root_requests in specs for request in root_requests]
+        successors = first.server.search_steps(requests)
+        offsets: list[tuple[int, int]] = []
+        start = 0
+        for _, root_requests in specs:
+            end = start + len(root_requests)
+            offsets.append((start, end))
+            start = end
+        good = [
+            not any(
+                successor.divergence is not None for successor in successors[left:right]
+            )
+            for left, right in offsets
+        ]
+        active = [
+            successor
+            for is_good, (left, right) in zip(good, offsets, strict=True)
+            if is_good
+            for successor in successors[left:right]
+            if not successor.done
+        ]
+        evaluations: dict[int, tuple[list[float], list[float], float]] = {}
+        if active:
+            policies, enemy_policies, values = first._evaluate_many(active)
+            evaluations = {
+                snapshot.handle: evaluation
+                for snapshot, evaluation in zip(
+                    active,
+                    zip(policies, enemy_policies, values, strict=True),
+                    strict=True,
+                )
+            }
+        results: list[SearchResult] = []
+        batch_size = len(searches)
+        for index, (search, root, spec, bounds, is_good) in enumerate(
+            zip(searches, roots, specs, offsets, good, strict=True)
+        ):
+            left, right = bounds
+            root_successors = successors[left:right]
+            search._cross_root_batch_size = batch_size
+            search._cross_root_root_leaves = len(root_successors)
+            if not is_good:
+                results.append(
+                    search._fallback(
+                        player_priors[index],
+                        enemy_priors[index],
+                        prior_values[index],
+                        len(root_successors),
+                        0,
+                    )
+                )
+                continue
+            evaluated: list[tuple[float, float]] = []
+            for successor in root_successors:
+                if successor.done:
+                    value = float(successor.terminal_return or 0)
+                else:
+                    evaluation = evaluations[successor.handle]
+                    search._evaluation_cache[successor.handle] = evaluation
+                    value = evaluation[2]
+                evaluated.append((value, value))
+            transitions = search._install_expansion(
+                root, spec[0], root_successors, evaluated
+            )
+            results.append(
+                search._finish_root(
+                    root,
+                    player_priors[index],
+                    enemy_priors[index],
+                    prior_values[index],
+                    transitions,
+                    sample_actions,
+                )
+            )
+        return results

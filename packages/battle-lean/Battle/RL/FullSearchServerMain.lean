@@ -37,6 +37,10 @@ private def SearchState.sourceSlot : SearchState → Nat
   | .battle _ _ | .diverged _ _ _ => 0
   | .mimic _ _ source _ _ => source.val
 
+private def SearchState.continuation : SearchState → Option Full.Action
+  | .battle _ _ | .diverged _ _ _ => none
+  | .mimic _ _ _ next _ => next
+
 private def SearchState.divergence : SearchState → Option String
   | .diverged _ reason _ => some reason
   | _ => none
@@ -90,14 +94,16 @@ private def playerReturn (state : Full.Environment.State) : Int :=
 private def snapshotFields (search : SearchState) : String :=
   let state := search.base
   let player := FullTraining.featureVector state .player search.requestActor search.sourceSlot
+    search.continuation
   let enemy := FullTraining.featureVector state .enemy search.requestActor search.sourceSlot
+    search.continuation
   let done := Full.Environment.done state
   let terminal := state.engine.battle.phase.isTerminal
   let result := if done then toString (playerReturn state) else "null"
   let divergence := match search.divergence with
     | none => "null"
     | some reason => s!"\"{reason}\""
-  s!"\"player_features\":{naturalsJson player},\"enemy_features\":{naturalsJson enemy},\"player_mask\":{legalMask search .player},\"enemy_mask\":{legalMask search .enemy},\"player_hash\":\"{FullTraining.fingerprint state .player search.requestActor search.sourceSlot}\",\"enemy_hash\":\"{FullTraining.fingerprint state .enemy search.requestActor search.sourceSlot}\",\"turn\":{state.engine.battle.turn},\"request\":\"{search.requestName}\",\"divergence\":{divergence},\"terminal\":{boolJson terminal},\"done\":{boolJson done},\"return\":{result}"
+  s!"\"player_features\":{naturalsJson player},\"enemy_features\":{naturalsJson enemy},\"player_mask\":{legalMask search .player},\"enemy_mask\":{legalMask search .enemy},\"player_hash\":\"{FullTraining.fingerprint state .player search.requestActor search.sourceSlot search.continuation}\",\"enemy_hash\":\"{FullTraining.fingerprint state .enemy search.requestActor search.sourceSlot search.continuation}\",\"turn\":{state.engine.battle.turn},\"request\":\"{search.requestName}\",\"divergence\":{divergence},\"terminal\":{boolJson terminal},\"done\":{boolJson done},\"return\":{result}"
 
 private def snapshotJson (handle : Nat) (state : SearchState) : String :=
   "{" ++ s!"\"handle\":{handle},{snapshotFields state}" ++ "}"
@@ -236,8 +242,8 @@ private def parseBatchSpec (raw : String) : Option (Nat × Nat × Nat × Nat) :=
   | some handle, some player, some enemy, some seed => some (handle, player, enemy, seed)
   | _, _, _, _ => none
 
-private def runBatch : List String → Array SearchState → Array (Nat × SearchState) →
-    Except String (Array SearchState × Array (Nat × SearchState))
+private def runBatch (freshChance : Bool) : List String → Array SearchState →
+    Array (Nat × SearchState) → Except String (Array SearchState × Array (Nat × SearchState))
   | [], states, results => .ok (states, results)
   | raw :: rest, states, results =>
       match parseBatchSpec raw with
@@ -246,11 +252,12 @@ private def runBatch : List String → Array SearchState → Array (Nat × Searc
           match states[handle]? with
           | none => .error "invalid-handle"
           | some state =>
-              match stepNative state playerId enemyId (some chanceSeed) with
+              let chance := if freshChance then some chanceSeed else none
+              match stepNative state playerId enemyId chance with
               | .failed reason => .error reason
               | .transitioned next =>
                   let nextHandle := states.size
-                  runBatch rest (states.push next) (results.push (nextHandle, next))
+                  runBatch freshChance rest (states.push next) (results.push (nextHandle, next))
 
 private def compactStates (handles : List Nat) (states : Array SearchState) :
     Option (Array SearchState) :=
@@ -395,7 +402,7 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
     | some "batch" =>
         match token tokens 2 with
         | some rawBatch =>
-            match runBatch (rawBatch.splitOn ";") states #[] with
+            match runBatch true (rawBatch.splitOn ";") states #[] with
             | .error reason =>
                 emit output (failure request reason)
                 serve input output states
@@ -407,6 +414,22 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
                 serve input output nextStates
         | none =>
             emit output (failure request "invalid-batch")
+            serve input output states
+    | some "batch-episode" =>
+        match token tokens 2 with
+        | some rawBatch =>
+            match runBatch false (rawBatch.splitOn ";") states #[] with
+            | .error reason =>
+                emit output (failure request reason)
+                serve input output states
+            | .ok (nextStates, results) =>
+                let snapshots := results.toList.map fun result =>
+                  snapshotJson result.1 result.2
+                emit output (simpleSuccess request
+                  s!",\"snapshots\":[{String.intercalate "," snapshots}]")
+                serve input output nextStates
+        | none =>
+            emit output (failure request "invalid-batch-episode")
             serve input output states
     | some "inspect" =>
         match tokenNat tokens 2 with

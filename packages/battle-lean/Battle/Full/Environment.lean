@@ -118,6 +118,23 @@ private def resetFromSamples (player enemy : RL.DynamicGenerator.Sample)
     trainerClass := trainerClass
     safari := safari }
 
+/-- Public profile-specific constructor used by the training-state invariant.
+It accepts proof-carrying samples without inspecting their proof fields. -/
+def linkResetFromSamples (player enemy : RL.DynamicGenerator.Sample)
+    (battleRng : Rng.LinkRng) : State :=
+  resetFromSamples player enemy battleRng .link [] [] 1
+
+theorem linkResetFromSamples_profile_fields
+    (player enemy : RL.DynamicGenerator.Sample) (battleRng : Rng.LinkRng) :
+    let state := linkResetFromSamples player enemy battleRng
+    state.engine.battle.mode = .link ∧
+      state.engine.playerBag = [] ∧ state.engine.enemyBag = [] ∧
+      state.pendingCapture = none ∧ state.safari = none ∧
+      state.oldManScratch = none ∧ state.pendingLearning = [] ∧
+      state.canEvolveFlags = 0 ∧ state.trainerActionsLeft = none := by
+  have linkNotSafari : (BattleMode.link == BattleMode.safari) = false := by decide
+  simp [linkResetFromSamples, resetFromSamples, linkNotSafari]
+
 /-- Reset from independent generator and battle streams. -/
 def reset (generatorRng battleRng : Rng.LinkRng)
     (mode : BattleMode := .link) (playerBag enemyBag : Items.Bag := [])
