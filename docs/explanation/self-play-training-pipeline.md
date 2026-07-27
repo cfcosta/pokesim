@@ -8,7 +8,7 @@ This page proposes a training architecture around the theorem-backed high-level 
 
 Build an actor–learner pipeline in which native Battle workers own mechanics state and search, a batched accelerator service evaluates policy/value leaves, immutable episode shards feed an external learner, and a league controls opponent sampling.
 
-The first serious game profile is perfect-information, stochastic, simultaneous-action link battle. Restricted one-mon ordinary battles are the plumbing test; full generated parties are the target. Player-view hidden-information training follows as a different profile rather than silently changing the observation contract.
+The first serious game profile is perfect-information, stochastic, simultaneous-action link battle. Restricted one-mon battles that use the link RNG are the plumbing test; full generated link parties are the target. The deployment target is a policy controlling one cartridge perspective through an emulator's virtual link cable. Player-view hidden-information training follows as a different profile rather than silently changing the observation contract.
 
 ## Why this shape
 
@@ -64,12 +64,43 @@ Training claims attach to a named profile.
 
 | Profile | Mechanics | Information | Purpose |
 |---|---|---|---|
-| `ordinary-1v1-perfect-v1` | Restricted ordinary link kernel | Complete active state, future RNG hidden | Plumbing, exact search tests, throughput baselines |
-| `full-link-perfect-v1` | Full generated parties, moves and switches, no bag items | Complete mechanics state, future RNG hidden | First serious search-guided self-play |
-| `full-link-player-v1` | Same mechanics | Own team plus observed opponent history | Recurrent policy and belief experiments |
+| `ordinary-link-1v1-perfect-v1` | Restricted ordinary-move kernel in link mode | Complete active state, future RNG hidden | Plumbing, exact search tests, throughput baselines |
+| `full-link-perfect-v1` | Synchronized full-party quotient, moves and switches, no bag items | Complete mechanics state, future RNG hidden | First serious search-guided self-play |
+| `full-link-paired-player-v1` | Two cartridge perspectives, serial actions, clock roles, and desynchronization | Own team plus observed opponent history | Emulator deployment profile |
 | `red-driver-audit-v1` | Sampled ROM-linked episodes | Profile-specific | Differential audit only; never the training hot path |
 
 Team construction is initially outside the policy. `DynamicGenerator` supplies progression-witnessed parties from independent entropy. Later work may train team builders in an outer population game, but mixing team construction and battle control in the first loop would make failures difficult to localize.
+
+## Emulator deployment
+
+The clean deployment path uses a real link battle. Two stock ROM instances can be connected through the emulator's virtual serial cable, with the policy driving joypad input on one instance. A single emulator can instead implement the remote serial peer, including party exchange, action nybbles, clock role, and RNG-list setup. Neither design needs to pretend that an ordinary trainer battle is a link battle.
+
+`Battle.Full.Link.Pair` already states the right semantic shape: each cartridge owns its local player party, a disposable mirror of the remote party, a link RNG cursor, and a clock role. The synchronized one-state environment is a useful hot-path quotient, but it is valid only while mirrored active state, RNG, and terminal phase agree. Psywave, Bide faint cleanup, generated trapping wrappers, setup quirks, and later discoveries can force the paired profile to continue without that quotient.
+
+A real link setup generates ten bytes with hardware `Random`, rejecting values greater than or equal to `$FD`. The internal-clock cartridge keeps its list; the external-clock cartridge copies it. The receiver incorrectly skips a legitimate leading zero, so a generated block beginning with zero can break synchronization. Training entropy for the stock-link profile must reproduce this setup law, randomize clock roles, and either model the leading-zero mismatch or declare and enforce a synchronized-setup precondition.
+
+### Link mode is not an RNG switch
+
+Setting `wLinkState := LINK_STATE_BATTLING` changes more than `BattleRandom`:
+
+- enemy actions come from serial exchange rather than wild or trainer AI;
+- battle items have no link action encoding;
+- badge stat boosts are disabled;
+- the ordinary enemy stat-down 25% failure branch is disabled;
+- experience gain and trainer payout are skipped;
+- faint replacement, run, text, result, evolution, cleanup, and party persistence follow link paths;
+- equal-Speed order depends on which cartridge owns the internal clock.
+
+Globally forcing that byte inside ordinary wild or trainer battles would create a hybrid with poorly defined control flow. It is not an acceptable shortcut.
+
+A narrower ROM variant could make `BattleRandom` always enter the shared-list body while leaving `wLinkState` and `wIsInBattle` unchanged. That requires initializing the ten-byte list and index at every battle. It still would not route every battle-related random call through the list: trainer action AI, capture, Safari behavior, setup, and VBlank call hardware `Random` directly. Such a ROM is an **ordinary-battle deterministic-RNG variant**, not the stock link profile. It needs its own ROM hash, patch certificate, mechanics profile, and evaluation suite.
+
+| Deployment | ROM changes | Mechanics match | Recommendation |
+|---|---:|---|---|
+| Two emulator instances with virtual cable | None | Stock paired link battle | Primary reference deployment |
+| One emulator plus a virtual serial peer | None | Stock paired link battle if the peer implements setup/exchange exactly | Best product path after the reference works |
+| Hook only `BattleRandom` and seed its WRAM list | Yes, or an emulator PC/WRAM hook | Ordinary battle with deterministic combat RNG | Separate experiment, useful for campaign agents |
+| Force `wLinkState` globally | Yes | Accidental hybrid of link and ordinary paths | Reject |
 
 ## Decision protocol
 
@@ -120,7 +151,7 @@ The root produces two mixed policy targets. These targets are not ordinary alter
 
 ### Chance
 
-Each simulation receives a search RNG stream derived from the experiment seed, episode ID, root decision index, worker, and simulation index. A counter-based PRNG or versioned hash expands that identity into all live bytes of the link RNG block; the existing correlated `seedFrom` helper is not used. Search samples semantic outcomes through the `Battle` high-level mechanics. It never reads or clones the episode's unseen future RNG bytes.
+Each simulation receives a search RNG stream derived from the experiment seed, episode ID, root decision index, worker, and simulation index. A counter-based PRNG or versioned hash expands that identity, then the stock-link profile rejection-samples setup bytes below `$FD`; the existing correlated `seedFrom` helper is not used. Search samples semantic outcomes through the `Battle` high-level mechanics. It never reads or clones the episode's unseen future RNG bytes.
 
 Mid-battle resampling needs an explicit chance model. Fresh root resampling is a practical first approximation, but visible hits, misses, damage, and side effects contain information about previously consumed bytes, and link-list regeneration can correlate that information with later bytes. A stronger profile maintains particles over initial blocks and conditions them on the public action/event history. Episode artifacts therefore name the chance model, such as `fresh-root-v1` or `link-posterior-v1`; neither is silently presented as access to the concrete episode's hidden RNG state.
 
@@ -250,7 +281,7 @@ Two leakage checks are mandatory. First, states with the same policy information
 
 ### M0: Training contracts
 
-Define one normalized decision-request machine, a full perfect-information tensor projection, a stable action dictionary, complete state pause/clone semantics, production entropy expansion, an explicit search chance-fork model, deterministic transcript hashes, and exact terminal/truncation labels for `ordinary-1v1-perfect-v1`.
+Define one normalized decision-request machine, a full perfect-information tensor projection, a stable link-action dictionary, complete state pause/clone semantics, stock-link setup entropy, clock-role handling, an explicit search chance-fork model, deterministic transcript hashes, and exact terminal/truncation labels for `ordinary-link-1v1-perfect-v1`.
 
 ### M1: Reproducible baseline arena
 
@@ -278,4 +309,4 @@ Replay a statistically useful sample of generated episodes through the eventual 
 
 ## First implementation slice
 
-The smallest useful slice is M0 plus M1 on `ordinary-1v1-perfect-v1`, followed by heuristic simultaneous search in M2. It deliberately does not begin with PPO, a large Transformer, MuZero, or hidden teams. That slice tests the properties on which every later method depends: correct decisions, no RNG leakage, replayable labels, native search throughput, and population-aware evaluation.
+The smallest useful slice is M0 plus M1 on `ordinary-link-1v1-perfect-v1`, followed by heuristic simultaneous search in M2. It deliberately does not begin with PPO, a large Transformer, MuZero, or hidden teams. That slice tests the properties on which every later method depends: correct decisions, no RNG leakage, replayable labels, native search throughput, and population-aware evaluation. Before calling a policy deployable, the synchronized quotient must also replay through `Battle.Full.Link.Pair` with both clock roles and explicit desynchronization outcomes.
