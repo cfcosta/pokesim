@@ -252,6 +252,10 @@ private def runBatch : List String → Array SearchState → Array (Nat × Searc
                   let nextHandle := states.size
                   runBatch rest (states.push next) (results.push (nextHandle, next))
 
+private def compactStates (handles : List Nat) (states : Array SearchState) :
+    Option (Array SearchState) :=
+  handles.foldlM (fun compact handle => states[handle]?.map compact.push) #[]
+
 private def sideCode : Side → Nat
   | .player => 0
   | .enemy => 1
@@ -350,6 +354,19 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
         | _, _ =>
             emit output (failure request "invalid-reset")
             serve input output states
+    | some "reset-append" =>
+        match tokenNat tokens 2, tokenNat tokens 3 with
+        | some root, some episode =>
+            let state := Full.Environment.resetSized Wram.partyLength
+              (Training.linkRng root.toUInt64 episode.toUInt64 Training.generatorStream)
+              (Training.linkRng root.toUInt64 episode.toUInt64 Training.battleStream)
+            let state := SearchState.battle state []
+            let handle := states.size
+            emit output (success request handle state)
+            serve input output (states.push state)
+        | _, _ =>
+            emit output (failure request "invalid-reset-append")
+            serve input output states
     | some "step" =>
         match tokenNat tokens 2, tokenNat tokens 3, tokenNat tokens 4,
             token tokens 5, tokenNat tokens 6 with
@@ -416,6 +433,23 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
                 serve input output states
         | none =>
             emit output (failure request "invalid-compact")
+            serve input output states
+    | some "compact-many" =>
+        match token tokens 2 with
+        | some rawHandles =>
+            let handles := rawHandles.splitOn "," |>.mapM String.toNat?
+            match handles.bind (compactStates · states) with
+            | some compact =>
+                let snapshots := compact.toList.zipIdx.map fun result =>
+                  snapshotJson result.2 result.1
+                emit output (simpleSuccess request
+                  s!",\"snapshots\":[{String.intercalate "," snapshots}]")
+                serve input output compact
+            | none =>
+                emit output (failure request "invalid-compact-many-handle")
+                serve input output states
+        | none =>
+            emit output (failure request "invalid-compact-many")
             serve input output states
     | some "quit" => emit output (simpleSuccess request ",\"stopped\":true")
     | _ =>

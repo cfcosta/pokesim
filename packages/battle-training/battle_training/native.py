@@ -146,6 +146,9 @@ class SearchServer:
     def reset(self, root_seed: int, episode: int) -> Snapshot:
         return self._snapshot(self._request(f"reset|{root_seed}|{episode}"))
 
+    def reset_append(self, root_seed: int, episode: int) -> Snapshot:
+        return self._snapshot(self._request(f"reset-append|{root_seed}|{episode}"))
+
     def search_step(
         self, handle: int, player_action: int, enemy_action: int, chance_seed: int
     ) -> Snapshot:
@@ -180,6 +183,17 @@ class SearchServer:
 
     def compact(self, handle: int) -> Snapshot:
         return self._snapshot(self._request(f"compact|{handle}"))
+
+    def compact_many(self, handles: list[int]) -> list[Snapshot]:
+        if not handles:
+            raise ValueError("compact_many requires at least one handle")
+        response = self._request(
+            "compact-many|" + ",".join(str(handle) for handle in handles)
+        )
+        snapshots = [self._snapshot(row) for row in response["snapshots"]]
+        if len(snapshots) != len(handles):
+            raise RuntimeError("native compact-many response length mismatch")
+        return snapshots
 
     def close(self) -> None:
         if self.process.poll() is None:
