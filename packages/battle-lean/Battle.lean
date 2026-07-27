@@ -80,6 +80,7 @@ import Battle.Rom.HazeDispatchRoutine
 import Battle.Diff
 import Battle.Driver
 import Battle.DriverInvariant
+import Battle.Rom.FullStateProjection
 import Battle.Fixtures
 import Battle.RL.LegalTeam
 import Battle.RL.Generator
