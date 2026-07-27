@@ -2,14 +2,14 @@
 
 `battle-training` is the external actor–learner and evaluation project for the
 verified Lean battle model. Lean owns team generation, immutable search states,
-chance forks, and mechanics. Python owns the transformer, simultaneous MCTS,
+chance forks, and mechanics. Python owns the transformer, simultaneous search,
 replay shards, optimization, checkpoints, and evaluation.
 
 The first executable profile is `ordinary-link-1v1-perfect-v1`: a restricted
 one-Pokémon link battle used to validate the full AlphaZero-style loop before
 normalizing every full-party decision protocol.
 
-## Transformer + MCTS smoke training
+## Transformer + simultaneous-search smoke training
 
 From the repository root:
 
@@ -25,24 +25,26 @@ The smoke command performs the complete loop:
 
 1. builds and starts the persistent Lean search server;
 2. initializes a side-canonical transformer policy/value network;
-3. runs stochastic simultaneous-move MCTS with Exp3 node selection;
-4. forks hidden search chance through `fresh-root-v1` without reading the
-   episode RNG suffix;
-5. records MCTS visit distributions and witnessed terminal values;
+3. evaluates every legal root joint action with batched policy rollouts;
+4. couples independent `fresh-root-v1` chance samples across joint actions for
+   lower-variance payoff comparisons without reading the episode RNG suffix;
+5. solves the sampled zero-sum payoff matrix with regret matching+ and records
+   its mixed strategies alongside witnessed terminal values;
 6. optimizes policy cross-entropy plus value MSE with AdamW;
 7. publishes model and optimizer checkpoints;
 8. runs a side-swapped final-versus-initial arena;
 9. writes SHA-256 manifests; and
-10. regenerates the first MCTS shard byte for byte from checkpoint zero.
+10. regenerates the first search shard byte for byte from checkpoint zero.
 
-Default smoke settings use a small two-layer transformer and twelve simulations
-per decision. `transformer-train` defaults to a four-layer, 128-wide model and a
-larger search budget:
+Default smoke settings use a small two-layer transformer and two chance samples
+per legal joint action. `transformer-train` defaults to a four-layer, 128-wide
+model and eight samples per joint action:
 
 ```sh
 nix develop -c python packages/battle-training/train.py transformer-train \
   --output artifacts/training/run-001 \
-  --iterations 20 --episodes 256 --simulations 96 --search-depth 8
+  --iterations 20 --episodes 256 \
+  --chance-samples-per-joint 8 --search-depth 8
 ```
 
 Use `--device cpu`, `--device cuda`, or `--device auto`. The uv2nix development
@@ -76,17 +78,24 @@ side-canonical state fields. Two heads predict:
 - logits for the four restricted link move-slot actions; and
 - a bounded terminal value in `[-1, 1]`.
 
-MCTS masks illegal actions before inference. Search maintains independent Exp3
-weights for both simultaneous players and samples semantic outcomes through the
-native Lean server. Search-selection entropy, search-chance entropy, real battle
-entropy, and team-generation entropy remain separate.
+Search and policy loss mask illegal actions. The default search batches native
+transitions and neural inference, estimates every legal root joint payoff, and
+uses regret matching+ to produce one mixed target per side. Common random
+numbers couple the sampled chance seeds across actions only inside the estimator;
+each action retains the required `fresh-root-v1` marginal distribution. The
+legacy sequential Exp3 MCTS remains available with
+`--search-solver exp3-mcts --simulations N` for controlled comparisons.
+Search-selection entropy, search-chance entropy, real battle entropy, and
+team-generation entropy remain separate.
 
 ## Native boundary
 
 `battleSearchServer` stores immutable `Battle.RL.Environment.State` values behind
 integer handles. `step ... fresh ...` installs a named search chance fork;
-`step ... episode ...` advances the real trajectory with its existing hidden
-RNG. Python cannot mutate or resolve battle state itself.
+`batch` derives many such successors in one native request; `step ... episode
+...` advances the real trajectory with its existing hidden RNG. Python cannot
+mutate or resolve battle state itself. Neural leaves are evaluated in bounded
+GPU batches within each root search.
 
 The earlier terminal-return move table remains available as `tabular-smoke` and
 `tabular-train`. It is a protocol baseline, not the intended learning system.
@@ -97,8 +106,10 @@ The earlier terminal-return move table remains available as `tabular-smoke` and
 - Truncation and mechanics failures never receive fabricated terminal labels.
 - The synchronized restricted profile is not yet the paired-cartridge emulator
   deployment profile.
-- Exp3 MCTS is implemented, but inference is currently synchronous rather than a
-  multi-worker batched service.
+- Root search now batches native stepping and inference, but there is not yet a
+  multi-worker inference service that combines leaves from independent roots.
+- Regret matching currently solves the exhaustively sampled root matrix; deeper
+  actions are policy rollouts rather than regret-matched tree nodes.
 - Full parties remain blocked on normalized forced-switch and nested requests.
 - This training pipeline is theorem-backed model execution, not a proof of
   behavioral equivalence to the Pokémon Red battle ROM.

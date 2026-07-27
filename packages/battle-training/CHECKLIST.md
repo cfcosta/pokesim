@@ -18,6 +18,7 @@ rows remain required before the corresponding profile can be called complete.
 - [ ] Normalize every full-engine one-side and nested decision request.
 - [ ] Define a mechanics-complete full-party tensor schema.
 - [x] Add immutable pause/branch handles for the restricted native search server.
+- [x] Batch independent fresh-chance branches in one native request.
 - [ ] Execute the restricted synchronized profile through `Full.Link.Pair`.
 - [ ] Reproduce stock setup rejection, clock roles, and leading-zero mismatch in
       paired episodes.
@@ -39,8 +40,9 @@ rows remain required before the corresponding profile can be called complete.
 ## M2 — simultaneous search
 
 - [ ] Add native state-branch benchmarks independent of episode throughput.
-- [ ] Evaluate every legal joint action at shallow roots.
-- [ ] Add regret-matching simultaneous MCTS.
+- [x] Evaluate every legal joint action at shallow roots.
+- [x] Solve sampled root payoff matrices with regret matching+.
+- [ ] Add regret matching at every expanded simultaneous MCTS node.
 - [x] Add sampled stochastic Exp3 simultaneous MCTS for the restricted profile.
 - [ ] Keep opponent-sampled PUCT only as a named best-response baseline.
 - [x] Implement `fresh-root-v1` without access to episode future RNG.
@@ -50,7 +52,8 @@ rows remain required before the corresponding profile can be called complete.
 
 - [x] Freeze the restricted 100-field side-canonical tensor and action mask.
 - [x] Train a byte/position-embedding transformer outside Lean.
-- [ ] Run a multi-worker batched inference service outside Lean.
+- [x] Batch bounded leaf inference within each exhaustive root search.
+- [ ] Run a multi-worker batched inference service across independent roots.
 - [ ] Add bounded worker queues and inference timeouts.
 - [x] Train policy and terminal value heads from MCTS/terminal targets.
 - [x] Publish immutable model, optimizer, schema, and SHA-256 checkpoints.
