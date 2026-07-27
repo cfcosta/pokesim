@@ -1,0 +1,456 @@
+"""Traced random-team 6v6 arenas and policy-skill diagnostics."""
+
+from __future__ import annotations
+
+import random
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
+
+from .artifacts import write_json
+from .joint_search import BatchedJointRegretSearch, JointSearchConfig
+from .native import SearchServer
+from .network import BattleTransformer
+
+_FIXED_DAMAGE_MOVES = {68, 69, 82, 101, 149, 162}
+_SUCCESS_EVENTS = {
+    "status-applied",
+    "stage-changed",
+    "healed",
+    "screen",
+    "transformed",
+    "seeded",
+    "disabled",
+}
+
+
+@dataclass(frozen=True)
+class ArenaConfig:
+    games: int
+    budget: int = 256
+    chance_samples_per_joint: int = 1
+    search_depth: int = 1
+    regret_iterations: int = 256
+    inference_batch_size: int = 96
+    max_actions_per_side: int = 9
+    seed: int = 0
+    replay_games: int = 3
+    search_every: int = 0
+
+
+@dataclass
+class SkillMetrics:
+    damaging_moves: int = 0
+    effectiveness_ratio_sum: float = 0.0
+    best_effectiveness_choices: int = 0
+    super_effective_choices: int = 0
+    status_uses: int = 0
+    status_successes: int = 0
+    status_failures: int = 0
+    status_wasted: int = 0
+    voluntary_switches: int = 0
+    completed_voluntary_switches: int = 0
+    matchup_improving_switches: int = 0
+
+    def report(self) -> dict[str, Any]:
+        result = asdict(self)
+        result["mean_move_effectiveness_vs_best"] = (
+            self.effectiveness_ratio_sum / self.damaging_moves
+            if self.damaging_moves
+            else None
+        )
+        result["best_move_choice_rate"] = (
+            self.best_effectiveness_choices / self.damaging_moves
+            if self.damaging_moves
+            else None
+        )
+        result["status_success_rate"] = (
+            self.status_successes / self.status_uses if self.status_uses else None
+        )
+        result["switch_completion_rate"] = (
+            self.completed_voluntary_switches / self.voluntary_switches
+            if self.voluntary_switches
+            else None
+        )
+        result["matchup_improvement_rate"] = (
+            self.matchup_improving_switches / self.completed_voluntary_switches
+            if self.completed_voluntary_switches
+            else None
+        )
+        return result
+
+
+@dataclass
+class Replay:
+    lines: list[str] = field(default_factory=list)
+
+    def add(self, line: str) -> None:
+        self.lines.append(line)
+
+    def text(self) -> str:
+        return "\n".join(self.lines) + "\n"
+
+
+def _sample_policy(probabilities: list[float], rng: random.Random) -> int:
+    threshold = rng.random()
+    cumulative = 0.0
+    for action, probability in enumerate(probabilities):
+        cumulative += probability
+        if threshold <= cumulative:
+            return action
+    return max(
+        index for index, probability in enumerate(probabilities) if probability > 0
+    )
+
+
+def _network_actions(
+    player: BattleTransformer,
+    enemy: BattleTransformer,
+    snapshot: Any,
+    rng: random.Random,
+) -> tuple[int, int]:
+    if player is enemy:
+        policies, _ = player.evaluate(
+            [snapshot.player_features, snapshot.enemy_features],
+            [snapshot.player_mask, snapshot.enemy_mask],
+        )
+        return _sample_policy(policies[0], rng), _sample_policy(policies[1], rng)
+    player_policy, _ = player.evaluate(
+        [snapshot.player_features], [snapshot.player_mask]
+    )
+    enemy_policy, _ = enemy.evaluate([snapshot.enemy_features], [snapshot.enemy_mask])
+    return _sample_policy(player_policy[0], rng), _sample_policy(enemy_policy[0], rng)
+
+
+def _legal(mask: int, action: int) -> bool:
+    return bool(mask & (1 << action))
+
+
+def _move_score(move: dict[str, Any]) -> int:
+    return int(move["power"]) * int(move["effectiveness"]) * int(move["accuracy"])
+
+
+def _is_status(move: dict[str, Any]) -> bool:
+    return int(move["power"]) == 0 and int(move["id"]) not in _FIXED_DAMAGE_MOVES
+
+
+def _active(side: dict[str, Any]) -> dict[str, Any]:
+    return side["party"][side["active"]]
+
+
+def _best_damage_score(side: dict[str, Any], mask: int) -> int:
+    return max(
+        (
+            _move_score(move)
+            for slot, move in enumerate(side["moves"])
+            if _legal(mask, slot) and int(move["power"]) > 0
+        ),
+        default=0,
+    )
+
+
+def _matchup_advantage(inspection: dict[str, Any], side_index: int) -> int:
+    own_name = "player" if side_index == 0 else "enemy"
+    opponent_name = "enemy" if side_index == 0 else "player"
+    own_mask = inspection[f"{own_name}_mask"]
+    opponent_mask = inspection[f"{opponent_name}_mask"]
+    return _best_damage_score(inspection[own_name], own_mask) - _best_damage_score(
+        inspection[opponent_name], opponent_mask
+    )
+
+
+def _effect_actors(events: list[dict[str, Any]]) -> tuple[set[int], set[int]]:
+    current: int | None = None
+    successful: set[int] = set()
+    blocked: set[int] = set()
+    for event in events:
+        if event["kind"] == "action":
+            current = int(event["side"])
+        elif event["kind"] == "status-blocked":
+            blocked.add(int(event["side"]))
+        elif event["kind"] in _SUCCESS_EVENTS and current is not None:
+            successful.add(current)
+    return successful, blocked
+
+
+def _update_side_metrics(
+    metrics: SkillMetrics,
+    side_index: int,
+    action: int,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    request: str,
+) -> None:
+    side_name = "player" if side_index == 0 else "enemy"
+    mask = before[f"{side_name}_mask"]
+    if request == "battle" and 0 <= action < 4:
+        move = before[side_name]["moves"][action]
+        if int(move["power"]) > 0:
+            chosen = _move_score(move)
+            best = _best_damage_score(before[side_name], mask)
+            metrics.damaging_moves += 1
+            if best:
+                metrics.effectiveness_ratio_sum += chosen / best
+                if chosen == best:
+                    metrics.best_effectiveness_choices += 1
+            if int(move["effectiveness"]) > 100:
+                metrics.super_effective_choices += 1
+        elif _is_status(move):
+            metrics.status_uses += 1
+            successful, blocked = _effect_actors(after["events"])
+            if side_index in successful:
+                metrics.status_successes += 1
+            elif side_index in blocked:
+                metrics.status_failures += 1
+            else:
+                metrics.status_wasted += 1
+    elif request == "battle" and 4 <= action < 10:
+        metrics.voluntary_switches += 1
+        completed = after[side_name]["active"] != before[side_name]["active"]
+        if completed:
+            metrics.completed_voluntary_switches += 1
+            if _matchup_advantage(after, side_index) > _matchup_advantage(
+                before, side_index
+            ):
+                metrics.matchup_improving_switches += 1
+
+
+def _preview(replay: Replay, inspection: dict[str, Any]) -> None:
+    replay.add("|player|p1|Player 1")
+    replay.add("|player|p2|Player 2")
+    replay.add("|teamsize|p1|6")
+    replay.add("|teamsize|p2|6")
+    replay.add("|gametype|singles")
+    replay.add("|gen|1")
+    replay.add("|tier|[Gen 1] Full Link 6v6")
+    for code, name in (("p1", "player"), ("p2", "enemy")):
+        for mon in inspection[name]["party"]:
+            replay.add(f"|poke|{code}|{mon['name']}, L{mon['level']}|")
+    replay.add("|teampreview")
+    replay.add("|start")
+    for code, name in (("p1", "player"), ("p2", "enemy")):
+        mon = _active(inspection[name])
+        replay.add(
+            f"|switch|{code}a: {mon['name']}|{mon['name']}, L{mon['level']}|"
+            f"{mon['hp']}/{mon['max_hp']}"
+        )
+
+
+def _action_line(
+    replay: Replay,
+    side_index: int,
+    action: int,
+    inspection: dict[str, Any],
+    request: str,
+) -> None:
+    side_name = "player" if side_index == 0 else "enemy"
+    opponent_name = "enemy" if side_index == 0 else "player"
+    code = "p1" if side_index == 0 else "p2"
+    opponent_code = "p2" if side_index == 0 else "p1"
+    actor = _active(inspection[side_name])
+    target = _active(inspection[opponent_name])
+    if request.startswith("mimic"):
+        move = inspection[opponent_name]["moves"][action]
+        replay.add(f"|-message|{code} selected {move['name']} for Mimic.")
+    elif action < 4:
+        move = inspection[side_name]["moves"][action]
+        replay.add(
+            f"|move|{code}a: {actor['name']}|{move['name']}|"
+            f"{opponent_code}a: {target['name']}"
+        )
+    elif 4 <= action < 10:
+        mon = inspection[side_name]["party"][action - 4]
+        replay.add(f"|-message|{code} requested a switch to {mon['name']}.")
+    elif action == 11:
+        replay.add(
+            f"|move|{code}a: {actor['name']}|Struggle|"
+            f"{opponent_code}a: {target['name']}"
+        )
+
+
+def _event_lines(
+    replay: Replay, before: dict[str, Any], inspection: dict[str, Any]
+) -> None:
+    explicit_switches = {
+        int(event["side"])
+        for event in inspection["events"]
+        if event["kind"] == "switch"
+    }
+    for side_index, side_name, code in (
+        (0, "player", "p1"),
+        (1, "enemy", "p2"),
+    ):
+        if (
+            side_index not in explicit_switches
+            and before[side_name]["active"] != inspection[side_name]["active"]
+        ):
+            switched = _active(inspection[side_name])
+            replay.add(
+                f"|switch|{code}a: {switched['name']}|{switched['name']}, "
+                f"L{switched['level']}|{switched['hp']}/{switched['max_hp']}"
+            )
+    for event in inspection["events"]:
+        kind = event["kind"]
+        side_index = int(event.get("side", 0))
+        side_name = "player" if side_index == 0 else "enemy"
+        code = "p1" if side_index == 0 else "p2"
+        mon = _active(inspection[side_name])
+        if kind == "damage":
+            replay.add(f"|-damage|{code}a: {mon['name']}|{event['hp']}/{mon['max_hp']}")
+        elif kind == "faint":
+            replay.add(f"|faint|{code}a: {mon['name']}")
+        elif kind == "switch":
+            switched = inspection[side_name]["party"][int(event["target"])]
+            replay.add(
+                f"|switch|{code}a: {switched['name']}|{switched['name']}, "
+                f"L{switched['level']}|{switched['hp']}/{switched['max_hp']}"
+            )
+        elif kind == "status-applied":
+            replay.add(f"|-status|{code}a: {mon['name']}|0x{int(event['value']):02x}")
+        elif kind == "status-blocked":
+            replay.add(f"|cant|{code}a: {mon['name']}|status")
+        elif kind in _SUCCESS_EVENTS:
+            replay.add(f"|-message|{kind} resolved.")
+
+
+def run_traced_arena(
+    candidate: BattleTransformer,
+    baseline: BattleTransformer,
+    config: ArenaConfig,
+    replay_dir: Path | None = None,
+) -> dict[str, Any]:
+    selection_rng = random.Random(config.seed + 0xA7E9A)
+    chance_rng = random.Random(config.seed + 0xA7E9B)
+    search_config = JointSearchConfig(
+        config.chance_samples_per_joint,
+        config.search_depth,
+        config.regret_iterations,
+        config.inference_batch_size,
+        config.max_actions_per_side,
+    )
+    candidate_metrics = SkillMetrics()
+    baseline_metrics = SkillMetrics()
+    wins = losses = draws = truncated = 0
+    if replay_dir is not None:
+        replay_dir.mkdir(parents=True, exist_ok=True)
+    with SearchServer() as server:
+        for episode in range(config.games):
+            candidate_player = episode % 2 == 0
+            player = candidate if candidate_player else baseline
+            enemy = baseline if candidate_player else candidate
+            snapshot = server.reset(config.seed + 90_000_000, episode)
+            replay = Replay() if episode < config.replay_games else None
+            initial = server.inspect(snapshot.handle)
+            initial["player_mask"] = snapshot.player_mask
+            initial["enemy_mask"] = snapshot.enemy_mask
+            if replay is not None:
+                _preview(replay, initial)
+            result_value: int | None = None
+            for decision in range(config.budget):
+                before = server.inspect(snapshot.handle)
+                before["player_mask"] = snapshot.player_mask
+                before["enemy_mask"] = snapshot.enemy_mask
+                if config.search_every and decision % config.search_every == 0:
+                    search = BatchedJointRegretSearch(
+                        server,
+                        player,
+                        enemy,
+                        search_config,
+                        selection_rng,
+                        chance_rng,
+                    )
+                    result = search.search(snapshot, sample_actions=True)
+                    player_action = result.player_action
+                    enemy_action = result.enemy_action
+                else:
+                    player_action, enemy_action = _network_actions(
+                        player, enemy, snapshot, selection_rng
+                    )
+                if replay is not None:
+                    replay.add(f"|turn|{decision + 1}")
+                    _action_line(replay, 0, player_action, before, snapshot.request)
+                    _action_line(replay, 1, enemy_action, before, snapshot.request)
+                snapshot = server.episode_step(
+                    snapshot.handle, player_action, enemy_action
+                )
+                after = server.inspect(snapshot.handle)
+                after["player_mask"] = snapshot.player_mask
+                after["enemy_mask"] = snapshot.enemy_mask
+                player_metrics = (
+                    candidate_metrics if candidate_player else baseline_metrics
+                )
+                enemy_metrics = (
+                    baseline_metrics if candidate_player else candidate_metrics
+                )
+                _update_side_metrics(
+                    player_metrics,
+                    0,
+                    player_action,
+                    before,
+                    after,
+                    before["request"],
+                )
+                _update_side_metrics(
+                    enemy_metrics,
+                    1,
+                    enemy_action,
+                    before,
+                    after,
+                    before["request"],
+                )
+                if replay is not None:
+                    _event_lines(replay, before, after)
+                if snapshot.done:
+                    result_value = snapshot.terminal_return
+                    break
+                snapshot = server.compact(snapshot.handle)
+            candidate_result = (
+                result_value
+                if candidate_player or result_value is None
+                else -result_value
+            )
+            if candidate_result == 1:
+                wins += 1
+            elif candidate_result == -1:
+                losses += 1
+            elif candidate_result == 0:
+                draws += 1
+            else:
+                truncated += 1
+            if replay is not None and replay_dir is not None:
+                if candidate_result == 1:
+                    replay.add("|win|Candidate")
+                elif candidate_result == -1:
+                    replay.add("|win|Baseline")
+                elif candidate_result == 0:
+                    replay.add("|tie")
+                else:
+                    replay.add("|message|Battle truncated without a terminal result.")
+                (replay_dir / f"game-{episode:05d}.log").write_text(replay.text())
+    finished = wins + losses + draws
+    return {
+        "profile": "full-link-6v6-perfect-v1",
+        "party_size": 6,
+        "games": config.games,
+        "wins": wins,
+        "losses": losses,
+        "draws": draws,
+        "truncated": truncated,
+        "finished": finished,
+        "score": (wins + 0.5 * draws) / finished if finished else None,
+        "candidate_skills": candidate_metrics.report(),
+        "baseline_skills": baseline_metrics.report(),
+        "config": asdict(config),
+    }
+
+
+def write_arena_report(
+    output: Path,
+    candidate: BattleTransformer,
+    baseline: BattleTransformer,
+    config: ArenaConfig,
+) -> dict[str, Any]:
+    output.mkdir(parents=True, exist_ok=True)
+    result = run_traced_arena(candidate, baseline, config, output / "replays")
+    write_json(output / "summary.json", result)
+    return result

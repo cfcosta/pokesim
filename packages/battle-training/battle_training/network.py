@@ -12,13 +12,11 @@ from torch import Tensor, nn
 
 from . import FEATURE_COUNT
 
-ACTION_COUNT = 4
-
 
 @dataclass(frozen=True)
 class TransformerConfig:
     feature_count: int = FEATURE_COUNT
-    action_count: int = ACTION_COUNT
+    action_count: int = 4
     d_model: int = 128
     heads: int = 8
     layers: int = 4
@@ -58,6 +56,15 @@ class BattleTransformer(nn.Module):
             nn.Tanh(),
         )
         nn.init.normal_(self.cls, std=0.02)
+        nn.init.zeros_(self.policy.weight)
+        nn.init.zeros_(self.policy.bias)
+        nn.init.zeros_(self.value[-2].weight)
+        nn.init.zeros_(self.value[-2].bias)
+        if config.action_count == 13:
+            with torch.no_grad():
+                self.policy.bias[4:10].fill_(-2.0)
+                self.policy.bias[10].fill_(-2.0)
+                self.policy.bias[12].fill_(-4.0)
 
     def forward(self, features: Tensor) -> tuple[Tensor, Tensor]:
         if features.ndim != 2 or features.shape[1] != self.config.feature_count:
@@ -86,7 +93,10 @@ class BattleTransformer(nn.Module):
         logits, values = self(tensor)
         legal = torch.tensor(
             [
-                [bool(mask & (1 << action)) for action in range(ACTION_COUNT)]
+                [
+                    bool(mask & (1 << action))
+                    for action in range(self.config.action_count)
+                ]
                 for mask in masks
             ],
             dtype=torch.bool,

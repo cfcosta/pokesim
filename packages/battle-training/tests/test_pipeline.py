@@ -132,8 +132,46 @@ class TransformerTests(unittest.TestCase):
                 )
                 + "\n"
             )
-            _, _, _, masks = _load_examples([shard])
+            _, _, _, masks, weights = _load_examples([shard])
+            self.assertEqual(weights.tolist(), [1.0])
             self.assertEqual(masks.tolist(), [[True, False, True, False]])
+
+    def test_full_party_models_stay_under_one_million_parameters(self) -> None:
+        configs = [
+            TransformerConfig(
+                feature_count=417,
+                action_count=13,
+                d_model=64,
+                heads=4,
+                layers=2,
+                feedforward=192,
+            ),
+            TransformerConfig(
+                feature_count=417,
+                action_count=13,
+                d_model=96,
+                heads=4,
+                layers=3,
+                feedforward=384,
+            ),
+            TransformerConfig(
+                feature_count=417,
+                action_count=13,
+                d_model=128,
+                heads=8,
+                layers=4,
+                feedforward=512,
+            ),
+        ]
+        counts = [
+            sum(
+                parameter.numel()
+                for parameter in BattleTransformer(config).parameters()
+            )
+            for config in configs
+        ]
+        self.assertEqual(counts, [148238, 435758, 930830])
+        self.assertTrue(all(count <= 1_000_000 for count in counts))
 
     def test_policy_masks_and_value_bounds(self) -> None:
         torch.manual_seed(7)

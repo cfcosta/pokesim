@@ -1,4 +1,4 @@
-"""Persistent client for Lean-owned immutable search states."""
+"""Persistent client for Lean-owned immutable full-party search states."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any, Self
 
-from . import FEATURE_COUNT, SCHEMA
+from . import FULL_ACTION_COUNT, FULL_PARTY_SIZE, FULL_PROFILE, FULL_SCHEMA
 from .worker import LEAN_PACKAGE, REPO_ROOT
 
 SEARCH_SERVER = LEAN_PACKAGE / ".lake" / "build" / "bin" / "battleSearchServer"
@@ -26,17 +26,14 @@ class Snapshot:
     terminal: bool
     done: bool
     terminal_return: int | None
+    request: str
 
     @classmethod
     def from_response(cls, response: dict[str, Any]) -> Snapshot:
-        player = tuple(response["player_features"])
-        enemy = tuple(response["enemy_features"])
-        if len(player) != FEATURE_COUNT or len(enemy) != FEATURE_COUNT:
-            raise ValueError("native search state feature count differs from schema")
         return cls(
             handle=response["handle"],
-            player_features=player,
-            enemy_features=enemy,
+            player_features=tuple(response["player_features"]),
+            enemy_features=tuple(response["enemy_features"]),
             player_mask=response["player_mask"],
             enemy_mask=response["enemy_mask"],
             player_hash=response["player_hash"],
@@ -45,6 +42,7 @@ class Snapshot:
             terminal=response["terminal"],
             done=response["done"],
             terminal_return=response["return"],
+            request=response["request"],
         )
 
 
@@ -79,9 +77,17 @@ class SearchServer:
         )
         self._request_id = 0
         hello = self._request("ping")
-        if hello["schema"] != SCHEMA or hello["chance"] != "fresh-root-v1":
+        if (
+            hello["profile"] != FULL_PROFILE
+            or hello["schema"] != FULL_SCHEMA
+            or hello["chance"] != "fresh-root-v1"
+            or hello["action_count"] != FULL_ACTION_COUNT
+            or hello["party_size"] != FULL_PARTY_SIZE
+        ):
             self.close()
             raise ValueError(f"native search protocol mismatch: {hello}")
+        self.feature_count = int(hello["feature_count"])
+        self.action_count = int(hello["action_count"])
 
     def _request(self, command: str) -> dict[str, Any]:
         if self.process.stdin is None or self.process.stdout is None:
@@ -103,13 +109,22 @@ class SearchServer:
             raise RuntimeError(f"native search operation failed: {response['error']}")
         return response
 
+    def _snapshot(self, response: dict[str, Any]) -> Snapshot:
+        snapshot = Snapshot.from_response(response)
+        if (
+            len(snapshot.player_features) != self.feature_count
+            or len(snapshot.enemy_features) != self.feature_count
+        ):
+            raise ValueError("native search state feature count differs from schema")
+        return snapshot
+
     def reset(self, root_seed: int, episode: int) -> Snapshot:
-        return Snapshot.from_response(self._request(f"reset|{root_seed}|{episode}"))
+        return self._snapshot(self._request(f"reset|{root_seed}|{episode}"))
 
     def search_step(
         self, handle: int, player_action: int, enemy_action: int, chance_seed: int
     ) -> Snapshot:
-        return Snapshot.from_response(
+        return self._snapshot(
             self._request(
                 f"step|{handle}|{player_action}|{enemy_action}|fresh|{chance_seed}"
             )
@@ -123,7 +138,7 @@ class SearchServer:
             for handle, player, enemy, seed in requests
         )
         response = self._request(f"batch|{payload}")
-        snapshots = [Snapshot.from_response(row) for row in response["snapshots"]]
+        snapshots = [self._snapshot(row) for row in response["snapshots"]]
         if len(snapshots) != len(requests):
             raise RuntimeError("native batch response length mismatch")
         return snapshots
@@ -131,12 +146,15 @@ class SearchServer:
     def episode_step(
         self, handle: int, player_action: int, enemy_action: int
     ) -> Snapshot:
-        return Snapshot.from_response(
+        return self._snapshot(
             self._request(f"step|{handle}|{player_action}|{enemy_action}|episode|0")
         )
 
+    def inspect(self, handle: int) -> dict[str, Any]:
+        return self._request(f"inspect|{handle}")
+
     def compact(self, handle: int) -> Snapshot:
-        return Snapshot.from_response(self._request(f"compact|{handle}"))
+        return self._snapshot(self._request(f"compact|{handle}"))
 
     def close(self) -> None:
         if self.process.poll() is None:

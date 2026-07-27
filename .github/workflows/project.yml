@@ -37,7 +37,7 @@ jobs:
           nix develop -c python packages/battle-training/train.py transformer-smoke \
             --output "$out" --device cpu --iterations 1 --episodes 2 \
             --arena-episodes 2 --chance-samples-per-joint 1 \
-            --search-depth 2 --epochs 1 \
+            --search-depth 1 --budget 64 --epochs 1 \
             --d-model 32 --heads 4 --layers 1 --feedforward 64
           nix develop -c python packages/battle-training/train.py verify "$out"
       - name: Check canonical address/range closure

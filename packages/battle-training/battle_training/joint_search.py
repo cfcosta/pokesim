@@ -6,19 +6,37 @@ import random
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from .mcts import SearchResult, legal_actions
 from .native import SearchServer, Snapshot
-from .network import ACTION_COUNT, BattleTransformer
+from .network import BattleTransformer
 
 PayoffMatrix: TypeAlias = list[list[float]]
 
 
 @dataclass(frozen=True)
+class SearchResult:
+    player_policy: tuple[float, ...]
+    enemy_policy: tuple[float, ...]
+    player_action: int
+    enemy_action: int
+    root_value: float
+    nodes: int
+    solver: str
+    exploitability: float | None
+    payoff_spread: float | None
+    payoff_matrix: tuple[tuple[float, ...], ...] | None
+
+
+@dataclass(frozen=True)
 class JointSearchConfig:
-    chance_samples_per_joint: int = 8
-    max_depth: int = 4
+    chance_samples_per_joint: int = 1
+    max_depth: int = 1
     regret_iterations: int = 256
     inference_batch_size: int = 96
+    max_actions_per_side: int = 13
+
+
+def legal_actions(mask: int, action_count: int) -> list[int]:
+    return [action for action in range(action_count) if mask & (1 << action)]
 
 
 def _sample(probabilities: list[float], rng: random.Random) -> int:
@@ -37,7 +55,7 @@ def _strategy(
     regrets: list[float], priors: list[float], legal: list[int]
 ) -> list[float]:
     positive = sum(max(0.0, regrets[action]) for action in legal)
-    strategy = [0.0] * ACTION_COUNT
+    strategy = [0.0] * len(regrets)
     if positive > 0.0:
         for action in legal:
             strategy[action] = max(0.0, regrets[action]) / positive
@@ -63,10 +81,11 @@ def solve_zero_sum_regret(
     """Approximate a zero-sum matrix equilibrium with regret matching+."""
     if iterations < 1:
         raise ValueError("regret iterations must be positive")
-    player_regrets = [0.0] * ACTION_COUNT
-    enemy_regrets = [0.0] * ACTION_COUNT
-    player_sum = [0.0] * ACTION_COUNT
-    enemy_sum = [0.0] * ACTION_COUNT
+    action_count = len(payoff)
+    player_regrets = [0.0] * action_count
+    enemy_regrets = [0.0] * action_count
+    player_sum = [0.0] * action_count
+    enemy_sum = [0.0] * action_count
     for _ in range(iterations):
         player = _strategy(player_regrets, player_priors, player_legal)
         enemy = _strategy(enemy_regrets, enemy_priors, enemy_legal)
@@ -74,8 +93,8 @@ def solve_zero_sum_regret(
             player_sum[action] += player[action]
         for action in enemy_legal:
             enemy_sum[action] += enemy[action]
-        row_values = [0.0] * ACTION_COUNT
-        column_values = [0.0] * ACTION_COUNT
+        row_values = [0.0] * action_count
+        column_values = [0.0] * action_count
         for player_action in player_legal:
             row_values[player_action] = sum(
                 enemy[enemy_action] * payoff[player_action][enemy_action]
@@ -147,9 +166,14 @@ class BatchedJointRegretSearch:
             raise ValueError("search depth must be positive")
         if config.inference_batch_size < 1:
             raise ValueError("inference batch size must be positive")
+        if config.max_actions_per_side < 1:
+            raise ValueError("max actions per side must be positive")
         self.server = server
         self.player_network = player_network
         self.enemy_network = enemy_network
+        if player_network.config.action_count != enemy_network.config.action_count:
+            raise ValueError("player and enemy action dictionaries differ")
+        self.action_count = player_network.config.action_count
         self.config = config
         self.selection_rng = selection_rng
         self.chance_rng = chance_rng
@@ -216,8 +240,14 @@ class BatchedJointRegretSearch:
         if snapshot.done:
             raise ValueError("cannot search a terminal state")
         root_player, root_enemy, _ = self._evaluate_many([snapshot])
-        player_legal = legal_actions(snapshot.player_mask)
-        enemy_legal = legal_actions(snapshot.enemy_mask)
+        player_legal = legal_actions(snapshot.player_mask, self.action_count)
+        enemy_legal = legal_actions(snapshot.enemy_mask, self.action_count)
+        player_legal = sorted(
+            player_legal, key=lambda action: (-root_player[0][action], action)
+        )[: self.config.max_actions_per_side]
+        enemy_legal = sorted(
+            enemy_legal, key=lambda action: (-root_enemy[0][action], action)
+        )[: self.config.max_actions_per_side]
         root_samples = [
             (player, enemy, sample)
             for player in player_legal
@@ -280,7 +310,9 @@ class BatchedJointRegretSearch:
                 trajectories[index] = successor
         if any(value is None for value in values):
             raise RuntimeError("batched search left an unevaluated trajectory")
-        payoff: PayoffMatrix = [[0.0] * ACTION_COUNT for _ in range(ACTION_COUNT)]
+        payoff: PayoffMatrix = [
+            [0.0] * self.action_count for _ in range(self.action_count)
+        ]
         totals: dict[tuple[int, int], float] = {}
         counts: dict[tuple[int, int], int] = {}
         for sample, value in zip(root_samples, values, strict=True):
