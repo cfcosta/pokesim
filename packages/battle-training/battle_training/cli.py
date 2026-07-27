@@ -56,7 +56,10 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--replay-window", type=int, default=2)
     parser.add_argument("--search-every", type=int, default=10)
     parser.add_argument("--opponent-checkpoint", type=Path, action="append", default=[])
-    parser.add_argument("--opponent-fraction", type=float, default=0.0)
+    parser.add_argument("--opponent-fraction", type=float, default=0.5)
+    parser.add_argument("--historical-window", type=int, default=4)
+    parser.add_argument("--promotion-games", type=int, default=64)
+    parser.add_argument("--minimum-anchor-score", type=float, default=0.40)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -141,6 +144,9 @@ def main(argv: list[str] | None = None) -> int:
                 str(path.resolve()) for path in arguments.opponent_checkpoint
             ),
             opponent_fraction=arguments.opponent_fraction,
+            historical_window=arguments.historical_window,
+            promotion_games=arguments.promotion_games,
+            minimum_anchor_score=arguments.minimum_anchor_score,
             chance_samples_per_joint=arguments.chance_samples_per_joint,
             regret_iterations=arguments.regret_iterations,
             inference_batch_size=arguments.inference_batch_size,

@@ -7,6 +7,7 @@ MOVE_COUNT = 166
 FEATURE_COUNT = 100
 
 FULL_PROFILE = "full-link-6v6-perfect-v1"
-FULL_SCHEMA = "full-link-6v6-state-v1"
+FULL_SCHEMA = "full-link-6v6-state-v2"
 FULL_PARTY_SIZE = 6
 FULL_ACTION_COUNT = 13
+FULL_FEATURE_COUNT = 477

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import random
@@ -15,10 +16,10 @@ import torch
 from torch import Tensor
 
 from . import ENTROPY, FULL_PARTY_SIZE, FULL_PROFILE, FULL_SCHEMA
-from .arena import ArenaConfig, write_arena_report
+from .arena import ArenaConfig, run_traced_arena, write_arena_report
 from .artifacts import build_manifest, sha256, verify_manifest, write_json, write_new
 from .joint_search import BatchedJointRegretSearch, JointSearchConfig, SearchResult
-from .native import SearchServer, build_search_server
+from .native import NativeRequestTimeout, SearchServer, build_search_server
 from .network import (
     BattleTransformer,
     TransformerConfig,
@@ -47,7 +48,10 @@ class TransformerPipelineConfig:
     layers: int
     feedforward: int
     opponent_checkpoints: tuple[str, ...] = ()
-    opponent_fraction: float = 0.0
+    opponent_fraction: float = 0.5
+    historical_window: int = 4
+    promotion_games: int = 64
+    minimum_anchor_score: float = 0.40
     chance_samples_per_joint: int = 1
     regret_iterations: int = 256
     inference_batch_size: int = 96
@@ -57,7 +61,7 @@ class TransformerPipelineConfig:
 
 
 def _pipeline_id() -> str:
-    return "transformer-full6v6-batched-joint-regret-v1"
+    return "transformer-full6v6-tactical-joint-regret-v2"
 
 
 def _scheduled_for_opponent(episode: int, fraction: float) -> bool:
@@ -168,7 +172,7 @@ def _collect_rows(
         "schema": FULL_SCHEMA,
         "entropy": ENTROPY,
         "chance": "fresh-root-v1",
-        "solver": "batched-joint-regret-crn-v1",
+        "solver": "tactical-switch-gated-joint-regret-crn-v1",
         "iteration": iteration,
         "episodes": config.selfplay_episodes,
         "depth": config.search_depth,
@@ -183,13 +187,13 @@ def _collect_rows(
     opponents = opponents or []
     if opponents:
         meta["opponents"] = {
-            "kind": "fixed-checkpoint-round-robin",
+            "kind": "anchored-historical-round-robin",
             "sha256": [identity for _, identity in opponents],
             "fraction": config.opponent_fraction,
             "schedule": "balanced-periodic-round-robin-v1",
         }
     rows: list[dict[str, Any]] = [meta]
-    finished = truncated = examples = transitions = 0
+    finished = truncated = semantic_divergences = examples = transitions = 0
     mirror_episodes = opponent_episodes = 0
     candidate_player_episodes = candidate_enemy_episodes = 0
     opponent_counts = {identity: 0 for _, identity in opponents}
@@ -237,6 +241,7 @@ def _collect_rows(
                     result = _policy_rollout(
                         player_network, enemy_network, snapshot, selection_rng
                     )
+                valid_search_target = searched and result.payoff_matrix is not None
                 player_row = {
                     "type": "example",
                     "episode": episode,
@@ -247,7 +252,9 @@ def _collect_rows(
                     "policy": list(result.player_policy),
                     "search_value": result.root_value,
                     "action": result.player_action,
-                    "target_kind": "joint-regret" if searched else "policy-rollout",
+                    "target_kind": (
+                        "joint-regret" if valid_search_target else "policy-rollout"
+                    ),
                 }
                 enemy_row = {
                     "type": "example",
@@ -259,7 +266,9 @@ def _collect_rows(
                     "policy": list(result.enemy_policy),
                     "search_value": -result.root_value,
                     "action": result.enemy_action,
-                    "target_kind": "joint-regret" if searched else "policy-rollout",
+                    "target_kind": (
+                        "joint-regret" if valid_search_target else "policy-rollout"
+                    ),
                 }
                 player_row["legal_mask"] = snapshot.player_mask
                 enemy_row["legal_mask"] = snapshot.enemy_mask
@@ -283,6 +292,19 @@ def _collect_rows(
                     snapshot.handle, result.player_action, result.enemy_action
                 )
                 transitions += 1
+                if snapshot.divergence is not None:
+                    rows.append(
+                        {
+                            "type": "episode",
+                            "episode": episode,
+                            "stop": "semantic-divergence",
+                            "reason": snapshot.divergence,
+                            "return": None,
+                            "decisions": decision + 1,
+                        }
+                    )
+                    semantic_divergences += 1
+                    break
                 if snapshot.done:
                     reward = int(snapshot.terminal_return or 0)
                     for row in pending:
@@ -327,6 +349,7 @@ def _collect_rows(
     return {
         "finished": finished,
         "truncated": truncated,
+        "semantic_divergences": semantic_divergences,
         "examples": examples,
         "transitions": transitions,
         "mirror_episodes": mirror_episodes,
@@ -344,6 +367,13 @@ def _collect_rows(
         "mean_payoff_spread": (
             sum(payoff_spreads) / len(payoff_spreads) if payoff_spreads else None
         ),
+        "mean_decisions": transitions / config.selfplay_episodes,
+        "voluntary_switch_rate": sum(
+            row["action"] in range(4, 10)
+            for row in example_rows
+            if row["request"] == "battle"
+        )
+        / max(1, sum(row["request"] == "battle" for row in example_rows)),
         "sha256": sha256(path),
         "bytes": path.stat().st_size,
     }
@@ -532,12 +562,14 @@ def run_transformer_pipeline(
         )
     if config.replay_window < 1:
         raise ValueError("replay_window must be positive")
+    if config.historical_window < 0:
+        raise ValueError("historical_window must be nonnegative")
+    if config.promotion_games < 2:
+        raise ValueError("promotion_games must be at least two")
+    if not 0.0 <= config.minimum_anchor_score <= 1.0:
+        raise ValueError("minimum_anchor_score must be in [0, 1]")
     if not 0.0 <= config.opponent_fraction <= 1.0:
         raise ValueError("opponent_fraction must be in [0, 1]")
-    if bool(config.opponent_checkpoints) != (config.opponent_fraction > 0.0):
-        raise ValueError(
-            "opponent checkpoints and a positive opponent_fraction must be supplied together"
-        )
     build_search_server()
     with SearchServer() as protocol:
         feature_count = protocol.feature_count
@@ -578,7 +610,7 @@ def run_transformer_pipeline(
             "schema": FULL_SCHEMA,
             "party_size": FULL_PARTY_SIZE,
             "chance": "fresh-root-v1",
-            "search_solver": "batched-joint-regret-crn-v1",
+            "search_solver": "tactical-switch-gated-joint-regret-crn-v1",
             "config": asdict(config),
             "network": asdict(model_config),
             "parameter_count": sum(
@@ -594,6 +626,9 @@ def run_transformer_pipeline(
     )
     initial_checkpoint = root / "checkpoints" / "policy-000.pt"
     save_network(initial_checkpoint, network, None, {"iteration": 0, "kind": "initial"})
+    initial_identity = sha256(initial_checkpoint)
+    initial_anchor = initial.detached_copy(device)
+    historical: list[tuple[BattleTransformer, str]] = []
     shards: list[Path] = []
     collection: list[dict[str, Any]] = []
     training: list[dict[str, Any]] = []
@@ -601,14 +636,64 @@ def run_transformer_pipeline(
         network.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
     )
     for iteration in range(1, config.iterations + 1):
+        population = opponents + [(initial_anchor, initial_identity)]
+        if config.historical_window:
+            population.extend(historical[:-1][-config.historical_window :])
+        population = list(
+            {identity: (model, identity) for model, identity in population}.values()
+        )
         shard = root / "shards" / f"iteration-{iteration:03d}.jsonl"
-        collection_metrics = _collect_rows(shard, network, config, iteration, opponents)
+        try:
+            collection_metrics = _collect_rows(
+                shard, network, config, iteration, population
+            )
+        except NativeRequestTimeout as error:
+            write_json(
+                root / "metrics" / f"iteration-{iteration:03d}.json",
+                {
+                    "collection": {
+                        "status": "failed",
+                        "mechanics_timeouts": 1,
+                        "operation": error.operation,
+                        "timeout_seconds": error.seconds,
+                    },
+                    "data_quality_pass": False,
+                },
+            )
+            raise
         shards.append(shard)
         collection.append(collection_metrics)
         training_shards = shards[-config.replay_window :]
+        incumbent_state = copy.deepcopy(network.state_dict())
+        optimizer_state = copy.deepcopy(optimizer.state_dict())
         training_metrics = _train_network(
             network, optimizer, training_shards, config, iteration
         )
+        promotion = run_traced_arena(
+            network,
+            initial_anchor,
+            ArenaConfig(
+                games=config.promotion_games,
+                budget=config.episode_budget,
+                seed=config.seed + 70_000_000,
+                replay_games=0,
+            ),
+        )
+        promotion_score = (
+            promotion["wins"] + 0.5 * promotion["draws"]
+        ) / config.promotion_games
+        accepted = (
+            promotion["data_quality_pass"]
+            and promotion_score >= config.minimum_anchor_score
+        )
+        promotion["score_with_truncations_as_losses"] = promotion_score
+        promotion["accepted"] = accepted
+        promotion["minimum_anchor_score"] = config.minimum_anchor_score
+        if not accepted:
+            network.load_state_dict(incumbent_state)
+            optimizer.load_state_dict(optimizer_state)
+            network.eval()
+        training_metrics["promotion"] = promotion
         training.append(training_metrics)
         checkpoint = root / "checkpoints" / f"policy-{iteration:03d}.pt"
         save_network(
@@ -624,9 +709,17 @@ def run_transformer_pipeline(
                 "training": training_metrics,
             },
         )
+        if accepted:
+            historical.append((network.detached_copy(device), sha256(checkpoint)))
+        if len(historical) > config.historical_window + 1:
+            historical.pop(0)
         write_json(
             root / "metrics" / f"iteration-{iteration:03d}.json",
-            {"collection": collection_metrics, "training": training_metrics},
+            {
+                "collection": collection_metrics,
+                "training": training_metrics,
+                "promotion": promotion,
+            },
         )
     distance = _parameter_distance(initial, network)
     if distance == 0.0:
@@ -659,8 +752,14 @@ def run_transformer_pipeline(
     with tempfile.TemporaryDirectory(prefix="battle-transformer-replay-") as temporary:
         replay_path = Path(temporary) / "replay.jsonl"
         replay_network = load_network(initial_checkpoint, device)
+        replay_opponents = opponents + [(initial_anchor, initial_identity)]
+        replay_opponents = list(
+            {
+                identity: (model, identity) for model, identity in replay_opponents
+            }.values()
+        )
         replay_metrics = _collect_rows(
-            replay_path, replay_network, config, 1, opponents
+            replay_path, replay_network, config, 1, replay_opponents
         )
         replay_identical = replay_path.read_bytes() == shards[0].read_bytes()
         if not replay_identical:
@@ -685,10 +784,16 @@ def run_transformer_pipeline(
         "final_checkpoint_sha256": sha256(
             root / "checkpoints" / f"policy-{config.iterations:03d}.pt"
         ),
+        "accepted_updates": sum(item["promotion"]["accepted"] for item in training),
         "final_training_loss": training[-1]["history"][-1],
         "arena": arena,
         "opponent_arenas": opponent_arenas,
         "opponents": opponent_metadata,
+        "data_quality_pass": (
+            arena["data_quality_pass"]
+            and all(item["data_quality_pass"] for item in opponent_arenas)
+            and all(item["promotion"]["data_quality_pass"] for item in training)
+        ),
         "deterministic_replay": replay,
     }
     write_json(root / "summary.json", summary)
@@ -705,18 +810,27 @@ def verify_transformer_run(root: Path) -> dict[str, Any]:
     errors = verify_manifest(root)
     if errors:
         raise ValueError("artifact verification failed: " + "; ".join(errors))
+    summary = json.loads((root / "summary.json").read_text())
+    if not summary.get("data_quality_pass", False):
+        raise ValueError("training run failed the mechanics-timeout data-quality gate")
     run = json.loads((root / "run.json").read_text())
     config = TransformerPipelineConfig(**run["config"])
     configure_determinism(config.seed)
     device = choose_device(config.device)
-    network = load_network(root / "checkpoints" / "policy-000.pt", device)
-    opponents: list[tuple[BattleTransformer, str]] = []
+    initial_path = root / "checkpoints" / "policy-000.pt"
+    network = load_network(initial_path, device)
+    opponents: list[tuple[BattleTransformer, str]] = [
+        (load_network(initial_path, device), sha256(initial_path))
+    ]
     for opponent_metadata in run.get("opponents", []):
         opponent_path = root / opponent_metadata["checkpoint"]
         opponent_sha = sha256(opponent_path)
         if opponent_sha != opponent_metadata["sha256"]:
             raise ValueError("fixed opponent checkpoint hash mismatch")
         opponents.append((load_network(opponent_path, device), opponent_sha))
+    opponents = list(
+        {identity: (model, identity) for model, identity in opponents}.values()
+    )
     shard = root / "shards" / "iteration-001.jsonl"
     with tempfile.TemporaryDirectory(prefix="battle-transformer-verify-") as temporary:
         replay = Path(temporary) / "replay.jsonl"
@@ -734,5 +848,5 @@ def verify_transformer_run(root: Path) -> dict[str, Any]:
             "sha256": metrics["sha256"],
             "byte_identical": True,
         },
-        "summary": json.loads((root / "summary.json").read_text()),
+        "summary": summary,
     }

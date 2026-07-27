@@ -9,7 +9,7 @@ from typing import Any
 
 from .artifacts import write_json
 from .joint_search import BatchedJointRegretSearch, JointSearchConfig
-from .native import SearchServer
+from .native import NativeRequestTimeout, SearchServer
 from .network import BattleTransformer
 
 _FIXED_DAMAGE_MOVES = {68, 69, 82, 101, 149, 162}
@@ -32,7 +32,7 @@ class ArenaConfig:
     search_depth: int = 1
     regret_iterations: int = 256
     inference_batch_size: int = 96
-    max_actions_per_side: int = 9
+    max_actions_per_side: int = 13
     seed: int = 0
     replay_games: int = 3
     search_every: int = 0
@@ -330,103 +330,141 @@ def run_traced_arena(
     )
     candidate_metrics = SkillMetrics()
     baseline_metrics = SkillMetrics()
-    wins = losses = draws = truncated = 0
+    wins = losses = draws = truncated = semantic_divergences = mechanics_timeouts = 0
     if replay_dir is not None:
         replay_dir.mkdir(parents=True, exist_ok=True)
-    with SearchServer() as server:
-        for episode in range(config.games):
-            candidate_player = episode % 2 == 0
-            player = candidate if candidate_player else baseline
-            enemy = baseline if candidate_player else candidate
-            snapshot = server.reset(config.seed + 90_000_000, episode)
-            replay = Replay() if episode < config.replay_games else None
-            initial = server.inspect(snapshot.handle)
-            initial["player_mask"] = snapshot.player_mask
-            initial["enemy_mask"] = snapshot.enemy_mask
+    for episode in range(config.games):
+        candidate_player = episode % 2 == 0
+        player = candidate if candidate_player else baseline
+        enemy = baseline if candidate_player else candidate
+        replay = Replay() if episode < config.replay_games else None
+        replay_path = (
+            replay_dir / f"game-{episode:05d}.log"
+            if replay is not None and replay_dir is not None
+            else None
+        )
+        result_value: int | None = None
+        timed_out = False
+        semantic_divergence = False
+        try:
+            # A fresh process makes a timed-out mechanics state disposable; no
+            # opaque native handle is ever reconstructed or mislabeled.
+            with SearchServer() as server:
+                snapshot = server.reset(config.seed + 90_000_000, episode)
+                initial = server.inspect(snapshot.handle)
+                initial["player_mask"] = snapshot.player_mask
+                initial["enemy_mask"] = snapshot.enemy_mask
+                if replay is not None:
+                    _preview(replay, initial)
+                    if replay_path is not None:
+                        replay_path.write_text(replay.text())
+                for decision in range(config.budget):
+                    before = server.inspect(snapshot.handle)
+                    before["player_mask"] = snapshot.player_mask
+                    before["enemy_mask"] = snapshot.enemy_mask
+                    if config.search_every and decision % config.search_every == 0:
+                        search = BatchedJointRegretSearch(
+                            server,
+                            player,
+                            enemy,
+                            search_config,
+                            selection_rng,
+                            chance_rng,
+                        )
+                        result = search.search(snapshot, sample_actions=True)
+                        player_action = result.player_action
+                        enemy_action = result.enemy_action
+                    else:
+                        player_action, enemy_action = _network_actions(
+                            player, enemy, snapshot, selection_rng
+                        )
+                    if replay is not None:
+                        replay.add(f"|turn|{decision + 1}")
+                        _action_line(replay, 0, player_action, before, snapshot.request)
+                        _action_line(replay, 1, enemy_action, before, snapshot.request)
+                        if replay_path is not None:
+                            replay_path.write_text(replay.text())
+                    snapshot = server.episode_step(
+                        snapshot.handle, player_action, enemy_action
+                    )
+                    if snapshot.divergence is not None:
+                        semantic_divergence = True
+                        semantic_divergences += 1
+                        if replay is not None:
+                            replay.add(
+                                "|message|Semantic divergence: " + snapshot.divergence
+                            )
+                            if replay_path is not None:
+                                replay_path.write_text(replay.text())
+                        break
+                    after = server.inspect(snapshot.handle)
+                    after["player_mask"] = snapshot.player_mask
+                    after["enemy_mask"] = snapshot.enemy_mask
+                    player_metrics = (
+                        candidate_metrics if candidate_player else baseline_metrics
+                    )
+                    enemy_metrics = (
+                        baseline_metrics if candidate_player else candidate_metrics
+                    )
+                    _update_side_metrics(
+                        player_metrics,
+                        0,
+                        player_action,
+                        before,
+                        after,
+                        before["request"],
+                    )
+                    _update_side_metrics(
+                        enemy_metrics,
+                        1,
+                        enemy_action,
+                        before,
+                        after,
+                        before["request"],
+                    )
+                    if replay is not None:
+                        _event_lines(replay, before, after)
+                        if replay_path is not None:
+                            replay_path.write_text(replay.text())
+                    if snapshot.done:
+                        result_value = snapshot.terminal_return
+                        break
+                    snapshot = server.compact(snapshot.handle)
+        except NativeRequestTimeout as error:
+            timed_out = True
+            mechanics_timeouts += 1
             if replay is not None:
-                _preview(replay, initial)
-            result_value: int | None = None
-            for decision in range(config.budget):
-                before = server.inspect(snapshot.handle)
-                before["player_mask"] = snapshot.player_mask
-                before["enemy_mask"] = snapshot.enemy_mask
-                if config.search_every and decision % config.search_every == 0:
-                    search = BatchedJointRegretSearch(
-                        server,
-                        player,
-                        enemy,
-                        search_config,
-                        selection_rng,
-                        chance_rng,
-                    )
-                    result = search.search(snapshot, sample_actions=True)
-                    player_action = result.player_action
-                    enemy_action = result.enemy_action
-                else:
-                    player_action, enemy_action = _network_actions(
-                        player, enemy, snapshot, selection_rng
-                    )
-                if replay is not None:
-                    replay.add(f"|turn|{decision + 1}")
-                    _action_line(replay, 0, player_action, before, snapshot.request)
-                    _action_line(replay, 1, enemy_action, before, snapshot.request)
-                snapshot = server.episode_step(
-                    snapshot.handle, player_action, enemy_action
-                )
-                after = server.inspect(snapshot.handle)
-                after["player_mask"] = snapshot.player_mask
-                after["enemy_mask"] = snapshot.enemy_mask
-                player_metrics = (
-                    candidate_metrics if candidate_player else baseline_metrics
-                )
-                enemy_metrics = (
-                    baseline_metrics if candidate_player else candidate_metrics
-                )
-                _update_side_metrics(
-                    player_metrics,
-                    0,
-                    player_action,
-                    before,
-                    after,
-                    before["request"],
-                )
-                _update_side_metrics(
-                    enemy_metrics,
-                    1,
-                    enemy_action,
-                    before,
-                    after,
-                    before["request"],
-                )
-                if replay is not None:
-                    _event_lines(replay, before, after)
-                if snapshot.done:
-                    result_value = snapshot.terminal_return
-                    break
-                snapshot = server.compact(snapshot.handle)
-            candidate_result = (
-                result_value
-                if candidate_player or result_value is None
-                else -result_value
-            )
+                replay.add(f"|message|Mechanics timeout: {error}")
+                if replay_path is not None:
+                    replay_path.write_text(replay.text())
+        candidate_result = (
+            result_value if candidate_player or result_value is None else -result_value
+        )
+        if timed_out or semantic_divergence:
+            pass
+        elif candidate_result == 1:
+            wins += 1
+        elif candidate_result == -1:
+            losses += 1
+        elif candidate_result == 0:
+            draws += 1
+        else:
+            truncated += 1
+        if (
+            replay is not None
+            and replay_path is not None
+            and not timed_out
+            and not semantic_divergence
+        ):
             if candidate_result == 1:
-                wins += 1
+                replay.add("|win|Candidate")
             elif candidate_result == -1:
-                losses += 1
+                replay.add("|win|Baseline")
             elif candidate_result == 0:
-                draws += 1
+                replay.add("|tie")
             else:
-                truncated += 1
-            if replay is not None and replay_dir is not None:
-                if candidate_result == 1:
-                    replay.add("|win|Candidate")
-                elif candidate_result == -1:
-                    replay.add("|win|Baseline")
-                elif candidate_result == 0:
-                    replay.add("|tie")
-                else:
-                    replay.add("|message|Battle truncated without a terminal result.")
-                (replay_dir / f"game-{episode:05d}.log").write_text(replay.text())
+                replay.add("|message|Battle truncated without a terminal result.")
+            replay_path.write_text(replay.text())
     finished = wins + losses + draws
     return {
         "profile": "full-link-6v6-perfect-v1",
@@ -436,6 +474,9 @@ def run_traced_arena(
         "losses": losses,
         "draws": draws,
         "truncated": truncated,
+        "semantic_divergences": semantic_divergences,
+        "mechanics_timeouts": mechanics_timeouts,
+        "data_quality_pass": mechanics_timeouts == 0,
         "finished": finished,
         "score": (wins + 0.5 * draws) / finished if finished else None,
         "candidate_skills": candidate_metrics.report(),

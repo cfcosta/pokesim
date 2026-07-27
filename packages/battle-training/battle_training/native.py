@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import selectors
 import subprocess
 from dataclasses import dataclass
 from typing import Any, Self
@@ -11,6 +12,15 @@ from . import FULL_ACTION_COUNT, FULL_PARTY_SIZE, FULL_PROFILE, FULL_SCHEMA
 from .worker import LEAN_PACKAGE, REPO_ROOT
 
 SEARCH_SERVER = LEAN_PACKAGE / ".lake" / "build" / "bin" / "battleSearchServer"
+
+
+class NativeRequestTimeout(RuntimeError):
+    def __init__(self, operation: str, seconds: float) -> None:
+        super().__init__(
+            f"native search operation {operation!r} exceeded {seconds:.1f}s"
+        )
+        self.operation = operation
+        self.seconds = seconds
 
 
 @dataclass(frozen=True)
@@ -27,6 +37,7 @@ class Snapshot:
     done: bool
     terminal_return: int | None
     request: str
+    divergence: str | None
 
     @classmethod
     def from_response(cls, response: dict[str, Any]) -> Snapshot:
@@ -43,6 +54,7 @@ class Snapshot:
             done=response["done"],
             terminal_return=response["return"],
             request=response["request"],
+            divergence=response.get("divergence"),
         )
 
 
@@ -65,7 +77,10 @@ def build_search_server() -> None:
 class SearchServer:
     """Owns one Lean process and addresses immutable states by integer handle."""
 
-    def __init__(self) -> None:
+    def __init__(self, request_timeout: float = 15.0) -> None:
+        if request_timeout <= 0:
+            raise ValueError("request_timeout must be positive")
+        self.request_timeout = request_timeout
         self.process = subprocess.Popen(
             [str(SEARCH_SERVER)],
             cwd=REPO_ROOT,
@@ -98,6 +113,16 @@ class SearchServer:
         wire = "|".join((operation, request, *arguments))
         self.process.stdin.write(wire + "\n")
         self.process.stdin.flush()
+        selector = selectors.DefaultSelector()
+        selector.register(self.process.stdout, selectors.EVENT_READ)
+        try:
+            ready = selector.select(self.request_timeout)
+        finally:
+            selector.close()
+        if not ready:
+            self.process.kill()
+            self.process.wait()
+            raise NativeRequestTimeout(operation, self.request_timeout)
         line = self.process.stdout.readline()
         if not line:
             stderr = self.process.stderr.read() if self.process.stderr else ""
@@ -161,7 +186,8 @@ class SearchServer:
             try:
                 self._request("quit")
             except (BrokenPipeError, RuntimeError):
-                self.process.terminate()
+                if self.process.poll() is None:
+                    self.process.terminate()
         try:
             self.process.wait(timeout=5)
         except subprocess.TimeoutExpired:

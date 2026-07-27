@@ -10,7 +10,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
 from battle_training.artifacts import build_manifest, verify_manifest, write_json
-from battle_training.joint_search import solve_zero_sum_regret
+from battle_training.joint_search import (
+    _cap_switch_mass,
+    _tactical_potential,
+    solve_zero_sum_regret,
+)
 from battle_training.model import MoveValueModel
 from battle_training.network import BattleTransformer, TransformerConfig
 from battle_training.transformer_pipeline import _load_examples, _scheduled_for_opponent
@@ -139,7 +143,7 @@ class TransformerTests(unittest.TestCase):
     def test_full_party_models_stay_under_one_million_parameters(self) -> None:
         configs = [
             TransformerConfig(
-                feature_count=417,
+                feature_count=477,
                 action_count=13,
                 d_model=64,
                 heads=4,
@@ -147,7 +151,7 @@ class TransformerTests(unittest.TestCase):
                 feedforward=192,
             ),
             TransformerConfig(
-                feature_count=417,
+                feature_count=477,
                 action_count=13,
                 d_model=96,
                 heads=4,
@@ -155,7 +159,7 @@ class TransformerTests(unittest.TestCase):
                 feedforward=384,
             ),
             TransformerConfig(
-                feature_count=417,
+                feature_count=477,
                 action_count=13,
                 d_model=128,
                 heads=8,
@@ -170,8 +174,30 @@ class TransformerTests(unittest.TestCase):
             )
             for config in configs
         ]
-        self.assertEqual(counts, [148238, 435758, 930830])
+        self.assertEqual(counts, [152078, 441518, 938510])
         self.assertTrue(all(count <= 1_000_000 for count in counts))
+
+    def test_switch_cap_preserves_all_legal_actions(self) -> None:
+        policy = tuple([0.05] * 4 + [0.125] * 6 + [0.05, 0.0, 0.0])
+        capped = _cap_switch_mass(policy, list(policy), list(range(11)), 0.2)
+        self.assertAlmostEqual(sum(capped), 1.0)
+        self.assertAlmostEqual(sum(capped[4:10]), 0.2)
+        self.assertTrue(all(capped[action] > 0 for action in range(10)))
+
+    def test_tactical_potential_rewards_hp_and_status_advantage(self) -> None:
+        features = [0] * 477
+        for side in (0, 181):
+            for slot in range(6):
+                base = side + slot * 22
+                features[base + 1] = 100
+                features[base + 13] = 100
+        neutral = _tactical_potential(tuple(features))
+        features[182] = 50
+        damaged = _tactical_potential(tuple(features))
+        features[184] = 4
+        statused = _tactical_potential(tuple(features))
+        self.assertGreater(damaged, neutral)
+        self.assertGreater(statused, damaged)
 
     def test_policy_masks_and_value_bounds(self) -> None:
         torch.manual_seed(7)

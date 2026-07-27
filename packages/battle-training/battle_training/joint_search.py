@@ -11,6 +11,12 @@ from .network import BattleTransformer
 
 PayoffMatrix: TypeAlias = list[list[float]]
 
+_PARTY_MON_WIDTH = 22
+_FULL_SIDE_WIDTH = 181
+_PARTY_SIZE = 6
+_FIGHT_ACTIONS = range(4)
+_SWITCH_ACTIONS = range(4, 10)
+
 
 @dataclass(frozen=True)
 class SearchResult:
@@ -37,6 +43,112 @@ class JointSearchConfig:
 
 def legal_actions(mask: int, action_count: int) -> list[int]:
     return [action for action in range(action_count) if mask & (1 << action)]
+
+
+def _tactical_potential(features: tuple[int, ...]) -> float:
+    """Dense, antisymmetric HP/faint/status potential from canonical party rows."""
+
+    def side(offset: int) -> tuple[float, int, int]:
+        hp_fraction = 0.0
+        alive = 0
+        statused = 0
+        for slot in range(_PARTY_SIZE):
+            base = offset + slot * _PARTY_MON_WIDTH
+            hp = features[base + 1]
+            status = features[base + 3]
+            max_hp = features[base + 13]
+            hp_fraction += hp / max(1, max_hp)
+            alive += int(hp > 0)
+            statused += int(hp > 0 and status != 0)
+        return hp_fraction / _PARTY_SIZE, alive, statused
+
+    own_hp, own_alive, own_status = side(0)
+    foe_hp, foe_alive, foe_status = side(_FULL_SIDE_WIDTH)
+    return (
+        own_hp
+        - foe_hp
+        + 0.10 * (own_alive - foe_alive) / _PARTY_SIZE
+        + 0.05 * (foe_status - own_status) / _PARTY_SIZE
+    )
+
+
+def _cap_switch_mass(
+    policy: tuple[float, ...],
+    priors: list[float],
+    legal: list[int],
+    cap: float,
+) -> tuple[float, ...]:
+    switches = [action for action in legal if action in _SWITCH_ACTIONS]
+    recipients = [action for action in legal if action not in _SWITCH_ACTIONS]
+    switch_mass = sum(policy[action] for action in switches)
+    if not switches or not recipients or switch_mass <= cap:
+        return policy
+    result = list(policy)
+    scale = cap / switch_mass
+    for action in switches:
+        result[action] *= scale
+    removed = switch_mass - cap
+    recipient_mass = sum(result[action] for action in recipients)
+    if recipient_mass > 0:
+        for action in recipients:
+            result[action] += removed * result[action] / recipient_mass
+    else:
+        prior_mass = sum(priors[action] for action in recipients)
+        for action in recipients:
+            weight = (
+                priors[action] / prior_mass if prior_mass > 0 else 1.0 / len(recipients)
+            )
+            result[action] += removed * weight
+    return tuple(result)
+
+
+def _switch_cap(advantage: float) -> float:
+    if advantage <= 0.02:
+        return 0.10
+    if advantage <= 0.10:
+        return 0.20
+    return 0.30
+
+
+def _gate_voluntary_switches(
+    payoff: PayoffMatrix,
+    player_policy: tuple[float, ...],
+    enemy_policy: tuple[float, ...],
+    player_priors: list[float],
+    enemy_priors: list[float],
+    player_legal: list[int],
+    enemy_legal: list[int],
+) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    player_moves = [action for action in player_legal if action in _FIGHT_ACTIONS]
+    player_switches = [action for action in player_legal if action in _SWITCH_ACTIONS]
+    enemy_moves = [action for action in enemy_legal if action in _FIGHT_ACTIONS]
+    enemy_switches = [action for action in enemy_legal if action in _SWITCH_ACTIONS]
+    if player_moves and player_switches:
+        row_values = [
+            sum(enemy_policy[enemy] * payoff[action][enemy] for enemy in enemy_legal)
+            for action in range(len(payoff))
+        ]
+        advantage = max(row_values[action] for action in player_switches) - max(
+            row_values[action] for action in player_moves
+        )
+        player_policy = _cap_switch_mass(
+            player_policy, player_priors, player_legal, _switch_cap(advantage)
+        )
+    if enemy_moves and enemy_switches:
+        column_values = [
+            sum(
+                player_policy[player] * payoff[player][action]
+                for player in player_legal
+            )
+            for action in range(len(payoff))
+        ]
+        advantage = min(column_values[action] for action in enemy_moves) - min(
+            column_values[action] for action in enemy_switches
+        )
+        enemy_policy = _cap_switch_mass(
+            enemy_policy, enemy_priors, enemy_legal, _switch_cap(advantage)
+        )
+    return player_policy, enemy_policy
 
 
 def _sample(probabilities: list[float], rng: random.Random) -> int:
@@ -239,7 +351,7 @@ class BatchedJointRegretSearch:
     def search(self, snapshot: Snapshot, sample_actions: bool = True) -> SearchResult:
         if snapshot.done:
             raise ValueError("cannot search a terminal state")
-        root_player, root_enemy, _ = self._evaluate_many([snapshot])
+        root_player, root_enemy, root_values = self._evaluate_many([snapshot])
         player_legal = legal_actions(snapshot.player_mask, self.action_count)
         enemy_legal = legal_actions(snapshot.enemy_mask, self.action_count)
         player_legal = sorted(
@@ -263,6 +375,22 @@ class BatchedJointRegretSearch:
             for player, enemy, sample in root_samples
         ]
         trajectories = self.server.search_steps(requests)
+        if any(successor.divergence is not None for successor in trajectories):
+            player_policy = root_player[0]
+            enemy_policy = root_enemy[0]
+            return SearchResult(
+                tuple(player_policy),
+                tuple(enemy_policy),
+                _sample(player_policy, self.selection_rng),
+                _sample(enemy_policy, self.selection_rng),
+                root_values[0],
+                len(trajectories),
+                "network-fallback-on-semantic-divergence-v1",
+                None,
+                None,
+                None,
+            )
+        root_potential = _tactical_potential(snapshot.player_features)
         transition_count = len(trajectories)
         values: list[float | None] = [None] * len(trajectories)
         for depth in range(1, self.config.max_depth + 1):
@@ -283,7 +411,11 @@ class BatchedJointRegretSearch:
             )
             if depth >= self.config.max_depth:
                 for index, value in zip(active_indexes, leaf_values, strict=True):
-                    values[index] = value
+                    tactical_delta = (
+                        _tactical_potential(trajectories[index].player_features)
+                        - root_potential
+                    )
+                    values[index] = max(-1.0, min(1.0, value + tactical_delta))
                 break
             rollout_chance = [
                 self.chance_rng.getrandbits(63)
@@ -329,6 +461,31 @@ class BatchedJointRegretSearch:
             enemy_legal,
             self.config.regret_iterations,
         )
+        player_policy, enemy_policy = _gate_voluntary_switches(
+            payoff,
+            player_policy,
+            enemy_policy,
+            root_player[0],
+            root_enemy[0],
+            player_legal,
+            enemy_legal,
+        )
+        root_value = sum(
+            player_policy[player] * enemy_policy[enemy] * payoff[player][enemy]
+            for player in player_legal
+            for enemy in enemy_legal
+        )
+        row_best_response = max(
+            sum(enemy_policy[enemy] * payoff[player][enemy] for enemy in enemy_legal)
+            for player in player_legal
+        )
+        column_best_response = min(
+            sum(
+                player_policy[player] * payoff[player][enemy] for player in player_legal
+            )
+            for enemy in enemy_legal
+        )
+        exploitability = row_best_response - column_best_response
         if sample_actions:
             player_action = _sample(list(player_policy), self.selection_rng)
             enemy_action = _sample(list(enemy_policy), self.selection_rng)
@@ -345,7 +502,7 @@ class BatchedJointRegretSearch:
             enemy_action,
             root_value,
             transition_count,
-            solver="batched-joint-regret-crn-v1",
+            solver="tactical-switch-gated-joint-regret-crn-v1",
             exploitability=exploitability,
             payoff_spread=max(legal_payoffs) - min(legal_payoffs),
             payoff_matrix=tuple(tuple(row) for row in payoff),
