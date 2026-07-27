@@ -27,27 +27,31 @@ The smoke command performs the complete loop:
 
 1. builds and starts the persistent Lean search server;
 2. initializes a side-canonical transformer policy/value network;
-3. periodically evaluates every legal root joint action with batched policy rollouts;
+3. periodically builds a persistent simultaneous tree with complete root coverage;
 4. couples independent `fresh-root-v1` chance samples across joint actions for
    lower-variance payoff comparisons without reading the episode RNG suffix;
-5. solves the sampled zero-sum payoff matrix with regret matching+ and records
-   its mixed strategies alongside witnessed terminal values;
+5. runs persistent regret matching+ at every expanded typed request and records
+   average-strategy targets alongside witnessed terminal values;
 6. optimizes policy cross-entropy plus value MSE with AdamW;
 7. publishes model and optimizer checkpoints;
 8. runs a side-swapped final-versus-initial arena;
 9. writes SHA-256 manifests; and
 10. regenerates the first search shard byte for byte from checkpoint zero.
 
-Default training searches every tenth real decision, evaluates every legal root
-joint action, and follows each branch with one sampled network-policy
-continuation through depth four. Unsearched real decisions use the network
-policy directly. This keeps six-member runs practical
-without silently pruning switches. `transformer-train` is an overnight profile:
+Default training searches every tenth real decision with an adaptive
+192–320-transition matrix-valued simultaneous tree. It may stop after eight
+stable average-strategy updates once the full depth has been reached. The root evaluates every legal joint action;
+deeper nodes begin with two cyclic joint-action rotations that cover every legal
+move and switch, then sample additional pairs and fresh chance outcomes under
+persistent regret matching+. Unsearched real decisions use the network policy
+directly. This keeps six-member runs practical without top-k action pruning.
+`transformer-train` is an overnight profile:
 30 iterations of 500 training battles, or 15,000 independently reset random
 6v6 battles. It uses depth-four policy rollouts, the 938,510-parameter
 four-layer, 128-wide model, two epochs per iteration, a CUDA-safe batch size of
-128, and a 1,024-game final arena. On an RTX 3080 Ti the measured estimate is
-approximately eight hours:
+128, and a 1,024-game final arena. The tree used 320 native transitions per
+searched root and was 1.31× slower than disposable depth-four rollouts in a
+24-root benchmark; the expected RTX 3080 Ti runtime is approximately nine hours:
 
 ```sh
 nix develop -c python packages/battle-training/train.py transformer-train \
@@ -98,9 +102,12 @@ labels. Two heads predict:
 - logits for all 13 stable link action IDs; and
 - a bounded terminal value in `[-1, 1]`.
 
-Search and policy loss mask illegal actions. The search batches native
-transitions and neural inference, estimates every legal root joint payoff, and
-uses regret matching+ to produce one mixed target per side. A dense,
+Search and policy loss mask illegal actions. Every expanded node retains an
+empirical joint payoff matrix, cumulative RM+ regrets, average strategies,
+explicit chance outcomes, and immutable child handles. The root matrix is
+complete; progressive deeper matrices represent unvisited pairs with the neural
+leaf prior while mandatory exploration gives every legal action initial support.
+A dense,
 antisymmetric HP/faint/status delta stabilizes one-step leaf estimates, and an
 adaptive 10–30% aggregate switch cap applies only to voluntary-switch targets;
 all six switch actions remain evaluated and retain nonzero support. Common
@@ -115,8 +122,9 @@ team-generation entropy remain separate.
 `battleSearchServer` stores immutable `Battle.Full.Environment.State` values and
 typed Mimic continuations behind integer handles. `step ... fresh ...` installs
 a named search chance fork;
-`batch` derives many such successors in one native request; `step ... episode
-...` advances the real trajectory with its existing hidden RNG. Python cannot
+`batch` derives many such successors in one native request; `reset-append` and
+`compact-many` retain and remap several live episode roots; `step ... episode
+...` advances a real trajectory with its existing hidden RNG. Python cannot
 mutate or resolve battle state itself. Neural leaves are evaluated in bounded
 GPU batches within each root search.
 
@@ -147,10 +155,12 @@ The earlier terminal-return move table remains available as `tabular-smoke` and
   indefinitely.
 - The synchronized full-party profile is still a hot-path quotient, not the
   paired-cartridge emulator deployment profile.
-- Root search now batches native stepping and inference, but there is not yet a
-  multi-worker inference service that combines leaves from independent roots.
-- Regret matching currently solves the exhaustively sampled root matrix; deeper
-  actions are policy rollouts rather than regret-matched tree nodes.
+- Node expansion batches native stepping and inference within one root, but
+  there is not yet a multi-worker service that combines leaves from independent
+  roots; this is now the primary performance bottleneck.
+- Deeper matrices use progressive joint sampling rather than exhaustive pair
+  coverage. Artifacts report sampled-joint coverage separately from mandatory
+  legal-action coverage.
 - Forced replacement and Mimic are normalized; other profile-excluded nested
   protocols remain blocked before widening beyond stock link battle control.
 - This training pipeline is theorem-backed model execution, not a proof of

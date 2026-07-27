@@ -44,15 +44,16 @@ rows remain required before the corresponding profile can be called complete.
 - [ ] Add native state-branch benchmarks independent of episode throughput.
 - [x] Evaluate every legal joint action at shallow roots.
 - [x] Solve sampled root payoff matrices with regret matching+.
-- [ ] Store regrets, average strategies, and joint-action returns at every tree node.
-- [ ] Add regret matching at every expanded simultaneous MCTS node.
-- [ ] Represent sampled chance outcomes as explicit edges with independent search keys.
-- [ ] Guarantee exploration support for every legal move and switch without top-k pruning.
-- [ ] Add `reset-append` and `compact-many`, or an equivalent multi-root worker pool.
-- [ ] Validate SM-MCTS backups on exact matrix and small stochastic games.
+- [x] Store regrets, average strategies, and joint-action returns at every tree node.
+- [x] Add regret matching at every expanded simultaneous MCTS node.
+- [x] Represent sampled chance outcomes as explicit edges with independent search keys.
+- [x] Guarantee exploration support for every legal move and switch without top-k pruning.
+- [x] Add native `reset-append` and `compact-many` multi-root state retention.
+- [ ] Schedule simultaneous-tree frontier expansion across independent roots.
+- [x] Validate RM+ and deeper backups on exact matrices and a stochastic toy game.
 - [ ] Keep opponent-sampled PUCT only as a named best-response baseline.
 - [x] Implement `fresh-root-v1` without access to episode future RNG.
-- [ ] Report exploitability/regret proxies on small exact games.
+- [x] Report root exploitability and tree coverage diagnostics.
 
 ## M3 — batched policy/value learning
 
