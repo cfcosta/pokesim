@@ -72,10 +72,13 @@ nix develop -c python packages/battle-training/train.py transformer-train \
 The pipeline copies fixed checkpoints into the immutable run, anchors half of
 default collection against the scratch initialization and a rolling historical
 window, records opponent SHA-256 identities in every shard, and includes the
-initial population in deterministic shard regeneration. Each update receives a
-64-game held-out promotion check against initialization; a score below 40% with
-truncations counted as losses restores both model and AdamW state. AdamW state
-otherwise persists across collection iterations.
+initial population in deterministic shard regeneration. Each production update
+receives at least 1,024 held-out games against its incumbent, grouped into 512
+same-reset pairs with model sides swapped across eight root seeds. Truncations
+and semantic cycles score zero. Promotion requires a point score of at least 50%,
+a paired 95% confidence lower bound of at least 50%, and passing separate
+held-out type, status, and switch probes; inconclusive updates restore both model
+and AdamW state. AdamW state otherwise persists across collection iterations.
 
 ## Model
 
@@ -113,8 +116,13 @@ GPU batches within each root search.
 
 Arena directories contain Showdown-style `.log` replays plus aggregate metrics
 for damage-move effectiveness relative to the best legal damaging move, status
-success/block/waste counts, and voluntary-switch matchup improvement. These are
-versioned diagnostics, not claims of strategic optimality.
+success/block/waste counts, and voluntary-switch rate/completion/matchup
+improvement. Production promotion rejects statistically inconclusive updates and
+probe regressions. The expanded gate also rejects collection with more than 1%
+horizon truncation or semantic divergence, below 98% completion, above 20%
+voluntary switching, or mean length above 96 decisions; evaluation nonfinishes
+are capped at 2%. These remain versioned diagnostics, not claims of strategic
+optimality.
 
 The earlier terminal-return move table remains available as `tabular-smoke` and
 `tabular-train`. It is a restricted protocol baseline, not the intended learner.

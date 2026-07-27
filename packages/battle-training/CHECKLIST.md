@@ -32,8 +32,8 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Evaluate the policy from both player and enemy perspectives.
 - [x] Retain nonterminal stop counts instead of fabricating labels.
 - [x] Verify generated artifacts and deterministic shard replay.
-- [ ] Add held-out generated-team suites shared across checkpoints.
-- [ ] Add paired-seed side-swapped confidence intervals.
+- [x] Add held-out generated-team type/status/switch probes.
+- [x] Add 1,024-game paired-seed side-swapped confidence intervals.
 - [x] Add multi-checkpoint fixed baselines and pairwise arena reports.
 - [x] Emit readable Showdown-style arena projections and policy-skill metrics.
 - [ ] Add historical-checkpoint payoff matrices and Nash-mixture estimates.
@@ -79,8 +79,9 @@ rows remain required before the corresponding profile can be called complete.
 - [ ] Sample latest, historical, and exploiter opponents.
 - [ ] Retain held-out teams and seeds outside actor sampling.
 - [ ] Produce checkpoint payoff matrices and Nash-mixture estimates.
-- [x] Reject updates below a held-out scratch-anchor promotion floor.
-- [ ] Gate final promotion on paired evaluation with confidence intervals.
+- [x] Keep the incumbent unless score and paired confidence both clear 50%.
+- [x] Gate promotion on type/status/switch probes and expanded data quality.
+- [ ] Gate final deployment promotion on paired-cartridge evaluation.
 - [ ] Detect policy cycling and catastrophic forgetting.
 - [ ] Keep team generation outside battle-control policy training.
 
