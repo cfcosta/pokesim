@@ -58,7 +58,9 @@ class MoveValueModel:
             updates += 1
         return {"updates": updates, "skipped_unlabeled": skipped}
 
-    def checkpoint(self, directory: Path, index: int, provenance: dict[str, Any]) -> dict[str, Any]:
+    def checkpoint(
+        self, directory: Path, index: int, provenance: dict[str, Any]
+    ) -> dict[str, Any]:
         stem = f"policy-{index:03d}"
         weights_path = directory / f"{stem}.weights"
         checkpoint_path = directory / f"{stem}.json"
@@ -83,7 +85,7 @@ class MoveValueModel:
         }
 
     @classmethod
-    def from_checkpoint(cls, path: Path) -> "MoveValueModel":
+    def from_checkpoint(cls, path: Path) -> MoveValueModel:
         payload = json.loads(path.read_text())
         if payload["profile"] != PROFILE or payload["state_schema"] != SCHEMA:
             raise ValueError("checkpoint profile/schema mismatch")

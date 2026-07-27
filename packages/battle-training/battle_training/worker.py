@@ -47,7 +47,9 @@ class WorkerRequest:
 
 def build_worker() -> None:
     command = ["lake", "-d", str(LEAN_PACKAGE), "build", "battleTrainingWorker"]
-    result = subprocess.run(command, cwd=REPO_ROOT, text=True, capture_output=True)
+    result = subprocess.run(
+        command, cwd=REPO_ROOT, text=True, capture_output=True, check=False
+    )
     if result.returncode:
         raise RuntimeError(
             f"native worker build failed\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
@@ -66,7 +68,9 @@ def validate_shard(path: Path, request: WorkerRequest) -> dict[str, Any]:
             try:
                 row = json.loads(line)
             except json.JSONDecodeError as error:
-                raise ValueError(f"invalid JSON at {path}:{line_number}: {error}") from error
+                raise ValueError(
+                    f"invalid JSON at {path}:{line_number}: {error}"
+                ) from error
             row_type = row.get("type")
             if row_type == "meta":
                 if meta is not None or line_number != 1:
@@ -104,7 +108,9 @@ def validate_shard(path: Path, request: WorkerRequest) -> dict[str, Any]:
     }
     for key, expected in expected_meta.items():
         if meta is None or meta.get(key) != expected:
-            raise ValueError(f"meta mismatch for {key}: {None if meta is None else meta.get(key)}")
+            raise ValueError(
+                f"meta mismatch for {key}: {None if meta is None else meta.get(key)}"
+            )
     return {
         "episodes": request.episodes,
         "transitions": transition_count,
@@ -125,6 +131,7 @@ def run_worker(path: Path, request: WorkerRequest) -> dict[str, Any]:
                 stderr=subprocess.PIPE,
                 text=True,
                 env={**os.environ, "LC_ALL": "C"},
+                check=False,
             )
         if result.returncode:
             raise RuntimeError(
@@ -139,7 +146,9 @@ def run_worker(path: Path, request: WorkerRequest) -> dict[str, Any]:
         raise
 
 
-def write_request(path: Path, root: Path, request: WorkerRequest, summary: dict[str, Any]) -> None:
+def write_request(
+    path: Path, root: Path, request: WorkerRequest, summary: dict[str, Any]
+) -> None:
     write_json(
         path,
         {

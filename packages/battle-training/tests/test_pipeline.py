@@ -8,8 +8,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import torch
 from battle_training.artifacts import build_manifest, verify_manifest, write_json
 from battle_training.model import MoveValueModel
+from battle_training.network import BattleTransformer, TransformerConfig
 
 
 class MoveValueModelTests(unittest.TestCase):
@@ -66,6 +68,22 @@ class MoveValueModelTests(unittest.TestCase):
             restored = MoveValueModel.from_checkpoint(artifact["checkpoint"])
             self.assertEqual(restored.scores, model.scores)
             self.assertEqual(len(artifact["weights"].read_text().splitlines()), 166)
+
+
+class TransformerTests(unittest.TestCase):
+    def test_policy_masks_and_value_bounds(self) -> None:
+        torch.manual_seed(7)
+        network = BattleTransformer(
+            TransformerConfig(d_model=32, heads=4, layers=1, feedforward=64)
+        ).eval()
+        policies, values = network.evaluate([[0] * 100, [1] * 100], [0b0101, 0b1010])
+        self.assertAlmostEqual(sum(policies[0]), 1.0, places=6)
+        self.assertAlmostEqual(sum(policies[1]), 1.0, places=6)
+        self.assertEqual(policies[0][1], 0.0)
+        self.assertEqual(policies[0][3], 0.0)
+        self.assertEqual(policies[1][0], 0.0)
+        self.assertEqual(policies[1][2], 0.0)
+        self.assertTrue(all(-1.0 <= value <= 1.0 for value in values))
 
 
 class ManifestTests(unittest.TestCase):

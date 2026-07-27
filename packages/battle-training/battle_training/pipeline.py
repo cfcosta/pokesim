@@ -15,7 +15,6 @@ from .worker import (
     WorkerRequest,
     build_worker,
     run_worker,
-    validate_shard,
     write_request,
 )
 
@@ -60,7 +59,9 @@ def _evaluation_metrics(path: Path) -> dict[str, Any]:
     }
 
 
-def _combined_evaluation(player: dict[str, Any], enemy: dict[str, Any]) -> dict[str, Any]:
+def _combined_evaluation(
+    player: dict[str, Any], enemy: dict[str, Any]
+) -> dict[str, Any]:
     finished = player["finished"] + enemy["finished"]
     wins = player["wins"] + enemy["wins"]
     draws = player["draws"] + enemy["draws"]
@@ -114,7 +115,10 @@ def _replay_one(root: Path, request_path: Path, shard_path: Path) -> dict[str, A
         replay = Path(temporary) / "replay.jsonl"
         summary = run_worker(replay, request)
         expected = sha256(shard_path)
-        if summary["sha256"] != expected or replay.read_bytes() != shard_path.read_bytes():
+        if (
+            summary["sha256"] != expected
+            or replay.read_bytes() != shard_path.read_bytes()
+        ):
             raise ValueError(f"deterministic replay mismatch: {shard_path}")
     return {
         "shard": shard_path.relative_to(root).as_posix(),
@@ -173,7 +177,11 @@ def run_pipeline(root: Path, config: PipelineConfig) -> dict[str, Any]:
         checkpoint = model.checkpoint(
             root / "checkpoints",
             iteration,
-            {"kind": "terminal-return-update", "iteration": iteration, "sources": updates},
+            {
+                "kind": "terminal-return-update",
+                "iteration": iteration,
+                "sources": updates,
+            },
         )
         checkpoints.append(checkpoint)
         evaluations.append(_evaluate(root, iteration, checkpoint["weights"], config))
@@ -217,7 +225,9 @@ def verify_run(root: Path) -> dict[str, Any]:
     if result["sha256"] != replay["sha256"]:
         raise ValueError("replay verification record differs")
     return {
-        "manifest_files": len(json.loads((root / "manifest.json").read_text())["files"]),
+        "manifest_files": len(
+            json.loads((root / "manifest.json").read_text())["files"]
+        ),
         "replay": result,
         "summary": json.loads((root / "summary.json").read_text()),
     }
