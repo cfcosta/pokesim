@@ -17,6 +17,7 @@ Commands are pipe-separated and carry a request ID:
 * `reset|id|root-seed|episode`
 * `step|id|handle|player-action-id|enemy-action-id|episode|0`
 * `step|id|handle|player-action-id|enemy-action-id|fresh|chance-seed`
+* `batch|id|handle,player-action-id,enemy-action-id,chance-seed;...`
 * `compact|id|handle`
 * `quit|id`
 
@@ -48,6 +49,9 @@ private def snapshotFields (state : Environment.State) : String :=
   let terminal := state.battle.phase.isTerminal
   let result := if done then toString (SelfPlay.playerReturn state) else "null"
   s!"\"player_features\":{naturalsJson (Training.featureVector player)},\"enemy_features\":{naturalsJson (Training.featureVector enemy)},\"player_mask\":{legalMask state .player},\"enemy_mask\":{legalMask state .enemy},\"player_hash\":\"{Training.fingerprint player}\",\"enemy_hash\":\"{Training.fingerprint enemy}\",\"turn\":{state.battle.turn},\"terminal\":{boolJson terminal},\"done\":{boolJson done},\"return\":{result}"
+
+private def snapshotJson (handle : Nat) (state : Environment.State) : String :=
+  "{" ++ s!"\"handle\":{handle},{snapshotFields state}" ++ "}"
 
 private def success (request : String) (handle : Nat) (state : Environment.State) : String :=
   "{" ++ s!"\"id\":\"{request}\",\"ok\":true,\"handle\":{handle},{snapshotFields state}" ++ "}"
@@ -87,6 +91,29 @@ private def stepNative (state : Environment.State) (player enemy : Battle.Action
   | .rngStuck next _ => .failed next "rng-stuck"
   | .divisionFreeze next _ => .failed next "division-freeze"
   | .inactive next => .failed next "inactive"
+
+private def parseBatchSpec (raw : String) : Option (Nat × Nat × Nat × Nat) :=
+  let fields := raw.splitOn ","
+  match tokenNat fields 0, tokenNat fields 1, tokenNat fields 2, tokenNat fields 3 with
+  | some handle, some player, some enemy, some seed => some (handle, player, enemy, seed)
+  | _, _, _, _ => none
+
+private def runBatch : List String → Array Environment.State →
+    Array (Nat × Environment.State) →
+    Except String (Array Environment.State × Array (Nat × Environment.State))
+  | [], states, results => .ok (states, results)
+  | raw :: rest, states, results =>
+      match parseBatchSpec raw with
+      | none => .error "invalid-batch-step"
+      | some (handle, playerId, enemyId, chanceSeed) =>
+          match states[handle]?, actionAt playerId, actionAt enemyId with
+          | some state, some player, some enemy =>
+              match stepNative state player enemy (some chanceSeed) with
+              | .transitioned next =>
+                  let nextHandle := states.size
+                  runBatch rest (states.push next) (results.push (nextHandle, next))
+              | .failed _ reason => .error reason
+          | _, _, _ => .error "invalid-handle-or-action"
 
 private def emit (output : IO.FS.Stream) (line : String) : IO Unit := do
   output.putStr (line ++ "\n")
@@ -138,6 +165,27 @@ partial def serve (input output : IO.FS.Stream) (states : Array Environment.Stat
                 serve input output states
         | _, _, _, _, _ =>
             emit output (failure request "invalid-step")
+            serve input output states
+    | some "batch" =>
+        match token tokens 2 with
+        | some rawBatch =>
+            let specs := rawBatch.splitOn ";"
+            if specs.isEmpty then
+              emit output (failure request "empty-batch")
+              serve input output states
+            else
+              match runBatch specs states #[] with
+              | .error reason =>
+                  emit output (failure request reason)
+                  serve input output states
+              | .ok (nextStates, results) =>
+                  let snapshots := results.toList.map fun result =>
+                    snapshotJson result.1 result.2
+                  emit output (simpleSuccess request
+                    s!",\"snapshots\":[{String.intercalate "," snapshots}]")
+                  serve input output nextStates
+        | none =>
+            emit output (failure request "invalid-batch")
             serve input output states
     | some "compact" =>
         match tokenNat tokens 2 with

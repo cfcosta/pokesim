@@ -115,6 +115,19 @@ class SearchServer:
             )
         )
 
+    def search_steps(self, requests: list[tuple[int, int, int, int]]) -> list[Snapshot]:
+        if not requests:
+            return []
+        payload = ";".join(
+            f"{handle},{player},{enemy},{seed}"
+            for handle, player, enemy, seed in requests
+        )
+        response = self._request(f"batch|{payload}")
+        snapshots = [Snapshot.from_response(row) for row in response["snapshots"]]
+        if len(snapshots) != len(requests):
+            raise RuntimeError("native batch response length mismatch")
+        return snapshots
+
     def episode_step(
         self, handle: int, player_action: int, enemy_action: int
     ) -> Snapshot:
