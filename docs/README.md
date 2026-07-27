@@ -10,6 +10,7 @@ These documents record twelve codebase, processor, and proof-architecture review
 - [RNG and time](explanation/rng-and-time.md) — why console randomness cannot honestly be reduced to a software seed.
 - [RL environment design](explanation/rl-environment.md) — legal teams, actions, observations, replay, and batching.
 - [Self-play training pipeline](explanation/self-play-training-pipeline.md) — proposed actor–learner, simultaneous MCTS, league, replay, evaluation, and staged implementation architecture.
+- [Training implementation checklist](../packages/battle-training/CHECKLIST.md) — executable restricted pipeline status and remaining search, full-party, population, and emulator gates.
 
 ## Reference
 

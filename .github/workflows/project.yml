@@ -29,6 +29,14 @@ jobs:
         run: nix develop -c lake -d packages/battle-lean exe battleSelfPlay
       - name: Run full-party model-against-itself smoke matrix
         run: nix develop -c lake -d packages/battle-lean exe battleFullSelfPlay
+      - name: Train and replay the restricted link policy end to end
+        run: |
+          out="$(mktemp -d)"
+          trap 'rm -rf "$out"' EXIT
+          nix develop -c python -m unittest discover -s packages/battle-training/tests
+          nix develop -c python packages/battle-training/train.py smoke \
+            --output "$out" --iterations 1 --episodes 32 --eval-episodes 64
+          nix develop -c python packages/battle-training/train.py verify "$out"
       - name: Check canonical address/range closure
         run: python3 tools/check-pokered-closure.py
       - name: Check documentation against nested source
