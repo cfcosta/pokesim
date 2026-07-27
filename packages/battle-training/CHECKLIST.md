@@ -4,22 +4,22 @@ This checklist is an implementation ledger, not a statement of cartridge
 parity. Checked rows have executable artifacts in this repository. Unchecked
 rows remain required before the corresponding profile can be called complete.
 
-## M0 — deterministic restricted link environment
+## M0 — deterministic full-party link environment
 
 - [x] Keep mechanics and team generation inside the native Lean worker.
 - [x] Use a versioned production entropy expander instead of `seedFrom`.
 - [x] Isolate generator, battle, player-policy, and enemy-policy streams.
-- [x] Expose stable link action IDs for all emitted restricted actions.
+- [x] Expose stable link action IDs for all emitted full-party actions.
 - [x] Emit side-canonical policy records without future RNG bytes.
 - [x] Preserve exact stop labels; train only from witnessed `finished` results.
 - [x] Emit deterministic native state fingerprints and transcript coordinates.
 - [x] Support policy control from either cartridge side.
 - [x] Reproduce a shard byte for byte from its seed and checkpoint.
 - [ ] Normalize every full-engine one-side and nested decision request.
-- [ ] Define a mechanics-complete full-party tensor schema.
-- [x] Add immutable pause/branch handles for the restricted native search server.
+- [x] Define the 417-field full-party perfect-information tensor schema.
+- [x] Add immutable pause/branch handles for the full-party native search server.
 - [x] Batch independent fresh-chance branches in one native request.
-- [ ] Execute the restricted synchronized profile through `Full.Link.Pair`.
+- [ ] Execute the synchronized full-party profile through `Full.Link.Pair`.
 - [ ] Reproduce stock setup rejection, clock roles, and leading-zero mismatch in
       paired episodes.
 
@@ -34,7 +34,9 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Verify generated artifacts and deterministic shard replay.
 - [ ] Add held-out generated-team suites shared across checkpoints.
 - [ ] Add paired-seed side-swapped confidence intervals.
-- [ ] Add historical-checkpoint payoff matrices and fixed baselines.
+- [x] Add multi-checkpoint fixed baselines and pairwise arena reports.
+- [x] Emit readable Showdown-style arena projections and policy-skill metrics.
+- [ ] Add historical-checkpoint payoff matrices and Nash-mixture estimates.
 - [ ] Add a versioned binary shard format after JSONL stabilizes.
 
 ## M2 — simultaneous search
@@ -43,14 +45,13 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Evaluate every legal joint action at shallow roots.
 - [x] Solve sampled root payoff matrices with regret matching+.
 - [ ] Add regret matching at every expanded simultaneous MCTS node.
-- [x] Add sampled stochastic Exp3 simultaneous MCTS for the restricted profile.
 - [ ] Keep opponent-sampled PUCT only as a named best-response baseline.
 - [x] Implement `fresh-root-v1` without access to episode future RNG.
 - [ ] Report exploitability/regret proxies on small exact games.
 
 ## M3 — batched policy/value learning
 
-- [x] Freeze the restricted 100-field side-canonical tensor and action mask.
+- [x] Freeze the full-party 417-field side-canonical tensor and 13-action mask.
 - [x] Train a byte/position-embedding transformer outside Lean.
 - [x] Batch bounded leaf inference within each exhaustive root search.
 - [ ] Run a multi-worker batched inference service across independent roots.
@@ -58,22 +59,24 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Train policy and terminal value heads from MCTS/terminal targets.
 - [x] Publish immutable model, optimizer, schema, and SHA-256 checkpoints.
 - [ ] Resume bit-for-bit from a checkpoint and replay ledger.
-- [ ] Compare network-only, PUCT, regret-MCTS, and Exp3-MCTS policies.
+- [ ] Compare network-only, PUCT, and deeper regret-MCTS policies.
 
 ## M4 — full-party link battles
 
-- [ ] Normalize forced replacement as a one-side request.
-- [ ] Normalize Mimic, learning, evolution, and other nested protocols.
+- [x] Normalize forced replacement as a one-side request.
+- [x] Normalize Mimic target selection as a one-side request.
+- [ ] Normalize learning, evolution, and other profile-widening nested protocols.
 - [ ] Support every legal move/switch/no-action/Struggle/run wire action.
-- [ ] Keep items unavailable in the stock link profile.
-- [ ] Promote only episodes with complete terminal provenance.
+- [x] Keep items and voluntary link forfeits unavailable in the training profile.
+- [x] Promote only episodes with complete terminal provenance.
 - [ ] Audit synchronized rollouts against both `Full.Link.Pair` perspectives.
 - [ ] Classify and retain known desynchronizations.
 
 ## M5 — population and evaluation
 
-- [x] Mix mirror self-play with a hash-identified fixed-checkpoint opponent.
-- [ ] Sample latest, historical, exploiter, and multi-baseline opponents.
+- [x] Mix mirror self-play with hash-identified fixed-checkpoint opponents.
+- [x] Round-robin multiple fixed baselines with balanced candidate sides.
+- [ ] Sample latest, historical, and exploiter opponents.
 - [ ] Retain held-out teams and seeds outside actor sampling.
 - [ ] Produce checkpoint payoff matrices and Nash-mixture estimates.
 - [ ] Gate promotion on paired evaluation with confidence intervals.
@@ -93,8 +96,9 @@ rows remain required before the corresponding profile can be called complete.
 
 ## Completion rule
 
-“End-to-end training works” currently means the restricted transformer can
-collect Lean-owned MCTS trajectories, train policy/value heads on GPU or CPU,
-evaluate a side-swapped checkpoint, and reproduce its first search shard.
+“End-to-end training works” currently means the full-party transformer can
+collect Lean-owned regret-search targets and network rollouts from random 6v6
+teams, train policy/value heads on GPU or CPU, emit traced side-swapped arenas,
+and reproduce its first search shard.
 “Deployable Pokémon agent” still means all relevant M0–M6 rows for
 `full-link-paired-player-v1` are checked and their quality gates pass.
