@@ -45,6 +45,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=20260726)
     parser.add_argument("--device", default="auto")
+    parser.add_argument("--precision", choices=("bf16", "fp32"), default="bf16")
     parser.add_argument("--d-model", type=int, default=64 if smoke else 128)
     parser.add_argument("--heads", type=int, default=4 if smoke else 8)
     parser.add_argument("--layers", type=int, default=2 if smoke else 4)
@@ -182,6 +183,7 @@ def main(argv: list[str] | None = None) -> int:
             tree_convergence_tolerance=arguments.tree_convergence_tolerance,
             tree_convergence_patience=arguments.tree_convergence_patience,
             actor_batch_size=arguments.actor_batch_size,
+            precision=arguments.precision,
         )
         report = run_transformer_pipeline(arguments.output.resolve(), config)
     else:

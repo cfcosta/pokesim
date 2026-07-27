@@ -77,6 +77,7 @@ class TransformerPipelineConfig:
     tree_convergence_tolerance: float = 0.005
     tree_convergence_patience: int = 8
     actor_batch_size: int = 16
+    precision: str = "bf16"
 
 
 @dataclass
@@ -94,7 +95,7 @@ class _ActorEpisode:
 
 
 def _pipeline_id() -> str:
-    return "transformer-full6v6-cross-root-tree-v4"
+    return "transformer-full6v6-bf16-tree-v5"
 
 
 def _scheduled_for_opponent(episode: int, fraction: float) -> bool:
@@ -784,6 +785,8 @@ def run_transformer_pipeline(
         raise ValueError("tree_convergence_patience must be positive")
     if config.actor_batch_size < 1:
         raise ValueError("actor_batch_size must be positive")
+    if config.precision not in {"bf16", "fp32"}:
+        raise ValueError("precision must be bf16 or fp32")
     if config.max_actions_per_side < 13:
         raise ValueError(
             "full-party training must consider the complete action dictionary"
@@ -821,6 +824,14 @@ def run_transformer_pipeline(
         action_count = protocol.action_count
     configure_determinism(config.seed)
     device = choose_device(config.device)
+    if (
+        config.precision == "bf16"
+        and device.type == "cuda"
+        and not torch.cuda.is_bf16_supported()
+    ):
+        raise RuntimeError("bf16 training requires a bf16-capable CUDA device")
+    if config.precision == "bf16" and device.type not in {"cpu", "cuda"}:
+        raise RuntimeError(f"bf16 training is unsupported on {device.type}")
     opponents: list[tuple[BattleTransformer, str]] = []
     opponent_metadata: list[dict[str, Any]] = []
     for index, source_name in enumerate(config.opponent_checkpoints):
@@ -843,6 +854,7 @@ def run_transformer_pipeline(
         heads=config.heads,
         layers=config.layers,
         feedforward=config.feedforward,
+        precision=config.precision,
     )
     network = BattleTransformer(model_config).to(device)
     network.eval()
@@ -1138,7 +1150,10 @@ def verify_transformer_run(root: Path) -> dict[str, Any]:
         raise ValueError("artifact verification failed: " + "; ".join(errors))
     summary = json.loads((root / "summary.json").read_text())
     run = json.loads((root / "run.json").read_text())
-    config = TransformerPipelineConfig(**run["config"])
+    raw_config = dict(run["config"])
+    # Runs written before v5 used strict FP32 and must replay under that contract.
+    raw_config.setdefault("precision", "fp32")
+    config = TransformerPipelineConfig(**raw_config)
     if not summary.get("data_quality_pass", False):
         raise ValueError("training run failed the expanded data-quality gate")
     if config.enforce_quality_gate and not summary.get("quality_gate", {}).get(

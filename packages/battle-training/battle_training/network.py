@@ -21,6 +21,7 @@ class TransformerConfig:
     heads: int = 8
     layers: int = 4
     feedforward: int = 512
+    precision: str = "bf16"
 
 
 class BattleTransformer(nn.Module):
@@ -30,6 +31,8 @@ class BattleTransformer(nn.Module):
         super().__init__()
         if config.d_model % config.heads:
             raise ValueError("d_model must be divisible by attention heads")
+        if config.precision not in {"bf16", "fp32"}:
+            raise ValueError("precision must be bf16 or fp32")
         self.config = config
         self.low_byte = nn.Embedding(256, config.d_model)
         self.high_byte = nn.Embedding(256, config.d_model)
@@ -66,9 +69,7 @@ class BattleTransformer(nn.Module):
                 self.policy.bias[10].fill_(-2.0)
                 self.policy.bias[12].fill_(-4.0)
 
-    def forward(self, features: Tensor) -> tuple[Tensor, Tensor]:
-        if features.ndim != 2 or features.shape[1] != self.config.feature_count:
-            raise ValueError(f"expected [batch,{self.config.feature_count}] features")
+    def _forward_impl(self, features: Tensor) -> tuple[Tensor, Tensor]:
         values = features.long().clamp_(0, 65535)
         low = values.bitwise_and(255)
         high = values.bitwise_right_shift(8).bitwise_and(255)
@@ -83,6 +84,21 @@ class BattleTransformer(nn.Module):
         encoded = self.encoder(torch.cat((cls, tokens), dim=1))
         pooled = self.final_norm(encoded[:, 0])
         return self.policy(pooled), self.value(pooled).squeeze(-1)
+
+    def forward(self, features: Tensor) -> tuple[Tensor, Tensor]:
+        if features.ndim != 2 or features.shape[1] != self.config.feature_count:
+            raise ValueError(f"expected [batch,{self.config.feature_count}] features")
+        if self.config.precision == "fp32":
+            return self._forward_impl(features)
+        device_type = features.device.type
+        if device_type == "cuda" and not torch.cuda.is_bf16_supported():
+            raise RuntimeError("bf16 precision requires a bf16-capable CUDA device")
+        if device_type not in {"cpu", "cuda"}:
+            raise RuntimeError(f"bf16 precision is unsupported on {device_type}")
+        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+            logits, values = self._forward_impl(features)
+        # Keep policy normalization, losses, reductions, and search values in FP32.
+        return logits.float(), values.float()
 
     @torch.inference_mode()
     def evaluate(
@@ -157,7 +173,10 @@ def load_network(path: Path, device: torch.device) -> BattleTransformer:
     payload = torch.load(path, map_location=device, weights_only=False)
     if payload.get("format") != "battle-transformer-policy-value-v1":
         raise ValueError("unknown transformer checkpoint format")
-    network = BattleTransformer(TransformerConfig(**payload["config"])).to(device)
+    raw_config = dict(payload["config"])
+    # Checkpoints written before precision became explicit executed in strict FP32.
+    raw_config.setdefault("precision", "fp32")
+    network = BattleTransformer(TransformerConfig(**raw_config)).to(device)
     network.load_state_dict(payload["model"])
     network.eval()
     return network

@@ -23,7 +23,7 @@ from battle_training.joint_search import (
 )
 from battle_training.model import MoveValueModel
 from battle_training.native import Snapshot
-from battle_training.network import BattleTransformer, TransformerConfig
+from battle_training.network import BattleTransformer, TransformerConfig, load_network
 from battle_training.transformer_pipeline import _load_examples, _scheduled_for_opponent
 
 
@@ -310,6 +310,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.tree_minimum_budget, 192)
         self.assertEqual(arguments.tree_convergence_patience, 8)
         self.assertEqual(arguments.actor_batch_size, 16)
+        self.assertEqual(arguments.precision, "bf16")
 
     def test_paired_arena_reuses_resets_and_spans_seeds(self) -> None:
         self.assertEqual(_paired_coordinates(100, 8, 0), _paired_coordinates(100, 8, 1))
@@ -427,6 +428,13 @@ class TransformerTests(unittest.TestCase):
         network = BattleTransformer(
             TransformerConfig(d_model=32, heads=4, layers=1, feedforward=64)
         ).eval()
+        self.assertEqual(network.config.precision, "bf16")
+        self.assertTrue(
+            all(parameter.dtype == torch.float32 for parameter in network.parameters())
+        )
+        logits, raw_values = network(torch.zeros((2, 100), dtype=torch.long))
+        self.assertEqual(logits.dtype, torch.float32)
+        self.assertEqual(raw_values.dtype, torch.float32)
         policies, values = network.evaluate([[0] * 100, [1] * 100], [0b0101, 0b1010])
         self.assertAlmostEqual(sum(policies[0]), 1.0, places=6)
         self.assertAlmostEqual(sum(policies[1]), 1.0, places=6)
@@ -435,6 +443,40 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(policies[1][0], 0.0)
         self.assertEqual(policies[1][2], 0.0)
         self.assertTrue(all(-1.0 <= value <= 1.0 for value in values))
+
+    def test_legacy_checkpoint_retains_fp32_precision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "legacy.pt"
+            network = BattleTransformer(
+                TransformerConfig(
+                    d_model=32,
+                    heads=4,
+                    layers=1,
+                    feedforward=64,
+                    precision="fp32",
+                )
+            )
+            config = {
+                "feature_count": 100,
+                "action_count": 4,
+                "d_model": 32,
+                "heads": 4,
+                "layers": 1,
+                "feedforward": 64,
+            }
+            torch.save(
+                {
+                    "format": "battle-transformer-policy-value-v1",
+                    "config": config,
+                    "model": network.state_dict(),
+                    "optimizer": None,
+                    "metadata": {},
+                    "torch_rng": torch.random.get_rng_state(),
+                },
+                path,
+            )
+            restored = load_network(path, torch.device("cpu"))
+            self.assertEqual(restored.config.precision, "fp32")
 
 
 class ManifestTests(unittest.TestCase):
