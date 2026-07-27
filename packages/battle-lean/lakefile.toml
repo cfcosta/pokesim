@@ -36,10 +36,10 @@ root = "Battle.Full.SelfPlayMain"
 name = "battleTrainingWorker"
 root = "Battle.RL.TrainingWorkerMain"
 
-# Persistent immutable-state server for external simultaneous search.
+# Persistent immutable-state server for external six-member simultaneous search.
 [[lean_exe]]
 name = "battleSearchServer"
-root = "Battle.RL.SearchServerMain"
+root = "Battle.RL.FullSearchServerMain"
 
 # Emit two progression-witnessed teams in Pokémon Showdown import format.
 [[lean_exe]]
