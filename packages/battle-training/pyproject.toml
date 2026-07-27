@@ -1,0 +1,16 @@
+[project]
+name = "battle-training"
+version = "0.1.0"
+description = "External actor-learner for the verified Pokémon Red battle model"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+battle-train = "battle_training.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["battle_training"]

@@ -82,6 +82,7 @@
             formatter
             gnumake
             lean4
+            python3
             rgbds-1_0_2-hotfix
           ];
         };
