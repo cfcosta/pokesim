@@ -211,10 +211,11 @@
             CUDA_HOME = if pkgs.stdenv.isLinux then "${cuda}" else "";
             CUDA_PATH = if pkgs.stdenv.isLinux then "${cuda}" else "";
             LD_LIBRARY_PATH =
-              lib.makeLibraryPath [
+              "${trainingPythonSet.nvidia-cudnn-cu13}/${pkgs.python312.sitePackages}/nvidia/cudnn/lib:"
+              + lib.makeLibraryPath [
                 pkgs.stdenv.cc.cc
                 pkgs.zlib
-                pkgs.xorg.libxcb
+                pkgs.libxcb
                 pkgs.libGL
                 pkgs.glib
               ]
