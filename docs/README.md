@@ -46,6 +46,7 @@ These documents record twelve codebase, processor, and proof-architecture review
 - [Eleventh-pass SM83 profile evidence audit](research/eleventh-pass-sm83-profile-evidence-audit.md) — DMG-CPU B selection, T1F–T4R evidence, temporal bus reads, reset/NMI/gates, SameBoy oracle, and hardware validation.
 - [Twelfth-pass RISC-V and CompCert proof audit](research/twelfth-pass-riscv-compcert-proof-audit.md) — the simulation and whole-behavior theorems required to turn the current executable SM83 candidate into an end-to-end formal verification.
 - [External bug compatibility audit](research/external-bug-compatibility-audit.md) — clean-room inventory of all 13 externally claimed battle bugs, canonical source anchors, corrected scope, and proof acceptance criteria.
+- [Pokémon Showdown Gen-I 1v1 reconstruction study](research/showdown-gen1-1v1-reconstruction.md) — three compact public replay projections reconstructed as theorem-checked model fixtures, with exact limitations.
 
 ## Documentation modes
 
