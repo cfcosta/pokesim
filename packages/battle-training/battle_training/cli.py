@@ -55,6 +55,14 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--max-actions-per-side", type=int, default=13)
     parser.add_argument("--replay-window", type=int, default=2)
     parser.add_argument("--search-every", type=int, default=10)
+    parser.add_argument("--tree-expansion-budget", type=int, default=320)
+    parser.add_argument("--tree-exploration", type=float, default=0.10)
+    parser.add_argument("--tree-chance-resample", type=float, default=0.10)
+    parser.add_argument("--tree-regret-iterations", type=int, default=16)
+    parser.add_argument("--tree-deeper-joint-rotations", type=int, default=2)
+    parser.add_argument("--tree-minimum-budget", type=int, default=192)
+    parser.add_argument("--tree-convergence-tolerance", type=float, default=0.005)
+    parser.add_argument("--tree-convergence-patience", type=int, default=8)
     parser.add_argument("--opponent-checkpoint", type=Path, action="append", default=[])
     parser.add_argument("--opponent-fraction", type=float, default=0.5)
     parser.add_argument("--historical-window", type=int, default=4)
@@ -164,6 +172,14 @@ def main(argv: list[str] | None = None) -> int:
             max_actions_per_side=arguments.max_actions_per_side,
             replay_window=arguments.replay_window,
             search_every=arguments.search_every,
+            tree_expansion_budget=arguments.tree_expansion_budget,
+            tree_exploration=arguments.tree_exploration,
+            tree_chance_resample=arguments.tree_chance_resample,
+            tree_regret_iterations=arguments.tree_regret_iterations,
+            tree_deeper_joint_rotations=arguments.tree_deeper_joint_rotations,
+            tree_minimum_budget=arguments.tree_minimum_budget,
+            tree_convergence_tolerance=arguments.tree_convergence_tolerance,
+            tree_convergence_patience=arguments.tree_convergence_patience,
         )
         report = run_transformer_pipeline(arguments.output.resolve(), config)
     else:

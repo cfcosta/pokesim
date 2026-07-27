@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts import write_json
-from .joint_search import BatchedJointRegretSearch, JointSearchConfig
+from .joint_search import JointSearchConfig, SimultaneousTreeSearch
 from .native import NativeRequestTimeout, SearchServer
 from .network import BattleTransformer
 
@@ -526,7 +526,7 @@ def run_traced_arena(
                     before["player_mask"] = snapshot.player_mask
                     before["enemy_mask"] = snapshot.enemy_mask
                     if config.search_every and decision % config.search_every == 0:
-                        search = BatchedJointRegretSearch(
+                        search = SimultaneousTreeSearch(
                             server,
                             player,
                             enemy,

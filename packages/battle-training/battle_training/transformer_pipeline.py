@@ -24,7 +24,7 @@ from .arena import (
     write_arena_report,
 )
 from .artifacts import build_manifest, sha256, verify_manifest, write_json, write_new
-from .joint_search import BatchedJointRegretSearch, JointSearchConfig, SearchResult
+from .joint_search import JointSearchConfig, SearchResult, SimultaneousTreeSearch
 from .native import NativeRequestTimeout, SearchServer, build_search_server
 from .network import (
     BattleTransformer,
@@ -68,10 +68,18 @@ class TransformerPipelineConfig:
     max_actions_per_side: int = 13
     replay_window: int = 2
     search_every: int = 10
+    tree_expansion_budget: int = 320
+    tree_exploration: float = 0.10
+    tree_chance_resample: float = 0.10
+    tree_regret_iterations: int = 16
+    tree_deeper_joint_rotations: int = 2
+    tree_minimum_budget: int = 192
+    tree_convergence_tolerance: float = 0.005
+    tree_convergence_patience: int = 8
 
 
 def _pipeline_id() -> str:
-    return "transformer-full6v6-tactical-joint-regret-v2"
+    return "transformer-full6v6-simultaneous-tree-v3"
 
 
 def _scheduled_for_opponent(episode: int, fraction: float) -> bool:
@@ -86,8 +94,8 @@ def _new_search(
     config: TransformerPipelineConfig,
     selection_rng: random.Random,
     chance_rng: random.Random,
-) -> BatchedJointRegretSearch:
-    return BatchedJointRegretSearch(
+) -> SimultaneousTreeSearch:
+    return SimultaneousTreeSearch(
         server,
         player,
         enemy,
@@ -97,6 +105,14 @@ def _new_search(
             config.regret_iterations,
             config.inference_batch_size,
             config.max_actions_per_side,
+            config.tree_expansion_budget,
+            config.tree_exploration,
+            config.tree_chance_resample,
+            config.tree_regret_iterations,
+            config.tree_deeper_joint_rotations,
+            config.tree_minimum_budget,
+            config.tree_convergence_tolerance,
+            config.tree_convergence_patience,
         ),
         selection_rng,
         chance_rng,
@@ -182,7 +198,7 @@ def _collect_rows(
         "schema": FULL_SCHEMA,
         "entropy": ENTROPY,
         "chance": "fresh-root-v1",
-        "solver": "tactical-switch-gated-joint-regret-crn-v1",
+        "solver": "simultaneous-matrix-tree-rmplus-v1",
         "iteration": iteration,
         "episodes": config.selfplay_episodes,
         "depth": config.search_depth,
@@ -193,6 +209,14 @@ def _collect_rows(
         "inference_batch_size": config.inference_batch_size,
         "max_actions_per_side": config.max_actions_per_side,
         "search_every": config.search_every,
+        "tree_expansion_budget": config.tree_expansion_budget,
+        "tree_exploration": config.tree_exploration,
+        "tree_chance_resample": config.tree_chance_resample,
+        "tree_regret_iterations": config.tree_regret_iterations,
+        "tree_deeper_joint_rotations": config.tree_deeper_joint_rotations,
+        "tree_minimum_budget": config.tree_minimum_budget,
+        "tree_convergence_tolerance": config.tree_convergence_tolerance,
+        "tree_convergence_patience": config.tree_convergence_patience,
     }
     opponents = opponents or []
     if opponents:
@@ -289,6 +313,10 @@ def _collect_rows(
                     enemy_row["search_exploitability"] = result.exploitability
                     player_row["payoff_spread"] = result.payoff_spread
                     enemy_row["payoff_spread"] = result.payoff_spread
+                if result.diagnostics is not None:
+                    for name, value in result.diagnostics.items():
+                        player_row[name] = value
+                        enemy_row[name] = value
                 if opponents:
                     player_row["episode_kind"] = episode_kind
                     enemy_row["episode_kind"] = episode_kind
@@ -356,6 +384,7 @@ def _collect_rows(
     payoff_spreads = [
         row["payoff_spread"] for row in example_rows if "payoff_spread" in row
     ]
+    tree_rows = [row for row in example_rows if "tree_nodes" in row]
     return {
         "finished": finished,
         "truncated": truncated,
@@ -376,6 +405,36 @@ def _collect_rows(
         ),
         "mean_payoff_spread": (
             sum(payoff_spreads) / len(payoff_spreads) if payoff_spreads else None
+        ),
+        "mean_tree_nodes": (
+            sum(row["tree_nodes"] for row in tree_rows) / len(tree_rows)
+            if tree_rows
+            else None
+        ),
+        "mean_tree_simulations": (
+            sum(row["tree_simulations"] for row in tree_rows) / len(tree_rows)
+            if tree_rows
+            else None
+        ),
+        "mean_tree_max_depth": (
+            sum(row["tree_max_depth"] for row in tree_rows) / len(tree_rows)
+            if tree_rows
+            else None
+        ),
+        "mean_chance_outcomes": (
+            sum(row["chance_outcomes"] for row in tree_rows) / len(tree_rows)
+            if tree_rows
+            else None
+        ),
+        "mean_sampled_joint_coverage": (
+            sum(row["sampled_joint_coverage"] for row in tree_rows) / len(tree_rows)
+            if tree_rows
+            else None
+        ),
+        "tree_convergence_rate": (
+            sum(row["tree_converged"] for row in tree_rows) / len(tree_rows)
+            if tree_rows
+            else None
         ),
         "mean_decisions": transitions / config.selfplay_episodes,
         "voluntary_switch_rate": sum(
@@ -586,6 +645,22 @@ def run_transformer_pipeline(
     root.mkdir(parents=True, exist_ok=True)
     if config.search_every < 1:
         raise ValueError("search_every must be positive")
+    if config.tree_expansion_budget < 1:
+        raise ValueError("tree_expansion_budget must be positive")
+    if not 0.0 <= config.tree_exploration <= 1.0:
+        raise ValueError("tree_exploration must be in [0, 1]")
+    if not 0.0 <= config.tree_chance_resample <= 1.0:
+        raise ValueError("tree_chance_resample must be in [0, 1]")
+    if config.tree_regret_iterations < 1:
+        raise ValueError("tree_regret_iterations must be positive")
+    if config.tree_deeper_joint_rotations < 1:
+        raise ValueError("tree_deeper_joint_rotations must be positive")
+    if not 1 <= config.tree_minimum_budget <= config.tree_expansion_budget:
+        raise ValueError("tree_minimum_budget must be in 1..tree_expansion_budget")
+    if config.tree_convergence_tolerance < 0.0:
+        raise ValueError("tree_convergence_tolerance must be nonnegative")
+    if config.tree_convergence_patience < 1:
+        raise ValueError("tree_convergence_patience must be positive")
     if config.max_actions_per_side < 13:
         raise ValueError(
             "full-party training must consider the complete action dictionary"
@@ -657,7 +732,7 @@ def run_transformer_pipeline(
             "schema": FULL_SCHEMA,
             "party_size": FULL_PARTY_SIZE,
             "chance": "fresh-root-v1",
-            "search_solver": "tactical-switch-gated-joint-regret-crn-v1",
+            "search_solver": "simultaneous-matrix-tree-rmplus-v1",
             "config": asdict(config),
             "network": asdict(model_config),
             "parameter_count": sum(

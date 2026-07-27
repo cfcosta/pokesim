@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import random
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -13,13 +15,88 @@ from battle_training.arena import _mean_ci95, _paired_coordinates, skill_probe_r
 from battle_training.artifacts import build_manifest, verify_manifest, write_json
 from battle_training.cli import parser as training_parser
 from battle_training.joint_search import (
+    JointSearchConfig,
+    SimultaneousTreeSearch,
     _cap_switch_mass,
     _tactical_potential,
     solve_zero_sum_regret,
 )
 from battle_training.model import MoveValueModel
+from battle_training.native import Snapshot
 from battle_training.network import BattleTransformer, TransformerConfig
 from battle_training.transformer_pipeline import _load_examples, _scheduled_for_opponent
+
+
+def _toy_features() -> tuple[int, ...]:
+    features = [0] * 477
+    for side in (0, 181):
+        for slot in range(6):
+            base = side + slot * 22
+            features[base + 1] = 100
+            features[base + 13] = 100
+    return tuple(features)
+
+
+class _ToyNetwork:
+    config = SimpleNamespace(action_count=2)
+
+    def evaluate(
+        self, features: object, masks: list[int]
+    ) -> tuple[list[list[float]], list[float]]:
+        policies = []
+        for mask in masks:
+            legal = [action for action in range(2) if mask & (1 << action)]
+            policy = [0.0, 0.0]
+            for action in legal:
+                policy[action] = 1.0 / len(legal)
+            policies.append(policy)
+        return policies, [0.0] * len(masks)
+
+
+class _ToyServer:
+    def __init__(self) -> None:
+        self.states: dict[int, tuple[int, int]] = {0: (0, 0)}
+        self.next_handle = 1
+
+    def _snapshot(
+        self, handle: int, done: bool = False, result: int | None = None
+    ) -> Snapshot:
+        return Snapshot(
+            handle=handle,
+            player_features=_toy_features(),
+            enemy_features=_toy_features(),
+            player_mask=0b11,
+            enemy_mask=0b11,
+            player_hash=str(handle),
+            enemy_hash=str(handle),
+            turn=self.states[handle][0],
+            terminal=done,
+            done=done,
+            terminal_return=result,
+            request="battle",
+            divergence=None,
+        )
+
+    def search_step(
+        self, handle: int, player_action: int, enemy_action: int, chance_seed: int
+    ) -> Snapshot:
+        del chance_seed
+        stage, root_player_action = self.states[handle]
+        child = self.next_handle
+        self.next_handle += 1
+        if stage == 0:
+            self.states[child] = (1, player_action)
+            return self._snapshot(child)
+        self.states[child] = (2, root_player_action)
+        result = (
+            (1 if player_action == enemy_action else -1)
+            if root_player_action == 0
+            else -1
+        )
+        return self._snapshot(child, done=True, result=result)
+
+    def search_steps(self, requests: list[tuple[int, int, int, int]]) -> list[Snapshot]:
+        return [self.search_step(*request) for request in requests]
 
 
 class MoveValueModelTests(unittest.TestCase):
@@ -118,6 +195,36 @@ class TransformerTests(unittest.TestCase):
         self.assertGreater(enemy[1], 0.99)
         self.assertLess(exploitability, 0.01)
 
+    def test_simultaneous_tree_backs_up_deeper_equilibrium_values(self) -> None:
+        server = _ToyServer()
+        network = _ToyNetwork()
+        search = SimultaneousTreeSearch(
+            server,  # type: ignore[arg-type]
+            network,  # type: ignore[arg-type]
+            network,  # type: ignore[arg-type]
+            JointSearchConfig(
+                chance_samples_per_joint=1,
+                max_depth=2,
+                regret_iterations=64,
+                inference_batch_size=16,
+                max_actions_per_side=2,
+                expansion_budget=128,
+                exploration=0.2,
+                chance_resample=1.0,
+                regret_iterations_per_update=16,
+                deeper_joint_rotations=2,
+                minimum_expansion_budget=4,
+            ),
+            random.Random(7),
+            random.Random(11),
+        )
+        result = search.search(server._snapshot(0), sample_actions=False)
+        self.assertEqual(result.solver, "simultaneous-matrix-tree-rmplus-v1")
+        self.assertGreater(result.player_policy[0], 0.8)
+        self.assertEqual(result.diagnostics["tree_max_depth"], 1)
+        self.assertEqual(result.diagnostics["root_joint_actions"], 4)
+        self.assertEqual(result.diagnostics["sampled_joint_coverage"], 1.0)
+
     def test_production_defaults_are_safe_overnight_configuration(self) -> None:
         arguments = training_parser().parse_args(
             ["transformer-train", "--output", "/tmp/overnight"]
@@ -132,6 +239,11 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.learning_rate, 2e-4)
         self.assertEqual(arguments.promotion_games, 1024)
         self.assertEqual(arguments.probe_games, 256)
+        self.assertEqual(arguments.tree_expansion_budget, 320)
+        self.assertEqual(arguments.tree_regret_iterations, 16)
+        self.assertEqual(arguments.tree_deeper_joint_rotations, 2)
+        self.assertEqual(arguments.tree_minimum_budget, 192)
+        self.assertEqual(arguments.tree_convergence_patience, 8)
 
     def test_paired_arena_reuses_resets_and_spans_seeds(self) -> None:
         self.assertEqual(_paired_coordinates(100, 8, 0), _paired_coordinates(100, 8, 1))

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TypeAlias
 
 from .native import SearchServer, Snapshot
@@ -30,6 +30,7 @@ class SearchResult:
     exploitability: float | None
     payoff_spread: float | None
     payoff_matrix: tuple[tuple[float, ...], ...] | None
+    diagnostics: dict[str, float | int] | None = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,14 @@ class JointSearchConfig:
     regret_iterations: int = 256
     inference_batch_size: int = 96
     max_actions_per_side: int = 13
+    expansion_budget: int = 320
+    exploration: float = 0.10
+    chance_resample: float = 0.10
+    regret_iterations_per_update: int = 16
+    deeper_joint_rotations: int = 2
+    minimum_expansion_budget: int = 192
+    convergence_tolerance: float = 0.005
+    convergence_patience: int = 8
 
 
 def legal_actions(mask: int, action_count: int) -> list[int]:
@@ -506,4 +515,610 @@ class BatchedJointRegretSearch:
             exploitability=exploitability,
             payoff_spread=max(legal_payoffs) - min(legal_payoffs),
             payoff_matrix=tuple(tuple(row) for row in payoff),
+        )
+
+
+class _TreeDivergence(RuntimeError):
+    pass
+
+
+@dataclass
+class _TreeOutcome:
+    snapshot: Snapshot
+    tactical_delta: float
+    leaf_value: float
+
+
+@dataclass
+class _TreeNode:
+    snapshot: Snapshot
+    player_priors: list[float]
+    enemy_priors: list[float]
+    leaf_value: float
+    player_legal: list[int]
+    enemy_legal: list[int]
+    payoff: PayoffMatrix
+    counts: list[list[int]]
+    outcomes: dict[tuple[int, int], list[_TreeOutcome]] = field(default_factory=dict)
+    children: dict[int, _TreeNode] = field(default_factory=dict)
+    player_policy: tuple[float, ...] = ()
+    enemy_policy: tuple[float, ...] = ()
+    root_value: float = 0.0
+    exploitability: float = 0.0
+    expanded: bool = False
+    visits: int = 0
+    solve_count: int = 0
+    player_strategy_sum: list[float] = field(default_factory=list)
+    enemy_strategy_sum: list[float] = field(default_factory=list)
+    player_regrets: list[float] = field(default_factory=list)
+    enemy_regrets: list[float] = field(default_factory=list)
+    sampled_pairs: set[tuple[int, int]] = field(default_factory=set)
+
+
+class SimultaneousTreeSearch(BatchedJointRegretSearch):
+    """Matrix-valued SM-MCTS with RM+ at every expanded simultaneous node.
+
+    Expansion covers the complete legal joint matrix. Later visits spend their
+    budget on equilibrium-relevant descendants and explicit fresh chance
+    outcomes instead of independent disposable rollout trajectories.
+    """
+
+    def __init__(
+        self,
+        server: SearchServer,
+        player_network: BattleTransformer,
+        enemy_network: BattleTransformer,
+        config: JointSearchConfig,
+        selection_rng: random.Random,
+        chance_rng: random.Random,
+    ) -> None:
+        super().__init__(
+            server,
+            player_network,
+            enemy_network,
+            config,
+            selection_rng,
+            chance_rng,
+        )
+        if config.expansion_budget < 1:
+            raise ValueError("tree expansion budget must be positive")
+        if not 0.0 <= config.exploration <= 1.0:
+            raise ValueError("tree exploration must be in [0, 1]")
+        if not 0.0 <= config.chance_resample <= 1.0:
+            raise ValueError("tree chance resampling must be in [0, 1]")
+        if config.regret_iterations_per_update < 1:
+            raise ValueError("tree regret iterations per update must be positive")
+        if config.deeper_joint_rotations < 1:
+            raise ValueError("deeper joint rotations must be positive")
+        if not 1 <= config.minimum_expansion_budget <= config.expansion_budget:
+            raise ValueError("minimum tree budget must be in 1..expansion_budget")
+        if config.convergence_tolerance < 0.0:
+            raise ValueError("tree convergence tolerance must be nonnegative")
+        if config.convergence_patience < 1:
+            raise ValueError("tree convergence patience must be positive")
+        self._evaluation_cache: dict[int, tuple[list[float], list[float], float]] = {}
+        self._expanded_nodes = 0
+        self._chance_outcomes = 0
+        self._max_depth_reached = 0
+        self._sampled_joint_pairs = 0
+        self._possible_joint_pairs = 0
+
+    def _legal_from_priors(self, mask: int, priors: list[float]) -> list[int]:
+        actions = legal_actions(mask, self.action_count)
+        return sorted(actions, key=lambda action: (-priors[action], action))[
+            : self.config.max_actions_per_side
+        ]
+
+    def _make_node(
+        self,
+        snapshot: Snapshot,
+        evaluation: tuple[list[float], list[float], float] | None = None,
+    ) -> _TreeNode:
+        if evaluation is None:
+            evaluation = self._evaluation_cache.get(snapshot.handle)
+        if evaluation is None:
+            players, enemies, values = self._evaluate_many([snapshot])
+            evaluation = (players[0], enemies[0], values[0])
+        player_priors, enemy_priors, leaf_value = evaluation
+        self._evaluation_cache[snapshot.handle] = evaluation
+        player_legal = self._legal_from_priors(snapshot.player_mask, player_priors)
+        enemy_legal = self._legal_from_priors(snapshot.enemy_mask, enemy_priors)
+        node = _TreeNode(
+            snapshot=snapshot,
+            player_priors=player_priors,
+            enemy_priors=enemy_priors,
+            leaf_value=leaf_value,
+            player_legal=player_legal,
+            enemy_legal=enemy_legal,
+            payoff=[[0.0] * self.action_count for _ in range(self.action_count)],
+            counts=[[0] * self.action_count for _ in range(self.action_count)],
+            player_strategy_sum=[0.0] * self.action_count,
+            enemy_strategy_sum=[0.0] * self.action_count,
+            player_regrets=[0.0] * self.action_count,
+            enemy_regrets=[0.0] * self.action_count,
+        )
+        for player_action in player_legal:
+            for enemy_action in enemy_legal:
+                node.payoff[player_action][enemy_action] = leaf_value
+        return node
+
+    @staticmethod
+    def _matrix_value(
+        payoff: PayoffMatrix,
+        player_policy: tuple[float, ...],
+        enemy_policy: tuple[float, ...],
+        player_legal: list[int],
+        enemy_legal: list[int],
+    ) -> float:
+        return sum(
+            player_policy[player] * enemy_policy[enemy] * payoff[player][enemy]
+            for player in player_legal
+            for enemy in enemy_legal
+        )
+
+    @staticmethod
+    def _exploitability(
+        payoff: PayoffMatrix,
+        player_policy: tuple[float, ...],
+        enemy_policy: tuple[float, ...],
+        player_legal: list[int],
+        enemy_legal: list[int],
+    ) -> float:
+        row_best = max(
+            sum(enemy_policy[enemy] * payoff[player][enemy] for enemy in enemy_legal)
+            for player in player_legal
+        )
+        column_best = min(
+            sum(
+                player_policy[player] * payoff[player][enemy] for player in player_legal
+            )
+            for enemy in enemy_legal
+        )
+        return row_best - column_best
+
+    def _solve_node(self, node: _TreeNode) -> None:
+        player: tuple[float, ...] = ()
+        enemy: tuple[float, ...] = ()
+        for _ in range(self.config.regret_iterations_per_update):
+            raw_player = tuple(
+                _strategy(
+                    node.player_regrets,
+                    node.player_priors,
+                    node.player_legal,
+                )
+            )
+            raw_enemy = tuple(
+                _strategy(
+                    node.enemy_regrets,
+                    node.enemy_priors,
+                    node.enemy_legal,
+                )
+            )
+            player, enemy = _gate_voluntary_switches(
+                node.payoff,
+                raw_player,
+                raw_enemy,
+                node.player_priors,
+                node.enemy_priors,
+                node.player_legal,
+                node.enemy_legal,
+            )
+            row_values = [0.0] * self.action_count
+            column_values = [0.0] * self.action_count
+            for player_action in node.player_legal:
+                row_values[player_action] = sum(
+                    enemy[enemy_action] * node.payoff[player_action][enemy_action]
+                    for enemy_action in node.enemy_legal
+                )
+            for enemy_action in node.enemy_legal:
+                column_values[enemy_action] = sum(
+                    player[player_action] * node.payoff[player_action][enemy_action]
+                    for player_action in node.player_legal
+                )
+            value = sum(
+                player[player_action] * row_values[player_action]
+                for player_action in node.player_legal
+            )
+            for action in node.player_legal:
+                node.player_regrets[action] = max(
+                    0.0,
+                    node.player_regrets[action] + row_values[action] - value,
+                )
+                node.player_strategy_sum[action] += player[action]
+            for action in node.enemy_legal:
+                node.enemy_regrets[action] = max(
+                    0.0,
+                    node.enemy_regrets[action] + value - column_values[action],
+                )
+                node.enemy_strategy_sum[action] += enemy[action]
+            node.solve_count += 1
+        node.player_policy = player
+        node.enemy_policy = enemy
+        node.root_value = self._matrix_value(
+            node.payoff,
+            player,
+            enemy,
+            node.player_legal,
+            node.enemy_legal,
+        )
+        node.exploitability = self._exploitability(
+            node.payoff,
+            player,
+            enemy,
+            node.player_legal,
+            node.enemy_legal,
+        )
+
+    @staticmethod
+    def _record_value(
+        node: _TreeNode, player_action: int, enemy_action: int, value: float
+    ) -> None:
+        count = node.counts[player_action][enemy_action]
+        current = node.payoff[player_action][enemy_action]
+        node.payoff[player_action][enemy_action] = (current * count + value) / (
+            count + 1
+        )
+        node.counts[player_action][enemy_action] = count + 1
+
+    def _evaluate_successors(
+        self, snapshots: list[Snapshot]
+    ) -> list[tuple[float, float]]:
+        if any(snapshot.divergence is not None for snapshot in snapshots):
+            raise _TreeDivergence("semantic divergence in tree expansion")
+        active_indexes = [
+            index for index, snapshot in enumerate(snapshots) if not snapshot.done
+        ]
+        active = [snapshots[index] for index in active_indexes]
+        evaluations: dict[int, tuple[list[float], list[float], float]] = {}
+        if active:
+            players, enemies, values = self._evaluate_many(active)
+            for snapshot, player, enemy, value in zip(
+                active, players, enemies, values, strict=True
+            ):
+                evaluation = (player, enemy, value)
+                evaluations[snapshot.handle] = evaluation
+                self._evaluation_cache[snapshot.handle] = evaluation
+        result: list[tuple[float, float]] = []
+        for snapshot in snapshots:
+            if snapshot.done:
+                value = float(snapshot.terminal_return or 0)
+                result.append((value, value))
+            else:
+                leaf_value = evaluations[snapshot.handle][2]
+                result.append((leaf_value, leaf_value))
+        return result
+
+    def _expansion_pairs(
+        self, node: _TreeNode, full_matrix: bool
+    ) -> list[tuple[int, int]]:
+        if full_matrix:
+            return [
+                (player, enemy)
+                for player in node.player_legal
+                for enemy in node.enemy_legal
+            ]
+        pair_count = max(len(node.player_legal), len(node.enemy_legal))
+        rotations = min(self.config.deeper_joint_rotations, len(node.enemy_legal))
+        pairs: list[tuple[int, int]] = []
+        for rotation in range(rotations):
+            for index in range(pair_count):
+                pair = (
+                    node.player_legal[index % len(node.player_legal)],
+                    node.enemy_legal[(index + rotation) % len(node.enemy_legal)],
+                )
+                if pair not in pairs:
+                    pairs.append(pair)
+        return pairs
+
+    def _expand(self, node: _TreeNode, full_matrix: bool = False) -> int:
+        pairs = self._expansion_pairs(node, full_matrix)
+        samples = [
+            (player, enemy, sample)
+            for player, enemy in pairs
+            for sample in range(self.config.chance_samples_per_joint)
+        ]
+        chance = [
+            self.chance_rng.getrandbits(63)
+            for _ in range(self.config.chance_samples_per_joint)
+        ]
+        requests = [
+            (node.snapshot.handle, player, enemy, chance[sample])
+            for player, enemy, sample in samples
+        ]
+        successors = self.server.search_steps(requests)
+        evaluated = self._evaluate_successors(successors)
+        parent_potential = _tactical_potential(node.snapshot.player_features)
+        for sample, successor, evaluation in zip(
+            samples, successors, evaluated, strict=True
+        ):
+            player, enemy, _ = sample
+            leaf_value = evaluation[0]
+            if successor.done:
+                delta = 0.0
+                shaped = leaf_value
+            else:
+                delta = (
+                    _tactical_potential(successor.player_features) - parent_potential
+                )
+                shaped = max(-1.0, min(1.0, leaf_value + delta))
+            node.outcomes.setdefault((player, enemy), []).append(
+                _TreeOutcome(successor, delta, leaf_value)
+            )
+            self._record_value(node, player, enemy, shaped)
+        node.sampled_pairs.update(pairs)
+        node.expanded = True
+        self._expanded_nodes += 1
+        self._possible_joint_pairs += len(node.player_legal) * len(node.enemy_legal)
+        self._sampled_joint_pairs += len(pairs)
+        self._chance_outcomes += len(successors)
+        self._solve_node(node)
+        return len(successors)
+
+    def _mixed_policy(
+        self, policy: tuple[float, ...], legal: list[int], visits: int
+    ) -> list[float]:
+        epsilon = max(0.02, self.config.exploration / ((visits + 1) ** 0.5))
+        result = [0.0] * self.action_count
+        for action in legal:
+            result[action] = (1.0 - epsilon) * policy[action] + epsilon / len(legal)
+        return result
+
+    def _new_chance_outcome(
+        self, node: _TreeNode, player_action: int, enemy_action: int
+    ) -> _TreeOutcome:
+        successor = self.server.search_step(
+            node.snapshot.handle,
+            player_action,
+            enemy_action,
+            self.chance_rng.getrandbits(63),
+        )
+        evaluated = self._evaluate_successors([successor])[0][0]
+        if successor.done:
+            delta = 0.0
+        else:
+            delta = _tactical_potential(
+                successor.player_features
+            ) - _tactical_potential(node.snapshot.player_features)
+        outcome = _TreeOutcome(successor, delta, evaluated)
+        pair = (player_action, enemy_action)
+        node.outcomes.setdefault(pair, []).append(outcome)
+        if pair not in node.sampled_pairs:
+            node.sampled_pairs.add(pair)
+            self._sampled_joint_pairs += 1
+        self._chance_outcomes += 1
+        return outcome
+
+    def _joint_cost(self, node: _TreeNode) -> int:
+        return (
+            len(self._expansion_pairs(node, False))
+            * self.config.chance_samples_per_joint
+        )
+
+    def _simulate(
+        self, node: _TreeNode, depth: int, remaining: int
+    ) -> tuple[float, int, bool]:
+        self._max_depth_reached = max(self._max_depth_reached, depth)
+        node.visits += 1
+        player_policy = self._mixed_policy(
+            node.player_policy, node.player_legal, node.visits
+        )
+        enemy_policy = self._mixed_policy(
+            node.enemy_policy, node.enemy_legal, node.visits
+        )
+        player_action = _sample(player_policy, self.selection_rng)
+        enemy_action = _sample(enemy_policy, self.selection_rng)
+        cost = 0
+        pair = (player_action, enemy_action)
+        if pair not in node.outcomes and remaining <= 0:
+            return node.root_value, 0, False
+        fresh = pair not in node.outcomes or (
+            remaining > 0 and self.selection_rng.random() < self.config.chance_resample
+        )
+        if fresh:
+            outcome = self._new_chance_outcome(node, player_action, enemy_action)
+            cost = 1
+        else:
+            outcomes = node.outcomes[pair]
+            outcome = outcomes[self.selection_rng.randrange(len(outcomes))]
+        successor = outcome.snapshot
+        if successor.done:
+            value = float(successor.terminal_return or 0)
+            learned = fresh
+        elif depth + 1 >= self.config.max_depth:
+            value = max(-1.0, min(1.0, outcome.leaf_value + outcome.tactical_delta))
+            learned = fresh
+        else:
+            child = node.children.get(successor.handle)
+            if child is None:
+                child = self._make_node(successor)
+                node.children[successor.handle] = child
+            if not child.expanded:
+                expansion_cost = self._joint_cost(child)
+                if cost + expansion_cost <= remaining:
+                    cost += self._expand(child, False)
+                    self._max_depth_reached = max(self._max_depth_reached, depth + 1)
+                    value = max(
+                        -1.0,
+                        min(1.0, outcome.tactical_delta + child.root_value),
+                    )
+                    learned = True
+                else:
+                    value = max(
+                        -1.0,
+                        min(1.0, outcome.leaf_value + outcome.tactical_delta),
+                    )
+                    learned = fresh
+            else:
+                child_value, child_cost, child_learned = self._simulate(
+                    child, depth + 1, remaining - cost
+                )
+                learned = fresh or child_learned
+                cost += child_cost
+                value = max(
+                    -1.0,
+                    min(1.0, outcome.tactical_delta + child_value),
+                )
+        if learned:
+            self._record_value(node, player_action, enemy_action, value)
+            self._solve_node(node)
+        return value, cost, learned
+
+    @staticmethod
+    def _average_policy(
+        strategy_sum: list[float], solves: int, fallback: tuple[float, ...]
+    ) -> tuple[float, ...]:
+        if solves <= 0:
+            return fallback
+        return tuple(value / solves for value in strategy_sum)
+
+    def search(self, snapshot: Snapshot, sample_actions: bool = True) -> SearchResult:
+        if snapshot.done:
+            raise ValueError("cannot search a terminal state")
+        players, enemies, values = self._evaluate_many([snapshot])
+        root_evaluation = (players[0], enemies[0], values[0])
+        root = self._make_node(snapshot, root_evaluation)
+        transitions = 0
+        simulations = 0
+        converged = False
+        previous_player: tuple[float, ...] | None = None
+        previous_enemy: tuple[float, ...] | None = None
+        stable_updates = 0
+        try:
+            transitions += self._expand(root, True)
+            attempts_without_learning = 0
+            while transitions < self.config.expansion_budget:
+                _, cost, learned = self._simulate(
+                    root, 0, self.config.expansion_budget - transitions
+                )
+                transitions += cost
+                if learned:
+                    simulations += 1
+                    attempts_without_learning = 0
+                    current_player = self._average_policy(
+                        root.player_strategy_sum,
+                        root.solve_count,
+                        root.player_policy,
+                    )
+                    current_enemy = self._average_policy(
+                        root.enemy_strategy_sum,
+                        root.solve_count,
+                        root.enemy_policy,
+                    )
+                    if previous_player is not None and previous_enemy is not None:
+                        change = sum(
+                            abs(left - right)
+                            for left, right in zip(
+                                current_player, previous_player, strict=True
+                            )
+                        ) + sum(
+                            abs(left - right)
+                            for left, right in zip(
+                                current_enemy, previous_enemy, strict=True
+                            )
+                        )
+                        stable_updates = (
+                            stable_updates + 1
+                            if change <= self.config.convergence_tolerance
+                            else 0
+                        )
+                    previous_player = current_player
+                    previous_enemy = current_enemy
+                    if (
+                        transitions >= self.config.minimum_expansion_budget
+                        and self._max_depth_reached >= self.config.max_depth - 1
+                        and stable_updates >= self.config.convergence_patience
+                    ):
+                        converged = True
+                        break
+                else:
+                    attempts_without_learning += 1
+                    if attempts_without_learning >= 64:
+                        break
+        except _TreeDivergence:
+            player_policy = players[0]
+            enemy_policy = enemies[0]
+            return SearchResult(
+                tuple(player_policy),
+                tuple(enemy_policy),
+                _sample(player_policy, self.selection_rng),
+                _sample(enemy_policy, self.selection_rng),
+                values[0],
+                transitions,
+                "network-fallback-on-semantic-divergence-v1",
+                None,
+                None,
+                None,
+                {
+                    "tree_nodes": self._expanded_nodes,
+                    "tree_simulations": simulations,
+                    "tree_max_depth": self._max_depth_reached,
+                    "chance_outcomes": self._chance_outcomes,
+                    "sampled_joint_coverage": (
+                        self._sampled_joint_pairs / self._possible_joint_pairs
+                        if self._possible_joint_pairs
+                        else 0.0
+                    ),
+                    "tree_converged": int(converged),
+                },
+            )
+        player_policy = self._average_policy(
+            root.player_strategy_sum, root.solve_count, root.player_policy
+        )
+        enemy_policy = self._average_policy(
+            root.enemy_strategy_sum, root.solve_count, root.enemy_policy
+        )
+        if sample_actions:
+            player_action = _sample(list(player_policy), self.selection_rng)
+            enemy_action = _sample(list(enemy_policy), self.selection_rng)
+        else:
+            player_action = max(
+                root.player_legal, key=lambda action: player_policy[action]
+            )
+            enemy_action = max(
+                root.enemy_legal, key=lambda action: enemy_policy[action]
+            )
+        root_value = self._matrix_value(
+            root.payoff,
+            player_policy,
+            enemy_policy,
+            root.player_legal,
+            root.enemy_legal,
+        )
+        exploitability = self._exploitability(
+            root.payoff,
+            player_policy,
+            enemy_policy,
+            root.player_legal,
+            root.enemy_legal,
+        )
+        legal_payoffs = [
+            root.payoff[player][enemy]
+            for player in root.player_legal
+            for enemy in root.enemy_legal
+        ]
+        return SearchResult(
+            player_policy,
+            enemy_policy,
+            player_action,
+            enemy_action,
+            root_value,
+            transitions,
+            "simultaneous-matrix-tree-rmplus-v1",
+            exploitability,
+            max(legal_payoffs) - min(legal_payoffs),
+            tuple(tuple(row) for row in root.payoff),
+            {
+                "tree_nodes": self._expanded_nodes,
+                "tree_simulations": simulations,
+                "tree_max_depth": self._max_depth_reached,
+                "chance_outcomes": self._chance_outcomes,
+                "root_joint_actions": len(root.player_legal) * len(root.enemy_legal),
+                "root_solves": root.solve_count,
+                "sampled_joint_coverage": (
+                    self._sampled_joint_pairs / self._possible_joint_pairs
+                    if self._possible_joint_pairs
+                    else 0.0
+                ),
+                "tree_converged": int(converged),
+            },
         )

@@ -29,17 +29,27 @@ jobs:
         run: nix develop -c lake -d packages/battle-lean exe battleSelfPlay
       - name: Run full-party model-against-itself smoke matrix
         run: nix develop -c lake -d packages/battle-lean exe battleFullSelfPlay
-      - name: Train and replay the restricted link policy end to end
+      - name: Train and replay the full-party simultaneous tree end to end
         run: |
           out="$(mktemp -d)"
           trap 'rm -rf "$out"' EXIT
           nix develop -c python -m unittest discover -s packages/battle-training/tests
           nix develop -c python packages/battle-training/train.py transformer-smoke \
             --output "$out" --device cpu --iterations 1 --episodes 2 \
-            --arena-episodes 2 --chance-samples-per-joint 1 \
+            --arena-episodes 4 --chance-samples-per-joint 1 \
             --search-depth 1 --budget 64 --epochs 1 \
             --d-model 32 --heads 4 --layers 1 --feedforward 64
           nix develop -c python packages/battle-training/train.py verify "$out"
+          nix develop -c python - <<'PY'
+          from battle_training.native import SearchServer
+          with SearchServer() as server:
+              first = server.reset(1, 0)
+              second = server.reset_append(2, 0)
+              compact = server.compact_many([second.handle, first.handle])
+              assert [state.handle for state in compact] == [0, 1]
+              assert compact[0].player_hash == second.player_hash
+              assert compact[1].player_hash == first.player_hash
+          PY
       - name: Check canonical address/range closure
         run: python3 tools/check-pokered-closure.py
       - name: Check documentation against nested source
