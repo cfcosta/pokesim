@@ -1,53 +1,90 @@
 # battle-training
 
 `battle-training` is the external actor–learner and evaluation project for the
-verified Lean battle model. Lean owns team generation and mechanics. This
-project owns immutable replay shards, policy checkpoints, learning, evaluation,
-and reproducibility checks.
+verified Lean battle model. Lean owns team generation, immutable search states,
+chance forks, and mechanics. Python owns the transformer, simultaneous MCTS,
+replay shards, optimization, checkpoints, and evaluation.
 
 The first executable profile is `ordinary-link-1v1-perfect-v1`: a restricted
-one-Pokémon link battle used to prove the pipeline works end to end before
-full-party search and neural inference are introduced.
+one-Pokémon link battle used to validate the full AlphaZero-style loop before
+normalizing every full-party decision protocol.
 
-## End-to-end smoke training
+## Transformer + MCTS smoke training
 
 From the repository root:
 
 ```sh
-nix develop -c python -m unittest discover -s packages/battle-training/tests
-nix develop -c python packages/battle-training/train.py smoke \
-  --output artifacts/training/smoke
+nix develop -c python packages/battle-training/train.py transformer-smoke \
+  --output artifacts/training/transformer-smoke
+
 nix develop -c python packages/battle-training/train.py verify \
-  artifacts/training/smoke
+  artifacts/training/transformer-smoke
 ```
 
-The smoke command:
+The smoke command performs the complete loop:
 
-1. builds the native Lean worker;
-2. evaluates an untrained checkpoint;
-3. collects deterministic player- and enemy-side replay shards;
-4. updates a terminal-return move-value policy;
-5. evaluates each immutable checkpoint;
-6. writes SHA-256 manifests; and
-7. regenerates one shard and requires byte-for-byte replay equality.
+1. builds and starts the persistent Lean search server;
+2. initializes a side-canonical transformer policy/value network;
+3. runs stochastic simultaneous-move MCTS with Exp3 node selection;
+4. forks hidden search chance through `fresh-root-v1` without reading the
+   episode RNG suffix;
+5. records MCTS visit distributions and witnessed terminal values;
+6. optimizes policy cross-entropy plus value MSE with AdamW;
+7. publishes model and optimizer checkpoints;
+8. runs a side-swapped final-versus-initial arena;
+9. writes SHA-256 manifests; and
+10. regenerates the first MCTS shard byte for byte from checkpoint zero.
 
-This is deliberately a small learner, not the final Pokémon agent. Its purpose
-is to exercise the real mechanics-to-checkpoint-to-evaluation loop without
-introducing a second battle simulator.
+Default smoke settings use a small two-layer transformer and twelve simulations
+per decision. `transformer-train` defaults to a four-layer, 128-wide model and a
+larger search budget:
+
+```sh
+nix develop -c python packages/battle-training/train.py transformer-train \
+  --output artifacts/training/run-001 \
+  --iterations 20 --episodes 256 --simulations 96 --search-depth 8
+```
+
+Use `--device cpu`, `--device cuda`, or `--device auto`. The uv2nix development
+environment is generated from `uv.lock`; on supported Linux hosts it includes
+the CUDA PyTorch wheel and the NixOS runtime-library fixes required to use the
+GPU.
+
+## Model
+
+Each mechanics scalar is encoded as low- and high-byte embeddings plus a learned
+field-position embedding. A learned CLS token attends over all 100
+side-canonical state fields. Two heads predict:
+
+- logits for the four restricted link move-slot actions; and
+- a bounded terminal value in `[-1, 1]`.
+
+MCTS masks illegal actions before inference. Search maintains independent Exp3
+weights for both simultaneous players and samples semantic outcomes through the
+native Lean server. Search-selection entropy, search-chance entropy, real battle
+entropy, and team-generation entropy remain separate.
+
+## Native boundary
+
+`battleSearchServer` stores immutable `Battle.RL.Environment.State` values behind
+integer handles. `step ... fresh ...` installs a named search chance fork;
+`step ... episode ...` advances the real trajectory with its existing hidden
+RNG. Python cannot mutate or resolve battle state itself.
+
+The earlier terminal-return move table remains available as `tabular-smoke` and
+`tabular-train`. It is a protocol baseline, not the intended learning system.
 
 ## Boundaries
 
-- The worker executes `Battle.RL.Environment`; Python never resolves a turn.
-- Future episode RNG bytes are absent from transition records and policy input.
-- Generator, battle, player-policy, and enemy-policy entropy use separate,
-  versioned counter-derived streams.
-- Only `finished` episodes produce terminal learning labels.
-- `truncated`, blocked, invalid, RNG-stuck, and division-freeze episodes remain
-  explicit and are excluded from updates.
-- A checkpoint is deployable only for the exact profile and schema recorded in
-  its manifest.
-- This restricted synchronized profile is not yet the paired-cartridge emulator
-  deployment profile and is not a claim of ROM equivalence.
+- Only `finished` episodes produce value targets.
+- Truncation and mechanics failures never receive fabricated terminal labels.
+- The synchronized restricted profile is not yet the paired-cartridge emulator
+  deployment profile.
+- Exp3 MCTS is implemented, but inference is currently synchronous rather than a
+  multi-worker batched service.
+- Full parties remain blocked on normalized forced-switch and nested requests.
+- This training pipeline is theorem-backed model execution, not a proof of
+  behavioral equivalence to the Pokémon Red battle ROM.
 
-See [`CHECKLIST.md`](CHECKLIST.md) for the path from this smoke loop to the full
-actor–learner system.
+See [`CHECKLIST.md`](CHECKLIST.md) for the remaining path to full-party paired
+link deployment.

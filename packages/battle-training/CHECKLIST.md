@@ -17,7 +17,7 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Reproduce a shard byte for byte from its seed and checkpoint.
 - [ ] Normalize every full-engine one-side and nested decision request.
 - [ ] Define a mechanics-complete full-party tensor schema.
-- [ ] Add arbitrary pause/clone handles for native search workers.
+- [x] Add immutable pause/branch handles for the restricted native search server.
 - [ ] Execute the restricted synchronized profile through `Full.Link.Pair`.
 - [ ] Reproduce stock setup rejection, clock roles, and leading-zero mismatch in
       paired episodes.
@@ -38,21 +38,22 @@ rows remain required before the corresponding profile can be called complete.
 
 ## M2 — simultaneous search
 
-- [ ] Add native state cloning benchmarks independent of episode throughput.
+- [ ] Add native state-branch benchmarks independent of episode throughput.
 - [ ] Evaluate every legal joint action at shallow roots.
 - [ ] Add regret-matching simultaneous MCTS.
-- [ ] Add Exp3 simultaneous MCTS as a second named solver.
+- [x] Add sampled stochastic Exp3 simultaneous MCTS for the restricted profile.
 - [ ] Keep opponent-sampled PUCT only as a named best-response baseline.
-- [ ] Implement `fresh-root-v1` without access to episode future RNG.
+- [x] Implement `fresh-root-v1` without access to episode future RNG.
 - [ ] Report exploitability/regret proxies on small exact games.
 
 ## M3 — batched policy/value learning
 
-- [ ] Freeze side-canonical tensor and action-mask schemas.
-- [ ] Run a batched inference service outside Lean.
+- [x] Freeze the restricted 100-field side-canonical tensor and action mask.
+- [x] Train a byte/position-embedding transformer outside Lean.
+- [ ] Run a multi-worker batched inference service outside Lean.
 - [ ] Add bounded worker queues and inference timeouts.
-- [ ] Train policy and terminal value heads from search targets.
-- [ ] Publish immutable model, optimizer, and schema checkpoints.
+- [x] Train policy and terminal value heads from MCTS/terminal targets.
+- [x] Publish immutable model, optimizer, schema, and SHA-256 checkpoints.
 - [ ] Resume bit-for-bit from a checkpoint and replay ledger.
 - [ ] Compare network-only, PUCT, regret-MCTS, and Exp3-MCTS policies.
 
@@ -88,8 +89,8 @@ rows remain required before the corresponding profile can be called complete.
 
 ## Completion rule
 
-“End-to-end training works” currently means the checked M0/M1 smoke slice can
-collect native trajectories, learn an external checkpoint, evaluate it on both
-sides, and reproduce its immutable artifacts. “Deployable Pokémon agent” means
-all relevant M0–M6 rows for `full-link-paired-player-v1` are checked and their
-quality gates pass.
+“End-to-end training works” currently means the restricted transformer can
+collect Lean-owned MCTS trajectories, train policy/value heads on GPU or CPU,
+evaluate a side-swapped checkpoint, and reproduce its first search shard.
+“Deployable Pokémon agent” still means all relevant M0–M6 rows for
+`full-link-paired-player-v1` are checked and their quality gates pass.

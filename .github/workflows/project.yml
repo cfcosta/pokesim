@@ -34,8 +34,10 @@ jobs:
           out="$(mktemp -d)"
           trap 'rm -rf "$out"' EXIT
           nix develop -c python -m unittest discover -s packages/battle-training/tests
-          nix develop -c python packages/battle-training/train.py smoke \
-            --output "$out" --iterations 1 --episodes 32 --eval-episodes 64
+          nix develop -c python packages/battle-training/train.py transformer-smoke \
+            --output "$out" --device cpu --iterations 1 --episodes 2 \
+            --arena-episodes 2 --simulations 4 --search-depth 2 --epochs 1 \
+            --d-model 32 --heads 4 --layers 1 --feedforward 64
           nix develop -c python packages/battle-training/train.py verify "$out"
       - name: Check canonical address/range closure
         run: python3 tools/check-pokered-closure.py
