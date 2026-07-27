@@ -47,7 +47,7 @@ persistent regret matching+. Unsearched real decisions use the network policy
 directly. This keeps six-member runs practical without top-k action pruning.
 `transformer-train` is an overnight profile:
 30 iterations of 500 training battles, or 15,000 independently reset random
-6v6 battles. It uses depth-four policy rollouts, the 938,510-parameter
+6v6 battles. It uses depth-four simultaneous trees, the 938,638-parameter
 four-layer, 128-wide model, two epochs per iteration, a CUDA-safe batch size of
 128, and a 1,024-game final arena. The tree used 320 native transitions per
 searched root and was 1.31× slower than disposable depth-four rollouts in a
@@ -93,9 +93,10 @@ and AdamW state. AdamW state otherwise persists across collection iterations.
 ## Model
 
 Each mechanics scalar is encoded as low- and high-byte embeddings plus a learned
-field-position embedding. A learned CLS token attends over all 477
-side-canonical full-party fields. The v2 tail adds canonical move descriptors,
-current type-effectiveness values, and offensive/incoming matchup scores; this
+field-position embedding. A learned CLS token attends over all 478
+side-canonical full-party fields. The v3 schema retains the move descriptors,
+current type-effectiveness values, and offensive/incoming matchup scores from v2
+and adds the pending Mimic continuation action; this
 keeps small networks from having to rediscover static ROM tables from terminal
 labels. Two heads predict:
 
@@ -123,10 +124,12 @@ team-generation entropy remain separate.
 typed Mimic continuations behind integer handles. `step ... fresh ...` installs
 a named search chance fork;
 `batch` derives many such successors in one native request; `reset-append` and
-`compact-many` retain and remap several live episode roots; `step ... episode
-...` advances a real trajectory with its existing hidden RNG. Python cannot
-mutate or resolve battle state itself. Neural leaves are evaluated in bounded
-GPU batches within each root search.
+`compact-many` retain and remap several live episode roots; `batch-episode`
+advances several real trajectories with their existing hidden RNG. Python cannot
+mutate or resolve battle state itself. Actors run in groups of 16. Root matrices,
+root leaf inference, network-only decisions, and real episode transitions are
+batched across compatible independent roots; deeper progressive simulations
+remain root-local.
 
 Arena directories contain Showdown-style `.log` replays plus aggregate metrics
 for damage-move effectiveness relative to the best legal damaging move, status
@@ -155,9 +158,9 @@ The earlier terminal-return move table remains available as `tabular-smoke` and
   indefinitely.
 - The synchronized full-party profile is still a hot-path quotient, not the
   paired-cartridge emulator deployment profile.
-- Node expansion batches native stepping and inference within one root, but
-  there is not yet a multi-worker service that combines leaves from independent
-  roots; this is now the primary performance bottleneck.
+- Cross-root batching currently combines complete root matrices and unsearched
+  policy decisions. Deeper progressive frontier expansion still runs one root at
+  a time; batching that frontier is the remaining accelerator bottleneck.
 - Deeper matrices use progressive joint sampling rather than exhaustive pair
   coverage. Artifacts report sampled-joint coverage separately from mandatory
   legal-action coverage.

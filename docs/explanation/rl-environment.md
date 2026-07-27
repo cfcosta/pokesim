@@ -359,7 +359,7 @@ For debugging, provide a structured JSON view derived from the canonical snapsho
 
 ## Batching and performance
 
-The instruction-level machine interpreter is too expensive for routine RL stepping. Training uses the extracted high-level Lean core whose equivalence has been proved.
+The instruction-level machine interpreter is too expensive for routine RL stepping. Training therefore uses the high-level Lean core. Its ROM equivalence is the required justification for this optimization, but that whole-battle theorem is not yet proved; current claims remain profile- and certificate-qualified.
 
 Performance work should follow this order:
 

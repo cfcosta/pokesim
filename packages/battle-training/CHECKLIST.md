@@ -16,7 +16,7 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Support policy control from either cartridge side.
 - [x] Reproduce a shard byte for byte from its seed and checkpoint.
 - [ ] Normalize every full-engine one-side and nested decision request.
-- [x] Define the 477-field full-party perfect-information and tactical schema.
+- [x] Define the audited 478-field full-party perfect-information and tactical schema.
 - [x] Add immutable pause/branch handles for the full-party native search server.
 - [x] Batch independent fresh-chance branches in one native request.
 - [ ] Execute the synchronized full-party profile through `Full.Link.Pair`.
@@ -49,7 +49,8 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Represent sampled chance outcomes as explicit edges with independent search keys.
 - [x] Guarantee exploration support for every legal move and switch without top-k pruning.
 - [x] Add native `reset-append` and `compact-many` multi-root state retention.
-- [ ] Schedule simultaneous-tree frontier expansion across independent roots.
+- [x] Batch complete root matrices across independent live episodes.
+- [ ] Schedule deeper progressive frontier expansion across independent roots.
 - [x] Validate RM+ and deeper backups on exact matrices and a stochastic toy game.
 - [ ] Keep opponent-sampled PUCT only as a named best-response baseline.
 - [x] Implement `fresh-root-v1` without access to episode future RNG.
@@ -57,10 +58,11 @@ rows remain required before the corresponding profile can be called complete.
 
 ## M3 — batched policy/value learning
 
-- [x] Freeze the full-party 477-field side-canonical tensor and 13-action mask.
+- [x] Freeze the full-party 478-field side-canonical tensor and 13-action mask.
 - [x] Train a byte/position-embedding transformer outside Lean.
 - [x] Batch bounded leaf inference within each exhaustive root search.
-- [ ] Run a multi-worker batched inference service across independent roots.
+- [x] Batch root-leaf and network-policy inference across compatible roots.
+- [ ] Run a multi-worker service for deeper frontier inference.
 - [ ] Add bounded worker queues and inference timeouts.
 - [x] Train policy and terminal value heads from MCTS/terminal targets.
 - [x] Publish immutable model, optimizer, schema, and SHA-256 checkpoints.
