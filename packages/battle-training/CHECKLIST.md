@@ -16,7 +16,7 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Support policy control from either cartridge side.
 - [x] Reproduce a shard byte for byte from its seed and checkpoint.
 - [ ] Normalize every full-engine one-side and nested decision request.
-- [x] Define the 417-field full-party perfect-information tensor schema.
+- [x] Define the 477-field full-party perfect-information and tactical schema.
 - [x] Add immutable pause/branch handles for the full-party native search server.
 - [x] Batch independent fresh-chance branches in one native request.
 - [ ] Execute the synchronized full-party profile through `Full.Link.Pair`.
@@ -51,7 +51,7 @@ rows remain required before the corresponding profile can be called complete.
 
 ## M3 — batched policy/value learning
 
-- [x] Freeze the full-party 417-field side-canonical tensor and 13-action mask.
+- [x] Freeze the full-party 477-field side-canonical tensor and 13-action mask.
 - [x] Train a byte/position-embedding transformer outside Lean.
 - [x] Batch bounded leaf inference within each exhaustive root search.
 - [ ] Run a multi-worker batched inference service across independent roots.
@@ -79,7 +79,8 @@ rows remain required before the corresponding profile can be called complete.
 - [ ] Sample latest, historical, and exploiter opponents.
 - [ ] Retain held-out teams and seeds outside actor sampling.
 - [ ] Produce checkpoint payoff matrices and Nash-mixture estimates.
-- [ ] Gate promotion on paired evaluation with confidence intervals.
+- [x] Reject updates below a held-out scratch-anchor promotion floor.
+- [ ] Gate final promotion on paired evaluation with confidence intervals.
 - [ ] Detect policy cycling and catastrophic forgetting.
 - [ ] Keep team generation outside battle-control policy training.
 

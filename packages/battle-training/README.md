@@ -69,25 +69,33 @@ nix develop -c python packages/battle-training/train.py transformer-train \
   --opponent-fraction 0.5
 ```
 
-The pipeline copies the fixed checkpoint into the immutable run, records its
-SHA-256 identity in every shard, evaluates the final candidate against both its
-scratch initialization and the fixed opponent, and includes the opponent in
-deterministic shard regeneration. AdamW state now persists across collection
-iterations instead of being reset after every shard.
+The pipeline copies fixed checkpoints into the immutable run, anchors half of
+default collection against the scratch initialization and a rolling historical
+window, records opponent SHA-256 identities in every shard, and includes the
+initial population in deterministic shard regeneration. Each update receives a
+64-game held-out promotion check against initialization; a score below 40% with
+truncations counted as losses restores both model and AdamW state. AdamW state
+otherwise persists across collection iterations.
 
 ## Model
 
 Each mechanics scalar is encoded as low- and high-byte embeddings plus a learned
-field-position embedding. A learned CLS token attends over all 417
-side-canonical full-party state fields. Two heads predict:
+field-position embedding. A learned CLS token attends over all 477
+side-canonical full-party fields. The v2 tail adds canonical move descriptors,
+current type-effectiveness values, and offensive/incoming matchup scores; this
+keeps small networks from having to rediscover static ROM tables from terminal
+labels. Two heads predict:
 
 - logits for all 13 stable link action IDs; and
 - a bounded terminal value in `[-1, 1]`.
 
 Search and policy loss mask illegal actions. The search batches native
 transitions and neural inference, estimates every legal root joint payoff, and
-uses regret matching+ to produce one mixed target per side. Common random
-numbers couple sampled chance seeds across actions only inside the estimator;
+uses regret matching+ to produce one mixed target per side. A dense,
+antisymmetric HP/faint/status delta stabilizes one-step leaf estimates, and an
+adaptive 10–30% aggregate switch cap applies only to voluntary-switch targets;
+all six switch actions remain evaluated and retain nonzero support. Common
+random numbers couple sampled chance seeds across actions only inside the estimator;
 each action retains the required `fresh-root-v1` marginal distribution. The old
 sequential Exp3 path and its replay compatibility have been removed.
 Search-selection entropy, search-chance entropy, real battle entropy, and
@@ -114,7 +122,15 @@ The earlier terminal-return move table remains available as `tabular-smoke` and
 ## Boundaries
 
 - Only `finished` episodes produce value targets.
-- Truncation and mechanics failures never receive fabricated terminal labels.
+- Horizon truncation, classified silent divergence, and mechanics timeouts never
+  receive fabricated terminal labels.
+- Every native request has a 15-second process-level timeout. Arena episodes
+  restart with a fresh server after timeout and report `mechanics_timeouts`;
+  collection timeouts kill the worker, write a failed iteration metric, and
+  reject the run.
+- Generated Mirror Move against a recorded Mirror Move is classified as
+  `nested-mirror-move-cycle` silent divergence rather than consuming host CPU
+  indefinitely.
 - The synchronized full-party profile is still a hot-path quotient, not the
   paired-cartridge emulator deployment profile.
 - Root search now batches native stepping and inference, but there is not yet a
