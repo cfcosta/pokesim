@@ -20,20 +20,26 @@ private inductive SearchState where
   | battle (state : Full.Environment.State) (events : List Full.Engine.Event)
   | mimic (state : Full.Environment.State) (actor : Side) (sourceSlot : Fin 4)
       (nextAction : Option Full.Action) (events : List Full.Engine.Event)
+  | diverged (state : Full.Environment.State) (reason : String)
+      (events : List Full.Engine.Event)
 
 private def SearchState.base : SearchState → Full.Environment.State
-  | .battle state _ | .mimic state _ _ _ _ => state
+  | .battle state _ | .mimic state _ _ _ _ | .diverged state _ _ => state
 
 private def SearchState.events : SearchState → List Full.Engine.Event
-  | .battle _ events | .mimic _ _ _ _ events => events
+  | .battle _ events | .mimic _ _ _ _ events | .diverged _ _ events => events
 
 private def SearchState.requestActor : SearchState → Option Side
-  | .battle _ _ => none
+  | .battle _ _ | .diverged _ _ _ => none
   | .mimic _ actor _ _ _ => some actor
 
 private def SearchState.sourceSlot : SearchState → Nat
-  | .battle _ _ => 0
+  | .battle _ _ | .diverged _ _ _ => 0
   | .mimic _ _ source _ _ => source.val
+
+private def SearchState.divergence : SearchState → Option String
+  | .diverged _ reason _ => some reason
+  | _ => none
 
 private def SearchState.requestName : SearchState → String
   | .battle state _ =>
@@ -43,6 +49,7 @@ private def SearchState.requestName : SearchState → String
       | some .enemy => "forced-enemy"
   | .mimic _ .player _ _ _ => "mimic-player"
   | .mimic _ .enemy _ _ _ => "mimic-enemy"
+  | .diverged _ _ _ => "silent-divergence"
 
 private def naturalsJson (values : Array Nat) : String :=
   "[" ++ String.intercalate "," (values.toList.map toString) ++ "]"
@@ -69,6 +76,7 @@ private def legalMask : SearchState → Side → Nat
       | none => actionMask (Full.Environment.legalActions state side)
   | .mimic state actor _ _ _, side =>
       if actor == side then mimicMask state actor else 2 ^ 10
+  | .diverged _ _ _, _ => 2 ^ 10
 
 private def playerReturn (state : Full.Environment.State) : Int :=
   match state.engine.battle.phase with
@@ -86,7 +94,10 @@ private def snapshotFields (search : SearchState) : String :=
   let done := Full.Environment.done state
   let terminal := state.engine.battle.phase.isTerminal
   let result := if done then toString (playerReturn state) else "null"
-  s!"\"player_features\":{naturalsJson player},\"enemy_features\":{naturalsJson enemy},\"player_mask\":{legalMask search .player},\"enemy_mask\":{legalMask search .enemy},\"player_hash\":\"{FullTraining.fingerprint state .player search.requestActor search.sourceSlot}\",\"enemy_hash\":\"{FullTraining.fingerprint state .enemy search.requestActor search.sourceSlot}\",\"turn\":{state.engine.battle.turn},\"request\":\"{search.requestName}\",\"terminal\":{boolJson terminal},\"done\":{boolJson done},\"return\":{result}"
+  let divergence := match search.divergence with
+    | none => "null"
+    | some reason => s!"\"{reason}\""
+  s!"\"player_features\":{naturalsJson player},\"enemy_features\":{naturalsJson enemy},\"player_mask\":{legalMask search .player},\"enemy_mask\":{legalMask search .enemy},\"player_hash\":\"{FullTraining.fingerprint state .player search.requestActor search.sourceSlot}\",\"enemy_hash\":\"{FullTraining.fingerprint state .enemy search.requestActor search.sourceSlot}\",\"turn\":{state.engine.battle.turn},\"request\":\"{search.requestName}\",\"divergence\":{divergence},\"terminal\":{boolJson terminal},\"done\":{boolJson done},\"return\":{result}"
 
 private def snapshotJson (handle : Nat) (state : SearchState) : String :=
   "{" ++ s!"\"handle\":{handle},{snapshotFields state}" ++ "}"
@@ -116,6 +127,7 @@ private def installFreshChance (search : SearchState) (seed : Nat) : SearchState
   match search with
   | .battle _ events => .battle state events
   | .mimic _ actor source next events => .mimic state actor source next events
+  | .diverged _ reason events => .diverged state reason events
 
 private inductive NativeStep where
   | transitioned (state : SearchState)
@@ -126,12 +138,35 @@ private def sideName : Side → String
   | .player => "player"
   | .enemy => "enemy"
 
+private def defenderLastMove (state : Full.Environment.State) : Side → MoveId
+  | .player => state.engine.enemyLastMove
+  | .enemy => state.engine.playerLastMove
+
+/-- Generated Mirror Move against a recorded Mirror Move recurs without
+consuming chance or returning to the turn driver. Classify that concrete cycle
+as silent divergence instead of using the native call stack as fuel. -/
+private def nestedMirrorCycle (state : Full.Environment.State) (actor : Side)
+    (move : MoveId) : Bool :=
+  move == 119 && defenderLastMove state actor == 119
+
+private def nestedCycleProbe : Full.Environment.State :=
+  let state := Full.Environment.resetSized Wram.partyLength
+    (Training.linkRng 1 1 Training.generatorStream)
+    (Training.linkRng 1 1 Training.battleStream)
+  { state with engine := { state.engine with playerLastMove := 119 } }
+
+#guard nestedMirrorCycle nestedCycleProbe .enemy 119
+#guard !nestedMirrorCycle nestedCycleProbe .enemy 118
+
 private partial def normalizeResult (prior : List Full.Engine.Event) :
     Full.Environment.StepResult → NativeStep
   | .transitioned state events =>
       .transitioned (.battle (Full.Environment.settle state) (prior ++ events))
   | .nestedMove state actor move events =>
-      normalizeResult (prior ++ events) (Full.Environment.resumeNested state actor move)
+      if nestedMirrorCycle state actor move then
+        .transitioned (.diverged state "nested-mirror-move-cycle" (prior ++ events))
+      else
+        normalizeResult (prior ++ events) (Full.Environment.resumeNested state actor move)
   | .mimicPending state actor source next events =>
       .transitioned (.mimic state actor source next (prior ++ events))
   | .disobediencePending state machine next events =>
@@ -192,6 +227,8 @@ private def stepNative (search : SearchState) (playerId enemyId : Nat)
   | .battle state _ => battleStep state playerId enemyId
   | .mimic state actor source next events =>
       mimicStep state actor source next events playerId enemyId
+  | .diverged state reason events =>
+      .transitioned (.diverged state reason events)
 
 private def parseBatchSpec (raw : String) : Option (Nat × Nat × Nat × Nat) :=
   let fields := raw.splitOn ","

@@ -21,7 +21,7 @@ open Battle Battle.Full
 
 
 def profileVersion : String := "full-link-6v6-perfect-v1"
-def schemaVersion : String := "full-link-6v6-state-v1"
+def schemaVersion : String := "full-link-6v6-state-v2"
 def actionCount : Nat := 13
 
 /-! ## Action dictionary -/
@@ -128,6 +128,45 @@ private def fullSideFeatures (side : Full.SideState) : List Nat :=
     monFeatures (side.party.mons.getD index fallback)) ++
   [side.activeIndex] ++ activeFeatures side.active
 
+private def effectiveness (moveType target1 target2 : UInt8) : Nat :=
+  let first := TypeChart.matchup moveType target1 |>.toNat
+  let second := if target1 == target2 then 10
+    else TypeChart.matchup moveType target2 |>.toNat
+  first * second
+
+private def tacticalScore (move : MoveId) (target : MonState) : Nat :=
+  let data := Data.moveData move
+  data.power.toNat * effectiveness data.type target.type1 target.type2 *
+    data.accuracy.toNat / 1000
+
+/-- Static canonical move descriptors make type and effect relationships
+learnable without asking a sub-million-parameter network to rediscover the ROM
+move table from sparse terminal labels. These are deterministic projections of
+state move IDs and the current target, not additional mechanics state. -/
+private def movePolicyFeatures (attacker target : MonState) : List Nat :=
+  (List.range Wram.numMoves).flatMap fun slot =>
+    let move := attacker.moves.getD slot 0
+    let data := Data.moveData move
+    [data.effect.toNat, data.power.toNat, data.type.toNat, data.accuracy.toNat,
+     effectiveness data.type target.type1 target.type2,
+     tacticalScore move target]
+
+private def bestTacticalScore (attacker target : MonState) : Nat :=
+  (List.range Wram.numMoves).foldl (fun best slot =>
+    max best (tacticalScore (attacker.moves.getD slot 0) target)) 0
+
+/-- For every legal party slot, expose both its best outgoing static matchup and
+the opposing active mon's best incoming matchup. All six switches remain legal
+and search-visible; these fields only remove an avoidable representation
+learning bottleneck. -/
+private def switchPolicyFeatures (side opponent : Full.SideState) : List Nat :=
+  let fallback := side.active.active
+  let attacker := opponent.active.active
+  (List.range Wram.partyLength).flatMap fun index =>
+    let candidate := side.party.mons.getD index fallback
+    [bestTacticalScore candidate attacker,
+     bestTacticalScore attacker candidate]
+
 private def selectionFeatures (scratch : Full.Selection.MoveScratch) : List Nat :=
   [scratch.selectedMove.toNat, scratch.loadedMove.toNat,
    scratch.highlightedSlot.toNat, scratch.effect.toNat, scratch.power.toNat,
@@ -176,7 +215,11 @@ def featureVector (state : Full.Environment.State) (view : Side)
      state.pendingLearning.length]
   let otIds := (List.range Wram.partyLength).map fun index =>
     (engine.playerOtIds.getD index 0).toNat
-  (fullSideFeatures own ++ fullSideFeatures opponent ++
+  let policyFeatures :=
+    movePolicyFeatures own.active.active opponent.active.active ++
+    movePolicyFeatures opponent.active.active own.active.active ++
+    switchPolicyFeatures own opponent
+  (fullSideFeatures own ++ fullSideFeatures opponent ++ policyFeatures ++
     selectionFeatures (selection state view) ++
     selectionFeatures (selection state view.other) ++
     bcdFeatures engine.payDayMoney ++ bcdFeatures engine.playerMoney ++
@@ -204,6 +247,6 @@ def featureCount : Nat := (featureVector sampleState .player).size
 #guard sampleState.playerReset.1.size == Wram.partyLength
 #guard sampleState.enemyReset.1.size == Wram.partyLength
 #guard actionCount == 13
-#guard featureCount == 417
+#guard featureCount == 477
 
 end Battle.RL.FullTraining
