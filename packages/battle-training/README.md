@@ -41,15 +41,19 @@ The smoke command performs the complete loop:
 Default training searches every tenth real decision, uses one chance sample per
 legal joint action at depth one, and lets network-policy rollouts choose from all
 legal actions between searched decisions. This keeps six-member runs practical
-without silently pruning switches. `transformer-train` defaults to a four-layer,
-128-wide model under one million parameters:
+without silently pruning switches. `transformer-train` is an overnight profile:
+30 iterations of 1,000 training battles, or 30,000 independently reset random
+6v6 battles. It uses the 938,510-parameter four-layer, 128-wide model, two epochs
+per iteration, a CUDA-safe batch size of 128, and a 1,024-game final arena. On an
+RTX 3080 Ti the measured estimate is approximately 7.8 hours:
 
 ```sh
 nix develop -c python packages/battle-training/train.py transformer-train \
-  --output artifacts/training/run-001 \
-  --iterations 20 --episodes 500 --budget 256 \
-  --chance-samples-per-joint 1 --search-depth 1 --search-every 10
+  --output artifacts/training/run-001
 ```
+
+Batch size 512 exceeded the card's 11.63 GiB capacity. Batch size 128 peaked at
+2.24 GiB in the same training step and is therefore the production default.
 
 Use `--device cpu`, `--device cuda`, or `--device auto`. The uv2nix development
 environment is generated from `uv.lock`; on supported Linux hosts it includes

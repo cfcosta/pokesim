@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import torch
 from battle_training.arena import _mean_ci95, _paired_coordinates, skill_probe_report
 from battle_training.artifacts import build_manifest, verify_manifest, write_json
+from battle_training.cli import parser as training_parser
 from battle_training.joint_search import (
     _cap_switch_mass,
     _tactical_potential,
@@ -116,6 +117,21 @@ class TransformerTests(unittest.TestCase):
         self.assertGreater(player[0], 0.99)
         self.assertGreater(enemy[1], 0.99)
         self.assertLess(exploitability, 0.01)
+
+    def test_production_defaults_are_safe_overnight_configuration(self) -> None:
+        arguments = training_parser().parse_args(
+            ["transformer-train", "--output", "/tmp/overnight"]
+        )
+        self.assertEqual(arguments.iterations * arguments.episodes, 30_000)
+        self.assertEqual(arguments.iterations, 30)
+        self.assertEqual(arguments.episodes, 1000)
+        self.assertEqual(arguments.arena_episodes, 1024)
+        self.assertEqual(arguments.search_depth, 1)
+        self.assertEqual(arguments.epochs, 2)
+        self.assertEqual(arguments.batch_size, 128)
+        self.assertEqual(arguments.learning_rate, 2e-4)
+        self.assertEqual(arguments.promotion_games, 1024)
+        self.assertEqual(arguments.probe_games, 256)
 
     def test_paired_arena_reuses_resets_and_spans_seeds(self) -> None:
         self.assertEqual(_paired_coordinates(100, 8, 0), _paired_coordinates(100, 8, 1))
