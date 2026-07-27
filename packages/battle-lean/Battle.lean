@@ -92,3 +92,4 @@ import Battle.RL.SelfPlay
 import Battle.RL.Showdown
 import Battle.RL.ShowdownLog
 import Battle.RL.ReplayExamples
+import Battle.RL.Training

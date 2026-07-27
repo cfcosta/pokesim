@@ -201,6 +201,11 @@ structure State where
 
 /-- Compact policy observation for the one-mon profile. -/
 structure Observation where
+  /-- Complete mechanics-owned side states for the restricted profile. The
+  future chance stream and generator witnesses are intentionally absent. -/
+  playerState : SideState
+  enemyState : SideState
+  mode : BattleMode
   playerSpecies : SpeciesId
   enemySpecies : SpeciesId
   playerHp : UInt16
@@ -257,7 +262,10 @@ def done (state : State) : Bool :=
 
 /-- Project policy-visible state. RNG future bytes are intentionally absent. -/
 def observe (state : State) : Observation :=
-  { playerSpecies := (state.battle.active .player).species
+  { playerState := state.battle.player
+    enemyState := state.battle.enemy
+    mode := state.battle.mode
+    playerSpecies := (state.battle.active .player).species
     enemySpecies := (state.battle.active .enemy).species
     playerHp := (state.battle.active .player).hp
     enemyHp := (state.battle.active .enemy).hp
@@ -284,11 +292,14 @@ def observePlayer (state : State) (viewer : Side) : PlayerObservation :=
     done := done state }
 
 @[simp] theorem perfect_observation_exact (state : State) :
-    (observe state).playerMoves = state.battle.player.active.moves ∧
+    (observe state).playerState = state.battle.player ∧
+      (observe state).enemyState = state.battle.enemy ∧
+      (observe state).mode = state.battle.mode ∧
+      (observe state).playerMoves = state.battle.player.active.moves ∧
       (observe state).enemyMoves = state.battle.enemy.active.moves ∧
       (observe state).playerPp = state.battle.player.active.pp ∧
       (observe state).enemyPp = state.battle.enemy.active.pp := by
-  exact ⟨rfl, rfl, rfl, rfl⟩
+  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 @[simp] theorem player_observation_exact (state : State) (viewer : Side) :
     let observed := observePlayer state viewer
