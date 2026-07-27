@@ -9,6 +9,7 @@ These documents record twelve codebase, processor, and proof-architecture review
 - [Formal verification strategy](explanation/formal-verification-strategy.md) — how the high-level Lean model will be connected to actual ROM bytes.
 - [RNG and time](explanation/rng-and-time.md) — why console randomness cannot honestly be reduced to a software seed.
 - [RL environment design](explanation/rl-environment.md) — legal teams, actions, observations, replay, and batching.
+- [Self-play training pipeline](explanation/self-play-training-pipeline.md) — proposed actor–learner, simultaneous MCTS, league, replay, evaluation, and staged implementation architecture.
 
 ## Reference
 
@@ -47,6 +48,7 @@ These documents record twelve codebase, processor, and proof-architecture review
 - [Twelfth-pass RISC-V and CompCert proof audit](research/twelfth-pass-riscv-compcert-proof-audit.md) — the simulation and whole-behavior theorems required to turn the current executable SM83 candidate into an end-to-end formal verification.
 - [External bug compatibility audit](research/external-bug-compatibility-audit.md) — clean-room inventory of all 13 externally claimed battle bugs, canonical source anchors, corrected scope, and proof acceptance criteria.
 - [Pokémon Showdown Gen-I 1v1 reconstruction study](research/showdown-gen1-1v1-reconstruction.md) — three compact public replay projections reconstructed as theorem-checked model fixtures, with exact limitations.
+- [Self-play, reinforcement learning, and search research](research/self-play-rl-search-literature.md) — Pokémon-specific work, AlphaZero, simultaneous MCTS, imperfect-information methods, leagues, and API precedents.
 
 ## Documentation modes
 

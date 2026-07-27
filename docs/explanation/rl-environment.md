@@ -2,7 +2,7 @@
 
 <!-- mode: explanation -->
 
-The RL environment should be a thin client of the verified high-level battle semantics. Training concerns such as reward shaping, curriculum, opponent sampling, and tensor layout must not leak into the mechanics core.
+The RL environment should be a thin client of the verified high-level battle semantics. Training concerns such as reward shaping, curriculum, opponent sampling, and tensor layout must not leak into the mechanics core. The proposed actor–learner and search system built around this boundary is described in [Self-play training pipeline](self-play-training-pipeline.md).
 
 ## Environment boundary
 
