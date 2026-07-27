@@ -65,6 +65,8 @@ rows remain required before the corresponding profile can be called complete.
 - [ ] Run a multi-worker service for deeper frontier inference.
 - [ ] Add bounded worker queues and inference timeouts.
 - [x] Train policy and terminal value heads from MCTS/terminal targets.
+- [x] Use BF16 autocast with FP32 parameters, optimizer state, outputs, and losses.
+- [x] Preserve pre-v5 checkpoint execution as FP32.
 - [x] Publish immutable model, optimizer, schema, and SHA-256 checkpoints.
 - [ ] Resume bit-for-bit from a checkpoint and replay ledger.
 - [ ] Compare network-only, PUCT, and deeper regret-MCTS policies.

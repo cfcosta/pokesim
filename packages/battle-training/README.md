@@ -48,20 +48,28 @@ directly. This keeps six-member runs practical without top-k action pruning.
 `transformer-train` is an overnight profile:
 30 iterations of 500 training battles, or 15,000 independently reset random
 6v6 battles. It uses depth-four simultaneous trees, the 938,638-parameter
-four-layer, 128-wide model, two epochs per iteration, a CUDA-safe batch size of
-128, and a 1,024-game final arena. The tree used 320 native transitions per
-searched root and was 1.31× slower than disposable depth-four rollouts in a
-24-root benchmark; the expected RTX 3080 Ti runtime is approximately nine hours:
+four-layer, 128-wide model, BF16 autocast, two epochs per iteration, a
+CUDA-safe batch size of 128, and a 1,024-game final arena. Parameters, gradients,
+AdamW state, policy normalization, losses, and reductions remain FP32. The tree
+used 320 native transitions per searched root and was 1.31× slower than
+disposable depth-four rollouts in a 24-root benchmark. The previous strict-FP32
+runtime estimate was approximately nine hours; measured BF16 actor throughput
+was 1.35× higher on a matched small workload, but a complete production run has
+not yet established a replacement wall-clock estimate:
 
 ```sh
 nix develop -c python packages/battle-training/train.py transformer-train \
   --output artifacts/training/run-001
 ```
 
-Batch size 512 exceeded the card's 11.63 GiB capacity. Batch size 128 peaked at
-2.24 GiB in the same training step and is therefore the production default.
+Strict-FP32 batch size 512 exceeded the card's 11.63 GiB capacity. Under BF16,
+batch 128 peaked at 1.26 GiB and delivered 3.77× the strict-FP32 training
+throughput. BF16 batch 512 fit at 4.76 GiB but was only 10.5% faster than BF16
+batch 128, so 128 remains the production default.
 
-Use `--device cpu`, `--device cuda`, or `--device auto`. The uv2nix development
+Use `--device cpu`, `--device cuda`, or `--device auto`. BF16 is the default;
+`--precision fp32` remains available for differential checks and older
+checkpoints without precision metadata retain their original FP32 contract. The uv2nix development
 environment is generated from `uv.lock`; on supported Linux hosts it includes
 the CUDA PyTorch wheel and the NixOS runtime-library fixes required to use the
 GPU.
@@ -102,6 +110,10 @@ labels. Two heads predict:
 
 - logits for all 13 stable link action IDs; and
 - a bounded terminal value in `[-1, 1]`.
+
+Encoder and head matrix operations run under BF16 autocast. Both head outputs
+are immediately promoted to FP32 before masks, softmax, RM+ search, losses, or
+reductions, and all trainable parameters and optimizer state stay FP32.
 
 Search and policy loss mask illegal actions. Every expanded node retains an
 empirical joint payoff matrix, cumulative RM+ regrets, average strategies,
