@@ -26,6 +26,10 @@ class SearchResult:
     enemy_action: int
     root_value: float
     nodes: int
+    solver: str = "simultaneous-exp3-mcts-v1"
+    exploitability: float | None = None
+    payoff_spread: float | None = None
+    payoff_matrix: tuple[tuple[float, ...], ...] | None = None
 
 
 def legal_actions(mask: int) -> list[int]:

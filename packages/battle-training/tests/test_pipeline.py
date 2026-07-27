@@ -10,9 +10,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
 from battle_training.artifacts import build_manifest, verify_manifest, write_json
+from battle_training.joint_search import solve_zero_sum_regret
 from battle_training.model import MoveValueModel
 from battle_training.network import BattleTransformer, TransformerConfig
-from battle_training.transformer_pipeline import _scheduled_for_opponent
+from battle_training.transformer_pipeline import _load_examples, _scheduled_for_opponent
 
 
 class MoveValueModelTests(unittest.TestCase):
@@ -72,10 +73,67 @@ class MoveValueModelTests(unittest.TestCase):
 
 
 class TransformerTests(unittest.TestCase):
+    def test_regret_matching_finds_matching_pennies_equilibrium(self) -> None:
+        payoff = [
+            [1.0, -1.0, 0.0, 0.0],
+            [-1.0, 1.0, 0.0, 0.0],
+            [0.0] * 4,
+            [0.0] * 4,
+        ]
+        player, enemy, value, exploitability = solve_zero_sum_regret(
+            payoff,
+            [0.5, 0.5, 0.0, 0.0],
+            [0.5, 0.5, 0.0, 0.0],
+            [0, 1],
+            [0, 1],
+            256,
+        )
+        self.assertAlmostEqual(player[0], 0.5, places=6)
+        self.assertAlmostEqual(enemy[0], 0.5, places=6)
+        self.assertAlmostEqual(value, 0.0, places=6)
+        self.assertAlmostEqual(exploitability, 0.0, places=6)
+
+    def test_regret_matching_finds_dominant_actions(self) -> None:
+        payoff = [
+            [1.0, -1.0, 0.0, 0.0],
+            [0.0, -2.0, 0.0, 0.0],
+            [0.0] * 4,
+            [0.0] * 4,
+        ]
+        player, enemy, _, exploitability = solve_zero_sum_regret(
+            payoff,
+            [0.5, 0.5, 0.0, 0.0],
+            [0.5, 0.5, 0.0, 0.0],
+            [0, 1],
+            [0, 1],
+            1024,
+        )
+        self.assertGreater(player[0], 0.99)
+        self.assertGreater(enemy[1], 0.99)
+        self.assertLess(exploitability, 0.01)
+
     def test_fixed_opponent_schedule_is_exact_and_periodic(self) -> None:
         schedule = [_scheduled_for_opponent(episode, 0.5) for episode in range(1000)]
         self.assertEqual(sum(schedule), 500)
         self.assertEqual(schedule[:6], [False, True, False, True, False, True])
+
+    def test_replay_loader_retains_legal_policy_masks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            shard = Path(temporary) / "examples.jsonl"
+            shard.write_text(
+                json.dumps(
+                    {
+                        "type": "example",
+                        "features": [0] * 100,
+                        "policy": [0.5, 0.0, 0.5, 0.0],
+                        "value": 1,
+                        "legal_mask": 0b0101,
+                    }
+                )
+                + "\n"
+            )
+            _, _, _, masks = _load_examples([shard])
+            self.assertEqual(masks.tolist(), [[True, False, True, False]])
 
     def test_policy_masks_and_value_bounds(self) -> None:
         torch.manual_seed(7)

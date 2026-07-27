@@ -16,6 +16,7 @@ from torch import Tensor
 
 from . import ENTROPY, PROFILE, SCHEMA
 from .artifacts import build_manifest, sha256, verify_manifest, write_json, write_new
+from .joint_search import BatchedJointRegretSearch, JointSearchConfig
 from .mcts import SearchConfig, SimultaneousMCTS
 from .native import SearchServer, build_search_server
 from .network import (
@@ -48,11 +49,62 @@ class TransformerPipelineConfig:
     feedforward: int
     opponent_checkpoint: str | None = None
     opponent_fraction: float = 0.0
+    search_solver: str = "exp3-mcts"
+    chance_samples_per_joint: int = 8
+    regret_iterations: int = 256
+    inference_batch_size: int = 96
+    mask_policy_loss: bool = False
+
+
+def _pipeline_id(config: TransformerPipelineConfig) -> str:
+    if config.search_solver == "exp3-mcts":
+        return "transformer-simultaneous-exp3-mcts-v1"
+    return "transformer-batched-joint-regret-v1"
 
 
 def _scheduled_for_opponent(episode: int, fraction: float) -> bool:
     """Periodic deterministic mixture with an exact count for rational fractions."""
     return math.floor((episode + 1) * fraction) > math.floor(episode * fraction)
+
+
+def _new_search(
+    server: SearchServer,
+    player: BattleTransformer,
+    enemy: BattleTransformer,
+    config: TransformerPipelineConfig,
+    selection_rng: random.Random,
+    chance_rng: random.Random,
+) -> SimultaneousMCTS | BatchedJointRegretSearch:
+    if config.search_solver == "exp3-mcts":
+        return SimultaneousMCTS(
+            server,
+            player,
+            enemy,
+            SearchConfig(config.simulations, config.search_depth),
+            selection_rng,
+            chance_rng,
+        )
+    if config.search_solver == "batched-joint-regret":
+        return BatchedJointRegretSearch(
+            server,
+            player,
+            enemy,
+            JointSearchConfig(
+                config.chance_samples_per_joint,
+                config.search_depth,
+                config.regret_iterations,
+                config.inference_batch_size,
+            ),
+            selection_rng,
+            chance_rng,
+        )
+    raise ValueError(f"unknown search solver: {config.search_solver}")
+
+
+def _policy_entropy(policy: list[float]) -> float:
+    return -sum(
+        probability * math.log(probability) for probability in policy if probability
+    )
 
 
 def _jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
@@ -71,23 +123,34 @@ def _collect_rows(
     opponent: BattleTransformer | None = None,
     opponent_sha256: str | None = None,
 ) -> dict[str, Any]:
-    search_config = SearchConfig(config.simulations, config.search_depth)
     selection_rng = random.Random(config.seed + iteration * 1_000_003)
     chance_rng = random.Random(config.seed + iteration * 1_000_033 + 17)
     meta: dict[str, Any] = {
         "type": "meta",
-        "format": "mcts-policy-value-jsonl-v1",
+        "format": (
+            "mcts-policy-value-jsonl-v1"
+            if config.search_solver == "exp3-mcts"
+            else "joint-regret-policy-value-jsonl-v1"
+        ),
         "profile": PROFILE,
         "schema": SCHEMA,
         "entropy": ENTROPY,
         "chance": "fresh-root-v1",
-        "solver": "simultaneous-exp3-mcts-v1",
+        "solver": (
+            "simultaneous-exp3-mcts-v1"
+            if config.search_solver == "exp3-mcts"
+            else "batched-joint-regret-crn-v1"
+        ),
         "iteration": iteration,
         "episodes": config.selfplay_episodes,
         "simulations": config.simulations,
         "depth": config.search_depth,
         "seed": config.seed,
     }
+    if config.search_solver == "batched-joint-regret":
+        meta["chance_samples_per_joint"] = config.chance_samples_per_joint
+        meta["regret_iterations"] = config.regret_iterations
+        meta["inference_batch_size"] = config.inference_batch_size
     if opponent is not None:
         meta["opponent"] = {
             "kind": "fixed-checkpoint",
@@ -123,11 +186,11 @@ def _collect_rows(
             snapshot = server.reset(config.seed + iteration * 10_000, episode)
             pending: list[dict[str, Any]] = []
             for decision in range(config.episode_budget):
-                search = SimultaneousMCTS(
+                search = _new_search(
                     server,
                     player_network,
                     enemy_network,
-                    search_config,
+                    config,
                     selection_rng,
                     chance_rng,
                 )
@@ -154,6 +217,14 @@ def _collect_rows(
                     "search_value": -result.root_value,
                     "action": result.enemy_action,
                 }
+                if config.mask_policy_loss:
+                    player_row["legal_mask"] = snapshot.player_mask
+                    enemy_row["legal_mask"] = snapshot.enemy_mask
+                if result.exploitability is not None:
+                    player_row["search_exploitability"] = result.exploitability
+                    enemy_row["search_exploitability"] = result.exploitability
+                    player_row["payoff_spread"] = result.payoff_spread
+                    enemy_row["payoff_spread"] = result.payoff_spread
                 if opponent is not None:
                     player_row["episode_kind"] = episode_kind
                     enemy_row["episode_kind"] = episode_kind
@@ -197,6 +268,15 @@ def _collect_rows(
     _jsonl(path, rows)
     if not examples:
         raise ValueError("MCTS self-play produced no terminal training examples")
+    example_rows = [row for row in rows if row["type"] == "example"]
+    exploitabilities = [
+        row["search_exploitability"]
+        for row in example_rows
+        if "search_exploitability" in row
+    ]
+    payoff_spreads = [
+        row["payoff_spread"] for row in example_rows if "payoff_spread" in row
+    ]
     return {
         "finished": finished,
         "truncated": truncated,
@@ -206,15 +286,26 @@ def _collect_rows(
         "opponent_episodes": opponent_episodes,
         "candidate_player_episodes": candidate_player_episodes,
         "candidate_enemy_episodes": candidate_enemy_episodes,
+        "mean_target_entropy": sum(
+            _policy_entropy(row["policy"]) for row in example_rows
+        )
+        / len(example_rows),
+        "mean_search_exploitability": (
+            sum(exploitabilities) / len(exploitabilities) if exploitabilities else None
+        ),
+        "mean_payoff_spread": (
+            sum(payoff_spreads) / len(payoff_spreads) if payoff_spreads else None
+        ),
         "sha256": sha256(path),
         "bytes": path.stat().st_size,
     }
 
 
-def _load_examples(paths: list[Path]) -> tuple[Tensor, Tensor, Tensor]:
+def _load_examples(paths: list[Path]) -> tuple[Tensor, Tensor, Tensor, Tensor]:
     features: list[list[int]] = []
     policies: list[list[float]] = []
     values: list[float] = []
+    legal_masks: list[list[bool]] = []
     for path in paths:
         with path.open() as source:
             for line in source:
@@ -224,10 +315,13 @@ def _load_examples(paths: list[Path]) -> tuple[Tensor, Tensor, Tensor]:
                 features.append(row["features"])
                 policies.append(row["policy"])
                 values.append(row["value"])
+                mask = row.get("legal_mask", (1 << 4) - 1)
+                legal_masks.append([bool(mask & (1 << action)) for action in range(4)])
     return (
         torch.tensor(features, dtype=torch.long),
         torch.tensor(policies, dtype=torch.float32),
         torch.tensor(values, dtype=torch.float32),
+        torch.tensor(legal_masks, dtype=torch.bool),
     )
 
 
@@ -239,7 +333,7 @@ def _train_network(
     iteration: int,
 ) -> dict[str, Any]:
     device = next(network.parameters()).device
-    features, target_policy, target_value = _load_examples(shards)
+    features, target_policy, target_value, legal_masks = _load_examples(shards)
     generator = torch.Generator(device="cpu").manual_seed(config.seed + iteration)
     network.train()
     history: list[dict[str, float]] = []
@@ -252,7 +346,9 @@ def _train_network(
             batch_features = features[indexes].to(device)
             batch_policy = target_policy[indexes].to(device)
             batch_value = target_value[indexes].to(device)
+            batch_legal = legal_masks[indexes].to(device)
             logits, values = network(batch_features)
+            logits = logits.masked_fill(~batch_legal, torch.finfo(logits.dtype).min)
             policy_loss = (
                 -(batch_policy * torch.log_softmax(logits, dim=-1)).sum(dim=-1).mean()
             )
@@ -293,11 +389,8 @@ def _play_game(
     chance_rng: random.Random,
 ) -> int | None:
     snapshot = server.reset(config.seed + 90_000_000, episode)
-    search_config = SearchConfig(config.simulations, config.search_depth)
     for _ in range(config.episode_budget):
-        search = SimultaneousMCTS(
-            server, player, enemy, search_config, selection_rng, chance_rng
-        )
+        search = _new_search(server, player, enemy, config, selection_rng, chance_rng)
         result = search.search(snapshot, sample_actions=False)
         snapshot = server.episode_step(
             snapshot.handle, result.player_action, result.enemy_action
@@ -370,6 +463,8 @@ def run_transformer_pipeline(
     if root.exists() and any(root.iterdir()):
         raise FileExistsError(f"output directory is not empty: {root}")
     root.mkdir(parents=True, exist_ok=True)
+    if config.search_solver not in {"exp3-mcts", "batched-joint-regret"}:
+        raise ValueError(f"unknown search solver: {config.search_solver}")
     if not 0.0 <= config.opponent_fraction <= 1.0:
         raise ValueError("opponent_fraction must be in [0, 1]")
     if (config.opponent_checkpoint is None) != (config.opponent_fraction == 0.0):
@@ -407,10 +502,11 @@ def run_transformer_pipeline(
     write_json(
         root / "run.json",
         {
-            "pipeline": "transformer-simultaneous-exp3-mcts-v1",
+            "pipeline": _pipeline_id(config),
             "profile": PROFILE,
             "schema": SCHEMA,
             "chance": "fresh-root-v1",
+            "search_solver": config.search_solver,
             "config": asdict(config),
             "network": asdict(model_config),
             "parameter_count": sum(
@@ -481,7 +577,7 @@ def run_transformer_pipeline(
         "byte_identical": True,
     }
     summary = {
-        "pipeline": "transformer-simultaneous-exp3-mcts-v1",
+        "pipeline": _pipeline_id(config),
         "device": str(device),
         "iterations": config.iterations,
         "selfplay_battles": config.iterations * config.selfplay_episodes,

@@ -48,6 +48,19 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--heads", type=int, default=4 if smoke else 8)
     parser.add_argument("--layers", type=int, default=2 if smoke else 4)
     parser.add_argument("--feedforward", type=int, default=192 if smoke else 512)
+    parser.add_argument(
+        "--search-solver",
+        choices=("exp3-mcts", "batched-joint-regret"),
+        default="batched-joint-regret",
+    )
+    parser.add_argument(
+        "--chance-samples-per-joint", type=int, default=2 if smoke else 8
+    )
+    parser.add_argument("--regret-iterations", type=int, default=256)
+    parser.add_argument("--inference-batch-size", type=int, default=96)
+    parser.add_argument(
+        "--mask-policy-loss", action=argparse.BooleanOptionalAction, default=True
+    )
     parser.add_argument("--opponent-checkpoint", type=Path)
     parser.add_argument("--opponent-fraction", type=float, default=0.0)
 
@@ -68,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
     if arguments.command == "verify":
         summary = json.loads((arguments.run / "summary.json").read_text())
-        if summary.get("pipeline") == "transformer-simultaneous-exp3-mcts-v1":
+        if str(summary.get("pipeline", "")).startswith("transformer-"):
             report = verify_transformer_run(arguments.run.resolve())
         else:
             report = verify_run(arguments.run.resolve())
@@ -102,6 +115,11 @@ def main(argv: list[str] | None = None) -> int:
                 else None
             ),
             opponent_fraction=arguments.opponent_fraction,
+            search_solver=arguments.search_solver,
+            chance_samples_per_joint=arguments.chance_samples_per_joint,
+            regret_iterations=arguments.regret_iterations,
+            inference_batch_size=arguments.inference_batch_size,
+            mask_policy_loss=arguments.mask_policy_loss,
         )
         report = run_transformer_pipeline(arguments.output.resolve(), config)
     else:
