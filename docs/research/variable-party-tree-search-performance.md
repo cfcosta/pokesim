@@ -218,6 +218,35 @@ proxies are noisy and not directly ordered. It does show that extra budget did
 not produce a monotonic improvement in this diagnostic. Teacher quality still
 requires equal-budget gameplay and held-out tests.
 
+## Neural inference follow-up
+
+Four changes address the fragmented neural share without changing the search
+budget or teacher:
+
+1. **Staged eager inference.** Native UInt16 observations use reusable pinned
+   buffers, asynchronous CUDA transfer, a device legal-mask lookup, and direct
+   position-weight access. The path was bit-identical to the previous eager
+   implementation and improved batch-96 latency from 10.85 to 9.10 ms (1.19×).
+2. **Bucketed compilation.** The v7 CUDA path uses static 2–96-row buckets with
+   `torch.compile(mode="reduce-overhead")`. Matched outputs were bit-identical;
+   steady-state gains ranged from 1.29× at batch 8 to 1.38× at batch 96 and 1.78×
+   at batch 2. Initial graph compilation remains an explicit startup cost.
+3. **Exact output memoization.** Policy/value outputs are cached only by model
+   identity, the complete 492-field tuple, and legal mask. Budget-320 roots had
+   a 2.3% hit rate and about a 4% median whole-search gain. This is function
+   memoization, not mechanics transposition merging.
+4. **Deterministic deeper waves.** Compatible roots finish concurrently behind a
+   barrier-style broker, which combines pending rows in root order rather than
+   using a timing-dependent queue. Mean neural batch size rose from 15.2 to 44.1,
+   neural wall time improved by 1.40×, and whole-search time improved by about
+   1.13×. Four matched runs produced identical policies, values, transition
+   counts, and actions. A compiled depth-two CUDA smoke also reproduced its
+   first shard byte-for-byte.
+
+The current bottleneck remains the 493-token scalar Transformer itself. These
+changes improve utilization and launch overhead but do not remove its quadratic
+attention work.
+
 ## Conclusions
 
 1. **The concern is confirmed.** Searching every move is not itself the main
@@ -238,17 +267,16 @@ requires equal-budget gameplay and held-out tests.
 
 ## Recommended order
 
-1. Implement a cross-root deeper-frontier scheduler and bounded shared inference
-   queue. Batch leaf evaluations before changing search semantics. Track queue
-   latency, effective batch size, transitions/s, and policy agreement.
+1. Re-run the 36-matchup collection benchmark with the v7 compiled wave path and
+   record compilation startup separately from steady-state collection.
 2. Evaluate tiered all-move search: retain a complete root at every decision,
    while assigning the full 320-transition tree to a randomized fraction of
    roots. Keep exploratory behavior separate from cleaned policy targets.
 3. Compare 96, 192, 320, and tiered teachers at equal wall-clock and transition
    budgets against raw policy, zero-value search, and learned-value search.
-4. Do not return to every-tenth policy supervision. If throughput must be
-   recovered before frontier batching lands, prefer a complete-root target on
-   every move plus randomized deep-search allocation.
-5. After frontier batching, profile a compact binary or leaf-only native
-   response. It cannot recover the 67% neural share, but it can reduce the
-   remaining native/JSON floor.
+4. Prototype structured 25–40-token side encoders and a dual-policy/value output,
+   distilling from the current network before promotion tests. This attacks the
+   remaining Transformer compute rather than only its launch schedule.
+5. Do not return to every-tenth policy supervision. If throughput must be
+   recovered, prefer a complete-root target on every move plus randomized
+   deep-search allocation.

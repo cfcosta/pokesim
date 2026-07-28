@@ -92,6 +92,9 @@ batch 128, so 128 remains the production default.
 Use `--device cpu`, `--device cuda`, or `--device auto`. BF16 is the default;
 `--precision fp32` remains available for differential checks and older
 checkpoints without precision metadata retain their original FP32 contract.
+The v7 pipeline defaults `--inference-engine auto`: CUDA uses bucketed compiled
+inference while CPU uses eager execution. `--inference-engine eager` remains
+available for differential checks and historical artifact verification.
 The v4 observation is structurally incompatible with 478-field v3 checkpoints,
 but `--warm-start-checkpoint PATH` copies every compatible parameter and the
 existing positional rows into the extended 492-field model. The uv2nix development
@@ -152,7 +155,10 @@ labels. Two heads predict:
 
 Encoder and head matrix operations run under BF16 autocast. Both head outputs
 are immediately promoted to FP32 before masks, softmax, RM+ search, losses, or
-reductions, and all trainable parameters and optimizer state stay FP32.
+reductions, and all trainable parameters and optimizer state stay FP32. Native
+UInt16 rows use reusable pinned buffers, legal masks come from a device lookup,
+and CUDA inference uses static compiled batch buckets. Exact feature/mask cache
+keys suppress duplicate forwards without claiming mechanics-state equivalence.
 
 Search and policy loss mask illegal actions. Every expanded node retains an
 empirical joint payoff matrix, cumulative RM+ regrets, average strategies,
@@ -181,8 +187,9 @@ their existing hidden RNG. The compatibility `compact-many` command still emits
 full snapshots for external protocol probes. Python cannot
 mutate or resolve battle state itself. Actors run in groups of 16. Root matrices,
 root leaf inference, network-only decisions, and real episode transitions are
-batched across compatible independent roots; deeper progressive simulations
-remain root-local.
+batched across compatible independent roots. Deeper progressive simulations
+submit inference through deterministic cross-root waves while retaining
+independent search and chance RNG streams.
 
 Arena directories contain Showdown-style `.log` replays plus aggregate metrics
 for damage-move effectiveness relative to the best legal damaging move, status
