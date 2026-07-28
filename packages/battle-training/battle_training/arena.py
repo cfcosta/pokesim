@@ -77,9 +77,30 @@ class SkillMetrics:
     voluntary_switches: int = 0
     completed_voluntary_switches: int = 0
     matchup_improving_switches: int = 0
+    effectiveness_ratios: list[float] = field(default_factory=list)
+
+    def merge(self, other: SkillMetrics) -> None:
+        for name in (
+            "damaging_moves",
+            "best_effectiveness_choices",
+            "super_effective_choices",
+            "status_uses",
+            "status_successes",
+            "status_failures",
+            "status_wasted",
+            "ordinary_actions",
+            "voluntary_switches",
+            "completed_voluntary_switches",
+            "matchup_improving_switches",
+        ):
+            setattr(self, name, getattr(self, name) + getattr(other, name))
+        for ratio in other.effectiveness_ratios:
+            self.effectiveness_ratio_sum += ratio
+            self.effectiveness_ratios.append(ratio)
 
     def report(self) -> dict[str, Any]:
         result = asdict(self)
+        result.pop("effectiveness_ratios")
         result["mean_move_effectiveness_vs_best"] = (
             self.effectiveness_ratio_sum / self.damaging_moves
             if self.damaging_moves
@@ -122,6 +143,31 @@ class Replay:
         return "\n".join(self.lines) + "\n"
 
 
+@dataclass
+class _FastArenaEpisode:
+    game: int
+    candidate_player: bool
+    player: BattleTransformer
+    enemy: BattleTransformer
+    player_rng: random.Random
+    enemy_rng: random.Random
+    player_size: int
+    enemy_size: int
+    campaign_index: int
+    snapshot: Any
+    result: int | None = None
+    stop: str = "truncated"
+
+
+@dataclass
+class _TracedArenaEpisode(_FastArenaEpisode):
+    inspection: dict[str, Any] | None = None
+    replay: Replay | None = None
+    replay_path: Path | None = None
+    candidate_metrics: SkillMetrics = field(default_factory=SkillMetrics)
+    baseline_metrics: SkillMetrics = field(default_factory=SkillMetrics)
+
+
 def _sample_policy(probabilities: list[float], rng: random.Random) -> int:
     threshold = rng.random()
     cumulative = 0.0
@@ -156,6 +202,48 @@ def _network_actions_split(
     return _sample_policy(player_policy[0], player_rng), _sample_policy(
         enemy_policy[0], enemy_rng
     )
+
+
+def _network_actions_many(
+    episodes: list[_FastArenaEpisode], batch_size: int = 256
+) -> list[tuple[int, int]]:
+    grouped: dict[int, list[tuple[int, int, Any, int, BattleTransformer]]] = {}
+    for index, episode in enumerate(episodes):
+        grouped.setdefault(id(episode.player), []).append(
+            (
+                index,
+                0,
+                episode.snapshot.player_features,
+                episode.snapshot.player_mask,
+                episode.player,
+            )
+        )
+        grouped.setdefault(id(episode.enemy), []).append(
+            (
+                index,
+                1,
+                episode.snapshot.enemy_features,
+                episode.snapshot.enemy_mask,
+                episode.enemy,
+            )
+        )
+    policies: dict[tuple[int, int], list[float]] = {}
+    for items in grouped.values():
+        network = items[0][4]
+        for start in range(0, len(items), batch_size):
+            batch = items[start : start + batch_size]
+            outputs, _ = network.evaluate(
+                [item[2] for item in batch], [item[3] for item in batch]
+            )
+            for item, policy in zip(batch, outputs, strict=True):
+                policies[(item[0], item[1])] = policy
+    return [
+        (
+            _sample_policy(policies[(index, 0)], episode.player_rng),
+            _sample_policy(policies[(index, 1)], episode.enemy_rng),
+        )
+        for index, episode in enumerate(episodes)
+    ]
 
 
 def _network_actions(
@@ -237,7 +325,9 @@ def _update_side_metrics(
             best = _best_damage_score(before[side_name], mask)
             metrics.damaging_moves += 1
             if best:
-                metrics.effectiveness_ratio_sum += chosen / best
+                ratio = chosen / best
+                metrics.effectiveness_ratio_sum += ratio
+                metrics.effectiveness_ratios.append(ratio)
                 if chosen == best:
                     metrics.best_effectiveness_choices += 1
             if int(move["effectiveness"]) > 100:
@@ -415,6 +505,110 @@ def _stratified_report(scores: dict[str, list[float]]) -> dict[str, Any]:
     return {"pass": all(row["pass"] for row in strata.values()), "groups": strata}
 
 
+def _run_fast_arena_games(
+    candidate: BattleTransformer,
+    baseline: BattleTransformer,
+    games: int,
+    budget: int,
+    seed: int,
+    seed_count: int,
+    campaign: bool,
+    batch_size: int = 256,
+) -> list[_FastArenaEpisode]:
+    completed: list[_FastArenaEpisode] = []
+    server = SearchServer()
+    try:
+        for batch_start in range(0, games, batch_size):
+            batch_stop = min(games, batch_start + batch_size)
+            episodes = []
+            for game in range(batch_start, batch_stop):
+                pair = game // 2
+                candidate_player = game % 2 == 0
+                candidate_rng = random.Random(seed + 30_000_019 + pair * 2_000_003)
+                baseline_rng = random.Random(seed + 40_000_033 + pair * 2_000_003)
+                player_size, enemy_size = _evaluation_party_sizes(pair)
+                episodes.append(
+                    _FastArenaEpisode(
+                        game=game,
+                        candidate_player=candidate_player,
+                        player=candidate if candidate_player else baseline,
+                        enemy=baseline if candidate_player else candidate,
+                        player_rng=(
+                            candidate_rng if candidate_player else baseline_rng
+                        ),
+                        enemy_rng=(
+                            baseline_rng if candidate_player else candidate_rng
+                        ),
+                        player_size=player_size,
+                        enemy_size=enemy_size,
+                        campaign_index=pair % len(_CAMPAIGN_NAMES),
+                        snapshot=None,
+                    )
+                )
+            try:
+                for offset, episode in enumerate(episodes):
+                    root_seed, reset_episode = _paired_coordinates(
+                        seed, seed_count, episode.game
+                    )
+                    if campaign:
+                        reset = (
+                            server.reset_campaign
+                            if offset == 0
+                            else server.reset_campaign_append
+                        )
+                        episode.snapshot = reset(
+                            root_seed, reset_episode, episode.campaign_index
+                        )
+                    else:
+                        reset = server.reset if offset == 0 else server.reset_append
+                        episode.snapshot = reset(
+                            root_seed,
+                            reset_episode,
+                            episode.player_size,
+                            episode.enemy_size,
+                        )
+                active = episodes.copy()
+                for _ in range(budget):
+                    if not active:
+                        break
+                    actions = _network_actions_many(active, batch_size)
+                    snapshots = server.episode_steps(
+                        [
+                            (episode.snapshot.handle, player_action, enemy_action)
+                            for episode, (player_action, enemy_action) in zip(
+                                active, actions, strict=True
+                            )
+                        ]
+                    )
+                    survivors = []
+                    for episode, snapshot in zip(active, snapshots, strict=True):
+                        episode.snapshot = snapshot
+                        if snapshot.divergence is not None:
+                            episode.stop = "semantic-divergence"
+                        elif snapshot.done:
+                            episode.result = snapshot.terminal_return
+                            episode.stop = "finished"
+                        else:
+                            survivors.append(episode)
+                    active = survivors
+                    if active:
+                        compacted = server.compact_many(
+                            [episode.snapshot for episode in active]
+                        )
+                        for episode, snapshot in zip(active, compacted, strict=True):
+                            episode.snapshot = snapshot
+            except NativeRequestTimeout:
+                for episode in episodes:
+                    if episode.stop == "truncated":
+                        episode.stop = "mechanics-timeout"
+                server.close()
+                server = SearchServer()
+            completed.extend(episodes)
+    finally:
+        server.close()
+    return sorted(completed, key=lambda episode: episode.game)
+
+
 def run_paired_arena(
     candidate: BattleTransformer,
     baseline: BattleTransformer,
@@ -445,79 +639,46 @@ def run_paired_arena(
     campaign_scores: dict[int, list[float]] = {
         index: [] for index in range(len(_CAMPAIGN_NAMES))
     }
-    server = SearchServer()
-    try:
-        for game in range(games):
-            pair = game // 2
-            candidate_player = game % 2 == 0
-            player = candidate if candidate_player else baseline
-            enemy = baseline if candidate_player else candidate
-            candidate_rng = random.Random(seed + 30_000_019 + pair * 2_000_003)
-            baseline_rng = random.Random(seed + 40_000_033 + pair * 2_000_003)
-            player_rng = candidate_rng if candidate_player else baseline_rng
-            enemy_rng = baseline_rng if candidate_player else candidate_rng
-            root_seed, episode = _paired_coordinates(seed, seed_count, game)
-            player_size, enemy_size = _evaluation_party_sizes(pair)
-            campaign_index = pair % len(_CAMPAIGN_NAMES)
-            result: int | None = None
-            stop = "truncated"
-            try:
-                snapshot = (
-                    server.reset_campaign(root_seed, episode, campaign_index)
-                    if campaign
-                    else server.reset(root_seed, episode, player_size, enemy_size)
-                )
-                for _ in range(budget):
-                    player_action, enemy_action = _network_actions_split(
-                        player, enemy, snapshot, player_rng, enemy_rng
-                    )
-                    snapshot = server.episode_step(
-                        snapshot.handle, player_action, enemy_action
-                    )
-                    if snapshot.divergence is not None:
-                        stop = "semantic-divergence"
-                        break
-                    if snapshot.done:
-                        result = snapshot.terminal_return
-                        stop = "finished"
-                        break
-                    snapshot = server.compact(snapshot)
-            except NativeRequestTimeout:
-                stop = "mechanics-timeout"
-                server.close()
-                server = SearchServer()
-            candidate_result = result if candidate_player or result is None else -result
-            if stop == "mechanics-timeout":
-                mechanics_timeouts += 1
-                score = 0.0
-            elif stop == "semantic-divergence":
-                semantic_divergences += 1
-                score = 0.0
-            elif candidate_result == 1:
-                wins += 1
-                score = 1.0
-            elif candidate_result == -1:
-                losses += 1
-                score = 0.0
-            elif candidate_result == 0:
-                draws += 1
-                score = 0.5
+    episodes = _run_fast_arena_games(
+        candidate, baseline, games, budget, seed, seed_count, campaign
+    )
+    for episode in episodes:
+        candidate_result = (
+            episode.result
+            if episode.candidate_player or episode.result is None
+            else -episode.result
+        )
+        if episode.stop == "mechanics-timeout":
+            mechanics_timeouts += 1
+            score = 0.0
+        elif episode.stop == "semantic-divergence":
+            semantic_divergences += 1
+            score = 0.0
+        elif candidate_result == 1:
+            wins += 1
+            score = 1.0
+        elif candidate_result == -1:
+            losses += 1
+            score = 0.0
+        elif candidate_result == 0:
+            draws += 1
+            score = 0.5
+        else:
+            truncated += 1
+            score = 0.0
+        game_scores.append(score)
+        pair_score.append(score)
+        if len(pair_score) == 2:
+            paired = sum(pair_score) / 2
+            pair_scores.append(paired)
+            if campaign:
+                campaign_scores[episode.campaign_index].append(paired)
             else:
-                truncated += 1
-                score = 0.0
-            game_scores.append(score)
-            pair_score.append(score)
-            if len(pair_score) == 2:
-                paired = sum(pair_score) / 2
-                pair_scores.append(paired)
-                if campaign:
-                    campaign_scores[campaign_index].append(paired)
-                else:
-                    for stratum in _party_strata(player_size, enemy_size):
-                        stratum_scores[stratum].append(paired)
-                pair_score = []
-    finally:
-        server.close()
+                for stratum in _party_strata(
+                    episode.player_size, episode.enemy_size
+                ):
+                    stratum_scores[stratum].append(paired)
+            pair_score = []
     robust_score = sum(game_scores) / games
     ci_low, ci_high = _mean_ci95(pair_scores)
     finished = wins + losses + draws
@@ -595,7 +756,339 @@ def run_campaign_arena(
     )
 
 
+def _traced_summary(
+    config: ArenaConfig,
+    wins: int,
+    losses: int,
+    draws: int,
+    truncated: int,
+    semantic_divergences: int,
+    mechanics_timeouts: int,
+    game_scores: list[float],
+    candidate_metrics: SkillMetrics,
+    baseline_metrics: SkillMetrics,
+) -> dict[str, Any]:
+    finished = wins + losses + draws
+    pair_scores = [
+        (game_scores[index] + game_scores[index + 1]) / 2
+        for index in range(0, len(game_scores), 2)
+    ]
+    ci_low, ci_high = _mean_ci95(pair_scores)
+    stratum_scores: dict[str, list[float]] = {
+        "party-1to2": [],
+        "party-3to4": [],
+        "party-5to6": [],
+        "unequal-party": [],
+    }
+    for pair, score in enumerate(pair_scores):
+        player_size, enemy_size = _evaluation_party_sizes(pair)
+        for stratum in _party_strata(player_size, enemy_size):
+            stratum_scores[stratum].append(score)
+    return {
+        "profile": FULL_PROFILE,
+        "max_party_size": FULL_PARTY_SIZE,
+        "party_size_schedule": "all-ordered-1to6-v1",
+        "strata": _stratified_report(stratum_scores),
+        "games": config.games,
+        "wins": wins,
+        "losses": losses,
+        "draws": draws,
+        "truncated": truncated,
+        "semantic_divergences": semantic_divergences,
+        "mechanics_timeouts": mechanics_timeouts,
+        "data_quality_pass": mechanics_timeouts == 0,
+        "quality_pass": (
+            mechanics_timeouts == 0
+            and truncated + semantic_divergences
+            <= max(1, math.floor(0.02 * config.games))
+        ),
+        "finished": finished,
+        "score": (wins + 0.5 * draws) / finished if finished else None,
+        "score_with_nonfinishes_as_losses": sum(game_scores) / config.games,
+        "paired_score_ci95": [ci_low, ci_high],
+        "candidate_skills": candidate_metrics.report(),
+        "baseline_skills": baseline_metrics.report(),
+        "config": asdict(config),
+    }
+
+
+def _run_traced_arena_batched(
+    candidate: BattleTransformer,
+    baseline: BattleTransformer,
+    config: ArenaConfig,
+    replay_dir: Path | None,
+) -> dict[str, Any]:
+    candidate_metrics = SkillMetrics()
+    baseline_metrics = SkillMetrics()
+    all_episodes: list[_TracedArenaEpisode] = []
+    if replay_dir is not None:
+        replay_dir.mkdir(parents=True, exist_ok=True)
+    server = SearchServer()
+    try:
+        for batch_start in range(0, config.games, 64):
+            batch_stop = min(config.games, batch_start + 64)
+            episodes = []
+            for game in range(batch_start, batch_stop):
+                pair = game // 2
+                candidate_player = game % 2 == 0
+                candidate_rng = random.Random(
+                    config.seed + 30_000_019 + pair * 2_000_003
+                )
+                baseline_rng = random.Random(
+                    config.seed + 40_000_033 + pair * 2_000_003
+                )
+                player_size, enemy_size = _evaluation_party_sizes(pair)
+                replay = Replay() if game < config.replay_games else None
+                episodes.append(
+                    _TracedArenaEpisode(
+                        game=game,
+                        candidate_player=candidate_player,
+                        player=candidate if candidate_player else baseline,
+                        enemy=baseline if candidate_player else candidate,
+                        player_rng=(
+                            candidate_rng if candidate_player else baseline_rng
+                        ),
+                        enemy_rng=(
+                            baseline_rng if candidate_player else candidate_rng
+                        ),
+                        player_size=player_size,
+                        enemy_size=enemy_size,
+                        campaign_index=0,
+                        snapshot=None,
+                        replay=replay,
+                        replay_path=(
+                            replay_dir / f"game-{game:05d}.log"
+                            if replay is not None and replay_dir is not None
+                            else None
+                        ),
+                    )
+                )
+            active = episodes.copy()
+            try:
+                for offset, episode in enumerate(episodes):
+                    root_seed, reset_episode = _paired_coordinates(
+                        config.seed, config.seed_count, episode.game
+                    )
+                    reset = server.reset if offset == 0 else server.reset_append
+                    episode.snapshot = reset(
+                        root_seed,
+                        reset_episode,
+                        episode.player_size,
+                        episode.enemy_size,
+                    )
+                inspections = server.inspect_many(
+                    [episode.snapshot.handle for episode in active]
+                )
+                for episode, inspection in zip(active, inspections, strict=True):
+                    inspection["player_mask"] = episode.snapshot.player_mask
+                    inspection["enemy_mask"] = episode.snapshot.enemy_mask
+                    episode.inspection = inspection
+                    if episode.replay is not None:
+                        _preview(episode.replay, inspection)
+                for decision in range(config.budget):
+                    if not active:
+                        break
+                    actions = _network_actions_many(
+                        active, config.inference_batch_size
+                    )
+                    for episode, (player_action, enemy_action) in zip(
+                        active, actions, strict=True
+                    ):
+                        if episode.replay is not None:
+                            assert episode.inspection is not None
+                            episode.replay.add(f"|turn|{decision + 1}")
+                            _action_line(
+                                episode.replay,
+                                0,
+                                player_action,
+                                episode.inspection,
+                                episode.snapshot.request,
+                            )
+                            _action_line(
+                                episode.replay,
+                                1,
+                                enemy_action,
+                                episode.inspection,
+                                episode.snapshot.request,
+                            )
+                    snapshots = server.episode_steps(
+                        [
+                            (episode.snapshot.handle, player_action, enemy_action)
+                            for episode, (player_action, enemy_action) in zip(
+                                active, actions, strict=True
+                            )
+                        ]
+                    )
+                    inspect_episodes = [
+                        episode
+                        for episode, snapshot in zip(active, snapshots, strict=True)
+                        if snapshot.divergence is None
+                    ]
+                    after_rows = server.inspect_many(
+                        [
+                            snapshot.handle
+                            for snapshot in snapshots
+                            if snapshot.divergence is None
+                        ]
+                    )
+                    after_by_game = {
+                        episode.game: inspection
+                        for episode, inspection in zip(
+                            inspect_episodes, after_rows, strict=True
+                        )
+                    }
+                    survivors = []
+                    for episode, snapshot, actions_row in zip(
+                        active, snapshots, actions, strict=True
+                    ):
+                        before = episode.inspection
+                        assert before is not None
+                        episode.snapshot = snapshot
+                        if snapshot.divergence is not None:
+                            episode.stop = "semantic-divergence"
+                            if episode.replay is not None:
+                                episode.replay.add(
+                                    "|message|Semantic divergence: "
+                                    + snapshot.divergence
+                                )
+                            continue
+                        after = after_by_game[episode.game]
+                        after["player_mask"] = snapshot.player_mask
+                        after["enemy_mask"] = snapshot.enemy_mask
+                        player_action, enemy_action = actions_row
+                        player_metrics = (
+                            episode.candidate_metrics
+                            if episode.candidate_player
+                            else episode.baseline_metrics
+                        )
+                        enemy_metrics = (
+                            episode.baseline_metrics
+                            if episode.candidate_player
+                            else episode.candidate_metrics
+                        )
+                        _update_side_metrics(
+                            player_metrics,
+                            0,
+                            player_action,
+                            before,
+                            after,
+                            before["request"],
+                        )
+                        _update_side_metrics(
+                            enemy_metrics,
+                            1,
+                            enemy_action,
+                            before,
+                            after,
+                            before["request"],
+                        )
+                        if episode.replay is not None:
+                            _event_lines(episode.replay, before, after)
+                        episode.inspection = after
+                        if snapshot.done:
+                            episode.result = snapshot.terminal_return
+                            episode.stop = "finished"
+                        else:
+                            survivors.append(episode)
+                    active = survivors
+                    if active:
+                        compacted = server.compact_many(
+                            [episode.snapshot for episode in active]
+                        )
+                        for episode, snapshot in zip(active, compacted, strict=True):
+                            episode.snapshot = snapshot
+                    for episode in episodes:
+                        if episode.replay_path is not None:
+                            episode.replay_path.write_text(episode.replay.text())
+            except NativeRequestTimeout as error:
+                for episode in active:
+                    episode.stop = "mechanics-timeout"
+                    if episode.replay is not None:
+                        episode.replay.add(f"|message|Mechanics timeout: {error}")
+                        if episode.replay_path is not None:
+                            episode.replay_path.write_text(episode.replay.text())
+                server.close()
+                server = SearchServer()
+            all_episodes.extend(episodes)
+    finally:
+        server.close()
+    wins = losses = draws = truncated = semantic_divergences = mechanics_timeouts = 0
+    game_scores = []
+    for episode in sorted(all_episodes, key=lambda item: item.game):
+        candidate_metrics.merge(episode.candidate_metrics)
+        baseline_metrics.merge(episode.baseline_metrics)
+        candidate_result = (
+            episode.result
+            if episode.candidate_player or episode.result is None
+            else -episode.result
+        )
+        if episode.stop == "mechanics-timeout":
+            mechanics_timeouts += 1
+            score = 0.0
+        elif episode.stop == "semantic-divergence":
+            semantic_divergences += 1
+            score = 0.0
+        elif candidate_result == 1:
+            wins += 1
+            score = 1.0
+        elif candidate_result == -1:
+            losses += 1
+            score = 0.0
+        elif candidate_result == 0:
+            draws += 1
+            score = 0.5
+        else:
+            truncated += 1
+            score = 0.0
+        game_scores.append(score)
+        if episode.replay is not None and episode.replay_path is not None:
+            if episode.stop == "finished" and candidate_result == 1:
+                episode.replay.add("|win|Candidate")
+            elif episode.stop == "finished" and candidate_result == -1:
+                episode.replay.add("|win|Baseline")
+            elif episode.stop == "finished" and candidate_result == 0:
+                episode.replay.add("|tie")
+            elif episode.stop == "truncated":
+                episode.replay.add(
+                    "|message|Battle truncated without a terminal result."
+                )
+            episode.replay_path.write_text(episode.replay.text())
+    return _traced_summary(
+        config,
+        wins,
+        losses,
+        draws,
+        truncated,
+        semantic_divergences,
+        mechanics_timeouts,
+        game_scores,
+        candidate_metrics,
+        baseline_metrics,
+    )
+
+
 def run_traced_arena(
+    candidate: BattleTransformer,
+    baseline: BattleTransformer,
+    config: ArenaConfig,
+    replay_dir: Path | None = None,
+) -> dict[str, Any]:
+    if (
+        config.games % 2
+        or config.seed_count < 2
+        or config.games < 2 * config.seed_count
+    ):
+        raise ValueError(
+            "traced arena requires even games and at least one pair for each seed"
+        )
+    if config.search_every:
+        return _run_traced_arena_sequential(
+            candidate, baseline, config, replay_dir
+        )
+    return _run_traced_arena_batched(candidate, baseline, config, replay_dir)
+
+
+def _run_traced_arena_sequential(
     candidate: BattleTransformer,
     baseline: BattleTransformer,
     config: ArenaConfig,

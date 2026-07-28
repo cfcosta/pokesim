@@ -455,7 +455,7 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
         emit output (simpleSuccess request
           s!",\"profile\":\"{FullTraining.profileVersion}\",\"schema\":\"{FullTraining.schemaVersion}\",\"chance\":\"fresh-root-v1\",\"feature_count\":{FullTraining.featureCount},\"action_count\":{FullTraining.actionCount},\"party_size\":{Wram.partyLength},\"campaign_count\":{CampaignTeams.count}")
         serve input output states
-    | some "reset-campaign" =>
+    | some "reset-campaign" | some "reset-campaign-append" =>
         match tokenNat tokens 2, tokenNat tokens 3, tokenNat tokens 4 with
         | some root, some episode, some campaign =>
             let generator := Training.linkRng root.toUInt64 episode.toUInt64
@@ -466,8 +466,13 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
               Training.battleStream
             let state := Full.Environment.linkResetFromSamples player enemy battleRng
             let state := SearchState.battle state []
-            emit output (success request 0 state)
-            serve input output #[state]
+            if token tokens 0 == some "reset-campaign" then
+              emit output (success request 0 state)
+              serve input output #[state]
+            else
+              let handle := states.size
+              emit output (success request handle state)
+              serve input output (states.push state)
         | _, _, _ =>
             emit output (failure request "invalid-reset-campaign")
             serve input output states
@@ -567,6 +572,28 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
                 serve input output states
         | none =>
             emit output (failure request "invalid-inspect")
+            serve input output states
+    | some "inspect-many" =>
+        match token tokens 2 with
+        | some rawHandles =>
+            let handles := rawHandles.splitOn "," |>.map String.toNat?
+            if handles.any Option.isNone then
+              emit output (failure request "invalid-inspect-many")
+              serve input output states
+            else
+              let handles := handles.filterMap id
+              if handles.any fun handle => states[handle]?.isNone then
+                emit output (failure request "invalid-handle")
+                serve input output states
+              else
+                let inspections := handles.filterMap fun handle =>
+                  states[handle]?.map fun state =>
+                    "{" ++ s!"\"handle\":{handle}" ++ inspectionFields state ++ "}"
+                emit output (simpleSuccess request
+                  s!",\"inspections\":[{String.intercalate "," inspections}]")
+                serve input output states
+        | none =>
+            emit output (failure request "invalid-inspect-many")
             serve input output states
     | some "compact" =>
         match tokenNat tokens 2 with

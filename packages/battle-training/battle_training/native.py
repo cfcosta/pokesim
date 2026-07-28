@@ -225,10 +225,22 @@ class SearchServer:
     def reset_campaign(
         self, root_seed: int, episode: int, campaign: int
     ) -> Snapshot:
+        return self._reset_campaign("reset-campaign", root_seed, episode, campaign)
+
+    def reset_campaign_append(
+        self, root_seed: int, episode: int, campaign: int
+    ) -> Snapshot:
+        return self._reset_campaign(
+            "reset-campaign-append", root_seed, episode, campaign
+        )
+
+    def _reset_campaign(
+        self, operation: str, root_seed: int, episode: int, campaign: int
+    ) -> Snapshot:
         if not 0 <= campaign < self.campaign_count:
             raise ValueError("campaign team index is out of range")
         return self._snapshot(
-            self._request(f"reset-campaign|{root_seed}|{episode}|{campaign}")
+            self._request(f"{operation}|{root_seed}|{episode}|{campaign}")
         )
 
     def search_step(
@@ -270,6 +282,17 @@ class SearchServer:
 
     def inspect(self, handle: int) -> dict[str, Any]:
         return self._request(f"inspect|{handle}")
+
+    def inspect_many(self, handles: list[int]) -> list[dict[str, Any]]:
+        if not handles:
+            return []
+        response = self._request(
+            "inspect-many|" + ",".join(str(handle) for handle in handles)
+        )
+        inspections = response["inspections"]
+        if [row["handle"] for row in inspections] != handles:
+            raise RuntimeError("native inspect-many response ordering mismatch")
+        return inspections
 
     def compact(self, snapshot: Snapshot) -> Snapshot:
         return self.compact_many([snapshot])[0]
