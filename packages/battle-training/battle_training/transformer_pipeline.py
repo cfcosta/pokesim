@@ -69,7 +69,7 @@ class TransformerPipelineConfig:
     enforce_quality_gate: bool = True
     chance_samples_per_joint: int = 1
     regret_iterations: int = 256
-    inference_batch_size: int = 96
+    inference_batch_size: int = 256
     max_actions_per_side: int = 13
     replay_window: int = 2
     search_every: int = 1

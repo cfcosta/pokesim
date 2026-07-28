@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import threading
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from typing import Any, TypeAlias, cast
@@ -40,7 +41,7 @@ class JointSearchConfig:
     chance_samples_per_joint: int = 1
     max_depth: int = 1
     regret_iterations: int = 256
-    inference_batch_size: int = 96
+    inference_batch_size: int = 256
     max_actions_per_side: int = 13
     expansion_budget: int = 320
     exploration: float = 0.10
@@ -56,7 +57,7 @@ def legal_actions(mask: int, action_count: int) -> list[int]:
     return [action for action in range(action_count) if mask & (1 << action)]
 
 
-def _tactical_potential(features: tuple[int, ...]) -> float:
+def _tactical_potential(features: Sequence[int]) -> float:
     """Dense, antisymmetric HP/faint/status potential from canonical party rows."""
 
     def side(offset: int) -> tuple[float, int, int]:
@@ -301,23 +302,33 @@ class BatchedJointRegretSearch:
         self.selection_rng = selection_rng
         self.chance_rng = chance_rng
         self._inference_cache: dict[
-            tuple[int, tuple[int, ...], int], tuple[list[float], float]
+            tuple[int, str, bytes | tuple[int, ...], int],
+            tuple[list[float], float],
         ] = {}
         self._inference_cache_stats = {"hits": 0, "misses": 0}
+
+    @staticmethod
+    def _feature_identity(feature: Sequence[int]) -> tuple[str, bytes | tuple[int, ...]]:
+        dtype = getattr(feature, "dtype", None)
+        tobytes = getattr(feature, "tobytes", None)
+        if dtype is not None and tobytes is not None:
+            return dtype.str, tobytes()
+        return "python-int", tuple(feature)
 
     def _network_batches(
         self,
         network: BattleTransformer,
-        features: list[tuple[int, ...]],
+        features: list[Sequence[int]],
         masks: list[int],
         batch_size: int,
     ) -> tuple[list[list[float]], list[float]]:
         keys = [
-            (id(network), feature, mask)
+            (id(network), *self._feature_identity(feature), mask)
             for feature, mask in zip(features, masks, strict=True)
         ]
         missing: dict[
-            tuple[int, tuple[int, ...], int], tuple[tuple[int, ...], int]
+            tuple[int, str, bytes | tuple[int, ...], int],
+            tuple[Sequence[int], int],
         ] = {}
         for key, feature, mask in zip(keys, features, masks, strict=True):
             if key in self._inference_cache or key in missing:
@@ -580,7 +591,7 @@ class _TreeNode:
 @dataclass
 class _InferenceRequest:
     network: Any
-    features: list[tuple[int, ...]]
+    features: list[Sequence[int]]
     masks: list[int]
     result: tuple[list[list[float]], list[float]] | None = None
     error: Exception | None = None
@@ -605,7 +616,7 @@ class _InferenceWaveBroker:
         self,
         worker_id: int,
         network: Any,
-        features: list[tuple[int, ...]],
+        features: list[Sequence[int]],
         masks: list[int],
     ) -> tuple[list[list[float]], list[float]]:
         request = _InferenceRequest(network, features, masks)
@@ -688,7 +699,7 @@ class _InferenceProxy:
         self.config = network.config
 
     def evaluate(
-        self, features: list[tuple[int, ...]], masks: list[int]
+        self, features: list[Sequence[int]], masks: list[int]
     ) -> tuple[list[list[float]], list[float]]:
         return self.broker.evaluate(self.worker_id, self.network, features, masks)
 

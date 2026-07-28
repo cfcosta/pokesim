@@ -55,7 +55,7 @@ class ArenaConfig:
     chance_samples_per_joint: int = 1
     search_depth: int = 1
     regret_iterations: int = 256
-    inference_batch_size: int = 96
+    inference_batch_size: int = 256
     max_actions_per_side: int = 13
     seed: int = 0
     replay_games: int = 3

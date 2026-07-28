@@ -62,7 +62,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--feedforward", type=int, default=192 if smoke else 512)
     parser.add_argument("--chance-samples-per-joint", type=int, default=1)
     parser.add_argument("--regret-iterations", type=int, default=256)
-    parser.add_argument("--inference-batch-size", type=int, default=96)
+    parser.add_argument("--inference-batch-size", type=int, default=256)
     parser.add_argument("--max-actions-per-side", type=int, default=13)
     parser.add_argument("--replay-window", type=int, default=2)
     parser.add_argument("--search-every", type=int, default=1)
@@ -107,7 +107,7 @@ def parser() -> argparse.ArgumentParser:
     arena.add_argument("--chance-samples-per-joint", type=int, default=1)
     arena.add_argument("--search-depth", type=int, default=1)
     arena.add_argument("--regret-iterations", type=int, default=256)
-    arena.add_argument("--inference-batch-size", type=int, default=96)
+    arena.add_argument("--inference-batch-size", type=int, default=256)
     arena.add_argument("--seed", type=int, default=90210)
     arena.add_argument("--device", default="auto")
     arena.add_argument(

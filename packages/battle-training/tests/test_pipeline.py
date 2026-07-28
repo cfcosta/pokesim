@@ -188,8 +188,12 @@ class TransformerTests(unittest.TestCase):
     def test_native_feature_decoding_supports_packed_and_fallback_rows(self) -> None:
         packed = {"feature_encoding": "u16le-base64", "player_features": "NBLNqw=="}
         fallback = {"player_features": [0x1234, 0xABCD]}
-        self.assertEqual(_decode_features(packed, "player"), (0x1234, 0xABCD))
-        self.assertEqual(_decode_features(fallback, "player"), (0x1234, 0xABCD))
+        packed_features = _decode_features(packed, "player")
+        fallback_features = _decode_features(fallback, "player")
+        self.assertEqual(packed_features.tolist(), [0x1234, 0xABCD])
+        self.assertEqual(fallback_features.tolist(), [0x1234, 0xABCD])
+        self.assertEqual(packed_features.dtype.str, "<u2")
+        self.assertFalse(packed_features.flags.writeable)
 
     def test_regret_matching_finds_matching_pennies_equilibrium(self) -> None:
         payoff = [

@@ -122,7 +122,7 @@ def search_profile(
             chance_samples_per_joint=1,
             max_depth=depth,
             regret_iterations=256,
-            inference_batch_size=96,
+            inference_batch_size=256,
             max_actions_per_side=13,
             expansion_budget=budget,
             exploration=0.10,

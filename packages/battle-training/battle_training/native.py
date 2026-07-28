@@ -5,11 +5,13 @@ from __future__ import annotations
 import base64
 import json
 import selectors
-import struct
 import subprocess
 import threading
 from dataclasses import dataclass
 from typing import Any, Self
+
+import numpy as np
+from numpy.typing import NDArray
 
 from . import (
     FULL_ACTION_COUNT,
@@ -32,24 +34,29 @@ class NativeRequestTimeout(RuntimeError):
         self.seconds = seconds
 
 
-def _decode_features(response: dict[str, Any], side: str) -> tuple[int, ...]:
+def _decode_features(response: dict[str, Any], side: str) -> NDArray[np.integer[Any]]:
     values = response[f"{side}_features"]
     encoding = response.get("feature_encoding", "json-nat-array")
     if encoding == "json-nat-array":
-        return tuple(values)
-    if encoding != "u16le-base64" or not isinstance(values, str):
-        raise ValueError(f"unsupported native feature encoding: {encoding!r}")
-    packed = base64.b64decode(values, validate=True)
-    if len(packed) % 2:
-        raise ValueError("packed native features have odd byte length")
-    return struct.unpack(f"<{len(packed) // 2}H", packed)
+        result = np.asarray(values, dtype=np.int64)
+    else:
+        if encoding != "u16le-base64" or not isinstance(values, str):
+            raise ValueError(f"unsupported native feature encoding: {encoding!r}")
+        packed = base64.b64decode(values, validate=True)
+        if len(packed) % 2:
+            raise ValueError("packed native features have odd byte length")
+        result = np.frombuffer(packed, dtype="<u2")
+    if result.ndim != 1:
+        raise ValueError("native features must be a one-dimensional array")
+    result.flags.writeable = False
+    return result
 
 
 @dataclass(frozen=True)
 class Snapshot:
     handle: int
-    player_features: tuple[int, ...]
-    enemy_features: tuple[int, ...]
+    player_features: NDArray[np.integer[Any]]
+    enemy_features: NDArray[np.integer[Any]]
     player_mask: int
     enemy_mask: int
     player_hash: str

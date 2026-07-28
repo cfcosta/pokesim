@@ -137,7 +137,7 @@ class BattleTransformer(nn.Module):
 
     @staticmethod
     def _inference_bucket(batch: int) -> int:
-        for bucket in (2, 4, 8, 16, 32, 64, 96):
+        for bucket in (2, 4, 8, 16, 32, 64, 96, 128, 192, 256):
             if batch <= bucket:
                 return bucket
         return batch
@@ -175,7 +175,11 @@ class BattleTransformer(nn.Module):
             return source.to(device)
         batch = len(values)
         staging = buffers.get(batch)
-        if staging is None or staging.shape != source.shape:
+        if (
+            staging is None
+            or staging.shape != source.shape
+            or staging.dtype != source.dtype
+        ):
             staging = torch.empty(source.shape, dtype=source.dtype, pin_memory=True)
             buffers[batch] = staging
         staging.copy_(source)
@@ -186,7 +190,7 @@ class BattleTransformer(nn.Module):
         self, features: Sequence[Sequence[int]], masks: Sequence[int]
     ) -> tuple[list[list[float]], list[float]]:
         device = next(self.parameters()).device
-        feature_array = np.asarray(features, dtype=np.uint16)
+        feature_array = np.stack(features)
         if feature_array.ndim != 2:
             raise ValueError("network evaluation requires a rectangular feature batch")
         tensor = self._staged_tensor(
@@ -208,7 +212,8 @@ class BattleTransformer(nn.Module):
             raise ValueError("network evaluation received an empty legal mask")
         logits = logits.masked_fill(~legal, torch.finfo(logits.dtype).min)
         probabilities = torch.softmax(logits, dim=-1)
-        return probabilities.cpu().tolist(), values.cpu().tolist()
+        outputs = torch.cat((probabilities, values.unsqueeze(1)), dim=1).cpu().numpy()
+        return outputs[:, :-1].tolist(), outputs[:, -1].tolist()
 
     def detached_copy(self, device: torch.device) -> BattleTransformer:
         clone = BattleTransformer(self.config).to(device)
