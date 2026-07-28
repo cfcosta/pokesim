@@ -260,7 +260,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(result.diagnostics["root_joint_actions"], 4)
         self.assertEqual(result.diagnostics["sampled_joint_coverage"], 1.0)
 
-    def test_cross_root_search_batches_root_inference(self) -> None:
+    def test_cross_root_search_batches_and_caches_inference(self) -> None:
         server = _ToyServer()
         server.states[100] = (0, 0)
         network = _ToyNetwork()
@@ -319,7 +319,10 @@ class TransformerTests(unittest.TestCase):
         self.assertTrue(
             all(result.diagnostics["cross_root_batch_size"] == 2 for result in results)
         )
-        self.assertGreaterEqual(max(network.batches), 16)
+        self.assertEqual(max(network.batches), 1)
+        self.assertTrue(
+            all(result.diagnostics["inference_cache_hits"] > 0 for result in results)
+        )
 
     def test_production_defaults_use_search_at_every_decision(self) -> None:
         arguments = training_parser().parse_args(

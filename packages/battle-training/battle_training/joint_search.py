@@ -298,24 +298,44 @@ class BatchedJointRegretSearch:
         self.config = config
         self.selection_rng = selection_rng
         self.chance_rng = chance_rng
+        self._inference_cache: dict[
+            tuple[int, tuple[int, ...], int], tuple[list[float], float]
+        ] = {}
+        self._inference_cache_stats = {"hits": 0, "misses": 0}
 
-    @staticmethod
     def _network_batches(
+        self,
         network: BattleTransformer,
         features: list[tuple[int, ...]],
         masks: list[int],
         batch_size: int,
     ) -> tuple[list[list[float]], list[float]]:
-        policies: list[list[float]] = []
-        values: list[float] = []
-        for start in range(0, len(features), batch_size):
+        keys = [
+            (id(network), feature, mask)
+            for feature, mask in zip(features, masks, strict=True)
+        ]
+        missing: dict[
+            tuple[int, tuple[int, ...], int], tuple[tuple[int, ...], int]
+        ] = {}
+        for key, feature, mask in zip(keys, features, masks, strict=True):
+            if key in self._inference_cache or key in missing:
+                self._inference_cache_stats["hits"] += 1
+            else:
+                self._inference_cache_stats["misses"] += 1
+                missing[key] = (feature, mask)
+        missing_items = list(missing.items())
+        for start in range(0, len(missing_items), batch_size):
+            batch = missing_items[start : start + batch_size]
             batch_policies, batch_values = network.evaluate(
-                features[start : start + batch_size],
-                masks[start : start + batch_size],
+                [item[1][0] for item in batch],
+                [item[1][1] for item in batch],
             )
-            policies.extend(batch_policies)
-            values.extend(batch_values)
-        return policies, values
+            for (key, _), policy, value in zip(
+                batch, batch_policies, batch_values, strict=True
+            ):
+                self._inference_cache[key] = (policy, value)
+        cached = [self._inference_cache[key] for key in keys]
+        return [item[0] for item in cached], [item[1] for item in cached]
 
     def _evaluate_many(
         self, snapshots: list[Snapshot]
@@ -1005,6 +1025,12 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             "tree_converged": int(converged),
             "cross_root_batch_size": self._cross_root_batch_size,
             "cross_root_root_leaves": self._cross_root_root_leaves,
+            "inference_cache_hits": self._inference_cache_stats["hits"],
+            "inference_cache_misses": self._inference_cache_stats["misses"],
+            "inference_cache_hit_rate": (
+                self._inference_cache_stats["hits"]
+                / max(1, sum(self._inference_cache_stats.values()))
+            ),
         }
         if root is not None:
             diagnostics["root_joint_actions"] = len(root.player_legal) * len(
@@ -1198,6 +1224,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             raise ValueError(
                 "cross-root batches require one server, model pair, and config"
             )
+        for search in searches[1:]:
+            search._inference_cache = first._inference_cache
+            search._inference_cache_stats = first._inference_cache_stats
         player_priors, enemy_priors, prior_values = first._evaluate_many(snapshots)
         roots = [
             search._make_node(snapshot, evaluation)

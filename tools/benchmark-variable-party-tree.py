@@ -179,6 +179,16 @@ def search_profile(
         "mean_depth": sum(row["tree_max_depth"] for row in diagnostics) / roots,
         "convergence_rate": sum(row["tree_converged"] for row in diagnostics)
         / roots,
+        "mean_inference_cache_hit_rate": sum(
+            row["inference_cache_hit_rate"] for row in diagnostics
+        )
+        / roots,
+        "inference_cache_hits": max(
+            row["inference_cache_hits"] for row in diagnostics
+        ),
+        "inference_cache_misses": max(
+            row["inference_cache_misses"] for row in diagnostics
+        ),
         "root_joint_actions": [row["root_joint_actions"] for row in diagnostics],
         "mean_exploitability": sum(result.exploitability or 0.0 for result in results)
         / roots,
