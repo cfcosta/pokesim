@@ -171,7 +171,9 @@ The earlier terminal-return move table remains available as `tabular-smoke` and
   reject the run.
 - Generated Mirror Move against a recorded Mirror Move is classified as
   `nested-mirror-move-cycle` silent divergence rather than consuming host CPU
-  indefinitely.
+  indefinitely. RNG-stuck states and cartridge-faithful division freezes are
+  likewise returned as typed divergences: search falls back without labeling
+  the branch, while a real episode stops without a terminal value target.
 - The synchronized full-party profile is still a hot-path quotient, not the
   paired-cartridge emulator deployment profile.
 - Cross-root batching currently combines complete root matrices and unsearched

@@ -182,11 +182,22 @@ private partial def normalizeResult (prior : List Full.Engine.Event) :
   | .invalidAction _ side => .failed s!"invalid-action-{sideName side}"
   | .ineffectiveAction _ side => .failed s!"ineffective-action-{sideName side}"
   | .capturePending _ _ _ => .failed "capture-pending-in-link"
-  | .rngStuck _ _ => .failed "rng-stuck"
-  | .divisionFreeze _ _ => .failed "division-freeze"
+  | .rngStuck state events =>
+      .transitioned (.diverged state "rng-stuck" (prior ++ events))
+  | .divisionFreeze state events =>
+      .transitioned (.diverged state "division-freeze" (prior ++ events))
   | .runPending _ _ _ _ => .failed "run-pending-in-link"
   | .wildFaintRunPending _ _ => .failed "wild-run-pending-in-link"
   | .inactive _ => .failed "inactive"
+
+private def nativeDivergenceReason : NativeStep → Option String
+  | .transitioned (.diverged _ reason _) => some reason
+  | _ => none
+
+#guard nativeDivergenceReason
+  (normalizeResult [] (.rngStuck nestedCycleProbe [])) == some "rng-stuck"
+#guard nativeDivergenceReason
+  (normalizeResult [] (.divisionFreeze nestedCycleProbe [])) == some "division-freeze"
 
 private def firstOrdinaryAction (state : Full.Environment.State) (side : Side) :
     Option Full.Action :=
