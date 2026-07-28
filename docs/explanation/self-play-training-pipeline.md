@@ -261,6 +261,12 @@ Each decision records observations, masks, chosen actions, search targets, root 
 
 Physical storage may use Arrow IPC, Parquet, or a custom binary frame after measurement. The logical schema and deterministic round trip come first.
 
+Browser matches use a stricter server-authoritative envelope described in
+[Learning from browser battle traces](human-battle-trace-training.md). They are
+replayed and search-relabeled offline before entering a bounded replay component;
+raw human choices are not automatically treated as perfect-information policy
+targets, and partial matches never receive fabricated terminal labels.
+
 ## League and data mixture
 
 The actor scheduler samples from a declared mixture rather than always pairing the newest checkpoint with itself:
@@ -272,7 +278,8 @@ The actor scheduler samples from a declared mixture rather than always pairing t
 - approximate best responses used for evaluation;
 - fixed mechanics/adversarial teams;
 - broad progression-witnessed generated teams;
-- held-out team distributions that never feed training.
+- validated, search-relabeled human-encountered states from the training split;
+- held-out team and human-trace distributions that never feed training.
 
 A payoff matrix tracks policy-by-policy and profile-by-profile results. A PSRO-style meta-solver can later choose opponent probabilities. Elo or Glicko is a presentation statistic, not the sole promotion criterion, because a single rating hides cycles.
 
@@ -289,7 +296,9 @@ Every promoted checkpoint is evaluated with paired teams, paired randomness, and
 - search-budget scaling and network-only versus search-assisted strength;
 - transition, inference, and end-to-end actor throughput;
 - terminal, truncation, blocked, RNG-stuck, division-freeze, and nested-open counts;
-- exact transcript replay success.
+- exact transcript replay success;
+- accepted, quarantined, partial, and divergent browser trace counts, with
+  self-play-only versus human-state-relabel ablations.
 
 Two leakage checks are mandatory. First, states with the same policy information but different hidden future battle RNG must produce the same network output and, for a fixed search seed, the same search distribution. Second, changing hidden opponent data outside a player information set must not change a player-view decision unless the belief sampler's public inputs changed.
 
@@ -313,7 +322,7 @@ The restricted implementation now trains a side-canonical transformer with searc
 
 ### M4: League training
 
-Historical checkpoint mixtures, aggressive and switch-heavy deterministic opponents, variable one-to-six-member requests, and stratified promotion gates are implemented. Main exploiters, league exploiters, human-transcript import, and payoff-matrix population sampling remain open.
+Historical checkpoint mixtures, aggressive and switch-heavy deterministic opponents, variable one-to-six-member requests, and stratified promotion gates are implemented. Main exploiters, league exploiters, server-authoritative human-trace replay/search relabeling, and payoff-matrix population sampling remain open.
 
 ### M5: Player-view training
 

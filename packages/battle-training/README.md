@@ -119,9 +119,12 @@ heuristic. On those episodes the candidate still receives an all-action RM+
 policy target, but the opposing real action is sampled from the named heuristic
 rather than the tree's opponent strategy. `--no-heuristic-opponents` disables
 the two deterministic heuristics for ablations. Shards record every opponent
-identity and deterministic regeneration reconstructs the same population order. Human transcripts remain
-external until a licensed corpus and observation-compatible importer exist. Each production update
-receives at least 1,024 held-out games against its incumbent, grouped into 512
+identity and deterministic regeneration reconstructs the same population order.
+Human traces remain external until the server-authoritative replay and search-
+relabeling importer in
+[the trace contract](../../docs/explanation/human-battle-trace-training.md) is
+implemented. Each production update receives at least 1,024 held-out games
+against its incumbent, grouped into 512
 same-reset pairs with model sides swapped across eight root seeds. Truncations
 and semantic cycles score zero. Promotion requires a point score of at least 50%,
 a paired 95% confidence lower bound of at least 50%, and passing separate
@@ -219,5 +222,8 @@ The earlier terminal-return move table remains available as `tabular-smoke` and
 - This training pipeline is theorem-backed model execution, not a proof of
   behavioral equivalence to the Pokémon Red battle ROM.
 
-See [`CHECKLIST.md`](CHECKLIST.md) for the remaining path to full-party paired
-link deployment.
+See [`CHECKLIST.md`](CHECKLIST.md) for the remaining paired-cartridge and patched
+browser deployment gates. The browser-first target is the
+[random level-100 6v6 exhibition](../../docs/explanation/web-random-6v6-exhibition.md);
+the later campaign integration is described in
+[Campaign trainer battles controlled by the learned link policy](../../docs/explanation/campaign-trainer-link-ai.md).

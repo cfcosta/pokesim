@@ -10,6 +10,9 @@ These documents record twelve codebase, processor, and proof-architecture review
 - [RNG and time](explanation/rng-and-time.md) — why console randomness cannot honestly be reduced to a software seed.
 - [RL environment design](explanation/rl-environment.md) — legal teams, actions, observations, replay, and batching.
 - [Self-play training pipeline](explanation/self-play-training-pipeline.md) — proposed actor–learner, simultaneous MCTS, league, replay, evaluation, and staged implementation architecture.
+- [Campaign trainer link-AI deployment](explanation/campaign-trainer-link-ai.md) — decision record for replacing campaign trainer controllers with the learned policy inside patched synchronized link battles.
+- [Random level-100 6v6 web exhibition](explanation/web-random-6v6-exhibition.md) — browser-first ROM profile that boots directly into a replayable human-versus-model battle.
+- [Learning from browser battle traces](explanation/human-battle-trace-training.md) — authoritative trace schema, search relabeling, poisoning resistance, data splits, and privacy boundary for user matches.
 - [Training implementation checklist](../packages/battle-training/CHECKLIST.md) — executable restricted pipeline status and remaining search, full-party, population, and emulator gates.
 
 ## Reference

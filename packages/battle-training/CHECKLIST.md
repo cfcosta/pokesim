@@ -106,11 +106,111 @@ rows remain required before the corresponding profile can be called complete.
 - [ ] Hash-gate the canonical or explicitly patched ROM profile.
 - [ ] Keep ROM/processor differential execution out of the training hot path.
 
+## M7 — patched campaign trainer deployment
+
+The target and its information, ROM, and training boundaries are recorded in
+[Campaign trainer battles controlled by the learned link policy](../../docs/explanation/campaign-trainer-link-ai.md).
+This is a synchronized patched-ROM profile, distinct from the stock paired-ROM
+profile in M6.
+
+- [ ] Enter the AI-link wrapper only for campaign trainer encounters; leave wild,
+      Safari, Old Man, and stock link controllers unchanged.
+- [ ] Build and hash a BPS patch against the canonical Red ROM and retain its
+      generated `.sym`, `.map`, and profile manifest.
+- [ ] Initialize the stock link random list and record the virtual clock role for
+      every trainer battle.
+- [ ] Emit the model request before accepting the player's action and prove that
+      later menu selection cannot change that request.
+- [ ] Replace serial remote-action receipt with one cached, mask-validated backend
+      action while retaining stock link action decoding.
+- [ ] Bridge voluntary switching, forced replacement, no-action, Struggle, and
+      every reachable typed nested request.
+- [ ] Keep player and trainer items plus voluntary forfeits unavailable in the
+      patched battle profile.
+- [ ] Translate link terminal results into campaign trainer-script progression,
+      save-state invariants, and the selected loss policy.
+- [ ] Implement the ROM-to-v4 observation adapter and compare all 492 fields with
+      `FullTraining.featureVector` fixtures.
+- [ ] Build the pinned SameBoy browser/WASM wrapper and versioned WebSocket
+      inference service.
+- [ ] Replay patched-ROM turns through the synchronized Lean model and retain
+      every mismatch, nonfinish, and paired-cartridge discrepancy.
+- [ ] Gate deployment on stratified campaign-team arenas and decide roster/level
+      scaling independently from the battle-control policy.
+
+## M8 — random level-100 6v6 web exhibition
+
+The browser-first target is specified in
+[Browser exhibition with random level-100 teams](../../docs/explanation/web-random-6v6-exhibition.md).
+It reuses M7's action, adapter, inference, and link-RNG work but has a separate
+boot patch and no campaign state.
+
+- [ ] Add a progression-witnessed generator fixed to six level-100 Pokémon and
+      prove deterministic replay and canonical legality.
+- [ ] Split root entropy into recorded human-team, model-team, battle-RNG, and
+      clock-role streams.
+- [ ] Define and validate the versioned party/RNG staging manifest consumed by
+      the patched ROM.
+- [ ] Build and hash `web-random-6v6-link-ai-v1` as a separate BPS profile that
+      bypasses intro, main menu, save loading, and overworld entry.
+- [ ] Hold on a minimal preparation screen until teams and inference are ready;
+      fail closed instead of falling back to cartridge AI.
+- [ ] Construct two full six-member party representations with every member at
+      level 100, full HP/PP, and clear status.
+- [ ] Enter patched synchronized link battle with slot zero as each side's lead,
+      no items, and no voluntary forfeit.
+- [ ] Reuse the pre-player-action cached backend bridge for every normal, forced,
+      and nested request.
+- [ ] Append every semantic decision and result to the server-authoritative M9
+      trace without blocking emulator input or rendering.
+- [ ] End at a win/loss screen and make rematch generate a clean match with a new
+      seed without reading or writing campaign save data.
+- [ ] Add a held-out `web-random-l100-6v6` promotion arena and human-play latency,
+      completion, and difficulty gates.
+- [ ] Differential-test generated party bytes and turn traces against the Lean
+      manifest and synchronized model.
+
+## M9 — human battle trace ingestion
+
+The collection and offline-learning boundary is specified in
+[Learning from browser battle traces](../../docs/explanation/human-battle-trace-training.md).
+
+- [ ] Publish a short collection notice and bind a consent-policy version before
+      issuing a match ID.
+- [ ] Freeze a logical trace schema for version/hash identities, exact parties,
+      typed decisions, masks, actions, events, RNG transitions, and provenance.
+- [ ] Record the model request, policy/value output, and cached action on the
+      backend before accepting the later human commitment.
+- [ ] Sequence human actions with server nonces and reject duplicate, stale,
+      illegal, impossible, or out-of-order records.
+- [ ] Retain disconnects and bridge failures as partial traces without terminal
+      value labels.
+- [ ] Content-address immutable traces while excluding ROMs, patches, save RAM,
+      raw keypresses, video/audio, IP addresses, and browser fingerprints.
+- [ ] Deterministically replay every candidate through Lean and quarantine the
+      first state, event, RNG, legality, or ROM-projection mismatch.
+- [ ] Search-relabel eligible human-encountered states with independent entropy;
+      do not use raw human choices as perfect-information targets by default.
+- [ ] Split by match and rotating player identity before extracting positions;
+      keep held-out users and seeds outside optimization.
+- [ ] Add source caps, content/state deduplication, rate limits, anomaly checks,
+      and a versioned maximum human-replay mixture weight.
+- [ ] Require self-play-only versus human-state-relabel ablations and all existing
+      nonhuman promotion gates before accepting a human-data checkpoint.
+- [ ] Define trace/shard retention, account export/deletion, tombstones, and a
+      separate consent/license decision before any public dataset release.
+
 ## Completion rule
 
 “End-to-end training works” currently means the full-party transformer can
 collect Lean-owned regret-search targets and network rollouts from random asymmetric 1-to-6-member
 teams, train policy/value heads on GPU or CPU, emit traced side-swapped arenas,
 and reproduce its first search shard.
-“Deployable Pokémon agent” still means all relevant M0–M6 rows for
-`full-link-paired-player-v1` are checked and their quality gates pass.
+A deployable stock paired-cartridge agent requires all relevant M0–M6 rows and
+quality gates for `full-link-paired-player-v1`. A deployable campaign trainer
+agent requires the relevant M0–M5 rows plus M7 for
+`campaign-trainer-link-ai-v1`. The first browser exhibition requires the shared
+M7 battle bridge and all M8 rows for `web-random-6v6-link-ai-v1`; it does not
+require campaign encounter or progression work. A checkpoint claimed to learn
+from user battles additionally requires all M9 rows and reports its human-state
+mixture separately.
