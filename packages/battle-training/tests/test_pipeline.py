@@ -290,7 +290,7 @@ class TransformerTests(unittest.TestCase):
         )
         self.assertGreaterEqual(max(network.batches), 16)
 
-    def test_production_defaults_are_safe_overnight_configuration(self) -> None:
+    def test_production_defaults_use_search_at_every_decision(self) -> None:
         arguments = training_parser().parse_args(
             ["transformer-train", "--output", "/tmp/overnight"]
         )
@@ -299,6 +299,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.episodes, 500)
         self.assertEqual(arguments.arena_episodes, 1024)
         self.assertEqual(arguments.search_depth, 4)
+        self.assertEqual(arguments.search_every, 1)
         self.assertEqual(arguments.epochs, 2)
         self.assertEqual(arguments.batch_size, 128)
         self.assertEqual(arguments.learning_rate, 2e-4)

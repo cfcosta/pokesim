@@ -38,24 +38,28 @@ The smoke command performs the complete loop:
 9. writes SHA-256 manifests; and
 10. regenerates the first search shard byte for byte from checkpoint zero.
 
-Default training searches every tenth real decision with an adaptive
+Default training searches every real decision with an adaptive
 192–320-transition matrix-valued simultaneous tree. It may stop after eight
-stable average-strategy updates once the full depth has been reached. The root evaluates every legal joint action;
-deeper nodes begin with two cyclic joint-action rotations that cover every legal
-move and switch, then sample additional pairs and fresh chance outcomes under
-persistent regret matching+. Unsearched real decisions use the network policy
-directly. This keeps six-member runs practical without top-k action pruning.
-`transformer-train` is an overnight profile:
+stable average-strategy updates once the full depth has been reached. The root
+evaluates every legal joint action; deeper nodes begin with two cyclic
+joint-action rotations that cover every legal move and switch, then sample
+additional pairs and fresh chance outcomes under persistent regret matching+.
+Except for typed search fallbacks, every completed training decision therefore
+carries an RM+ average-strategy policy target. `--search-every` remains available
+for explicit sparse-search experiments, but it is not the production default.
+This preserves complete action consideration without top-k pruning.
+`transformer-train` is the production profile:
 30 iterations of 500 training battles, or 15,000 independently reset random
 6v6 battles. It uses depth-four simultaneous trees, the 938,638-parameter
 four-layer, 128-wide model, BF16 autocast, two epochs per iteration, a
 CUDA-safe batch size of 128, and a 1,024-game final arena. Parameters, gradients,
 AdamW state, policy normalization, losses, and reductions remain FP32. The tree
-used 320 native transitions per searched root and was 1.31× slower than
-disposable depth-four rollouts in a 24-root benchmark. The previous strict-FP32
-runtime estimate was approximately nine hours; measured BF16 actor throughput
-was 1.35× higher on a matched small workload, but a complete production run has
-not yet established a replacement wall-clock estimate:
+uses up to 320 native transitions per searched root and was 1.31× slower than
+disposable depth-four rollouts in a 24-root benchmark. The former every-tenth
+profile had an approximately nine-hour strict-FP32 estimate and completed a
+15-iteration BF16 run in under five hours. Searching every move creates roughly
+ten times as many search roots; a complete all-move production run has not yet
+established its wall-clock time:
 
 ```sh
 nix develop -c python packages/battle-training/train.py transformer-train \

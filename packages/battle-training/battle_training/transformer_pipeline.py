@@ -67,7 +67,7 @@ class TransformerPipelineConfig:
     inference_batch_size: int = 96
     max_actions_per_side: int = 13
     replay_window: int = 2
-    search_every: int = 10
+    search_every: int = 1
     tree_expansion_budget: int = 320
     tree_exploration: float = 0.10
     tree_chance_resample: float = 0.10

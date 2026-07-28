@@ -55,7 +55,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--inference-batch-size", type=int, default=96)
     parser.add_argument("--max-actions-per-side", type=int, default=13)
     parser.add_argument("--replay-window", type=int, default=2)
-    parser.add_argument("--search-every", type=int, default=10)
+    parser.add_argument("--search-every", type=int, default=1)
     parser.add_argument("--tree-expansion-budget", type=int, default=320)
     parser.add_argument("--tree-exploration", type=float, default=0.10)
     parser.add_argument("--tree-chance-resample", type=float, default=0.10)
