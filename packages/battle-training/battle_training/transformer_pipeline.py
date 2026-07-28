@@ -580,7 +580,7 @@ def _collect_rows(
                 if not active:
                     break
                 compacted = server.compact_many(
-                    [actor.snapshot.handle for actor in active]
+                    [actor.snapshot for actor in active]
                 )
                 for actor, snapshot in zip(active, compacted, strict=True):
                     actor.snapshot = snapshot
@@ -793,7 +793,7 @@ def _play_game(
         )
         if snapshot.done:
             return snapshot.terminal_return
-        snapshot = server.compact(snapshot.handle)
+        snapshot = server.compact(snapshot)
     return None
 
 

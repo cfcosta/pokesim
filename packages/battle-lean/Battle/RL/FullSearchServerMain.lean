@@ -581,6 +581,22 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
         | none =>
             emit output (failure request "invalid-compact")
             serve input output states
+    | some "compact-handles" =>
+        match token tokens 2 with
+        | some rawHandles =>
+            let handles := rawHandles.splitOn "," |>.mapM String.toNat?
+            match handles.bind (compactStates · states) with
+            | some compact =>
+                let remapped := (List.range compact.size).map toString
+                emit output (simpleSuccess request
+                  s!",\"handles\":[{String.intercalate "," remapped}]")
+                serve input output compact
+            | none =>
+                emit output (failure request "invalid-compact-handles-handle")
+                serve input output states
+        | none =>
+            emit output (failure request "invalid-compact-handles")
+            serve input output states
     | some "compact-many" =>
         match token tokens 2 with
         | some rawHandles =>

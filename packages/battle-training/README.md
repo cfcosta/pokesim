@@ -175,8 +175,10 @@ team-generation entropy remain separate.
 typed Mimic continuations behind integer handles. `step ... fresh ...` installs
 a named search chance fork;
 `batch` derives many such successors in one native request; `reset-append` and
-`compact-many` retain and remap several live episode roots; `batch-episode`
-advances several real trajectories with their existing hidden RNG. Python cannot
+`compact-handles` retain and remap several live episode roots without returning
+unchanged observations; `batch-episode` advances several real trajectories with
+their existing hidden RNG. The compatibility `compact-many` command still emits
+full snapshots for external protocol probes. Python cannot
 mutate or resolve battle state itself. Actors run in groups of 16. Root matrices,
 root leaf inference, network-only decisions, and real episode transitions are
 batched across compatible independent roots; deeper progressive simulations

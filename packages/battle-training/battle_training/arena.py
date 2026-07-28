@@ -481,7 +481,7 @@ def run_paired_arena(
                         result = snapshot.terminal_return
                         stop = "finished"
                         break
-                    snapshot = server.compact(snapshot.handle)
+                    snapshot = server.compact(snapshot)
             except NativeRequestTimeout:
                 stop = "mechanics-timeout"
                 server.close()
@@ -731,7 +731,7 @@ def run_traced_arena(
                     if snapshot.done:
                         result_value = snapshot.terminal_return
                         break
-                    snapshot = server.compact(snapshot.handle)
+                    snapshot = server.compact(snapshot)
         except NativeRequestTimeout as error:
             timed_out = True
             mechanics_timeouts += 1

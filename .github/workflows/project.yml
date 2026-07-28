@@ -49,7 +49,7 @@ jobs:
               )
               assert first.player_features[22:44] == (0,) * 22
               second = server.reset_append(2, 0, 6, 1)
-              compact = server.compact_many([second.handle, first.handle])
+              compact = server.compact_many([second, first])
               assert [state.handle for state in compact] == [0, 1]
               assert compact[0].player_hash == second.player_hash
               assert compact[1].player_hash == first.player_hash

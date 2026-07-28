@@ -84,6 +84,20 @@ def main() -> int:
                     "median_us_per_transition": median_us / batch_size,
                 }
             )
+        compacted = snapshots[:16]
+        compaction_elapsed = []
+        for _ in range(arguments.repeats):
+            started = time.perf_counter_ns()
+            compacted = server.compact_many(compacted)
+            compaction_elapsed.append((time.perf_counter_ns() - started) / 1000)
+        compact_ordered = sorted(compaction_elapsed)
+        compaction = {
+            "snapshots": len(compacted),
+            "repeats": arguments.repeats,
+            "median_us": statistics.median(compaction_elapsed),
+            "minimum_us": compact_ordered[0],
+            "p95_us": compact_ordered[int(len(compact_ordered) * 0.95) - 1],
+        }
 
     report = {
         "binary": str(binary.resolve()),
@@ -91,7 +105,8 @@ def main() -> int:
         "profile": native.FULL_PROFILE,
         "schema": native.FULL_SCHEMA,
         "measurements": measurements,
-        "scope": "fresh-chance native mechanics, projection, wire IO, and JSON decoding",
+        "compaction": compaction,
+        "scope": "fresh-chance native mechanics, projection, wire IO, JSON decoding, and handle compaction",
     }
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

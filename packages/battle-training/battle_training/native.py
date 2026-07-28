@@ -60,6 +60,23 @@ class Snapshot:
     request: str
     divergence: str | None
 
+    def with_handle(self, handle: int) -> Snapshot:
+        return Snapshot(
+            handle=handle,
+            player_features=self.player_features,
+            enemy_features=self.enemy_features,
+            player_mask=self.player_mask,
+            enemy_mask=self.enemy_mask,
+            player_hash=self.player_hash,
+            enemy_hash=self.enemy_hash,
+            turn=self.turn,
+            terminal=self.terminal,
+            done=self.done,
+            terminal_return=self.terminal_return,
+            request=self.request,
+            divergence=self.divergence,
+        )
+
     @classmethod
     def from_response(cls, response: dict[str, Any]) -> Snapshot:
         return cls(
@@ -241,19 +258,23 @@ class SearchServer:
     def inspect(self, handle: int) -> dict[str, Any]:
         return self._request(f"inspect|{handle}")
 
-    def compact(self, handle: int) -> Snapshot:
-        return self._snapshot(self._request(f"compact|{handle}"))
+    def compact(self, snapshot: Snapshot) -> Snapshot:
+        return self.compact_many([snapshot])[0]
 
-    def compact_many(self, handles: list[int]) -> list[Snapshot]:
-        if not handles:
-            raise ValueError("compact_many requires at least one handle")
+    def compact_many(self, snapshots: list[Snapshot]) -> list[Snapshot]:
+        if not snapshots:
+            raise ValueError("compact_many requires at least one snapshot")
         response = self._request(
-            "compact-many|" + ",".join(str(handle) for handle in handles)
+            "compact-handles|"
+            + ",".join(str(snapshot.handle) for snapshot in snapshots)
         )
-        snapshots = [self._snapshot(row) for row in response["snapshots"]]
-        if len(snapshots) != len(handles):
-            raise RuntimeError("native compact-many response length mismatch")
-        return snapshots
+        handles = response["handles"]
+        if handles != list(range(len(snapshots))):
+            raise RuntimeError("native compact-handles response mapping mismatch")
+        return [
+            snapshot.with_handle(handle)
+            for snapshot, handle in zip(snapshots, handles, strict=True)
+        ]
 
     def close(self) -> None:
         if self.process.poll() is None:
