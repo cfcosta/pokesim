@@ -75,6 +75,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--tree-convergence-tolerance", type=float, default=0.005)
     parser.add_argument("--tree-convergence-patience", type=int, default=8)
     parser.add_argument("--actor-batch-size", type=int, default=16)
+    parser.add_argument("--actor-processes", type=int, default=1 if smoke else 2)
     parser.add_argument("--opponent-checkpoint", type=Path, action="append", default=[])
     parser.add_argument("--opponent-fraction", type=float, default=0.5)
     parser.add_argument("--historical-window", type=int, default=4)
@@ -208,6 +209,7 @@ def main(argv: list[str] | None = None) -> int:
             tree_convergence_tolerance=arguments.tree_convergence_tolerance,
             tree_convergence_patience=arguments.tree_convergence_patience,
             actor_batch_size=arguments.actor_batch_size,
+            actor_processes=arguments.actor_processes,
             precision=arguments.precision,
             inference_engine=arguments.inference_engine,
             warm_start_checkpoint=(

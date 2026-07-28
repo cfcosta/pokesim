@@ -5,9 +5,11 @@ from __future__ import annotations
 import copy
 import json
 import math
+import multiprocessing
 import random
 import tempfile
 from collections.abc import Iterable
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -82,6 +84,7 @@ class TransformerPipelineConfig:
     tree_convergence_tolerance: float = 0.005
     tree_convergence_patience: int = 8
     actor_batch_size: int = 16
+    actor_processes: int = 1
     precision: str = "bf16"
     inference_engine: str = "auto"
     warm_start_checkpoint: str | None = None
@@ -105,14 +108,14 @@ class _HeuristicNetwork:
                 if not mask & (1 << action):
                     continue
                 if action < 4:
-                    tactical = row[362 + action * 6 + 5]
+                    tactical = int(row[362 + action * 6 + 5])
                     weights[action] = 1.0 + tactical
                     if self.style == "switch-heavy":
                         weights[action] *= 0.10
                 elif 4 <= action < 10:
                     slot = action - 4
-                    outgoing = row[410 + slot * 2]
-                    incoming = row[411 + slot * 2]
+                    outgoing = int(row[410 + slot * 2])
+                    incoming = int(row[411 + slot * 2])
                     advantage = max(0, outgoing - incoming)
                     weights[action] = 1.0 + advantage
                     if self.style == "aggressive":
@@ -151,7 +154,7 @@ class _ActorEpisode:
 
 
 def _pipeline_id() -> str:
-    return "transformer-variable-party-bf16-tree-v7"
+    return "transformer-variable-party-bf16-tree-v8"
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
@@ -344,13 +347,18 @@ def _jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     write_new(path, payload)
 
 
-def _collect_rows(
+def _collect_rows_single(
     path: Path,
     network: BattleTransformer,
     config: TransformerPipelineConfig,
     iteration: int,
     opponents: list[tuple[Any, str]] | None = None,
+    episode_indices: list[int] | None = None,
 ) -> dict[str, Any]:
+    if episode_indices is None:
+        episode_indices = list(range(config.selfplay_episodes))
+    if not episode_indices:
+        raise ValueError("collection worker requires at least one episode")
     meta: dict[str, Any] = {
         "type": "meta",
         "format": "variable-party-joint-regret-policy-value-jsonl-v2",
@@ -360,7 +368,7 @@ def _collect_rows(
         "chance": "fresh-root-v1",
         "solver": "simultaneous-matrix-tree-rmplus-v1",
         "iteration": iteration,
-        "episodes": config.selfplay_episodes,
+        "episodes": len(episode_indices),
         "depth": config.search_depth,
         "seed": config.seed,
         "max_party_size": FULL_PARTY_SIZE,
@@ -379,6 +387,7 @@ def _collect_rows(
         "tree_convergence_tolerance": config.tree_convergence_tolerance,
         "tree_convergence_patience": config.tree_convergence_patience,
         "actor_batch_size": config.actor_batch_size,
+        "actor_processes": config.actor_processes,
     }
     opponents = opponents or []
     if opponents:
@@ -399,19 +408,18 @@ def _collect_rows(
         for enemy in range(1, FULL_PARTY_SIZE + 1)
     }
     with SearchServer() as server:
-        for batch_start in range(0, config.selfplay_episodes, config.actor_batch_size):
-            batch_stop = min(
-                config.selfplay_episodes, batch_start + config.actor_batch_size
-            )
+        for batch_start in range(0, len(episode_indices), config.actor_batch_size):
+            batch = episode_indices[batch_start : batch_start + config.actor_batch_size]
             active: list[_ActorEpisode] = []
-            for offset, episode in enumerate(range(batch_start, batch_stop)):
+            for offset, episode in enumerate(batch):
                 versus_opponent = bool(opponents) and _scheduled_for_opponent(
                     episode, config.opponent_fraction
                 )
                 opponent_identity: str | None = None
                 if versus_opponent:
-                    opponent_index = opponent_episodes % len(opponents)
-                    opponent_round = opponent_episodes // len(opponents)
+                    opponent_ordinal = math.floor(episode * config.opponent_fraction)
+                    opponent_index = opponent_ordinal % len(opponents)
+                    opponent_round = opponent_ordinal // len(opponents)
                     opponent, opponent_identity = opponents[opponent_index]
                     candidate_player = opponent_round % 2 == 0
                     player_network = network if candidate_player else opponent
@@ -522,7 +530,7 @@ def _collect_rows(
                         "decision": decision,
                         "side": "player",
                         "state_hash": snapshot.player_hash,
-                        "features": list(snapshot.player_features),
+                        "features": snapshot.player_features.tolist(),
                         "policy": list(result.player_policy),
                         "search_value": result.root_value,
                         "action": result.player_action,
@@ -540,7 +548,7 @@ def _collect_rows(
                         "decision": decision,
                         "side": "enemy",
                         "state_hash": snapshot.enemy_hash,
-                        "features": list(snapshot.enemy_features),
+                        "features": snapshot.enemy_features.tolist(),
                         "policy": list(result.enemy_policy),
                         "search_value": -result.root_value,
                         "action": result.enemy_action,
@@ -716,7 +724,7 @@ def _collect_rows(
             if tree_rows
             else None
         ),
-        "mean_decisions": transitions / config.selfplay_episodes,
+        "mean_decisions": transitions / len(episode_indices),
         "voluntary_switch_rate": sum(
             row["action"] in range(4, 10)
             for row in example_rows
@@ -726,6 +734,218 @@ def _collect_rows(
         "sha256": sha256(path),
         "bytes": path.stat().st_size,
     }
+
+
+def _serialized_model(model: Any) -> dict[str, Any]:
+    if isinstance(model, _HeuristicNetwork):
+        return {"kind": "heuristic", "style": model.style}
+    if not isinstance(model, BattleTransformer):
+        raise TypeError("actor process received an unsupported opponent model")
+    return {
+        "kind": "transformer",
+        "config": asdict(model.config),
+        "state": {
+            name: value.detach().cpu() for name, value in model.state_dict().items()
+        },
+    }
+
+
+def _load_serialized_model(record: dict[str, Any], device: torch.device) -> Any:
+    if record["kind"] == "heuristic":
+        return _HeuristicNetwork(record["style"])
+    network = BattleTransformer(TransformerConfig(**record["config"])).to(device)
+    network.load_state_dict(record["state"])
+    network.eval()
+    return network
+
+
+def _collection_process_worker(
+    shard: str,
+    model_payload: str,
+    config: TransformerPipelineConfig,
+    iteration: int,
+    episode_indices: list[int],
+) -> dict[str, Any]:
+    configure_determinism(config.seed + iteration)
+    device = choose_device(config.device)
+    payload = torch.load(model_payload, map_location="cpu", weights_only=False)
+    network = _load_serialized_model(payload["candidate"], device)
+    opponents = [
+        (_load_serialized_model(record, device), identity)
+        for record, identity in payload["opponents"]
+    ]
+    _configure_inference(
+        [network, *(opponent for opponent, _ in opponents)],
+        config.inference_engine,
+    )
+    return _collect_rows_single(
+        Path(shard),
+        network,
+        replace(config, actor_processes=1),
+        iteration,
+        opponents,
+        episode_indices,
+    )
+
+
+def _merge_collection_rows(
+    path: Path,
+    worker_paths: list[Path],
+    worker_metrics: list[dict[str, Any]],
+    config: TransformerPipelineConfig,
+) -> dict[str, Any]:
+    rows = []
+    actor_shards = []
+    meta: dict[str, Any] | None = None
+    for process, worker_path in enumerate(worker_paths):
+        worker_rows = [json.loads(line) for line in worker_path.read_text().splitlines()]
+        worker_meta, *data_rows = worker_rows
+        if meta is None:
+            meta = worker_meta
+        rows.extend(data_rows)
+        actor_shards.append(
+            {
+                "process": process,
+                "sha256": sha256(worker_path),
+                "bytes": worker_path.stat().st_size,
+                "episodes": worker_metrics[process]["finished"]
+                + worker_metrics[process]["truncated"]
+                + worker_metrics[process]["semantic_divergences"],
+            }
+        )
+    assert meta is not None
+    meta["episodes"] = config.selfplay_episodes
+    meta["actor_processes"] = config.actor_processes
+    rows.sort(
+        key=lambda row: (
+            row["episode"],
+            0 if row["type"] == "example" else 1,
+            row.get("decision", config.episode_budget),
+            0 if row.get("side") == "player" else 1,
+        )
+    )
+    _jsonl(path, [meta, *rows])
+    example_rows = [row for row in rows if row["type"] == "example"]
+    tree_rows = [row for row in example_rows if "tree_nodes" in row]
+    exploitabilities = [
+        row["search_exploitability"]
+        for row in example_rows
+        if "search_exploitability" in row
+    ]
+    payoff_spreads = [
+        row["payoff_spread"] for row in example_rows if "payoff_spread" in row
+    ]
+
+    def total(name: str) -> int:
+        return sum(int(metrics[name]) for metrics in worker_metrics)
+
+    def tree_mean(name: str) -> float | None:
+        return (
+            sum(float(row[name]) for row in tree_rows) / len(tree_rows)
+            if tree_rows
+            else None
+        )
+
+    opponent_counts: dict[str, int] = {}
+    party_size_counts: dict[str, int] = {}
+    for metrics in worker_metrics:
+        for name, count in metrics["opponent_counts"].items():
+            opponent_counts[name] = opponent_counts.get(name, 0) + count
+        for name, count in metrics["party_size_counts"].items():
+            party_size_counts[name] = party_size_counts.get(name, 0) + count
+    transitions = total("transitions")
+    return {
+        "finished": total("finished"),
+        "truncated": total("truncated"),
+        "semantic_divergences": total("semantic_divergences"),
+        "examples": len(example_rows),
+        "transitions": transitions,
+        "mirror_episodes": total("mirror_episodes"),
+        "opponent_episodes": total("opponent_episodes"),
+        "candidate_player_episodes": total("candidate_player_episodes"),
+        "candidate_enemy_episodes": total("candidate_enemy_episodes"),
+        "opponent_counts": opponent_counts,
+        "party_size_counts": party_size_counts,
+        "mean_target_entropy": sum(
+            _policy_entropy(row["policy"]) for row in example_rows
+        )
+        / len(example_rows),
+        "mean_search_exploitability": (
+            sum(exploitabilities) / len(exploitabilities) if exploitabilities else None
+        ),
+        "mean_payoff_spread": (
+            sum(payoff_spreads) / len(payoff_spreads) if payoff_spreads else None
+        ),
+        "mean_tree_nodes": tree_mean("tree_nodes"),
+        "mean_tree_simulations": tree_mean("tree_simulations"),
+        "mean_tree_max_depth": tree_mean("tree_max_depth"),
+        "mean_chance_outcomes": tree_mean("chance_outcomes"),
+        "mean_sampled_joint_coverage": tree_mean("sampled_joint_coverage"),
+        "tree_convergence_rate": tree_mean("tree_converged"),
+        "mean_cross_root_batch_size": tree_mean("cross_root_batch_size"),
+        "mean_cross_root_root_leaves": tree_mean("cross_root_root_leaves"),
+        "mean_decisions": transitions / config.selfplay_episodes,
+        "voluntary_switch_rate": sum(
+            row["action"] in range(4, 10)
+            for row in example_rows
+            if row["request"] == "battle"
+        )
+        / max(1, sum(row["request"] == "battle" for row in example_rows)),
+        "actor_shards": actor_shards,
+        "sha256": sha256(path),
+        "bytes": path.stat().st_size,
+    }
+
+
+def _collect_rows(
+    path: Path,
+    network: BattleTransformer,
+    config: TransformerPipelineConfig,
+    iteration: int,
+    opponents: list[tuple[Any, str]] | None = None,
+) -> dict[str, Any]:
+    if config.actor_processes == 1:
+        return _collect_rows_single(path, network, config, iteration, opponents)
+    opponents = opponents or []
+    payload = {
+        "candidate": _serialized_model(network),
+        "opponents": [
+            (_serialized_model(opponent), identity)
+            for opponent, identity in opponents
+        ],
+    }
+    partitions = [
+        list(range(process, config.selfplay_episodes, config.actor_processes))
+        for process in range(config.actor_processes)
+    ]
+    context = multiprocessing.get_context("spawn")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="battle-actors-", dir=path.parent) as raw:
+        temporary = Path(raw)
+        model_payload = temporary / "models.pt"
+        torch.save(payload, model_payload)
+        worker_paths = [
+            temporary / f"actor-{process:02d}.jsonl"
+            for process in range(config.actor_processes)
+        ]
+        with ProcessPoolExecutor(
+            max_workers=config.actor_processes, mp_context=context
+        ) as executor:
+            futures = [
+                executor.submit(
+                    _collection_process_worker,
+                    str(worker_path),
+                    str(model_payload),
+                    config,
+                    iteration,
+                    episodes,
+                )
+                for worker_path, episodes in zip(
+                    worker_paths, partitions, strict=True
+                )
+            ]
+            metrics = [future.result() for future in futures]
+        return _merge_collection_rows(path, worker_paths, metrics, config)
 
 
 def _load_examples(paths: list[Path]) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
@@ -1093,6 +1313,8 @@ def run_transformer_pipeline(
         raise ValueError("tree_convergence_patience must be positive")
     if config.actor_batch_size < 1:
         raise ValueError("actor_batch_size must be positive")
+    if not 1 <= config.actor_processes <= min(4, config.selfplay_episodes):
+        raise ValueError("actor_processes must be in 1..min(4, selfplay_episodes)")
     if config.precision not in {"bf16", "fp32"}:
         raise ValueError("precision must be bf16 or fp32")
     if config.max_actions_per_side < 13:

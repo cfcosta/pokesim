@@ -397,6 +397,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.tree_minimum_budget, 192)
         self.assertEqual(arguments.tree_convergence_patience, 8)
         self.assertEqual(arguments.actor_batch_size, 16)
+        self.assertEqual(arguments.actor_processes, 2)
         self.assertEqual(arguments.precision, "bf16")
         self.assertEqual(arguments.inference_engine, "auto")
         self.assertTrue(arguments.heuristic_opponents)
