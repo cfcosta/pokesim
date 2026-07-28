@@ -92,9 +92,12 @@ batch 128, so 128 remains the production default.
 Use `--device cpu`, `--device cuda`, or `--device auto`. BF16 is the default;
 `--precision fp32` remains available for differential checks and older
 checkpoints without precision metadata retain their original FP32 contract.
-The v7 pipeline defaults `--inference-engine auto`: CUDA uses bucketed compiled
-inference while CPU uses eager execution. `--inference-engine eager` remains
-available for differential checks and historical artifact verification.
+The v8 pipeline defaults `--inference-engine auto`: CUDA uses bucketed compiled
+inference through static batches up to 256 while CPU uses eager execution.
+`--inference-engine eager` remains available for differential checks and
+historical artifact verification. Production collection defaults to two spawned
+actor processes; `--actor-processes 1..4` controls the versioned choice, while
+smoke runs stay single-process to avoid startup overhead.
 The v4 observation is structurally incompatible with 478-field v3 checkpoints,
 but `--warm-start-checkpoint PATH` copies every compatible parameter and the
 existing positional rows into the extended 492-field model. The uv2nix development
@@ -142,7 +145,10 @@ state otherwise persists across collection iterations.
 
 Each mechanics scalar is encoded as low- and high-byte embeddings plus a learned
 field-position embedding. A learned CLS token attends over all 492
-side-canonical variable-party fields. The v4 schema retains v3's move descriptors,
+side-canonical variable-party fields. The quality-gated `--token-group-size`
+option can mean-pool adjacent scalar embeddings before attention; group eight
+reduces the sequence from 493 to 63 tokens but remains opt-in pending full
+promotion evidence. The v4 schema retains v3's move descriptors,
 current type-effectiveness values, offensive/incoming matchup scores, and Mimic
 continuation action. It appends both party counts and twelve presence bits while
 zeroing every absent party and switch descriptor; present fainted members retain
@@ -187,11 +193,19 @@ their existing hidden RNG. The compatibility `compact-many` command still emits
 full snapshots for external protocol probes. Python cannot
 mutate or resolve battle state itself. Actors run in groups of 16. Root matrices,
 root leaf inference, network-only decisions, and real episode transitions are
-batched across compatible independent roots. Deeper progressive simulations
-submit inference through deterministic cross-root waves while retaining
-independent search and chance RNG streams.
+batched across compatible independent roots. Deeper progressive simulations are
+resumable frontiers: native requests and leaf rows are pooled across roots and
+model identities, then deterministic cohorts overlap Lean mechanics with GPU
+inference. Independent search, chance, and deep-tier RNG streams are retained.
+`--deep-search-fraction` optionally stops a randomized fraction after the complete
+root while labeling those targets `joint-regret-root`; its default remains 1.0
+pending equal-budget quality gates.
 
-Arena directories contain Showdown-style `.log` replays plus aggregate metrics
+Promotion and campaign arenas keep hundreds of live games on one Lean server,
+batching inference, episode steps, and handle compaction. Probe arenas use 64-game
+batches and carry each post-step inspection into the next decision. A timed-out
+batch is discarded and the server is respawned. Arena directories contain
+Showdown-style `.log` replays plus aggregate metrics
 for damage-move effectiveness relative to the best legal damaging move, status
 success/block/waste counts, and voluntary-switch rate/completion/matchup
 improvement. Production promotion rejects statistically inconclusive updates and
@@ -220,9 +234,9 @@ The earlier terminal-return move table remains available as `tabular-smoke` and
   the branch, while a real episode stops without a terminal value target.
 - The synchronized full-party profile is still a hot-path quotient, not the
   paired-cartridge emulator deployment profile.
-- Cross-root batching currently combines complete root matrices and unsearched
-  policy decisions. Deeper progressive frontier expansion still runs one root at
-  a time; batching that frontier is the remaining accelerator bottleneck.
+- Cross-root batching covers complete roots, progressive deep frontiers, native
+  mechanics, and model-identity inference pools. Exact neural memoization still
+  does not license mechanics transposition merging.
 - Deeper matrices use progressive joint sampling rather than exhaustive pair
   coverage. Artifacts report sampled-joint coverage separately from mandatory
   legal-action coverage.

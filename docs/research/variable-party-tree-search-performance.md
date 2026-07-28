@@ -11,7 +11,7 @@ for a complete-root depth-one teacher. The production tree was **14.5× slower
 per real decision** and increased the extrapolated 500-battle collection time
 from 4.65 to 48.82 minutes.
 
-This is not primarily RM+ arithmetic. Deeper search is root-local and fragments
+In the measured baseline this was not primarily RM+ arithmetic. Deeper search was root-local and fragmented
 neural evaluation into hundreds of small GPU calls. In the production
 microbenchmark, network evaluation consumed 66.8% of wall time, native mechanics
 and protocol work consumed 24.7%, and Python—including RM+—consumed 8.5%.
@@ -220,14 +220,14 @@ requires equal-budget gameplay and held-out tests.
 
 ## Neural inference follow-up
 
-Four changes address the fragmented neural share without changing the search
-budget or teacher:
+The implemented follow-up separates teacher-preserving runtime work from
+quality-gated teacher/model alternatives:
 
 1. **Staged eager inference.** Native UInt16 observations use reusable pinned
    buffers, asynchronous CUDA transfer, a device legal-mask lookup, and direct
    position-weight access. The path was bit-identical to the previous eager
    implementation and improved batch-96 latency from 10.85 to 9.10 ms (1.19×).
-2. **Bucketed compilation.** The v7 CUDA path uses static 2–96-row buckets with
+2. **Bucketed compilation.** The v8 CUDA path uses static 2–256-row buckets with
    `torch.compile(mode="reduce-overhead")`. Matched outputs were bit-identical;
    steady-state gains ranged from 1.29× at batch 8 to 1.38× at batch 96 and 1.78×
    at batch 2. Initial graph compilation remains an explicit startup cost.
@@ -235,17 +235,25 @@ budget or teacher:
    identity, the complete 492-field tuple, and legal mask. Budget-320 roots had
    a 2.3% hit rate and about a 4% median whole-search gain. This is function
    memoization, not mechanics transposition merging.
-4. **Deterministic deeper waves.** Compatible roots finish concurrently behind a
-   barrier-style broker, which combines pending rows in root order rather than
-   using a timing-dependent queue. Mean neural batch size rose from 15.2 to 44.1,
-   neural wall time improved by 1.40×, and whole-search time improved by about
-   1.13×. Four matched runs produced identical policies, values, transition
-   counts, and actions. A compiled depth-two CUDA smoke also reproduced its
-   first shard byte-for-byte.
-
-The current bottleneck remains the 493-token scalar Transformer itself. These
-changes improve utilization and launch overhead but do not remove its quadratic
-attention work.
+4. **Complete frontier scheduling.** Recursive simulations now yield resumable
+   native and inference frontiers. Sixteen roots raised mean neural batch size
+   from 61.6 to 84.2, pooled native waves across the Lean parallel threshold,
+   and improved wall time by 1.26× with exact target/action agreement.
+5. **Native/GPU double buffering.** Deterministic root cohorts overlap a trailing
+   Lean request with leading GPU inference. Median improvement over the frontier
+   scheduler was 1.29×; 215 waves overlapped in the representative 16-root run.
+6. **Batched evaluation.** Promotion arenas improved 5.62×, campaign arenas
+   3.05×, and traced probes 3.17× while retaining reports and replay bytes.
+7. **Multi-process actors.** Two spawned Lean/GPU actors merge temporary shards
+   by episode index. A 32-episode CUDA probe improved only 1.09×; startup can make
+   shorter runs slower, so this is versioned and smoke defaults to one process.
+8. **Grouped-token encoder (quality-gated).** Mean-pooling groups of eight scalar
+   embeddings reduces 493 tokens to 63 and improved batch-96 eager inference
+   4.45×. It changes model semantics and is not the default.
+9. **Tiered deep search (quality-gated).** Every move retains a complete root;
+   only a configured fraction receives the full tree. A 25% probe improved a
+   short collection workload 4.84×, but trajectories changed, so the production
+   default remains 100% deep pending equal-budget promotion evidence.
 
 ## Conclusions
 
@@ -253,9 +261,8 @@ attention work.
    problem; spending nearly 320 transitions in a root-local depth-four tree at
    every move is. It cuts decision throughput by about 14.5× relative to a
    complete-root target.
-2. **The GPU is launch-bound at depth.** Cross-root batching works for complete
-   root matrices, but deeper search produces hundreds of batches too small to
-   use the accelerator efficiently.
+2. **The baseline GPU path was launch-bound at depth.** Complete-frontier
+   scheduling and double buffering now address that measured fragmentation.
 3. **Adaptive stopping rarely saves enough.** Most roots approach the maximum
    transition budget, and the average tree does not fully reach configured
    depth four.
@@ -267,16 +274,14 @@ attention work.
 
 ## Recommended order
 
-1. Re-run the 36-matchup collection benchmark with the v7 compiled wave path and
-   record compilation startup separately from steady-state collection.
-2. Evaluate tiered all-move search: retain a complete root at every decision,
-   while assigning the full 320-transition tree to a randomized fraction of
-   roots. Keep exploratory behavior separate from cleaned policy targets.
+1. Run the full 36-matchup v8 benchmark with eager and compiled engines, recording
+   compilation and process startup separately from steady state.
+2. Compare group-one and grouped-token models over multiple training seeds. Do
+   not promote grouping from its latency result alone.
 3. Compare 96, 192, 320, and tiered teachers at equal wall-clock and transition
    budgets against raw policy, zero-value search, and learned-value search.
-4. Prototype structured 25–40-token side encoders and a dual-policy/value output,
-   distilling from the current network before promotion tests. This attacks the
-   remaining Transformer compute rather than only its launch schedule.
-5. Do not return to every-tenth policy supervision. If throughput must be
-   recovered, prefer a complete-root target on every move plus randomized
-   deep-search allocation.
+4. Tune one through four actor processes on the production workload; the measured
+   two-process gain is modest and must not be extrapolated from launch-bound
+   assumptions.
+5. Keep complete-root supervision on every move and retain the existing paired,
+   probe, party-stratum, campaign, and data-quality gates for every Tier-2 change.

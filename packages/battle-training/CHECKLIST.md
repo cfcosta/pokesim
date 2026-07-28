@@ -50,7 +50,7 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Guarantee exploration support for every legal move and switch without top-k pruning.
 - [x] Add native `reset-append` and `compact-many` multi-root state retention.
 - [x] Batch complete root matrices across independent live episodes.
-- [ ] Schedule deeper progressive frontier expansion across independent roots.
+- [x] Schedule deeper progressive frontier expansion across independent roots.
 - [x] Validate RM+ and deeper backups on exact matrices and a stochastic toy game.
 - [ ] Keep opponent-sampled PUCT only as a named best-response baseline.
 - [x] Implement `fresh-root-v1` without access to episode future RNG.
@@ -62,10 +62,12 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Train a byte/position-embedding transformer outside Lean.
 - [x] Batch bounded leaf inference within each exhaustive root search.
 - [x] Batch root-leaf and network-policy inference across compatible roots.
-- [ ] Run a multi-worker service for deeper frontier inference.
-- [ ] Add bounded worker queues and inference timeouts.
+- [x] Pool deeper native/inference frontiers by network identity across live roots.
+- [x] Run deterministic multi-process actors with one timed Lean server per process.
 - [x] Train policy and terminal value heads from MCTS/terminal targets.
 - [x] Use BF16 autocast with FP32 parameters, optimizer state, outputs, and losses.
+- [x] Batch promotion, campaign, and traced-probe arenas across live games.
+- [x] Add quality-gated grouped-token and tiered-deep-search profiles.
 - [x] Preserve pre-v5 checkpoint execution as FP32.
 - [x] Publish immutable model, optimizer, schema, and SHA-256 checkpoints.
 - [ ] Resume bit-for-bit from a checkpoint and replay ledger.
