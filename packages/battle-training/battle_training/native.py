@@ -7,6 +7,7 @@ import json
 import selectors
 import struct
 import subprocess
+import threading
 from dataclasses import dataclass
 from typing import Any, Self
 
@@ -129,6 +130,7 @@ class SearchServer:
             bufsize=1,
         )
         self._request_id = 0
+        self._request_lock = threading.Lock()
         hello = self._request("ping")
         if (
             hello["profile"] != FULL_PROFILE
@@ -145,6 +147,10 @@ class SearchServer:
         self.campaign_count = int(hello["campaign_count"])
 
     def _request(self, command: str) -> dict[str, Any]:
+        with self._request_lock:
+            return self._request_unlocked(command)
+
+    def _request_unlocked(self, command: str) -> dict[str, Any]:
         if self.process.stdin is None or self.process.stdout is None:
             raise RuntimeError("search server pipes are unavailable")
         self._request_id += 1

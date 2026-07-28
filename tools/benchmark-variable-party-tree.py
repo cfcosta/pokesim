@@ -9,6 +9,7 @@ import dataclasses
 import json
 import math
 import random
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -51,12 +52,28 @@ class TimedServer:
         self.seconds_by_batch: collections.defaultdict[int, float] = (
             collections.defaultdict(float)
         )
+        self.lock = threading.Lock()
+        self.intervals: list[tuple[float, float]] = []
 
     def _record(self, size: int, started: float) -> None:
-        elapsed = time.perf_counter() - started
-        self.seconds += elapsed
-        self.calls[size] += 1
-        self.seconds_by_batch[size] += elapsed
+        finished = time.perf_counter()
+        elapsed = finished - started
+        with self.lock:
+            self.seconds += elapsed
+            self.calls[size] += 1
+            self.seconds_by_batch[size] += elapsed
+            self.intervals.append((started, finished))
+
+    def wall_seconds(self) -> float:
+        total = 0.0
+        end = 0.0
+        for start, stop in sorted(self.intervals):
+            if start >= end:
+                total += stop - start
+            elif stop > end:
+                total += stop - end
+            end = max(end, stop)
+        return total
 
     def search_steps(self, requests: list[tuple[int, int, int, int]]) -> Any:
         started = time.perf_counter()
@@ -136,6 +153,7 @@ def search_profile(
     assert all(row is not None for row in diagnostics)
     network_examples = sum(size * calls for size, calls in timed_network.calls.items())
     native_transitions = sum(size * calls for size, calls in server.calls.items())
+    native_seconds = server.wall_seconds()
     report = {
         "roots": roots,
         "depth": depth,
@@ -143,10 +161,10 @@ def search_profile(
         "elapsed_seconds": elapsed,
         "milliseconds_per_root": elapsed * 1000 / roots,
         "network_seconds": timed_network.seconds,
-        "native_seconds": server.seconds,
-        "python_seconds": elapsed - timed_network.seconds - server.seconds,
+        "native_seconds": native_seconds,
+        "python_seconds": elapsed - timed_network.seconds - native_seconds,
         "network_fraction": timed_network.seconds / elapsed,
-        "native_fraction": server.seconds / elapsed,
+        "native_fraction": native_seconds / elapsed,
         "network_calls": sum(timed_network.calls.values()),
         "network_examples": network_examples,
         "mean_network_batch": (

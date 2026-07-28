@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
-from typing import TypeAlias
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field, replace
+from typing import Any, TypeAlias, cast
 
 from .native import SearchServer, Snapshot
 from .network import BattleTransformer
@@ -575,6 +577,122 @@ class _TreeNode:
     sampled_pairs: set[tuple[int, int]] = field(default_factory=set)
 
 
+@dataclass
+class _InferenceRequest:
+    network: Any
+    features: list[tuple[int, ...]]
+    masks: list[int]
+    result: tuple[list[list[float]], list[float]] | None = None
+    error: Exception | None = None
+
+
+class _InferenceWaveBroker:
+    """Deterministically batches one pending inference call per active root."""
+
+    def __init__(self, worker_ids: list[int], max_batch: int) -> None:
+        self.max_batch = max_batch
+        self.active = set(worker_ids)
+        self.pending: dict[int, _InferenceRequest] = {}
+        self.condition = threading.Condition()
+        self.stopping = False
+        self.calls = 0
+        self.rows = 0
+        self.waves = 0
+        self.worker = threading.Thread(target=self._run, daemon=True)
+        self.worker.start()
+
+    def evaluate(
+        self,
+        worker_id: int,
+        network: Any,
+        features: list[tuple[int, ...]],
+        masks: list[int],
+    ) -> tuple[list[list[float]], list[float]]:
+        request = _InferenceRequest(network, features, masks)
+        with self.condition:
+            if worker_id not in self.active or worker_id in self.pending:
+                raise RuntimeError("invalid deeper-inference wave submission")
+            self.pending[worker_id] = request
+            self.condition.notify_all()
+            while request.result is None and request.error is None:
+                self.condition.wait()
+        if request.error is not None:
+            raise request.error
+        assert request.result is not None
+        return request.result
+
+    def deregister(self, worker_id: int) -> None:
+        with self.condition:
+            self.active.discard(worker_id)
+            self.condition.notify_all()
+
+    def close(self) -> None:
+        with self.condition:
+            self.stopping = True
+            self.condition.notify_all()
+        self.worker.join()
+
+    def _run(self) -> None:
+        while True:
+            with self.condition:
+                self.condition.wait_for(
+                    lambda: self.stopping
+                    or (self.active and self.active.issubset(self.pending))
+                    or (not self.active and bool(self.pending))
+                )
+                if self.stopping and not self.pending:
+                    return
+                if self.active and not self.active.issubset(self.pending):
+                    continue
+                requests = [self.pending.pop(worker) for worker in sorted(self.pending)]
+            self.waves += 1
+            groups: dict[int, list[_InferenceRequest]] = {}
+            for request in requests:
+                groups.setdefault(id(request.network), []).append(request)
+            for group in groups.values():
+                network = group[0].network
+                features = [row for request in group for row in request.features]
+                masks = [mask for request in group for mask in request.masks]
+                try:
+                    policies: list[list[float]] = []
+                    values: list[float] = []
+                    for start in range(0, len(features), self.max_batch):
+                        batch_policies, batch_values = network.evaluate(
+                            features[start : start + self.max_batch],
+                            masks[start : start + self.max_batch],
+                        )
+                        policies.extend(batch_policies)
+                        values.extend(batch_values)
+                        self.calls += 1
+                        self.rows += len(batch_values)
+                    offset = 0
+                    for request in group:
+                        stop = offset + len(request.features)
+                        request.result = (policies[offset:stop], values[offset:stop])
+                        offset = stop
+                # Every waiter must be released if an inference backend fails.
+                except Exception as error:  # noqa: BLE001
+                    for request in group:
+                        request.error = error
+            with self.condition:
+                self.condition.notify_all()
+
+
+class _InferenceProxy:
+    def __init__(
+        self, broker: _InferenceWaveBroker, worker_id: int, network: Any
+    ) -> None:
+        self.broker = broker
+        self.worker_id = worker_id
+        self.network = network
+        self.config = network.config
+
+    def evaluate(
+        self, features: list[tuple[int, ...]], masks: list[int]
+    ) -> tuple[list[list[float]], list[float]]:
+        return self.broker.evaluate(self.worker_id, self.network, features, masks)
+
+
 class SimultaneousTreeSearch(BatchedJointRegretSearch):
     """Matrix-valued SM-MCTS with RM+ at every expanded simultaneous node.
 
@@ -624,6 +742,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._possible_joint_pairs = 0
         self._cross_root_batch_size = 1
         self._cross_root_root_leaves = 0
+        self._deep_inference_calls = 0
+        self._deep_inference_rows = 0
+        self._deep_inference_waves = 0
 
     def _legal_from_priors(self, mask: int, priors: list[float]) -> list[int]:
         actions = legal_actions(mask, self.action_count)
@@ -1031,6 +1152,12 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 self._inference_cache_stats["hits"]
                 / max(1, sum(self._inference_cache_stats.values()))
             ),
+            "deep_inference_calls": self._deep_inference_calls,
+            "deep_inference_rows": self._deep_inference_rows,
+            "deep_inference_waves": self._deep_inference_waves,
+            "mean_deep_inference_batch": (
+                self._deep_inference_rows / max(1, self._deep_inference_calls)
+            ),
         }
         if root is not None:
             diagnostics["root_joint_actions"] = len(root.player_legal) * len(
@@ -1202,6 +1329,91 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         )
 
     @classmethod
+    def _finish_many(
+        cls,
+        jobs: list[
+            tuple[
+                int,
+                SimultaneousTreeSearch,
+                _TreeNode,
+                list[float],
+                list[float],
+                float,
+                int,
+                bool,
+            ]
+        ],
+    ) -> list[tuple[int, SearchResult]]:
+        if not jobs:
+            return []
+        if len(jobs) == 1:
+            index, search, root, player, enemy, value, transitions, sample = jobs[0]
+            return [
+                (
+                    index,
+                    search._finish_root(
+                        root, player, enemy, value, transitions, sample
+                    ),
+                )
+            ]
+        broker = _InferenceWaveBroker(
+            [job[0] for job in jobs], jobs[0][1].config.inference_batch_size
+        )
+
+        def finish(
+            job: tuple[
+                int,
+                SimultaneousTreeSearch,
+                _TreeNode,
+                list[float],
+                list[float],
+                float,
+                int,
+                bool,
+            ],
+        ) -> tuple[int, SearchResult]:
+            index, search, root, player, enemy, value, transitions, sample = job
+            player_network = search.player_network
+            enemy_network = search.enemy_network
+            player_proxy = _InferenceProxy(broker, index, player_network)
+            enemy_proxy = (
+                player_proxy
+                if player_network is enemy_network
+                else _InferenceProxy(broker, index, enemy_network)
+            )
+            search.player_network = cast(Any, player_proxy)
+            search.enemy_network = cast(Any, enemy_proxy)
+            try:
+                result = search._finish_root(
+                    root, player, enemy, value, transitions, sample
+                )
+                return index, result
+            finally:
+                search.player_network = player_network
+                search.enemy_network = enemy_network
+                broker.deregister(index)
+
+        try:
+            with ThreadPoolExecutor(max_workers=len(jobs)) as executor:
+                completed = list(executor.map(finish, jobs))
+        finally:
+            broker.close()
+        enriched = []
+        for index, result in completed:
+            diagnostics = dict(result.diagnostics or {})
+            diagnostics.update(
+                {
+                    "deep_inference_calls": broker.calls,
+                    "deep_inference_rows": broker.rows,
+                    "deep_inference_waves": broker.waves,
+                    "mean_deep_inference_batch": broker.rows
+                    / max(1, broker.calls),
+                }
+            )
+            enriched.append((index, replace(result, diagnostics=diagnostics)))
+        return enriched
+
+    @classmethod
     def search_many(
         cls,
         searches: list[SimultaneousTreeSearch],
@@ -1224,9 +1436,6 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             raise ValueError(
                 "cross-root batches require one server, model pair, and config"
             )
-        for search in searches[1:]:
-            search._inference_cache = first._inference_cache
-            search._inference_cache_stats = first._inference_cache_stats
         player_priors, enemy_priors, prior_values = first._evaluate_many(snapshots)
         roots = [
             search._make_node(snapshot, evaluation)
@@ -1273,7 +1482,8 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     strict=True,
                 )
             }
-        results: list[SearchResult] = []
+        results: list[SearchResult | None] = [None] * len(searches)
+        finish_jobs = []
         batch_size = len(searches)
         for index, (search, root, spec, bounds, is_good) in enumerate(
             zip(searches, roots, specs, offsets, good, strict=True)
@@ -1283,14 +1493,12 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             search._cross_root_batch_size = batch_size
             search._cross_root_root_leaves = len(root_successors)
             if not is_good:
-                results.append(
-                    search._fallback(
-                        player_priors[index],
-                        enemy_priors[index],
-                        prior_values[index],
-                        len(root_successors),
-                        0,
-                    )
+                results[index] = search._fallback(
+                    player_priors[index],
+                    enemy_priors[index],
+                    prior_values[index],
+                    len(root_successors),
+                    0,
                 )
                 continue
             evaluated: list[tuple[float, float]] = []
@@ -1305,8 +1513,10 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             transitions = search._install_expansion(
                 root, spec[0], root_successors, evaluated
             )
-            results.append(
-                search._finish_root(
+            finish_jobs.append(
+                (
+                    index,
+                    search,
                     root,
                     player_priors[index],
                     enemy_priors[index],
@@ -1315,4 +1525,8 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     sample_actions,
                 )
             )
-        return results
+        for index, result in cls._finish_many(finish_jobs):
+            results[index] = result
+        if any(result is None for result in results):
+            raise RuntimeError("cross-root scheduler left an unfinished search")
+        return cast(list[SearchResult], results)

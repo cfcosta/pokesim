@@ -319,9 +319,12 @@ class TransformerTests(unittest.TestCase):
         self.assertTrue(
             all(result.diagnostics["cross_root_batch_size"] == 2 for result in results)
         )
-        self.assertEqual(max(network.batches), 1)
+        self.assertEqual(max(network.batches), 2)
         self.assertTrue(
             all(result.diagnostics["inference_cache_hits"] > 0 for result in results)
+        )
+        self.assertTrue(
+            all(result.diagnostics["mean_deep_inference_batch"] >= 2 for result in results)
         )
 
     def test_production_defaults_use_search_at_every_decision(self) -> None:
