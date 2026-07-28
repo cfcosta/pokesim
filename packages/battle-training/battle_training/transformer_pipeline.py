@@ -58,6 +58,7 @@ class TransformerPipelineConfig:
     heads: int
     layers: int
     feedforward: int
+    token_group_size: int = 1
     opponent_checkpoints: tuple[str, ...] = ()
     opponent_fraction: float = 0.5
     historical_window: int = 4
@@ -1386,6 +1387,7 @@ def run_transformer_pipeline(
         layers=config.layers,
         feedforward=config.feedforward,
         precision=config.precision,
+        token_group_size=config.token_group_size,
     )
     opponents: list[tuple[Any, str]] = []
     opponent_metadata: list[dict[str, Any]] = []

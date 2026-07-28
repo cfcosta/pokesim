@@ -398,6 +398,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.tree_convergence_patience, 8)
         self.assertEqual(arguments.actor_batch_size, 16)
         self.assertEqual(arguments.actor_processes, 2)
+        self.assertEqual(arguments.token_group_size, 1)
         self.assertEqual(arguments.precision, "bf16")
         self.assertEqual(arguments.inference_engine, "auto")
         self.assertTrue(arguments.heuristic_opponents)
@@ -648,6 +649,25 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(policies[0][3], 0.0)
         self.assertEqual(policies[1][0], 0.0)
         self.assertEqual(policies[1][2], 0.0)
+        self.assertTrue(all(-1.0 <= value <= 1.0 for value in values))
+
+    def test_grouped_scalar_tokens_reduce_sequence_length(self) -> None:
+        network = BattleTransformer(
+            TransformerConfig(
+                feature_count=492,
+                action_count=13,
+                d_model=32,
+                heads=4,
+                layers=1,
+                feedforward=64,
+                token_group_size=8,
+            )
+        ).eval()
+        self.assertEqual(network.sequence_length, 63)
+        policies, values = network.evaluate([[0] * 492, [1] * 492], [1, 2])
+        self.assertEqual(len(policies), 2)
+        self.assertEqual(policies[0][0], 1.0)
+        self.assertEqual(policies[1][1], 1.0)
         self.assertTrue(all(-1.0 <= value <= 1.0 for value in values))
 
     def test_legacy_checkpoint_retains_fp32_precision(self) -> None:

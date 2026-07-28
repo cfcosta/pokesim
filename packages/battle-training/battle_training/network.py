@@ -26,6 +26,7 @@ class TransformerConfig:
     layers: int = 4
     feedforward: int = 512
     precision: str = "bf16"
+    token_group_size: int = 1
 
 
 class BattleTransformer(nn.Module):
@@ -37,6 +38,8 @@ class BattleTransformer(nn.Module):
             raise ValueError("d_model must be divisible by attention heads")
         if config.precision not in {"bf16", "fp32"}:
             raise ValueError("precision must be bf16 or fp32")
+        if config.token_group_size not in {1, 2, 4, 8}:
+            raise ValueError("token_group_size must be one of 1, 2, 4, or 8")
         self.config = config
         self.low_byte = nn.Embedding(256, config.d_model)
         self.high_byte = nn.Embedding(256, config.d_model)
@@ -69,6 +72,16 @@ class BattleTransformer(nn.Module):
             masks.bitwise_and(1 << actions).ne(0),
             persistent=False,
         )
+        pooled_tokens = (
+            config.feature_count + config.token_group_size - 1
+        ) // config.token_group_size
+        counts = torch.full(
+            (pooled_tokens, 1), float(config.token_group_size), dtype=torch.float32
+        )
+        remainder = config.feature_count % config.token_group_size
+        if remainder:
+            counts[-1].fill_(float(remainder))
+        self.register_buffer("_token_pool_counts", counts, persistent=False)
         self._pinned_feature_buffers: dict[int, Tensor] = {}
         self._pinned_mask_buffers: dict[int, Tensor] = {}
         self._inference_engine = "eager"
@@ -94,6 +107,13 @@ class BattleTransformer(nn.Module):
             + self.high_byte(high)
             + self.position.weight[1:].unsqueeze(0)
         )
+        group = self.config.token_group_size
+        if group > 1:
+            padding = (-tokens.shape[1]) % group
+            if padding:
+                tokens = torch.nn.functional.pad(tokens, (0, 0, 0, padding))
+            tokens = tokens.reshape(batch, -1, group, tokens.shape[-1]).sum(dim=2)
+            tokens = tokens / self._token_pool_counts.unsqueeze(0)
         cls = self.cls.expand(batch, -1, -1) + self.position.weight[:1].unsqueeze(0)
         encoded = self.encoder(torch.cat((cls, tokens), dim=1))
         pooled = self.final_norm(encoded[:, 0])
@@ -113,6 +133,12 @@ class BattleTransformer(nn.Module):
             logits, values = self._forward_impl(features)
         # Keep policy normalization, losses, reductions, and search values in FP32.
         return logits.float(), values.float()
+
+    @property
+    def sequence_length(self) -> int:
+        return (
+            self.config.feature_count + self.config.token_group_size - 1
+        ) // self.config.token_group_size + 1
 
     @property
     def inference_engine(self) -> str:
