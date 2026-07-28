@@ -84,6 +84,7 @@ class TransformerPipelineConfig:
     tree_minimum_budget: int = 192
     tree_convergence_tolerance: float = 0.005
     tree_convergence_patience: int = 8
+    deep_search_fraction: float = 1.0
     actor_batch_size: int = 16
     actor_processes: int = 1
     precision: str = "bf16"
@@ -152,6 +153,7 @@ class _ActorEpisode:
     selection_rng: random.Random
     chance_rng: random.Random
     opponent_rng: random.Random
+    tier_rng: random.Random
 
 
 def _pipeline_id() -> str:
@@ -182,6 +184,8 @@ def _new_search(
     config: TransformerPipelineConfig,
     selection_rng: random.Random,
     chance_rng: random.Random,
+    *,
+    deep: bool = True,
 ) -> SimultaneousTreeSearch:
     return SimultaneousTreeSearch(
         server,
@@ -193,12 +197,12 @@ def _new_search(
             config.regret_iterations,
             config.inference_batch_size,
             config.max_actions_per_side,
-            config.tree_expansion_budget,
+            config.tree_expansion_budget if deep else 1,
             config.tree_exploration,
             config.tree_chance_resample,
             config.tree_regret_iterations,
             config.tree_deeper_joint_rotations,
-            config.tree_minimum_budget,
+            config.tree_minimum_budget if deep else 1,
             config.tree_convergence_tolerance,
             config.tree_convergence_patience,
         ),
@@ -387,6 +391,8 @@ def _collect_rows_single(
         "tree_minimum_budget": config.tree_minimum_budget,
         "tree_convergence_tolerance": config.tree_convergence_tolerance,
         "tree_convergence_patience": config.tree_convergence_patience,
+        "deep_search_fraction": config.deep_search_fraction,
+        "deep_search_schedule": "independent-episode-tier-v1",
         "actor_batch_size": config.actor_batch_size,
         "actor_processes": config.actor_processes,
     }
@@ -400,6 +406,7 @@ def _collect_rows_single(
         }
     rows: list[dict[str, Any]] = [meta]
     finished = truncated = semantic_divergences = examples = transitions = 0
+    deep_search_decisions = root_only_decisions = 0
     mirror_episodes = opponent_episodes = 0
     candidate_player_episodes = candidate_enemy_episodes = 0
     opponent_counts = {identity: 0 for _, identity in opponents}
@@ -473,11 +480,19 @@ def _collect_rows_single(
                         opponent_rng=random.Random(
                             config.seed + iteration * 1_000_037 + episode * 10_043 + 29
                         ),
+                        tier_rng=random.Random(
+                            config.seed + iteration * 1_000_081 + episode * 10_049 + 43
+                        ),
                     )
                 )
             for decision in range(config.episode_budget):
                 searched = decision % config.search_every == 0
                 results: dict[int, SearchResult] = {}
+                deep_by_episode = {
+                    actor.episode: searched
+                    and actor.tier_rng.random() < config.deep_search_fraction
+                    for actor in active
+                }
                 if searched:
                     actor_results = SimultaneousTreeSearch.search_many(
                         [
@@ -488,6 +503,7 @@ def _collect_rows_single(
                                 config,
                                 actor.selection_rng,
                                 actor.chance_rng,
+                                deep=deep_by_episode[actor.episode],
                             )
                             for actor in active
                         ],
@@ -525,6 +541,15 @@ def _collect_rows_single(
                     result = results[actor.episode]
                     snapshot = actor.snapshot
                     valid_search_target = searched and result.payoff_matrix is not None
+                    if valid_search_target:
+                        if deep_by_episode[actor.episode]:
+                            target_kind = "joint-regret"
+                            deep_search_decisions += 1
+                        else:
+                            target_kind = "joint-regret-root"
+                            root_only_decisions += 1
+                    else:
+                        target_kind = "policy-rollout"
                     player_row = {
                         "type": "example",
                         "episode": actor.episode,
@@ -535,9 +560,7 @@ def _collect_rows_single(
                         "policy": list(result.player_policy),
                         "search_value": result.root_value,
                         "action": result.player_action,
-                        "target_kind": (
-                            "joint-regret" if valid_search_target else "policy-rollout"
-                        ),
+                        "target_kind": target_kind,
                         "legal_mask": snapshot.player_mask,
                         "request": snapshot.request,
                         "player_party_size": actor.player_size,
@@ -553,9 +576,7 @@ def _collect_rows_single(
                         "policy": list(result.enemy_policy),
                         "search_value": -result.root_value,
                         "action": result.enemy_action,
-                        "target_kind": (
-                            "joint-regret" if valid_search_target else "policy-rollout"
-                        ),
+                        "target_kind": target_kind,
                         "legal_mask": snapshot.enemy_mask,
                         "request": snapshot.request,
                         "player_party_size": actor.player_size,
@@ -669,6 +690,8 @@ def _collect_rows_single(
         "semantic_divergences": semantic_divergences,
         "examples": examples,
         "transitions": transitions,
+        "deep_search_decisions": deep_search_decisions,
+        "root_only_decisions": root_only_decisions,
         "mirror_episodes": mirror_episodes,
         "opponent_episodes": opponent_episodes,
         "candidate_player_episodes": candidate_player_episodes,
@@ -861,6 +884,8 @@ def _merge_collection_rows(
         "semantic_divergences": total("semantic_divergences"),
         "examples": len(example_rows),
         "transitions": transitions,
+        "deep_search_decisions": total("deep_search_decisions"),
+        "root_only_decisions": total("root_only_decisions"),
         "mirror_episodes": total("mirror_episodes"),
         "opponent_episodes": total("opponent_episodes"),
         "candidate_player_episodes": total("candidate_player_episodes"),
@@ -1312,6 +1337,8 @@ def run_transformer_pipeline(
         raise ValueError("tree_convergence_tolerance must be nonnegative")
     if config.tree_convergence_patience < 1:
         raise ValueError("tree_convergence_patience must be positive")
+    if not 0.0 <= config.deep_search_fraction <= 1.0:
+        raise ValueError("deep_search_fraction must be in [0, 1]")
     if config.actor_batch_size < 1:
         raise ValueError("actor_batch_size must be positive")
     if not 1 <= config.actor_processes <= min(4, config.selfplay_episodes):

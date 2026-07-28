@@ -75,6 +75,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--tree-minimum-budget", type=int, default=192)
     parser.add_argument("--tree-convergence-tolerance", type=float, default=0.005)
     parser.add_argument("--tree-convergence-patience", type=int, default=8)
+    parser.add_argument("--deep-search-fraction", type=float, default=1.0)
     parser.add_argument("--actor-batch-size", type=int, default=16)
     parser.add_argument("--actor-processes", type=int, default=1 if smoke else 2)
     parser.add_argument("--opponent-checkpoint", type=Path, action="append", default=[])
@@ -210,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
             tree_minimum_budget=arguments.tree_minimum_budget,
             tree_convergence_tolerance=arguments.tree_convergence_tolerance,
             tree_convergence_patience=arguments.tree_convergence_patience,
+            deep_search_fraction=arguments.deep_search_fraction,
             actor_batch_size=arguments.actor_batch_size,
             actor_processes=arguments.actor_processes,
             precision=arguments.precision,

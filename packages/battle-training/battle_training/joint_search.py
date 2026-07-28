@@ -1544,12 +1544,10 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         if any(snapshot.done for snapshot in snapshots):
             raise ValueError("cannot search a terminal state")
         if any(
-            search.server is not first.server
-            or search.config != first.config
-            or search.action_count != first.action_count
+            search.server is not first.server or search.action_count != first.action_count
             for search in searches[1:]
         ):
-            raise ValueError("cross-root batches require one server and config")
+            raise ValueError("cross-root batches require one server and action schema")
         root_evaluations, _, _ = cls._pooled_evaluate(
             [
                 (index, search, [snapshot])

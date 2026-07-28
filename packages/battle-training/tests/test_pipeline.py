@@ -340,6 +340,44 @@ class TransformerTests(unittest.TestCase):
             all(result.diagnostics["deep_overlap_waves"] > 0 for result in results)
         )
 
+    def test_complete_root_and_deep_tiers_share_one_frontier(self) -> None:
+        server = _ToyServer()
+        server.states[100] = (0, 0)
+        network = _ToyNetwork()
+        configs = [
+            JointSearchConfig(
+                max_depth=2,
+                inference_batch_size=32,
+                max_actions_per_side=2,
+                expansion_budget=1,
+                minimum_expansion_budget=1,
+            ),
+            JointSearchConfig(
+                max_depth=2,
+                inference_batch_size=32,
+                max_actions_per_side=2,
+                expansion_budget=16,
+                minimum_expansion_budget=4,
+            ),
+        ]
+        results = SimultaneousTreeSearch.search_many(
+            [
+                SimultaneousTreeSearch(
+                    server,  # type: ignore[arg-type]
+                    network,  # type: ignore[arg-type]
+                    network,  # type: ignore[arg-type]
+                    config,
+                    random.Random(index + 1),
+                    random.Random(index + 101),
+                )
+                for index, config in enumerate(configs)
+            ],
+            [server._snapshot(0), server._snapshot(100)],
+        )
+        self.assertEqual(results[0].nodes, 4)
+        self.assertGreater(results[1].nodes, results[0].nodes)
+        self.assertIsNotNone(results[0].payoff_matrix)
+
     def test_cross_root_search_pools_shared_networks_across_opponents(self) -> None:
         server = _ToyServer()
         server.states[100] = (0, 0)
@@ -396,6 +434,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.tree_deeper_joint_rotations, 2)
         self.assertEqual(arguments.tree_minimum_budget, 192)
         self.assertEqual(arguments.tree_convergence_patience, 8)
+        self.assertEqual(arguments.deep_search_fraction, 1.0)
         self.assertEqual(arguments.actor_batch_size, 16)
         self.assertEqual(arguments.actor_processes, 2)
         self.assertEqual(arguments.token_group_size, 1)
