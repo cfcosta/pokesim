@@ -67,6 +67,7 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Train policy and terminal value heads from MCTS/terminal targets.
 - [x] Use BF16 autocast with FP32 parameters, optimizer state, outputs, and losses.
 - [x] Batch promotion, campaign, and traced-probe arenas across live games.
+- [x] Serve a read-only live dashboard for model, battle, actor, and promotion state.
 - [x] Add quality-gated grouped-token and tiered-deep-search profiles.
 - [x] Preserve pre-v5 checkpoint execution as FP32.
 - [x] Publish immutable model, optimizer, schema, and SHA-256 checkpoints.

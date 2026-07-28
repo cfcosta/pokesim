@@ -628,6 +628,7 @@ def run_paired_arena(
         )
     wins = losses = draws = truncated = semantic_divergences = mechanics_timeouts = 0
     game_scores: list[float] = []
+    battles: list[dict[str, Any]] = []
     pair_scores: list[float] = []
     pair_score: list[float] = []
     stratum_scores: dict[str, list[float]] = {
@@ -667,6 +668,23 @@ def run_paired_arena(
             truncated += 1
             score = 0.0
         game_scores.append(score)
+        battles.append(
+            {
+                "game": episode.game,
+                "pair": episode.game // 2,
+                "candidate_side": (
+                    "player" if episode.candidate_player else "enemy"
+                ),
+                "player_party_size": episode.player_size,
+                "enemy_party_size": episode.enemy_size,
+                "campaign": (
+                    _CAMPAIGN_NAMES[episode.campaign_index] if campaign else None
+                ),
+                "stop": episode.stop,
+                "candidate_return": candidate_result,
+                "score": score,
+            }
+        )
         pair_score.append(score)
         if len(pair_score) == 2:
             paired = sum(pair_score) / 2
@@ -726,6 +744,7 @@ def run_paired_arena(
         "score": (wins + 0.5 * draws) / finished if finished else None,
         "score_with_nonfinishes_as_losses": robust_score,
         "paired_score_ci95": [ci_low, ci_high],
+        "battles": battles,
         "data_quality_pass": mechanics_timeouts == 0,
         "quality_pass": (
             mechanics_timeouts == 0

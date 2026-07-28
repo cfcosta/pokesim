@@ -75,6 +75,32 @@ nix develop -c python packages/battle-training/train.py transformer-resume \
   --output artifacts/training/run-001
 ```
 
+## Training monitor
+
+A read-only web dashboard can follow an active run or inspect a completed one:
+
+```sh
+nix develop -c python packages/battle-training/train.py monitor \
+  --run artifacts/training/run-001 \
+  --open
+```
+
+The server binds to `127.0.0.1:8765` by default. Use `--host` and `--port` to
+change the listener. The page polls local artifacts every two seconds and shows:
+
+- live stage, iteration, and per-actor collection progress;
+- checkpoint identity, architecture, precision, device, and parameter count;
+- policy/value losses and promotion confidence history;
+- collection completion, battle length, switching, search, and 36-party-size
+  coverage;
+- recent paired promotion battles, strata, campaign cases, and skill probes;
+- accepted/rejected updates and every promotion quality gate.
+
+Training updates `monitor-state.json` and `.monitor/actor-*.json` atomically. The
+monitor never imports mechanics state, mutates checkpoints, or controls the
+trainer. These transient files are removed before the immutable final manifest;
+a completed dashboard is reconstructed from `summary.json` and iteration metrics.
+
 Each checkpoint is published atomically and contains the post-promotion model,
 AdamW state, RNG state, collection metrics, and training metrics. Resume checks
 the contiguous checkpoint/shard prefix and their hashes, rebuilds the historical

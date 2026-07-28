@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from .arena import ArenaConfig, write_arena_report
+from .monitor import serve_monitor
 from .network import choose_device, load_network
 from .pipeline import PipelineConfig, run_pipeline, verify_run
 from .transformer_pipeline import (
@@ -101,6 +102,11 @@ def parser() -> argparse.ArgumentParser:
     _transformer_parser(subparsers, "transformer-train")
     resume = subparsers.add_parser("transformer-resume")
     resume.add_argument("--output", type=Path, required=True)
+    monitor = subparsers.add_parser("monitor")
+    monitor.add_argument("--run", type=Path, required=True)
+    monitor.add_argument("--host", default="127.0.0.1")
+    monitor.add_argument("--port", type=int, default=8765)
+    monitor.add_argument("--open", dest="open_browser", action="store_true")
     arena = subparsers.add_parser("arena")
     arena.add_argument("--candidate", type=Path, required=True)
     arena.add_argument("--baseline", type=Path, required=True)
@@ -128,6 +134,14 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
+    if arguments.command == "monitor":
+        serve_monitor(
+            arguments.run,
+            host=arguments.host,
+            port=arguments.port,
+            open_browser=arguments.open_browser,
+        )
+        return 0
     if arguments.command == "arena":
         device = choose_device(arguments.device)
         candidate = load_network(arguments.candidate.resolve(), device)

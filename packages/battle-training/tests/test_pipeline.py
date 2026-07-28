@@ -27,6 +27,7 @@ from battle_training.joint_search import (
     solve_zero_sum_regret,
 )
 from battle_training.model import MoveValueModel
+from battle_training.monitor import build_dashboard_snapshot, write_monitor_state
 from battle_training.native import Snapshot, _decode_features
 from battle_training.network import (
     BattleTransformer,
@@ -175,6 +176,70 @@ class MoveValueModelTests(unittest.TestCase):
             restored = MoveValueModel.from_checkpoint(artifact["checkpoint"])
             self.assertEqual(restored.scores, model.scores)
             self.assertEqual(len(artifact["weights"].read_text().splitlines()), 166)
+
+
+class MonitorTests(unittest.TestCase):
+    def test_dashboard_projects_live_model_and_promotion_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "metrics").mkdir()
+            (root / "checkpoints").mkdir()
+            (root / "run.json").write_text(
+                json.dumps(
+                    {
+                        "pipeline": "transformer-test-v1",
+                        "profile": "test-profile",
+                        "schema": "test-schema",
+                        "parameter_count": 1234,
+                        "device": "cpu",
+                        "network": {
+                            "feature_count": 492,
+                            "d_model": 32,
+                            "heads": 4,
+                            "layers": 1,
+                            "feedforward": 64,
+                            "precision": "bf16",
+                            "token_group_size": 1,
+                        },
+                        "config": {"iterations": 2},
+                    }
+                )
+            )
+            (root / "checkpoints" / "policy-001.pt").write_bytes(b"checkpoint")
+            (root / "metrics" / "iteration-001.json").write_text(
+                json.dumps(
+                    {
+                        "collection": {"finished": 4, "examples": 20},
+                        "training": {
+                            "history": [
+                                {"policy_loss": 1.0, "value_loss": 0.5}
+                            ]
+                        },
+                        "promotion": {
+                            "accepted": True,
+                            "score_with_nonfinishes_as_losses": 0.6,
+                            "paired_score_ci95": [0.51, 0.69],
+                            "battles": [{"game": 0, "score": 1.0}],
+                        },
+                    }
+                )
+            )
+            write_monitor_state(
+                root, "promotion", iteration=2, message="Running arena"
+            )
+            snapshot = build_dashboard_snapshot(root)
+            self.assertEqual(snapshot["status"]["stage"], "promotion")
+            self.assertEqual(snapshot["model"]["checkpoint"]["iteration"], 1)
+            self.assertEqual(snapshot["latest"]["promotion"]["battles"][0]["game"], 0)
+            self.assertEqual(len(snapshot["iterations"]), 1)
+
+    def test_monitor_cli_defaults_to_loopback(self) -> None:
+        arguments = training_parser().parse_args(
+            ["monitor", "--run", "/tmp/training"]
+        )
+        self.assertEqual(arguments.host, "127.0.0.1")
+        self.assertEqual(arguments.port, 8765)
+        self.assertFalse(arguments.open_browser)
 
 
 class TransformerTests(unittest.TestCase):

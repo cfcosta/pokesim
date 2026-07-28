@@ -247,6 +247,16 @@ The production runner commits each completed iteration through an atomic checkpo
 
 The production PyTorch implementation uses BF16 autocast for transformer and head matrix operations. Parameters, gradients, AdamW state, returned logits/values, masks, softmax, policy/value losses, and reductions remain FP32. On the RTX 3080 Ti this increased batch-128 training throughput by 3.77x and reduced peak allocation from 2.24 to 1.26 GiB. The v8 inference path additionally uses NumPy `frombuffer` decoding, pinned UInt16 staging, a device legal-mask table, one fused output transfer, exact observation memoization, and compiled static buckets through 256 rows. Compiled and eager outputs were bit-identical on matched probes. An opt-in grouped-token encoder reduces sequence length from 493 to 63 at group eight and measured a 4.45× batch-96 neural gain, but it changes model semantics and must pass the ordinary promotion suite. `--inference-engine eager` remains available for differential checks. See the [precision benchmark](../research/full6v6-precision-benchmark.md).
 
+### Read-only monitoring
+
+The trainer atomically publishes a small mutable stage file and one progress file
+per actor while an iteration is open. Completed metrics, checkpoints, promotion
+battles, campaign cases, probes, and replay summaries remain the authoritative
+immutable artifacts. The `monitor` command projects both sets into a loopback web
+dashboard; it has no mechanics handles, trainer control endpoint, or write API.
+Transient heartbeats are removed before the final manifest, after which the
+same dashboard is reconstructed from immutable summaries and iteration metrics.
+
 ### Replay storage
 
 Each episode header records:

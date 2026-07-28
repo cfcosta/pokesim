@@ -18,6 +18,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = ["battle_training"]
 
+[tool.setuptools.package-data]
+battle_training = ["web/*.html", "web/*.css", "web/*.js"]
+
 [tool.uv]
 required-version = ">=0.8"
 

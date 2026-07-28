@@ -7,6 +7,7 @@ import json
 import math
 import multiprocessing
 import random
+import shutil
 import tempfile
 from collections.abc import Iterable
 from concurrent.futures import ProcessPoolExecutor
@@ -28,6 +29,7 @@ from .arena import (
 )
 from .artifacts import build_manifest, sha256, verify_manifest, write_json, write_new
 from .joint_search import JointSearchConfig, SearchResult, SimultaneousTreeSearch
+from .monitor import write_actor_progress, write_monitor_state
 from .native import NativeRequestTimeout, SearchServer, Snapshot, build_search_server
 from .network import (
     BattleTransformer,
@@ -359,11 +361,16 @@ def _collect_rows_single(
     iteration: int,
     opponents: list[tuple[Any, str]] | None = None,
     episode_indices: list[int] | None = None,
+    progress_path: Path | None = None,
+    process: int = 0,
 ) -> dict[str, Any]:
     if episode_indices is None:
         episode_indices = list(range(config.selfplay_episodes))
     if not episode_indices:
         raise ValueError("collection worker requires at least one episode")
+    if progress_path is not None:
+        write_actor_progress(progress_path, process, 0, len(episode_indices))
+    completed_episodes = 0
     meta: dict[str, Any] = {
         "type": "meta",
         "format": "variable-party-joint-regret-policy-value-jsonl-v2",
@@ -671,6 +678,18 @@ def _collect_rows_single(
                     }
                 )
                 truncated += 1
+            completed_episodes += len(batch)
+            if progress_path is not None:
+                write_actor_progress(
+                    progress_path,
+                    process,
+                    completed_episodes,
+                    len(episode_indices),
+                    finished=finished,
+                    truncated=truncated,
+                    semantic_divergences=semantic_divergences,
+                    transitions=transitions,
+                )
     _jsonl(path, rows)
     if not examples:
         raise ValueError("full-party search produced no terminal training examples")
@@ -789,6 +808,8 @@ def _collection_process_worker(
     config: TransformerPipelineConfig,
     iteration: int,
     episode_indices: list[int],
+    progress_path: str,
+    process: int,
 ) -> dict[str, Any]:
     configure_determinism(config.seed + iteration)
     device = choose_device(config.device)
@@ -809,6 +830,8 @@ def _collection_process_worker(
         iteration,
         opponents,
         episode_indices,
+        Path(progress_path),
+        process,
     )
 
 
@@ -929,9 +952,23 @@ def _collect_rows(
     config: TransformerPipelineConfig,
     iteration: int,
     opponents: list[tuple[Any, str]] | None = None,
+    monitor_root: Path | None = None,
 ) -> dict[str, Any]:
+    progress_dir = (
+        monitor_root / ".monitor" if monitor_root is not None else path.parent
+    )
+    progress_dir.mkdir(parents=True, exist_ok=True)
+    for old_progress in progress_dir.glob("actor-*.json"):
+        old_progress.unlink()
     if config.actor_processes == 1:
-        return _collect_rows_single(path, network, config, iteration, opponents)
+        return _collect_rows_single(
+            path,
+            network,
+            config,
+            iteration,
+            opponents,
+            progress_path=progress_dir / "actor-00.json",
+        )
     opponents = opponents or []
     payload = {
         "candidate": _serialized_model(network),
@@ -965,9 +1002,11 @@ def _collect_rows(
                     config,
                     iteration,
                     episodes,
+                    str(progress_dir / f"actor-{process:02d}.json"),
+                    process,
                 )
-                for worker_path, episodes in zip(
-                    worker_paths, partitions, strict=True
+                for process, (worker_path, episodes) in enumerate(
+                    zip(worker_paths, partitions, strict=True)
                 )
             ]
             metrics = [future.result() for future in futures]
@@ -1319,6 +1358,7 @@ def run_transformer_pipeline(
     if config.arena_episodes < 4 or config.arena_episodes % 2:
         raise ValueError("arena_episodes must be an even number of at least four")
     root.mkdir(parents=True, exist_ok=True)
+    write_monitor_state(root, "initializing", message="Validating native protocol")
     if config.search_every < 1:
         raise ValueError("search_every must be positive")
     if config.tree_expansion_budget < 1:
@@ -1565,6 +1605,12 @@ def run_transformer_pipeline(
         + [model for model, _ in historical],
         config.inference_engine,
     )
+    write_monitor_state(
+        root,
+        "ready",
+        iteration=first_iteration,
+        message="Models loaded; collection is ready",
+    )
     for iteration in range(first_iteration, config.iterations + 1):
         population = opponents + [(initial_anchor, initial_identity)]
         if config.historical_window:
@@ -1573,11 +1619,24 @@ def run_transformer_pipeline(
             {identity: (model, identity) for model, identity in population}.values()
         )
         shard = root / "shards" / f"iteration-{iteration:03d}.jsonl"
+        write_monitor_state(
+            root,
+            "collection",
+            iteration=iteration,
+            message=f"Collecting {config.selfplay_episodes} self-play battles",
+            battles=config.selfplay_episodes,
+        )
         try:
             collection_metrics = _collect_rows(
-                shard, network, config, iteration, population
+                shard, network, config, iteration, population, monitor_root=root
             )
         except NativeRequestTimeout as error:
+            write_monitor_state(
+                root,
+                "failed",
+                iteration=iteration,
+                message=f"Native collection timeout: {error.operation}",
+            )
             write_json(
                 root / "metrics" / f"iteration-{iteration:03d}.json",
                 {
@@ -1596,11 +1655,29 @@ def run_transformer_pipeline(
         shards.append(shard)
         collection.append(collection_metrics)
         training_shards = shards[-config.replay_window :]
+        write_monitor_state(
+            root,
+            "training",
+            iteration=iteration,
+            message=f"Optimizing on {collection_metrics['examples']:,} examples",
+            collection={
+                "finished": collection_metrics["finished"],
+                "examples": collection_metrics["examples"],
+                "transitions": collection_metrics["transitions"],
+            },
+        )
         incumbent = network.detached_copy(device)
         incumbent_state = copy.deepcopy(network.state_dict())
         optimizer_state = copy.deepcopy(optimizer.state_dict())
         training_metrics = _train_network(
             network, optimizer, training_shards, config, iteration
+        )
+        write_monitor_state(
+            root,
+            "promotion",
+            iteration=iteration,
+            message=f"Running {config.promotion_games:,} paired promotion games",
+            games=config.promotion_games,
         )
         promotion = run_paired_arena(
             network,
@@ -1609,6 +1686,27 @@ def run_transformer_pipeline(
             config.episode_budget,
             config.seed + 70_000_000 + iteration * 10_007,
             config.promotion_seed_count,
+        )
+        live_promotion = {
+            "games": promotion["games"],
+            "wins": promotion["wins"],
+            "losses": promotion["losses"],
+            "draws": promotion["draws"],
+            "truncated": promotion["truncated"],
+            "semantic_divergences": promotion["semantic_divergences"],
+            "score_with_nonfinishes_as_losses": promotion[
+                "score_with_nonfinishes_as_losses"
+            ],
+            "paired_score_ci95": promotion["paired_score_ci95"],
+            "battles": promotion["battles"][-40:],
+        }
+        write_monitor_state(
+            root,
+            "probes",
+            iteration=iteration,
+            message=f"Running {config.probe_games:,} held-out skill probes",
+            games=config.probe_games,
+            promotion=live_promotion,
         )
         probe_arena = run_traced_arena(
             network,
@@ -1622,6 +1720,15 @@ def run_transformer_pipeline(
             ),
         )
         probes = skill_probe_report(probe_arena)
+        write_monitor_state(
+            root,
+            "campaign",
+            iteration=iteration,
+            message=f"Running {config.campaign_games:,} campaign battles",
+            games=config.campaign_games,
+            promotion=live_promotion,
+            probes_pass=probes["pass"],
+        )
         campaign_arena = run_campaign_arena(
             network,
             incumbent,
@@ -1671,6 +1778,16 @@ def run_transformer_pipeline(
             network.eval()
         training_metrics["promotion"] = promotion
         training.append(training_metrics)
+        write_monitor_state(
+            root,
+            "checkpoint",
+            iteration=iteration,
+            message="Publishing promoted model" if accepted else "Restoring incumbent model",
+            accepted=accepted,
+            promotion_score=promotion_score,
+            confidence_low=confidence_low,
+            promotion={**live_promotion, "accepted": accepted},
+        )
         checkpoint = root / "checkpoints" / f"policy-{iteration:03d}.pt"
         save_network(
             checkpoint,
@@ -1697,6 +1814,21 @@ def run_transformer_pipeline(
                 "promotion": promotion,
             },
         )
+        write_monitor_state(
+            root,
+            "iteration-complete",
+            iteration=iteration,
+            message="Candidate promoted" if accepted else "Incumbent retained",
+            accepted=accepted,
+            promotion_score=promotion_score,
+            confidence_low=confidence_low,
+        )
+    write_monitor_state(
+        root,
+        "final-arena",
+        iteration=config.iterations,
+        message="Running final model evaluations",
+    )
     distance = _parameter_distance(initial, network)
     arena_config = ArenaConfig(
         games=config.arena_episodes,
@@ -1848,6 +1980,16 @@ def run_transformer_pipeline(
         "deterministic_replay": replay,
     }
     write_json(root / "summary.json", summary)
+    write_monitor_state(
+        root,
+        "completed",
+        iteration=config.iterations,
+        message="Training complete; publishing immutable manifest",
+        accepted_updates=accepted_updates,
+        quality_gate_pass=quality_gate_pass,
+    )
+    (root / "monitor-state.json").unlink(missing_ok=True)
+    shutil.rmtree(root / ".monitor", ignore_errors=True)
     write_json(root / "manifest.json", build_manifest(root))
     errors = verify_manifest(root)
     if errors:

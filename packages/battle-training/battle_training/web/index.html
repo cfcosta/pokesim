@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Redline Training Monitor</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-block">
+      <div class="brand-mark" aria-hidden="true"><span></span></div>
+      <div>
+        <p class="eyebrow">Pokémon Red · verified battle learning</p>
+        <h1>Training control</h1>
+      </div>
+    </div>
+    <div class="connection">
+      <span id="connection-dot" class="status-dot"></span>
+      <div>
+        <strong id="connection-label">Connecting</strong>
+        <span id="last-updated">Waiting for run data</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="run-strip" aria-label="Run status">
+      <div>
+        <span class="label">Run</span>
+        <strong id="run-name">—</strong>
+        <span id="run-path" class="muted path">—</span>
+      </div>
+      <div class="stage-wrap">
+        <span id="stage-pill" class="stage-pill">Waiting</span>
+        <span id="stage-detail" class="muted">No training artifacts yet</span>
+      </div>
+      <div class="iteration-progress">
+        <div class="progress-copy"><span>Iteration progress</span><strong id="iteration-progress-label">0 / 0</strong></div>
+        <div class="progress-track"><span id="iteration-progress-bar"></span></div>
+      </div>
+    </section>
+
+    <section class="kpi-grid" aria-label="Training summary">
+      <article class="kpi accent-red">
+        <span class="label">Latest model</span>
+        <strong id="checkpoint-iteration">—</strong>
+        <small id="checkpoint-hash">No checkpoint</small>
+      </article>
+      <article class="kpi accent-green">
+        <span class="label">Promotion score</span>
+        <strong id="promotion-score">—</strong>
+        <small id="promotion-ci">No completed arena</small>
+      </article>
+      <article class="kpi accent-blue">
+        <span class="label">Collection</span>
+        <strong id="collection-finished">—</strong>
+        <small id="collection-detail">No completed shard</small>
+      </article>
+      <article class="kpi accent-gold">
+        <span class="label">Model size</span>
+        <strong id="parameter-count">—</strong>
+        <small id="model-shape">Architecture unavailable</small>
+      </article>
+    </section>
+
+    <section class="dashboard-grid">
+      <article class="panel chart-panel span-2">
+        <header class="panel-header">
+          <div><span class="label">Learner</span><h2>Loss history</h2></div>
+          <div class="legend"><span><i class="legend-policy"></i>Policy</span><span><i class="legend-value"></i>Value</span></div>
+        </header>
+        <div id="loss-chart" class="chart" role="img" aria-label="Policy and value loss history"></div>
+      </article>
+
+      <article class="panel model-panel">
+        <header class="panel-header"><div><span class="label">Checkpoint</span><h2>Model contract</h2></div></header>
+        <dl id="model-contract" class="definition-list"></dl>
+      </article>
+
+      <article class="panel promotion-panel span-2">
+        <header class="panel-header">
+          <div><span class="label">Incumbent gate</span><h2>Promotion history</h2></div>
+          <span id="latest-decision" class="decision-badge">No decision</span>
+        </header>
+        <div id="promotion-chart" class="chart compact" role="img" aria-label="Promotion scores and confidence intervals"></div>
+      </article>
+
+      <article class="panel">
+        <header class="panel-header"><div><span class="label">Live workers</span><h2>Collection actors</h2></div></header>
+        <div id="actors" class="actors empty-state">No active actor reports</div>
+      </article>
+
+      <article class="panel span-2">
+        <header class="panel-header"><div><span class="label">Latest shard</span><h2>Battle population</h2></div></header>
+        <div class="battle-stats" id="battle-stats"></div>
+        <div class="heatmap-wrap">
+          <div><h3>Party-size coverage</h3><p class="muted">Player size by enemy size</p></div>
+          <div id="party-heatmap" class="heatmap" aria-label="Party size matchup heatmap"></div>
+        </div>
+      </article>
+
+      <article class="panel gates-panel">
+        <header class="panel-header"><div><span class="label">Quality control</span><h2>Promotion gates</h2></div></header>
+        <div id="gates" class="gate-list empty-state">No completed promotion</div>
+      </article>
+
+      <article class="panel span-3">
+        <header class="panel-header">
+          <div><span class="label">Paired evaluation</span><h2>Latest promotion battles</h2></div>
+          <span id="battle-record" class="muted">—</span>
+        </header>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Game</th><th>Candidate side</th><th>Party</th><th>Outcome</th><th>Stop</th><th>Score</th></tr></thead>
+            <tbody id="promotion-battles"><tr><td colspan="6" class="empty-cell">No battle-level records yet</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="panel span-2">
+        <header class="panel-header"><div><span class="label">Deployment shape</span><h2>Campaign suite</h2></div></header>
+        <div id="campaign-cases" class="campaign-grid empty-state">No campaign evaluation</div>
+      </article>
+
+      <article class="panel">
+        <header class="panel-header"><div><span class="label">Held-out behavior</span><h2>Skill probes</h2></div></header>
+        <div id="probes" class="probe-list empty-state">No probe evaluation</div>
+      </article>
+
+      <article class="panel span-3">
+        <header class="panel-header"><div><span class="label">Ledger</span><h2>Iteration history</h2></div></header>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Iteration</th><th>Examples</th><th>Mean turns</th><th>Policy loss</th><th>Value loss</th><th>Promotion</th><th>CI low</th><th>Decision</th></tr></thead>
+            <tbody id="iteration-history"><tr><td colspan="8" class="empty-cell">No completed iterations</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <footer>
+    <span>Read-only artifact projection</span>
+    <span id="pipeline-footer">Pipeline unavailable</span>
+  </footer>
+</body>
+</html>
