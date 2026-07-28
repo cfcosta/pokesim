@@ -5,9 +5,10 @@ verified Lean battle model. Lean owns team generation, immutable search states,
 chance forks, and mechanics. Python owns the transformer, simultaneous search,
 replay shards, optimization, checkpoints, and evaluation.
 
-The primary executable profile is `full-link-6v6-perfect-v1`. Every reset uses
-two independently generated, progression-witnessed parties of exactly six.
-Policies choose from the complete 13-action link dictionary: four moves, six
+The primary executable profile is `full-link-party-1to6-perfect-v2`. Training
+cycles through all 36 ordered combinations of two independently generated,
+progression-witnessed parties sized one through six. Policies choose from the
+complete 13-action link dictionary: four moves, six
 switch slots, typed no-action, Struggle, and the profile-disabled run slot.
 Forced replacement and Mimic are normalized as one-side requests.
 
@@ -50,8 +51,8 @@ for explicit sparse-search experiments, but it is not the production default.
 This preserves complete action consideration without top-k pruning.
 `transformer-train` is the production profile:
 30 iterations of 500 training battles, or 15,000 independently reset random
-6v6 battles. It uses depth-four simultaneous trees, the 938,638-parameter
-four-layer, 128-wide model, BF16 autocast, two epochs per iteration, a
+variable-party battles. It uses depth-four simultaneous trees, the
+940,430-parameter four-layer, 128-wide model, BF16 autocast, two epochs per iteration, a
 CUDA-safe batch size of 128, and a 1,024-game final arena. Parameters, gradients,
 AdamW state, policy normalization, losses, and reductions remain FP32. The tree
 uses up to 320 native transitions per searched root and was 1.31× slower than
@@ -90,7 +91,10 @@ batch 128, so 128 remains the production default.
 
 Use `--device cpu`, `--device cuda`, or `--device auto`. BF16 is the default;
 `--precision fp32` remains available for differential checks and older
-checkpoints without precision metadata retain their original FP32 contract. The uv2nix development
+checkpoints without precision metadata retain their original FP32 contract.
+The v4 observation is structurally incompatible with 478-field v3 checkpoints,
+but `--warm-start-checkpoint PATH` copies every compatible parameter and the
+existing positional rows into the extended 492-field model. The uv2nix development
 environment is generated from `uv.lock`; on supported Linux hosts it includes
 the CUDA PyTorch wheel and the NixOS runtime-library fixes required to use the
 GPU.
@@ -108,24 +112,35 @@ nix develop -c python packages/battle-training/train.py transformer-train \
   --opponent-fraction 0.5
 ```
 
-The pipeline copies fixed checkpoints into the immutable run, anchors half of
-default collection against the scratch initialization and a rolling historical
-window, records opponent SHA-256 identities in every shard, and includes the
-initial population in deterministic shard regeneration. Each production update
+The pipeline copies fixed checkpoints into the immutable run and anchors half
+of default collection against the scratch initialization, a rolling historical
+window, an aggressive tactical heuristic, and a deliberately switch-heavy
+heuristic. On those episodes the candidate still receives an all-action RM+
+policy target, but the opposing real action is sampled from the named heuristic
+rather than the tree's opponent strategy. `--no-heuristic-opponents` disables
+the two deterministic heuristics for ablations. Shards record every opponent
+identity and deterministic regeneration reconstructs the same population order. Human transcripts remain
+external until a licensed corpus and observation-compatible importer exist. Each production update
 receives at least 1,024 held-out games against its incumbent, grouped into 512
 same-reset pairs with model sides swapped across eight root seeds. Truncations
 and semantic cycles score zero. Promotion requires a point score of at least 50%,
 a paired 95% confidence lower bound of at least 50%, and passing separate
-held-out type, status, and switch probes; inconclusive updates restore both model
-and AdamW state. AdamW state otherwise persists across collection iterations.
+held-out type, status, and switch probes. It also reports and gates 1–2, 3–4,
+5–6, and unequal-party strata, plus a nine-team fixed campaign suite covering
+Brock through Giovanni and Lance. The campaign teams use canonical natural
+moves and fixed DVs inside the link quotient; they do not claim trainer AI or
+item equivalence. Inconclusive updates restore both model and AdamW state. AdamW
+state otherwise persists across collection iterations.
 
 ## Model
 
 Each mechanics scalar is encoded as low- and high-byte embeddings plus a learned
-field-position embedding. A learned CLS token attends over all 478
-side-canonical full-party fields. The v3 schema retains the move descriptors,
-current type-effectiveness values, and offensive/incoming matchup scores from v2
-and adds the pending Mimic continuation action; this
+field-position embedding. A learned CLS token attends over all 492
+side-canonical variable-party fields. The v4 schema retains v3's move descriptors,
+current type-effectiveness values, offensive/incoming matchup scores, and Mimic
+continuation action. It appends both party counts and twelve presence bits while
+zeroing every absent party and switch descriptor; present fainted members retain
+presence `1` with HP `0`. This
 keeps small networks from having to rediscover static ROM tables from terminal
 labels. Two heads predict:
 

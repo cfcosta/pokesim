@@ -47,6 +47,10 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--seed", type=int, default=20260726)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--precision", choices=("bf16", "fp32"), default="bf16")
+    parser.add_argument("--warm-start-checkpoint", type=Path)
+    parser.add_argument(
+        "--no-heuristic-opponents", dest="heuristic_opponents", action="store_false"
+    )
     parser.add_argument("--d-model", type=int, default=64 if smoke else 128)
     parser.add_argument("--heads", type=int, default=4 if smoke else 8)
     parser.add_argument("--layers", type=int, default=2 if smoke else 4)
@@ -73,6 +77,8 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--promotion-seed-count", type=int, default=2 if smoke else 8)
     parser.add_argument("--probe-games", type=int, default=16 if smoke else 256)
     parser.add_argument("--probe-seed-count", type=int, default=2 if smoke else 8)
+    parser.add_argument("--campaign-games", type=int, default=18 if smoke else 288)
+    parser.add_argument("--campaign-seed-count", type=int, default=2 if smoke else 8)
     parser.add_argument(
         "--minimum-promotion-score", type=float, default=0.0 if smoke else 0.50
     )
@@ -171,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
             promotion_seed_count=arguments.promotion_seed_count,
             probe_games=arguments.probe_games,
             probe_seed_count=arguments.probe_seed_count,
+            campaign_games=arguments.campaign_games,
+            campaign_seed_count=arguments.campaign_seed_count,
             minimum_promotion_score=arguments.minimum_promotion_score,
             enforce_quality_gate=arguments.command == "transformer-train",
             chance_samples_per_joint=arguments.chance_samples_per_joint,
@@ -189,6 +197,12 @@ def main(argv: list[str] | None = None) -> int:
             tree_convergence_patience=arguments.tree_convergence_patience,
             actor_batch_size=arguments.actor_batch_size,
             precision=arguments.precision,
+            warm_start_checkpoint=(
+                str(arguments.warm_start_checkpoint.resolve())
+                if arguments.warm_start_checkpoint is not None
+                else None
+            ),
+            heuristic_opponents=arguments.heuristic_opponents,
         )
         report = run_transformer_pipeline(arguments.output.resolve(), config)
     else:

@@ -8,7 +8,7 @@ import Battle.RL.Training
 /-!
 # Full-party link training schema
 
-This module projects the complete six-member full battle state into a stable
+This module projects a one-to-six-member full battle state into a stable
 side-canonical integer tensor. Future RNG bytes are deliberately absent. The
 profile admits moves, voluntary and forced switches, automatic no-action,
 Struggle, and typed Mimic target requests; link forfeits are excluded from
@@ -20,8 +20,8 @@ namespace Battle.RL.FullTraining
 open Battle Battle.Full
 
 
-def profileVersion : String := "full-link-6v6-perfect-v1"
-def schemaVersion : String := "full-link-6v6-state-v3"
+def profileVersion : String := "full-link-party-1to6-perfect-v2"
+def schemaVersion : String := "full-link-party-state-v4"
 def actionCount : Nat := 13
 
 /-- State restrictions under which omitted inventory, capture, trainer, and
@@ -125,6 +125,13 @@ private def monFeatures (mon : MonState) : List Nat :=
    mon.defense.toNat, mon.speed.toNat, mon.special.toNat] ++
   (List.range Wram.numMoves).map (fun slot => (mon.pp.getD slot 0).toNat)
 
+private def zeroMonFeatures : List Nat := List.replicate 22 0
+
+private def partyMonFeatures (side : Full.SideState) (index : Nat) : List Nat :=
+  match side.party.mons[index]? with
+  | some mon => monFeatures mon
+  | none => zeroMonFeatures
+
 private def activeFeatures (side : Battle.SideState) : List Nat :=
   monFeatures side.active ++
   [side.unmodified.attack.toNat, side.unmodified.defense.toNat,
@@ -141,9 +148,8 @@ private def activeFeatures (side : Battle.SideState) : List Nat :=
    side.partyPosition.toNat, side.actualCatchRate.toNat]
 
 private def fullSideFeatures (side : Full.SideState) : List Nat :=
-  let fallback := side.active.active
   ((List.range Wram.partyLength).flatMap fun index =>
-    monFeatures (side.party.mons.getD index fallback)) ++
+    partyMonFeatures side index) ++
   [side.activeIndex] ++ activeFeatures side.active
 
 private def effectiveness (moveType target1 target2 : UInt8) : Nat :=
@@ -178,12 +184,20 @@ the opposing active mon's best incoming matchup. All six switches remain legal
 and search-visible; these fields only remove an avoidable representation
 learning bottleneck. -/
 private def switchPolicyFeatures (side opponent : Full.SideState) : List Nat :=
-  let fallback := side.active.active
   let attacker := opponent.active.active
   (List.range Wram.partyLength).flatMap fun index =>
-    let candidate := side.party.mons.getD index fallback
-    [bestTacticalScore candidate attacker,
-     bestTacticalScore attacker candidate]
+    match side.party.mons[index]? with
+    | none => [0, 0]
+    | some candidate =>
+        [bestTacticalScore candidate attacker,
+         bestTacticalScore attacker candidate]
+
+private def partyShapeFeatures (own opponent : Full.SideState) : List Nat :=
+  [own.party.mons.size, opponent.party.mons.size] ++
+  (List.range Wram.partyLength).map
+    (fun index => boolNat (decide (index < own.party.mons.size))) ++
+  (List.range Wram.partyLength).map
+    (fun index => boolNat (decide (index < opponent.party.mons.size)))
 
 private def selectionFeatures (scratch : Full.Selection.MoveScratch) : List Nat :=
   [scratch.selectedMove.toNat, scratch.loadedMove.toNat,
@@ -243,7 +257,8 @@ def featureVector (state : Full.Environment.State) (view : Side)
     selectionFeatures (selection state view) ++
     selectionFeatures (selection state view.other) ++
     bcdFeatures engine.payDayMoney ++ bcdFeatures engine.playerMoney ++
-    bcdFeatures engine.trainerPrize ++ otIds ++ global).toArray
+    bcdFeatures engine.trainerPrize ++ otIds ++ global ++
+    partyShapeFeatures own opponent).toArray
 
 private def fnvOffset : UInt64 := 0xcbf29ce484222325
 private def fnvPrime : UInt64 := 0x100000001b3
@@ -262,6 +277,20 @@ private def sampleState : Full.Environment.State :=
   Full.Environment.resetSized Wram.partyLength
     (Training.linkRng 1 1 Training.generatorStream)
     (Training.linkRng 1 1 Training.battleStream)
+
+private def asymmetricSampleState : Full.Environment.State :=
+  Full.Environment.resetSizedPair 1 2
+    (Training.linkRng 2 1 Training.generatorStream)
+    (Training.linkRng 2 1 Training.battleStream)
+
+private def faintedReserveSampleState : Full.Environment.State :=
+  let state := Full.Environment.resetSizedPair 2 2
+    (Training.linkRng 3 1 Training.generatorStream)
+    (Training.linkRng 3 1 Training.battleStream)
+  let player := state.engine.battle.player
+  let mons := player.party.mons.modify 1 fun mon => { mon with hp := 0 }
+  { state with engine := { state.engine with battle :=
+      { state.engine.battle with player := { player with party := { mons } } } } }
 
 def featureCount : Nat := (featureVector sampleState .player).size
 
@@ -282,6 +311,14 @@ def featureCount : Nat := (featureVector sampleState .player).size
 #guard continuationId (some .noAction) == 11
 #guard featureVector sampleState .player (some .player) 0 none !=
   featureVector sampleState .player (some .player) 0 (some .noAction)
-#guard featureCount == 478
+#guard zeroMonFeatures.length == 22
+#guard (featureVector asymmetricSampleState .player).toList.extract 22 44 ==
+  List.replicate 22 0
+#guard (featureVector asymmetricSampleState .player).toList.drop 478 ==
+  [1, 2, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0]
+#guard (featureVector faintedReserveSampleState .player).toList.extract 22 44 !=
+  List.replicate 22 0
+#guard ((featureVector faintedReserveSampleState .player).toList.drop 478).getD 3 0 == 1
+#guard featureCount == 492
 
 end Battle.RL.FullTraining

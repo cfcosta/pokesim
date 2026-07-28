@@ -5,7 +5,7 @@
 This audit compares `Battle.RL.FullTraining.featureVector` with the state read by
 `Battle.Full.Environment.step`, `Battle.Full.Engine.step`, and the typed request
 normalizer in `Battle.RL.FullSearchServerMain`. Its scope is
-`full-link-6v6-perfect-v1`. It does not cover trainer, wild, Safari, capture,
+`full-link-party-1to6-perfect-v2`. It does not cover trainer, wild, Safari, capture,
 learning, evolution, or player-information policies.
 
 ## Result
@@ -16,18 +16,27 @@ opposing action that must resume after the target slot is chosen, but
 therefore have identical 477 fields and legal masks while resuming different
 actions.
 
-Schema `full-link-6v6-state-v3` adds one collision-free continuation field:
+Schema `full-link-6v6-state-v3` added one collision-free continuation field:
 
 - `0`: no pending continuation;
 - `1..13`: stable link action ID plus one;
 - `14`: an item continuation, reserved outside this profile.
 
-The tensor now has 478 fields. A Lean guard constructs the same mechanics state
+That tensor had 478 fields. A Lean guard constructs the same mechanics state
 and Mimic request with `none` and `some noAction` continuations and checks that
-the two vectors differ. Search fingerprints include the new field. Checkpoints
-for v2 are intentionally incompatible with v3.
+the two vectors differ.
 
-No second concrete alias was found in the current link request surface. CI runs
+Schema `full-link-party-state-v4` fixes a second representation alias exposed by
+one-to-six-member battles. V3 filled missing persistent and switch slots with a
+copy of the active Pokémon and omitted party count, so the value head could not
+distinguish an absent member from copied state. V4 zeroes all absent descriptors
+and appends own/opponent counts plus twelve presence bits. Present fainted
+members have presence `1` and HP `0`; absent members have presence `0` and a
+zero descriptor. Search fingerprints include all 492 fields. V3 checkpoints are
+structurally incompatible, with an explicit positional-table extension available
+for warm starts.
+
+No further concrete alias was found in the current link request surface. CI runs
 `tools/audit-full-training-state.py`, which rejects any new `Engine.State` or
 `Environment.State` field until it is classified as encoded, latent chance,
 profile-inert, or proof-only. This is a source-shape drift gate, not a universal
@@ -45,7 +54,8 @@ injectivity or transition-kernel theorem; the proof gaps are listed below.
 | Money scratch | 9 | Pay Day, player money, and trainer prize BCD bytes |
 | Player OT IDs | 6 | One word-valued scalar per party slot |
 | Global and request state | 25 | Mode, turn, phase, verdict, replacement queue, last moves, damage words, IDs/badges/run state, canceled action, trainer scratch, Mimic actor/source/continuation, progression flags, pending-learning length |
-| Total | 478 | `full-link-6v6-state-v3` |
+| Party shape | 14 | Own/opponent counts followed by six own and six opponent presence bits |
+| Total | 492 | `full-link-party-state-v4` |
 
 The move and switch descriptors are deterministic functions of already encoded
 mechanics state and canonical tables. They help the network but do not repair an
@@ -89,7 +99,7 @@ using a concrete generator fixture.
 1. Prove `profileInvariant` is preserved by every normalized link action,
    automatic generated move, disobedience response, forced replacement, and
    Mimic response.
-2. Define a structured 478-field decoder on canonical six-member states and
+2. Define a structured 492-field decoder on canonical one-to-six-member states and
    prove `decode (featureVector state view request)` recovers every field in the
    link mechanics projection.
 3. Prove equal decoded projections and equal legal actions induce equal
@@ -99,6 +109,6 @@ using a concrete generator fixture.
 5. Repeat this audit from scratch for `full-link-paired-player-v1`; the current
    perfect-information tensor exposes the opponent party and cannot be reused.
 
-Until obligations 1-3 close, the accurate statement is: v3 fixes the known Mimic
-alias and covers all direct mutable reads found by the audit, but complete Markov
-sufficiency is not yet a theorem.
+Until obligations 1-3 close, the accurate statement is: v4 fixes the known Mimic
+and absent-party aliases and covers all direct mutable reads found by the audit,
+but complete Markov sufficiency is not yet a theorem.

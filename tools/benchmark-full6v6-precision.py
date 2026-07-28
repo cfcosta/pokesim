@@ -13,14 +13,18 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from battle_training import FULL_ACTION_COUNT, FULL_FEATURE_COUNT
+from battle_training import FULL_ACTION_COUNT
 from battle_training.network import BattleTransformer, TransformerConfig
 from torch.nn import functional as F
+
+# This script reproduces the documented v3 benchmark rather than silently
+# changing shape when the current variable-party schema evolves.
+HISTORICAL_FEATURE_COUNT = 478
 
 
 def model_config(precision: str) -> TransformerConfig:
     return TransformerConfig(
-        feature_count=FULL_FEATURE_COUNT,
+        feature_count=HISTORICAL_FEATURE_COUNT,
         action_count=FULL_ACTION_COUNT,
         d_model=128,
         heads=8,
@@ -54,7 +58,7 @@ def worker(arguments: argparse.Namespace) -> dict[str, Any]:
     features = torch.randint(
         0,
         65536,
-        (arguments.batch_size, FULL_FEATURE_COUNT),
+        (arguments.batch_size, HISTORICAL_FEATURE_COUNT),
         device="cuda",
         dtype=torch.long,
     )

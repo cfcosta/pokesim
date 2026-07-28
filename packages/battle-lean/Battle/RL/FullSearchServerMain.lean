@@ -3,6 +3,7 @@ Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.RL.FullTraining
+import Battle.RL.CampaignTeams
 import Battle.RL.Showdown
 
 /-!
@@ -358,31 +359,49 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
     match token tokens 0 with
     | some "ping" =>
         emit output (simpleSuccess request
-          s!",\"profile\":\"{FullTraining.profileVersion}\",\"schema\":\"{FullTraining.schemaVersion}\",\"chance\":\"fresh-root-v1\",\"feature_count\":{FullTraining.featureCount},\"action_count\":{FullTraining.actionCount},\"party_size\":{Wram.partyLength}")
+          s!",\"profile\":\"{FullTraining.profileVersion}\",\"schema\":\"{FullTraining.schemaVersion}\",\"chance\":\"fresh-root-v1\",\"feature_count\":{FullTraining.featureCount},\"action_count\":{FullTraining.actionCount},\"party_size\":{Wram.partyLength},\"campaign_count\":{CampaignTeams.count}")
         serve input output states
+    | some "reset-campaign" =>
+        match tokenNat tokens 2, tokenNat tokens 3, tokenNat tokens 4 with
+        | some root, some episode, some campaign =>
+            let generator := Training.linkRng root.toUInt64 episode.toUInt64
+              Training.generatorStream
+            let player := RL.DynamicGenerator.sampleSized Wram.partyLength generator
+            let enemy := CampaignTeams.sample campaign player.rng
+            let battleRng := Training.linkRng root.toUInt64 episode.toUInt64
+              Training.battleStream
+            let state := Full.Environment.linkResetFromSamples player enemy battleRng
+            let state := SearchState.battle state []
+            emit output (success request 0 state)
+            serve input output #[state]
+        | _, _, _ =>
+            emit output (failure request "invalid-reset-campaign")
+            serve input output states
     | some "reset" =>
-        match tokenNat tokens 2, tokenNat tokens 3 with
-        | some root, some episode =>
-            let state := Full.Environment.resetSized Wram.partyLength
+        match tokenNat tokens 2, tokenNat tokens 3, tokenNat tokens 4,
+            tokenNat tokens 5 with
+        | some root, some episode, some playerSize, some enemySize =>
+            let state := Full.Environment.resetSizedPair playerSize enemySize
               (Training.linkRng root.toUInt64 episode.toUInt64 Training.generatorStream)
               (Training.linkRng root.toUInt64 episode.toUInt64 Training.battleStream)
             let state := SearchState.battle state []
             emit output (success request 0 state)
             serve input output #[state]
-        | _, _ =>
+        | _, _, _, _ =>
             emit output (failure request "invalid-reset")
             serve input output states
     | some "reset-append" =>
-        match tokenNat tokens 2, tokenNat tokens 3 with
-        | some root, some episode =>
-            let state := Full.Environment.resetSized Wram.partyLength
+        match tokenNat tokens 2, tokenNat tokens 3, tokenNat tokens 4,
+            tokenNat tokens 5 with
+        | some root, some episode, some playerSize, some enemySize =>
+            let state := Full.Environment.resetSizedPair playerSize enemySize
               (Training.linkRng root.toUInt64 episode.toUInt64 Training.generatorStream)
               (Training.linkRng root.toUInt64 episode.toUInt64 Training.battleStream)
             let state := SearchState.battle state []
             let handle := states.size
             emit output (success request handle state)
             serve input output (states.push state)
-        | _, _ =>
+        | _, _, _, _ =>
             emit output (failure request "invalid-reset-append")
             serve input output states
     | some "step" =>

@@ -8,7 +8,13 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any, Self
 
-from . import FULL_ACTION_COUNT, FULL_PARTY_SIZE, FULL_PROFILE, FULL_SCHEMA
+from . import (
+    FULL_ACTION_COUNT,
+    FULL_CAMPAIGN_COUNT,
+    FULL_PARTY_SIZE,
+    FULL_PROFILE,
+    FULL_SCHEMA,
+)
 from .worker import LEAN_PACKAGE, REPO_ROOT
 
 SEARCH_SERVER = LEAN_PACKAGE / ".lake" / "build" / "bin" / "battleSearchServer"
@@ -98,11 +104,13 @@ class SearchServer:
             or hello["chance"] != "fresh-root-v1"
             or hello["action_count"] != FULL_ACTION_COUNT
             or hello["party_size"] != FULL_PARTY_SIZE
+            or hello["campaign_count"] != FULL_CAMPAIGN_COUNT
         ):
             self.close()
             raise ValueError(f"native search protocol mismatch: {hello}")
         self.feature_count = int(hello["feature_count"])
         self.action_count = int(hello["action_count"])
+        self.campaign_count = int(hello["campaign_count"])
 
     def _request(self, command: str) -> dict[str, Any]:
         if self.process.stdin is None or self.process.stdout is None:
@@ -143,11 +151,40 @@ class SearchServer:
             raise ValueError("native search state feature count differs from schema")
         return snapshot
 
-    def reset(self, root_seed: int, episode: int) -> Snapshot:
-        return self._snapshot(self._request(f"reset|{root_seed}|{episode}"))
+    def reset(
+        self,
+        root_seed: int,
+        episode: int,
+        player_size: int = FULL_PARTY_SIZE,
+        enemy_size: int = FULL_PARTY_SIZE,
+    ) -> Snapshot:
+        return self._snapshot(
+            self._request(
+                f"reset|{root_seed}|{episode}|{player_size}|{enemy_size}"
+            )
+        )
 
-    def reset_append(self, root_seed: int, episode: int) -> Snapshot:
-        return self._snapshot(self._request(f"reset-append|{root_seed}|{episode}"))
+    def reset_append(
+        self,
+        root_seed: int,
+        episode: int,
+        player_size: int = FULL_PARTY_SIZE,
+        enemy_size: int = FULL_PARTY_SIZE,
+    ) -> Snapshot:
+        return self._snapshot(
+            self._request(
+                f"reset-append|{root_seed}|{episode}|{player_size}|{enemy_size}"
+            )
+        )
+
+    def reset_campaign(
+        self, root_seed: int, episode: int, campaign: int
+    ) -> Snapshot:
+        if not 0 <= campaign < self.campaign_count:
+            raise ValueError("campaign team index is out of range")
+        return self._snapshot(
+            self._request(f"reset-campaign|{root_seed}|{episode}|{campaign}")
+        )
 
     def search_step(
         self, handle: int, player_action: int, enemy_action: int, chance_seed: int

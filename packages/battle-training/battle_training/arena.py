@@ -1,4 +1,4 @@
-"""Traced random-team 6v6 arenas and policy-skill diagnostics."""
+"""Traced variable-party arenas and policy-skill diagnostics."""
 
 from __future__ import annotations
 
@@ -8,12 +8,35 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import FULL_CAMPAIGN_COUNT, FULL_PARTY_SIZE, FULL_PROFILE
 from .artifacts import write_json
 from .joint_search import JointSearchConfig, SimultaneousTreeSearch
 from .native import NativeRequestTimeout, SearchServer
 from .network import BattleTransformer
 
 _FIXED_DAMAGE_MOVES = {68, 69, 82, 101, 149, 162}
+_MAX_PARTY_SIZE = FULL_PARTY_SIZE
+_CAMPAIGN_NAMES = (
+    "Brock",
+    "Misty",
+    "Lt. Surge",
+    "Erika",
+    "Koga",
+    "Sabrina",
+    "Blaine",
+    "Giovanni",
+    "Lance",
+)
+assert len(_CAMPAIGN_NAMES) == FULL_CAMPAIGN_COUNT
+_PARTY_MATCHUPS = tuple(
+    [(size, size) for size in range(1, _MAX_PARTY_SIZE + 1)]
+    + [
+        (player, enemy)
+        for player in range(1, _MAX_PARTY_SIZE + 1)
+        for enemy in range(1, _MAX_PARTY_SIZE + 1)
+        if player != enemy
+    ]
+)
 _SUCCESS_EVENTS = {
     "status-applied",
     "stage-changed",
@@ -242,11 +265,11 @@ def _update_side_metrics(
 def _preview(replay: Replay, inspection: dict[str, Any]) -> None:
     replay.add("|player|p1|Player 1")
     replay.add("|player|p2|Player 2")
-    replay.add("|teamsize|p1|6")
-    replay.add("|teamsize|p2|6")
+    replay.add(f"|teamsize|p1|{len(inspection['player']['party'])}")
+    replay.add(f"|teamsize|p2|{len(inspection['enemy']['party'])}")
     replay.add("|gametype|singles")
     replay.add("|gen|1")
-    replay.add("|tier|[Gen 1] Full Link 6v6")
+    replay.add("|tier|[Gen 1] Full Link Variable Party")
     for code, name in (("p1", "player"), ("p2", "enemy")):
         for mon in inspection[name]["party"]:
             replay.add(f"|poke|{code}|{mon['name']}, L{mon['level']}|")
@@ -353,6 +376,45 @@ def _mean_ci95(values: list[float]) -> tuple[float, float]:
     return max(0.0, mean - radius), min(1.0, mean + radius)
 
 
+def _evaluation_party_sizes(pair: int) -> tuple[int, int]:
+    return _PARTY_MATCHUPS[pair % len(_PARTY_MATCHUPS)]
+
+
+def _party_strata(player_size: int, enemy_size: int) -> tuple[str, ...]:
+    result = []
+    if player_size <= 2 and enemy_size <= 2:
+        result.append("party-1to2")
+    if 3 <= player_size <= 4 and 3 <= enemy_size <= 4:
+        result.append("party-3to4")
+    if player_size >= 5 and enemy_size >= 5:
+        result.append("party-5to6")
+    if player_size != enemy_size:
+        result.append("unequal-party")
+    return tuple(result)
+
+
+def _stratified_report(scores: dict[str, list[float]]) -> dict[str, Any]:
+    strata: dict[str, Any] = {}
+    for name in ("party-1to2", "party-3to4", "party-5to6", "unequal-party"):
+        values = scores[name]
+        if values:
+            low, high = _mean_ci95(values)
+            score = sum(values) / len(values)
+            passed = score >= 0.45 and low >= 0.35
+        else:
+            low = high = score = None
+            passed = False
+        strata[name] = {
+            "pairs": len(values),
+            "score": score,
+            "paired_score_ci95": [low, high],
+            "minimum_score": 0.45,
+            "minimum_ci95_low": 0.35,
+            "pass": passed,
+        }
+    return {"pass": all(row["pass"] for row in strata.values()), "groups": strata}
+
+
 def run_paired_arena(
     candidate: BattleTransformer,
     baseline: BattleTransformer,
@@ -360,6 +422,8 @@ def run_paired_arena(
     budget: int,
     seed: int,
     seed_count: int = 8,
+    *,
+    campaign: bool = False,
 ) -> dict[str, Any]:
     """Fast paired, side-swapped evaluation with nonfinishes scored as losses."""
     if games < 2 or games % 2:
@@ -372,6 +436,15 @@ def run_paired_arena(
     game_scores: list[float] = []
     pair_scores: list[float] = []
     pair_score: list[float] = []
+    stratum_scores: dict[str, list[float]] = {
+        "party-1to2": [],
+        "party-3to4": [],
+        "party-5to6": [],
+        "unequal-party": [],
+    }
+    campaign_scores: dict[int, list[float]] = {
+        index: [] for index in range(len(_CAMPAIGN_NAMES))
+    }
     server = SearchServer()
     try:
         for game in range(games):
@@ -384,10 +457,16 @@ def run_paired_arena(
             player_rng = candidate_rng if candidate_player else baseline_rng
             enemy_rng = baseline_rng if candidate_player else candidate_rng
             root_seed, episode = _paired_coordinates(seed, seed_count, game)
+            player_size, enemy_size = _evaluation_party_sizes(pair)
+            campaign_index = pair % len(_CAMPAIGN_NAMES)
             result: int | None = None
             stop = "truncated"
             try:
-                snapshot = server.reset(root_seed, episode)
+                snapshot = (
+                    server.reset_campaign(root_seed, episode, campaign_index)
+                    if campaign
+                    else server.reset(root_seed, episode, player_size, enemy_size)
+                )
                 for _ in range(budget):
                     player_action, enemy_action = _network_actions_split(
                         player, enemy, snapshot, player_rng, enemy_rng
@@ -429,18 +508,53 @@ def run_paired_arena(
             game_scores.append(score)
             pair_score.append(score)
             if len(pair_score) == 2:
-                pair_scores.append(sum(pair_score) / 2)
+                paired = sum(pair_score) / 2
+                pair_scores.append(paired)
+                if campaign:
+                    campaign_scores[campaign_index].append(paired)
+                else:
+                    for stratum in _party_strata(player_size, enemy_size):
+                        stratum_scores[stratum].append(paired)
                 pair_score = []
     finally:
         server.close()
     robust_score = sum(game_scores) / games
     ci_low, ci_high = _mean_ci95(pair_scores)
     finished = wins + losses + draws
+    campaign_cases = {}
+    for index, name in enumerate(_CAMPAIGN_NAMES):
+        values = campaign_scores[index]
+        if values:
+            low, high = _mean_ci95(values)
+            case_score = sum(values) / len(values)
+        else:
+            low = high = case_score = None
+        campaign_cases[name] = {
+            "pairs": len(values),
+            "score": case_score,
+            "paired_score_ci95": [low, high],
+            "pass": case_score is not None and case_score >= 0.40,
+        }
+    campaign_report = {
+        "pass": (
+            campaign
+            and robust_score >= 0.45
+            and all(case["pass"] for case in campaign_cases.values())
+        ),
+        "minimum_overall_score": 0.45,
+        "minimum_case_score": 0.40,
+        "cases": campaign_cases,
+    }
     return {
         "games": games,
         "pairs": games // 2,
         "seed_count": seed_count,
         "pairing": "same-reset-model-side-swap-v1",
+        "party_size_schedule": (
+            "fixed-campaign-suite-v1" if campaign else "all-ordered-1to6-v1"
+        ),
+        "strata": None if campaign else _stratified_report(stratum_scores),
+        "campaign": campaign_report if campaign else None,
         "wins": wins,
         "losses": losses,
         "draws": draws,
@@ -457,6 +571,28 @@ def run_paired_arena(
             and truncated + semantic_divergences <= max(1, math.floor(0.02 * games))
         ),
     }
+
+
+def run_campaign_arena(
+    candidate: BattleTransformer,
+    baseline: BattleTransformer,
+    games: int,
+    budget: int,
+    seed: int,
+    seed_count: int = 8,
+) -> dict[str, Any]:
+    """Evaluate both model sides across the fixed patched campaign suite."""
+    if games < 2 * len(_CAMPAIGN_NAMES):
+        raise ValueError("campaign arena requires at least one pair per fixed team")
+    return run_paired_arena(
+        candidate,
+        baseline,
+        games,
+        budget,
+        seed,
+        seed_count,
+        campaign=True,
+    )
 
 
 def run_traced_arena(
@@ -493,6 +629,7 @@ def run_traced_arena(
         player = candidate if candidate_player else baseline
         enemy = baseline if candidate_player else candidate
         pair = episode // 2
+        player_size, enemy_size = _evaluation_party_sizes(pair)
         candidate_rng = random.Random(config.seed + 30_000_019 + pair * 2_000_003)
         baseline_rng = random.Random(config.seed + 40_000_033 + pair * 2_000_003)
         player_rng = candidate_rng if candidate_player else baseline_rng
@@ -513,7 +650,9 @@ def run_traced_arena(
                 root_seed, reset_episode = _paired_coordinates(
                     config.seed, config.seed_count, episode
                 )
-                snapshot = server.reset(root_seed, reset_episode)
+                snapshot = server.reset(
+                    root_seed, reset_episode, player_size, enemy_size
+                )
                 initial = server.inspect(snapshot.handle)
                 initial["player_mask"] = snapshot.player_mask
                 initial["enemy_mask"] = snapshot.enemy_mask
@@ -639,9 +778,21 @@ def run_traced_arena(
         for index in range(0, len(game_scores), 2)
     ]
     ci_low, ci_high = _mean_ci95(pair_scores)
+    stratum_scores: dict[str, list[float]] = {
+        "party-1to2": [],
+        "party-3to4": [],
+        "party-5to6": [],
+        "unequal-party": [],
+    }
+    for pair, score in enumerate(pair_scores):
+        player_size, enemy_size = _evaluation_party_sizes(pair)
+        for stratum in _party_strata(player_size, enemy_size):
+            stratum_scores[stratum].append(score)
     return {
-        "profile": "full-link-6v6-perfect-v1",
-        "party_size": 6,
+        "profile": FULL_PROFILE,
+        "max_party_size": FULL_PARTY_SIZE,
+        "party_size_schedule": "all-ordered-1to6-v1",
+        "strata": _stratified_report(stratum_scores),
         "games": config.games,
         "wins": wins,
         "losses": losses,

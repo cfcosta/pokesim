@@ -8,7 +8,7 @@ import math
 import random
 import tempfile
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,7 @@ from torch import Tensor
 from . import ENTROPY, FULL_PARTY_SIZE, FULL_PROFILE, FULL_SCHEMA
 from .arena import (
     ArenaConfig,
+    run_campaign_arena,
     run_paired_arena,
     run_traced_arena,
     skill_probe_report,
@@ -34,6 +35,7 @@ from .network import (
     load_checkpoint,
     load_network,
     save_network,
+    warm_start_network,
 )
 
 
@@ -61,6 +63,8 @@ class TransformerPipelineConfig:
     promotion_seed_count: int = 8
     probe_games: int = 256
     probe_seed_count: int = 8
+    campaign_games: int = 288
+    campaign_seed_count: int = 8
     minimum_promotion_score: float = 0.50
     enforce_quality_gate: bool = True
     chance_samples_per_joint: int = 1
@@ -79,29 +83,85 @@ class TransformerPipelineConfig:
     tree_convergence_patience: int = 8
     actor_batch_size: int = 16
     precision: str = "bf16"
+    warm_start_checkpoint: str | None = None
+    heuristic_opponents: bool = True
+
+
+class _HeuristicNetwork:
+    """Deterministic non-self-play policy with a neutral leaf value."""
+
+    def __init__(self, style: str) -> None:
+        self.style = style
+        self.config = type("HeuristicConfig", (), {"action_count": 13})()
+
+    def evaluate(
+        self, features: list[tuple[int, ...]], masks: list[int]
+    ) -> tuple[list[list[float]], list[float]]:
+        policies = []
+        for row, mask in zip(features, masks, strict=True):
+            weights = [0.0] * 13
+            for action in range(13):
+                if not mask & (1 << action):
+                    continue
+                if action < 4:
+                    tactical = row[362 + action * 6 + 5]
+                    weights[action] = 1.0 + tactical
+                    if self.style == "switch-heavy":
+                        weights[action] *= 0.10
+                elif 4 <= action < 10:
+                    slot = action - 4
+                    outgoing = row[410 + slot * 2]
+                    incoming = row[411 + slot * 2]
+                    advantage = max(0, outgoing - incoming)
+                    weights[action] = 1.0 + advantage
+                    if self.style == "aggressive":
+                        weights[action] *= 0.02
+                    elif self.style == "switch-heavy":
+                        weights[action] *= 8.0
+                else:
+                    weights[action] = 0.01
+            total = sum(weights)
+            policies.append([weight / total for weight in weights])
+        return policies, [0.0] * len(features)
+
+
+def _heuristic_population() -> list[tuple[_HeuristicNetwork, str]]:
+    return [
+        (_HeuristicNetwork("aggressive"), "heuristic-aggressive-v1"),
+        (_HeuristicNetwork("switch-heavy"), "heuristic-switch-heavy-v1"),
+    ]
 
 
 @dataclass
 class _ActorEpisode:
     episode: int
-    player_network: BattleTransformer
-    enemy_network: BattleTransformer
+    player_network: Any
+    enemy_network: Any
     episode_kind: str
     opponent_identity: str | None
     candidate_player: bool
+    player_size: int
+    enemy_size: int
     snapshot: Snapshot
     pending: list[dict[str, Any]]
     selection_rng: random.Random
     chance_rng: random.Random
+    opponent_rng: random.Random
 
 
 def _pipeline_id() -> str:
-    return "transformer-full6v6-bf16-tree-v5"
+    return "transformer-variable-party-bf16-tree-v6"
 
 
 def _scheduled_for_opponent(episode: int, fraction: float) -> bool:
     """Periodic deterministic mixture with an exact count for rational fractions."""
     return math.floor((episode + 1) * fraction) > math.floor(episode * fraction)
+
+
+def _training_party_sizes(iteration: int, episode: int) -> tuple[int, int]:
+    """Cycle through all 36 ordered 1-to-6 party-size matchups."""
+    matchup = (episode + (iteration - 1) * 13) % (FULL_PARTY_SIZE**2)
+    return matchup // FULL_PARTY_SIZE + 1, matchup % FULL_PARTY_SIZE + 1
 
 
 def _new_search(
@@ -232,11 +292,11 @@ def _collect_rows(
     network: BattleTransformer,
     config: TransformerPipelineConfig,
     iteration: int,
-    opponents: list[tuple[BattleTransformer, str]] | None = None,
+    opponents: list[tuple[Any, str]] | None = None,
 ) -> dict[str, Any]:
     meta: dict[str, Any] = {
         "type": "meta",
-        "format": "full6v6-joint-regret-policy-value-jsonl-v1",
+        "format": "variable-party-joint-regret-policy-value-jsonl-v2",
         "profile": FULL_PROFILE,
         "schema": FULL_SCHEMA,
         "entropy": ENTROPY,
@@ -246,7 +306,8 @@ def _collect_rows(
         "episodes": config.selfplay_episodes,
         "depth": config.search_depth,
         "seed": config.seed,
-        "party_size": FULL_PARTY_SIZE,
+        "max_party_size": FULL_PARTY_SIZE,
+        "party_size_schedule": "all-ordered-1to6-v1",
         "chance_samples_per_joint": config.chance_samples_per_joint,
         "regret_iterations": config.regret_iterations,
         "inference_batch_size": config.inference_batch_size,
@@ -265,8 +326,8 @@ def _collect_rows(
     opponents = opponents or []
     if opponents:
         meta["opponents"] = {
-            "kind": "anchored-historical-round-robin",
-            "sha256": [identity for _, identity in opponents],
+            "kind": "checkpoint-and-heuristic-round-robin",
+            "identities": [identity for _, identity in opponents],
             "fraction": config.opponent_fraction,
             "schedule": "balanced-periodic-round-robin-v1",
         }
@@ -275,6 +336,11 @@ def _collect_rows(
     mirror_episodes = opponent_episodes = 0
     candidate_player_episodes = candidate_enemy_episodes = 0
     opponent_counts = {identity: 0 for _, identity in opponents}
+    party_size_counts = {
+        f"{player}v{enemy}": 0
+        for player in range(1, FULL_PARTY_SIZE + 1)
+        for enemy in range(1, FULL_PARTY_SIZE + 1)
+    }
     with SearchServer() as server:
         for batch_start in range(0, config.selfplay_episodes, config.actor_batch_size):
             batch_stop = min(
@@ -293,7 +359,11 @@ def _collect_rows(
                     candidate_player = opponent_round % 2 == 0
                     player_network = network if candidate_player else opponent
                     enemy_network = opponent if candidate_player else network
-                    episode_kind = "fixed-opponent"
+                    episode_kind = (
+                        "heuristic-opponent"
+                        if isinstance(opponent, _HeuristicNetwork)
+                        else "checkpoint-opponent"
+                    )
                     opponent_episodes += 1
                     opponent_counts[opponent_identity] += 1
                     if candidate_player:
@@ -307,10 +377,14 @@ def _collect_rows(
                     episode_kind = "mirror"
                     mirror_episodes += 1
                 reset_seed = config.seed + iteration * 10_000
+                player_size, enemy_size = _training_party_sizes(iteration, episode)
+                party_size_counts[f"{player_size}v{enemy_size}"] += 1
                 snapshot = (
-                    server.reset(reset_seed, episode)
+                    server.reset(reset_seed, episode, player_size, enemy_size)
                     if offset == 0
-                    else server.reset_append(reset_seed, episode)
+                    else server.reset_append(
+                        reset_seed, episode, player_size, enemy_size
+                    )
                 )
                 active.append(
                     _ActorEpisode(
@@ -320,6 +394,8 @@ def _collect_rows(
                         episode_kind=episode_kind,
                         opponent_identity=opponent_identity,
                         candidate_player=candidate_player,
+                        player_size=player_size,
+                        enemy_size=enemy_size,
                         snapshot=snapshot,
                         pending=[],
                         selection_rng=random.Random(
@@ -327,6 +403,9 @@ def _collect_rows(
                         ),
                         chance_rng=random.Random(
                             config.seed + iteration * 1_000_033 + episode * 10_009 + 17
+                        ),
+                        opponent_rng=random.Random(
+                            config.seed + iteration * 1_000_037 + episode * 10_043 + 29
                         ),
                     )
                 )
@@ -365,6 +444,29 @@ def _collect_rows(
                             [actor.selection_rng for actor in actors],
                         )
                     for actor, result in zip(actors, actor_results, strict=True):
+                        if actor.episode_kind == "heuristic-opponent":
+                            heuristic = (
+                                actor.enemy_network
+                                if actor.candidate_player
+                                else actor.player_network
+                            )
+                            features = (
+                                actor.snapshot.enemy_features
+                                if actor.candidate_player
+                                else actor.snapshot.player_features
+                            )
+                            mask = (
+                                actor.snapshot.enemy_mask
+                                if actor.candidate_player
+                                else actor.snapshot.player_mask
+                            )
+                            policy, _ = heuristic.evaluate([features], [mask])
+                            action = _sample_policy(policy[0], actor.opponent_rng)
+                            result = (
+                                replace(result, enemy_action=action)
+                                if actor.candidate_player
+                                else replace(result, player_action=action)
+                            )
                         results[actor.episode] = result
                 for actor in active:
                     result = results[actor.episode]
@@ -385,6 +487,8 @@ def _collect_rows(
                         ),
                         "legal_mask": snapshot.player_mask,
                         "request": snapshot.request,
+                        "player_party_size": actor.player_size,
+                        "enemy_party_size": actor.enemy_size,
                     }
                     enemy_row = {
                         "type": "example",
@@ -401,6 +505,8 @@ def _collect_rows(
                         ),
                         "legal_mask": snapshot.enemy_mask,
                         "request": snapshot.request,
+                        "player_party_size": actor.player_size,
+                        "enemy_party_size": actor.enemy_size,
                     }
                     if result.exploitability is not None:
                         player_row["search_exploitability"] = result.exploitability
@@ -442,6 +548,8 @@ def _collect_rows(
                                 "reason": snapshot.divergence,
                                 "return": None,
                                 "decisions": decision + 1,
+                                "player_party_size": actor.player_size,
+                                "enemy_party_size": actor.enemy_size,
                             }
                         )
                         semantic_divergences += 1
@@ -460,6 +568,8 @@ def _collect_rows(
                                 "stop": "finished",
                                 "return": reward,
                                 "decisions": decision + 1,
+                                "player_party_size": actor.player_size,
+                                "enemy_party_size": actor.enemy_size,
                             }
                         )
                         finished += 1
@@ -482,6 +592,8 @@ def _collect_rows(
                         "stop": "truncated",
                         "return": None,
                         "decisions": config.episode_budget,
+                        "player_party_size": actor.player_size,
+                        "enemy_party_size": actor.enemy_size,
                     }
                 )
                 truncated += 1
@@ -509,6 +621,7 @@ def _collect_rows(
         "candidate_player_episodes": candidate_player_episodes,
         "candidate_enemy_episodes": candidate_enemy_episodes,
         "opponent_counts": opponent_counts,
+        "party_size_counts": party_size_counts,
         "mean_target_entropy": sum(
             _policy_entropy(row["policy"]) for row in example_rows
         )
@@ -950,12 +1063,20 @@ def run_transformer_pipeline(
         raise ValueError("promotion_games must be an even number of at least two")
     if config.probe_games < 2 or config.probe_games % 2:
         raise ValueError("probe_games must be an even number of at least two")
-    if config.promotion_seed_count < 2 or config.probe_seed_count < 2:
-        raise ValueError("promotion and probe arenas require multiple seeds")
+    if config.campaign_games < 18 or config.campaign_games % 2:
+        raise ValueError("campaign_games must be even and cover all nine fixed teams")
+    if (
+        config.promotion_seed_count < 2
+        or config.probe_seed_count < 2
+        or config.campaign_seed_count < 2
+    ):
+        raise ValueError("promotion, probe, and campaign arenas require multiple seeds")
     if config.promotion_games < 2 * config.promotion_seed_count:
         raise ValueError("promotion games must cover every promotion seed")
     if config.probe_games < 2 * config.probe_seed_count:
         raise ValueError("probe games must cover every probe seed")
+    if config.campaign_games < 2 * config.campaign_seed_count:
+        raise ValueError("campaign games must cover every campaign seed")
     if not 0.0 <= config.minimum_promotion_score <= 1.0:
         raise ValueError("minimum_promotion_score must be in [0, 1]")
     if config.enforce_quality_gate:
@@ -966,6 +1087,10 @@ def run_transformer_pipeline(
         if config.minimum_promotion_score < 0.50:
             raise ValueError(
                 "quality-gated training requires a promotion score of at least 50%"
+            )
+        if config.campaign_games < 288:
+            raise ValueError(
+                "quality-gated training requires at least 288 campaign games"
             )
     if not 0.0 <= config.opponent_fraction <= 1.0:
         raise ValueError("opponent_fraction must be in [0, 1]")
@@ -992,7 +1117,7 @@ def run_transformer_pipeline(
         feedforward=config.feedforward,
         precision=config.precision,
     )
-    opponents: list[tuple[BattleTransformer, str]] = []
+    opponents: list[tuple[Any, str]] = []
     opponent_metadata: list[dict[str, Any]] = []
     initial_checkpoint = root / "checkpoints" / "policy-000.pt"
 
@@ -1003,11 +1128,17 @@ def run_transformer_pipeline(
         if run_metadata.get("network") != asdict(model_config):
             raise ValueError("resume network shape differs from the native protocol")
         for metadata in run_metadata.get("opponents", []):
-            opponent_copy = root / metadata["checkpoint"]
-            opponent_sha = sha256(opponent_copy)
-            if opponent_sha != metadata["sha256"]:
-                raise ValueError("resume fixed-opponent hash mismatch")
-            opponents.append((load_network(opponent_copy, device), opponent_sha))
+            if metadata["kind"] == "fixed-checkpoint":
+                opponent_copy = root / metadata["checkpoint"]
+                opponent_sha = sha256(opponent_copy)
+                if opponent_sha != metadata["sha256"]:
+                    raise ValueError("resume fixed-opponent hash mismatch")
+                opponents.append((load_network(opponent_copy, device), opponent_sha))
+            elif metadata["kind"] == "heuristic":
+                style = metadata["style"]
+                opponents.append((_HeuristicNetwork(style), metadata["identity"]))
+            else:
+                raise ValueError("resume opponent kind is unknown")
             opponent_metadata.append(metadata)
         if not initial_checkpoint.is_file():
             raise FileNotFoundError("resume initial checkpoint is missing")
@@ -1049,15 +1180,39 @@ def run_transformer_pipeline(
                     "sha256": opponent_sha,
                 }
             )
-        network = BattleTransformer(model_config).to(device)
-        network.eval()
+        if config.heuristic_opponents:
+            for heuristic, identity in _heuristic_population():
+                opponents.append((heuristic, identity))
+                opponent_metadata.append(
+                    {
+                        "kind": "heuristic",
+                        "style": heuristic.style,
+                        "identity": identity,
+                    }
+                )
+        warm_start_metadata: dict[str, Any] | None = None
+        if config.warm_start_checkpoint is not None:
+            warm_source = Path(config.warm_start_checkpoint).resolve()
+            warm_sha = sha256(warm_source)
+            warm_copy = root / "warm-start" / "source.pt"
+            write_new(warm_copy, warm_source.read_bytes())
+            network = warm_start_network(warm_copy, model_config, device)
+            warm_start_metadata = {
+                "checkpoint": warm_copy.relative_to(root).as_posix(),
+                "sha256": warm_sha,
+                "method": "extend-position-table-v1",
+            }
+        else:
+            network = BattleTransformer(model_config).to(device)
+            network.eval()
         write_json(
             root / "run.json",
             {
                 "pipeline": _pipeline_id(),
                 "profile": FULL_PROFILE,
                 "schema": FULL_SCHEMA,
-                "party_size": FULL_PARTY_SIZE,
+                "max_party_size": FULL_PARTY_SIZE,
+                "party_size_schedule": "all-ordered-1to6-v1",
                 "chance": "fresh-root-v1",
                 "search_solver": "simultaneous-matrix-tree-rmplus-v1",
                 "config": asdict(config),
@@ -1066,6 +1221,7 @@ def run_transformer_pipeline(
                     parameter.numel() for parameter in network.parameters()
                 ),
                 "opponents": opponent_metadata,
+                "warm_start": warm_start_metadata,
                 "torch": torch.__version__,
                 "device": str(device),
                 "device_name": torch.cuda.get_device_name(device)
@@ -1077,7 +1233,11 @@ def run_transformer_pipeline(
             initial_checkpoint,
             network,
             None,
-            {"iteration": 0, "kind": "initial"},
+            {
+                "iteration": 0,
+                "kind": "initial",
+                "warm_start": warm_start_metadata,
+            },
         )
         shards = []
         collection = []
@@ -1157,6 +1317,14 @@ def run_transformer_pipeline(
             ),
         )
         probes = skill_probe_report(probe_arena)
+        campaign_arena = run_campaign_arena(
+            network,
+            incumbent,
+            config.campaign_games,
+            config.episode_budget,
+            config.seed + 85_000_000 + iteration * 10_019,
+            config.campaign_seed_count,
+        )
         promotion_score = promotion["score_with_nonfinishes_as_losses"]
         confidence_low = promotion["paired_score_ci95"][0]
         statistically_superior = (
@@ -1167,6 +1335,10 @@ def run_transformer_pipeline(
                 collection_quality["pass"]
                 and promotion["data_quality_pass"]
                 and promotion["quality_pass"]
+                and promotion["strata"]["pass"]
+                and campaign_arena["data_quality_pass"]
+                and campaign_arena["quality_pass"]
+                and campaign_arena["campaign"]["pass"]
                 and probe_arena["data_quality_pass"]
                 and probe_arena["quality_pass"]
                 and statistically_superior
@@ -1182,8 +1354,11 @@ def run_transformer_pipeline(
             )
         promotion["statistically_superior"] = statistically_superior
         promotion["minimum_score"] = config.minimum_promotion_score
+        promotion["stratified_party_gate"] = promotion["strata"]["pass"]
         promotion["held_out_probes"] = probes
         promotion["probe_arena"] = probe_arena
+        promotion["campaign_arena"] = campaign_arena
+        promotion["campaign_gate"] = campaign_arena["campaign"]["pass"]
         promotion["accepted"] = accepted
         if not accepted:
             network.load_state_dict(incumbent_state)
@@ -1273,12 +1448,20 @@ def run_transformer_pipeline(
         and all(
             item["promotion"]["probe_arena"]["data_quality_pass"] for item in training
         )
+        and all(
+            item["promotion"]["campaign_arena"]["data_quality_pass"]
+            for item in training
+        )
     )
     evaluation_quality_pass = (
         arena["quality_pass"]
         and all(item["quality_pass"] for item in opponent_arenas)
         and all(item["promotion"]["quality_pass"] for item in training)
         and all(item["promotion"]["probe_arena"]["quality_pass"] for item in training)
+        and all(
+            item["promotion"]["campaign_arena"]["quality_pass"]
+            for item in training
+        )
     )
     data_quality_pass = evaluation_data_quality_pass
     model_quality_pass = accepted_updates > 0 and all(
@@ -1337,6 +1520,22 @@ def run_transformer_pipeline(
                     if item["promotion"]["accepted"]
                 )
             ),
+            "accepted_updates_passed_party_strata": (
+                accepted_updates > 0
+                and all(
+                    item["promotion"]["stratified_party_gate"]
+                    for item in training
+                    if item["promotion"]["accepted"]
+                )
+            ),
+            "accepted_updates_passed_campaign_suite": (
+                accepted_updates > 0
+                and all(
+                    item["promotion"]["campaign_gate"]
+                    for item in training
+                    if item["promotion"]["accepted"]
+                )
+            ),
             "semantic_cycles_scored_as_losses": True,
             "deterministic_replay": True,
         },
@@ -1372,15 +1571,24 @@ def verify_transformer_run(root: Path) -> dict[str, Any]:
     device = choose_device(config.device)
     initial_path = root / "checkpoints" / "policy-000.pt"
     network = load_network(initial_path, device)
-    opponents: list[tuple[BattleTransformer, str]] = [
-        (load_network(initial_path, device), sha256(initial_path))
-    ]
+    opponents: list[tuple[Any, str]] = []
     for opponent_metadata in run.get("opponents", []):
-        opponent_path = root / opponent_metadata["checkpoint"]
-        opponent_sha = sha256(opponent_path)
-        if opponent_sha != opponent_metadata["sha256"]:
-            raise ValueError("fixed opponent checkpoint hash mismatch")
-        opponents.append((load_network(opponent_path, device), opponent_sha))
+        if opponent_metadata["kind"] == "fixed-checkpoint":
+            opponent_path = root / opponent_metadata["checkpoint"]
+            opponent_sha = sha256(opponent_path)
+            if opponent_sha != opponent_metadata["sha256"]:
+                raise ValueError("fixed opponent checkpoint hash mismatch")
+            opponents.append((load_network(opponent_path, device), opponent_sha))
+        elif opponent_metadata["kind"] == "heuristic":
+            opponents.append(
+                (
+                    _HeuristicNetwork(opponent_metadata["style"]),
+                    opponent_metadata["identity"],
+                )
+            )
+        else:
+            raise ValueError("opponent kind is unknown")
+    opponents.append((load_network(initial_path, device), sha256(initial_path)))
     opponents = list(
         {identity: (model, identity) for model, identity in opponents}.values()
     )

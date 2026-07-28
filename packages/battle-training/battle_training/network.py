@@ -206,3 +206,41 @@ def load_network(path: Path, device: torch.device) -> BattleTransformer:
     network.load_state_dict(payload["model"])
     network.eval()
     return network
+
+
+def warm_start_network(
+    path: Path, target_config: TransformerConfig, device: torch.device
+) -> BattleTransformer:
+    """Extend only the positional table while preserving every old parameter."""
+    source = load_network(path, device)
+    source_config = source.config
+    comparable_source = asdict(source_config)
+    comparable_target = asdict(target_config)
+    source_features = comparable_source.pop("feature_count")
+    target_features = comparable_target.pop("feature_count")
+    # Precision changes execution, not stored parameter shape, and is governed by
+    # the new run's explicit contract.
+    comparable_source.pop("precision")
+    comparable_target.pop("precision")
+    if comparable_source != comparable_target:
+        raise ValueError("warm-start checkpoint architecture is incompatible")
+    if source_features >= target_features:
+        raise ValueError("warm-start requires a smaller source observation schema")
+
+    target = BattleTransformer(target_config).to(device)
+    source_state = source.state_dict()
+    target_state = target.state_dict()
+    with torch.no_grad():
+        for name, source_value in source_state.items():
+            target_value = target_state[name]
+            if name == "position.weight":
+                if source_value.shape[1:] != target_value.shape[1:]:
+                    raise ValueError("warm-start positional width is incompatible")
+                target_value[: source_value.shape[0]].copy_(source_value)
+            else:
+                if source_value.shape != target_value.shape:
+                    raise ValueError(f"warm-start parameter shape differs: {name}")
+                target_value.copy_(source_value)
+    target.load_state_dict(target_state)
+    target.eval()
+    return target

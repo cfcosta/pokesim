@@ -33,16 +33,18 @@ from battle_training.network import (
     TransformerConfig,
     load_network,
     save_network,
+    warm_start_network,
 )
 from battle_training.transformer_pipeline import (
     _load_completed_prefix,
     _load_examples,
     _scheduled_for_opponent,
+    _training_party_sizes,
 )
 
 
 def _toy_features() -> tuple[int, ...]:
-    features = [0] * 478
+    features = [0] * 492
     for side in (0, 181):
         for slot in range(6):
             base = side + slot * 22
@@ -319,6 +321,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.learning_rate, 2e-4)
         self.assertEqual(arguments.promotion_games, 1024)
         self.assertEqual(arguments.probe_games, 256)
+        self.assertEqual(arguments.campaign_games, 288)
         self.assertEqual(arguments.tree_expansion_budget, 320)
         self.assertEqual(arguments.tree_regret_iterations, 16)
         self.assertEqual(arguments.tree_deeper_joint_rotations, 2)
@@ -326,6 +329,8 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.tree_convergence_patience, 8)
         self.assertEqual(arguments.actor_batch_size, 16)
         self.assertEqual(arguments.precision, "bf16")
+        self.assertTrue(arguments.heuristic_opponents)
+        self.assertIsNone(arguments.warm_start_checkpoint)
         resume = training_parser().parse_args(
             ["transformer-resume", "--output", "/tmp/overnight"]
         )
@@ -424,6 +429,57 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(sum(schedule), 500)
         self.assertEqual(schedule[:6], [False, True, False, True, False, True])
 
+    def test_training_schedule_covers_all_ordered_party_sizes(self) -> None:
+        expected = {
+            (player, enemy)
+            for player in range(1, 7)
+            for enemy in range(1, 7)
+        }
+        self.assertEqual(
+            {_training_party_sizes(1, episode) for episode in range(36)}, expected
+        )
+        self.assertEqual(
+            {_training_party_sizes(2, episode) for episode in range(36)}, expected
+        )
+
+    def test_v3_checkpoint_warm_starts_v4_position_table(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source_config = TransformerConfig(
+                feature_count=478,
+                action_count=13,
+                d_model=16,
+                heads=4,
+                layers=1,
+                feedforward=32,
+                precision="fp32",
+            )
+            source = BattleTransformer(source_config)
+            source_path = Path(temporary) / "v3.pt"
+            save_network(source_path, source, None, {"iteration": 0})
+            target_config = TransformerConfig(
+                feature_count=492,
+                action_count=13,
+                d_model=16,
+                heads=4,
+                layers=1,
+                feedforward=32,
+                precision="bf16",
+            )
+            target = warm_start_network(
+                source_path, target_config, torch.device("cpu")
+            )
+            source_state = source.state_dict()
+            target_state = target.state_dict()
+            for name, source_value in source_state.items():
+                target_value = target_state[name]
+                if name == "position.weight":
+                    self.assertTrue(
+                        torch.equal(target_value[: source_value.shape[0]], source_value)
+                    )
+                    self.assertEqual(target_value.shape[0], 493)
+                else:
+                    self.assertTrue(torch.equal(target_value, source_value), name)
+
     def test_replay_loader_retains_legal_policy_masks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             shard = Path(temporary) / "examples.jsonl"
@@ -446,7 +502,7 @@ class TransformerTests(unittest.TestCase):
     def test_full_party_models_stay_under_one_million_parameters(self) -> None:
         configs = [
             TransformerConfig(
-                feature_count=478,
+                feature_count=492,
                 action_count=13,
                 d_model=64,
                 heads=4,
@@ -454,7 +510,7 @@ class TransformerTests(unittest.TestCase):
                 feedforward=192,
             ),
             TransformerConfig(
-                feature_count=478,
+                feature_count=492,
                 action_count=13,
                 d_model=96,
                 heads=4,
@@ -462,7 +518,7 @@ class TransformerTests(unittest.TestCase):
                 feedforward=384,
             ),
             TransformerConfig(
-                feature_count=478,
+                feature_count=492,
                 action_count=13,
                 d_model=128,
                 heads=8,
@@ -477,7 +533,7 @@ class TransformerTests(unittest.TestCase):
             )
             for config in configs
         ]
-        self.assertEqual(counts, [152142, 441614, 938638])
+        self.assertEqual(counts, [153038, 442958, 940430])
         self.assertTrue(all(count <= 1_000_000 for count in counts))
 
     def test_switch_cap_preserves_all_legal_actions(self) -> None:
@@ -488,7 +544,7 @@ class TransformerTests(unittest.TestCase):
         self.assertTrue(all(capped[action] > 0 for action in range(10)))
 
     def test_tactical_potential_rewards_hp_and_status_advantage(self) -> None:
-        features = [0] * 478
+        features = [0] * 492
         for side in (0, 181):
             for slot in range(6):
                 base = side + slot * 22

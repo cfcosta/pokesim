@@ -16,7 +16,7 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Support policy control from either cartridge side.
 - [x] Reproduce a shard byte for byte from its seed and checkpoint.
 - [ ] Normalize every full-engine one-side and nested decision request.
-- [x] Define the audited 478-field full-party perfect-information and tactical schema.
+- [x] Define the audited 492-field variable-party perfect-information and tactical schema.
 - [x] Add immutable pause/branch handles for the full-party native search server.
 - [x] Batch independent fresh-chance branches in one native request.
 - [ ] Execute the synchronized full-party profile through `Full.Link.Pair`.
@@ -58,7 +58,7 @@ rows remain required before the corresponding profile can be called complete.
 
 ## M3 — batched policy/value learning
 
-- [x] Freeze the full-party 478-field side-canonical tensor and 13-action mask.
+- [x] Freeze the variable-party v4 492-field side-canonical tensor and 13-action mask.
 - [x] Train a byte/position-embedding transformer outside Lean.
 - [x] Batch bounded leaf inference within each exhaustive root search.
 - [x] Batch root-leaf and network-policy inference across compatible roots.
@@ -109,7 +109,7 @@ rows remain required before the corresponding profile can be called complete.
 ## Completion rule
 
 “End-to-end training works” currently means the full-party transformer can
-collect Lean-owned regret-search targets and network rollouts from random 6v6
+collect Lean-owned regret-search targets and network rollouts from random asymmetric 1-to-6-member
 teams, train policy/value heads on GPU or CPU, emit traced side-swapped arenas,
 and reproduce its first search shard.
 “Deployable Pokémon agent” still means all relevant M0–M6 rows for

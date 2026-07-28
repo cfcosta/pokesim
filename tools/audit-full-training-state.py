@@ -122,25 +122,31 @@ def main() -> int:
     training = TRAINING.read_text()
     python_schema = PYTHON_SCHEMA.read_text()
     required_fragments = [
-        'def schemaVersion : String := "full-link-6v6-state-v3"',
-        "#guard featureCount == 478",
+        'def profileVersion : String := "full-link-party-1to6-perfect-v2"',
+        'def schemaVersion : String := "full-link-party-state-v4"',
+        "#guard featureCount == 492",
         "continuationId continuation",
+        "partyShapeFeatures own opponent",
+        "partyMonFeatures side index",
         "sampled_link_reset_satisfies_profile",
     ]
     for fragment in required_fragments:
         if fragment not in training:
             raise SystemExit(f"missing Lean schema audit guard: {fragment}")
-    if 'FULL_SCHEMA = "full-link-6v6-state-v3"' not in python_schema:
-        raise SystemExit("Python full schema does not match Lean v3")
-    if "FULL_FEATURE_COUNT = 478" not in python_schema:
+    if 'FULL_PROFILE = "full-link-party-1to6-perfect-v2"' not in python_schema:
+        raise SystemExit("Python full profile does not match Lean variable-party profile")
+    if 'FULL_SCHEMA = "full-link-party-state-v4"' not in python_schema:
+        raise SystemExit("Python full schema does not match Lean v4")
+    if "FULL_FEATURE_COUNT = 492" not in python_schema:
         raise SystemExit("Python full feature count does not match Lean")
 
     report = {
-        "schema": "full-link-6v6-state-v3",
-        "feature_count": 478,
+        "profile": "full-link-party-1to6-perfect-v2",
+        "schema": "full-link-party-state-v4",
+        "feature_count": 492,
         "engine_fields": len(engine),
         "environment_fields": len(environment),
-        "known_alias_fixed": "mimic-pending-continuation",
+        "known_alias_fixed": "mimic-pending-continuation; absent-party-slot-fallback",
         "formal_status": "reset-invariant-proved; preservation-and-injectivity-open",
     }
     print(json.dumps(report, sort_keys=True))
