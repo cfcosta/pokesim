@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 from torch import Tensor, nn
 
@@ -61,6 +62,15 @@ class BattleTransformer(nn.Module):
             nn.Linear(config.d_model, 1),
             nn.Tanh(),
         )
+        masks = torch.arange(1 << config.action_count, dtype=torch.long).unsqueeze(1)
+        actions = torch.arange(config.action_count, dtype=torch.long).unsqueeze(0)
+        self.register_buffer(
+            "_legal_mask_lookup",
+            masks.bitwise_and(1 << actions).ne(0),
+            persistent=False,
+        )
+        self._pinned_feature_buffers: dict[int, Tensor] = {}
+        self._pinned_mask_buffers: dict[int, Tensor] = {}
         nn.init.normal_(self.cls, std=0.02)
         nn.init.zeros_(self.policy.weight)
         nn.init.zeros_(self.policy.bias)
@@ -77,13 +87,12 @@ class BattleTransformer(nn.Module):
         low = values.bitwise_and(255)
         high = values.bitwise_right_shift(8).bitwise_and(255)
         batch = values.shape[0]
-        positions = torch.arange(
-            self.config.feature_count + 1, device=values.device, dtype=torch.long
-        )
         tokens = (
-            self.low_byte(low) + self.high_byte(high) + self.position(positions[1:])
+            self.low_byte(low)
+            + self.high_byte(high)
+            + self.position.weight[1:].unsqueeze(0)
         )
-        cls = self.cls.expand(batch, -1, -1) + self.position(positions[:1])
+        cls = self.cls.expand(batch, -1, -1) + self.position.weight[:1].unsqueeze(0)
         encoded = self.encoder(torch.cat((cls, tokens), dim=1))
         pooled = self.final_norm(encoded[:, 0])
         return self.policy(pooled), self.value(pooled).squeeze(-1)
@@ -103,24 +112,40 @@ class BattleTransformer(nn.Module):
         # Keep policy normalization, losses, reductions, and search values in FP32.
         return logits.float(), values.float()
 
+    def _staged_tensor(
+        self,
+        values: np.ndarray,
+        buffers: dict[int, Tensor],
+        device: torch.device,
+    ) -> Tensor:
+        source = torch.from_numpy(values)
+        if device.type != "cuda":
+            return source.to(device)
+        batch = len(values)
+        staging = buffers.get(batch)
+        if staging is None or staging.shape != source.shape:
+            staging = torch.empty(source.shape, dtype=source.dtype, pin_memory=True)
+            buffers[batch] = staging
+        staging.copy_(source)
+        return staging.to(device, non_blocking=True)
+
     @torch.inference_mode()
     def evaluate(
         self, features: Sequence[Sequence[int]], masks: Sequence[int]
     ) -> tuple[list[list[float]], list[float]]:
         device = next(self.parameters()).device
-        tensor = torch.tensor(features, dtype=torch.long, device=device)
-        logits, values = self(tensor)
-        legal = torch.tensor(
-            [
-                [
-                    bool(mask & (1 << action))
-                    for action in range(self.config.action_count)
-                ]
-                for mask in masks
-            ],
-            dtype=torch.bool,
-            device=device,
+        feature_array = np.asarray(features, dtype=np.uint16)
+        if feature_array.ndim != 2:
+            raise ValueError("network evaluation requires a rectangular feature batch")
+        tensor = self._staged_tensor(
+            feature_array, self._pinned_feature_buffers, device
         )
+        logits, values = self(tensor)
+        mask_array = np.asarray(masks, dtype=np.uint16)
+        mask_indexes = self._staged_tensor(
+            mask_array, self._pinned_mask_buffers, device
+        ).long()
+        legal = self._legal_mask_lookup.index_select(0, mask_indexes)
         if (~legal.any(dim=1)).any():
             raise ValueError("network evaluation received an empty legal mask")
         logits = logits.masked_fill(~legal, torch.finfo(logits.dtype).min)
