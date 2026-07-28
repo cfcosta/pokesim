@@ -71,6 +71,8 @@ class BattleTransformer(nn.Module):
         )
         self._pinned_feature_buffers: dict[int, Tensor] = {}
         self._pinned_mask_buffers: dict[int, Tensor] = {}
+        self._inference_engine = "eager"
+        self._compiled_forwards: dict[int, Any] = {}
         nn.init.normal_(self.cls, std=0.02)
         nn.init.zeros_(self.policy.weight)
         nn.init.zeros_(self.policy.bias)
@@ -83,7 +85,7 @@ class BattleTransformer(nn.Module):
                 self.policy.bias[12].fill_(-4.0)
 
     def _forward_impl(self, features: Tensor) -> tuple[Tensor, Tensor]:
-        values = features.long().clamp_(0, 65535)
+        values = features.long().clamp(0, 65535)
         low = values.bitwise_and(255)
         high = values.bitwise_right_shift(8).bitwise_and(255)
         batch = values.shape[0]
@@ -112,6 +114,56 @@ class BattleTransformer(nn.Module):
         # Keep policy normalization, losses, reductions, and search values in FP32.
         return logits.float(), values.float()
 
+    @property
+    def inference_engine(self) -> str:
+        return self._inference_engine
+
+    def configure_inference(self, engine: str) -> None:
+        if engine not in {"auto", "eager", "compiled"}:
+            raise ValueError("inference engine must be auto, eager, or compiled")
+        device = next(self.parameters()).device
+        selected = "compiled" if engine == "auto" and device.type == "cuda" else engine
+        if selected == "auto":
+            selected = "eager"
+        if selected == "compiled" and device.type != "cuda":
+            raise ValueError("compiled inference requires CUDA")
+        if selected == "compiled":
+            driver = Path("/run/opengl-driver/lib")
+            if "TRITON_LIBCUDA_PATH" not in os.environ and driver.is_dir():
+                os.environ["TRITON_LIBCUDA_PATH"] = str(driver)
+        if selected != self._inference_engine:
+            self._compiled_forwards.clear()
+            self._inference_engine = selected
+
+    @staticmethod
+    def _inference_bucket(batch: int) -> int:
+        for bucket in (2, 4, 8, 16, 32, 64, 96):
+            if batch <= bucket:
+                return bucket
+        return batch
+
+    def _compiled_forward(self, features: Tensor) -> tuple[Tensor, Tensor]:
+        batch = features.shape[0]
+        bucket = self._inference_bucket(batch)
+        if bucket != batch:
+            padded = torch.zeros(
+                (bucket, features.shape[1]), dtype=features.dtype, device=features.device
+            )
+            padded[:batch].copy_(features)
+        else:
+            padded = features
+        compiled = self._compiled_forwards.get(bucket)
+        if compiled is None:
+            compiled = torch.compile(
+                self._forward_impl,
+                mode="reduce-overhead",
+                fullgraph=True,
+                dynamic=False,
+            )
+            self._compiled_forwards[bucket] = compiled
+        logits, values = compiled(padded)
+        return logits[:batch], values[:batch]
+
     def _staged_tensor(
         self,
         values: np.ndarray,
@@ -139,8 +191,14 @@ class BattleTransformer(nn.Module):
             raise ValueError("network evaluation requires a rectangular feature batch")
         tensor = self._staged_tensor(
             feature_array, self._pinned_feature_buffers, device
-        )
-        logits, values = self(tensor)
+        ).long()
+        if self._inference_engine == "compiled":
+            device_type = tensor.device.type
+            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                logits, values = self._compiled_forward(tensor)
+            logits, values = logits.float(), values.float()
+        else:
+            logits, values = self(tensor)
         mask_array = np.asarray(masks, dtype=np.uint16)
         mask_indexes = self._staged_tensor(
             mask_array, self._pinned_mask_buffers, device
@@ -156,6 +214,7 @@ class BattleTransformer(nn.Module):
         clone = BattleTransformer(self.config).to(device)
         clone.load_state_dict(copy.deepcopy(self.state_dict()))
         clone.eval()
+        clone.configure_inference(self._inference_engine)
         return clone
 
 

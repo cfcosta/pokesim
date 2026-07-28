@@ -47,6 +47,11 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--seed", type=int, default=20260726)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--precision", choices=("bf16", "fp32"), default="bf16")
+    parser.add_argument(
+        "--inference-engine",
+        choices=("auto", "eager", "compiled"),
+        default="auto",
+    )
     parser.add_argument("--warm-start-checkpoint", type=Path)
     parser.add_argument(
         "--no-heuristic-opponents", dest="heuristic_opponents", action="store_false"
@@ -105,6 +110,11 @@ def parser() -> argparse.ArgumentParser:
     arena.add_argument("--inference-batch-size", type=int, default=96)
     arena.add_argument("--seed", type=int, default=90210)
     arena.add_argument("--device", default="auto")
+    arena.add_argument(
+        "--inference-engine",
+        choices=("auto", "eager", "compiled"),
+        default="auto",
+    )
     arena.add_argument("--replay-games", type=int, default=3)
     arena.add_argument("--search-every", type=int, default=0)
     arena.add_argument("--seed-count", type=int, default=8)
@@ -119,6 +129,8 @@ def main(argv: list[str] | None = None) -> int:
         device = choose_device(arguments.device)
         candidate = load_network(arguments.candidate.resolve(), device)
         baseline = load_network(arguments.baseline.resolve(), device)
+        candidate.configure_inference(arguments.inference_engine)
+        baseline.configure_inference(arguments.inference_engine)
         report = write_arena_report(
             arguments.output.resolve(),
             candidate,
@@ -197,6 +209,7 @@ def main(argv: list[str] | None = None) -> int:
             tree_convergence_patience=arguments.tree_convergence_patience,
             actor_batch_size=arguments.actor_batch_size,
             precision=arguments.precision,
+            inference_engine=arguments.inference_engine,
             warm_start_checkpoint=(
                 str(arguments.warm_start_checkpoint.resolve())
                 if arguments.warm_start_checkpoint is not None

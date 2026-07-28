@@ -83,6 +83,7 @@ class TransformerPipelineConfig:
     tree_convergence_patience: int = 8
     actor_batch_size: int = 16
     precision: str = "bf16"
+    inference_engine: str = "auto"
     warm_start_checkpoint: str | None = None
     heuristic_opponents: bool = True
 
@@ -150,7 +151,13 @@ class _ActorEpisode:
 
 
 def _pipeline_id() -> str:
-    return "transformer-variable-party-bf16-tree-v6"
+    return "transformer-variable-party-bf16-tree-v7"
+
+
+def _configure_inference(models: Iterable[Any], engine: str) -> None:
+    for model in models:
+        if isinstance(model, BattleTransformer):
+            model.configure_inference(engine)
 
 
 def _scheduled_for_opponent(episode: int, fraction: float) -> bool:
@@ -1108,6 +1115,10 @@ def run_transformer_pipeline(
         raise RuntimeError("bf16 training requires a bf16-capable CUDA device")
     if config.precision == "bf16" and device.type not in {"cpu", "cuda"}:
         raise RuntimeError(f"bf16 training is unsupported on {device.type}")
+    if config.inference_engine not in {"auto", "eager", "compiled"}:
+        raise ValueError("inference_engine must be auto, eager, or compiled")
+    if config.inference_engine == "compiled" and device.type != "cuda":
+        raise ValueError("compiled inference requires CUDA")
     model_config = TransformerConfig(
         feature_count=feature_count,
         action_count=action_count,
@@ -1260,6 +1271,12 @@ def run_transformer_pipeline(
         )
         for iteration in accepted_iterations[-(config.historical_window + 1) :]
     ]
+    _configure_inference(
+        [network, initial, initial_anchor]
+        + [model for model, _ in opponents]
+        + [model for model, _ in historical],
+        config.inference_engine,
+    )
     for iteration in range(first_iteration, config.iterations + 1):
         population = opponents + [(initial_anchor, initial_identity)]
         if config.historical_window:
@@ -1422,6 +1439,7 @@ def run_transformer_pipeline(
     with tempfile.TemporaryDirectory(prefix="battle-transformer-replay-") as temporary:
         replay_path = Path(temporary) / "replay.jsonl"
         replay_network = load_network(initial_checkpoint, device)
+        replay_network.configure_inference(config.inference_engine)
         replay_opponents = opponents + [(initial_anchor, initial_identity)]
         replay_opponents = list(
             {
@@ -1560,6 +1578,7 @@ def verify_transformer_run(root: Path) -> dict[str, Any]:
     raw_config = dict(run["config"])
     # Runs written before v5 used strict FP32 and must replay under that contract.
     raw_config.setdefault("precision", "fp32")
+    raw_config.setdefault("inference_engine", "eager")
     config = TransformerPipelineConfig(**raw_config)
     if not summary.get("data_quality_pass", False):
         raise ValueError("training run failed the expanded data-quality gate")
@@ -1591,6 +1610,9 @@ def verify_transformer_run(root: Path) -> dict[str, Any]:
     opponents.append((load_network(initial_path, device), sha256(initial_path)))
     opponents = list(
         {identity: (model, identity) for model, identity in opponents}.values()
+    )
+    _configure_inference(
+        [network] + [model for model, _ in opponents], config.inference_engine
     )
     shard = root / "shards" / "iteration-001.jsonl"
     with tempfile.TemporaryDirectory(prefix="battle-transformer-verify-") as temporary:

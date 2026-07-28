@@ -176,6 +176,15 @@ class MoveValueModelTests(unittest.TestCase):
 
 
 class TransformerTests(unittest.TestCase):
+    def test_inference_engine_auto_falls_back_to_eager_on_cpu(self) -> None:
+        network = BattleTransformer(
+            TransformerConfig(feature_count=8, action_count=4, d_model=8, heads=2, layers=1, feedforward=16)
+        )
+        network.configure_inference("auto")
+        self.assertEqual(network.inference_engine, "eager")
+        with self.assertRaisesRegex(ValueError, "requires CUDA"):
+            network.configure_inference("compiled")
+
     def test_native_feature_decoding_supports_packed_and_fallback_rows(self) -> None:
         packed = {"feature_encoding": "u16le-base64", "player_features": "NBLNqw=="}
         fallback = {"player_features": [0x1234, 0xABCD]}
@@ -335,6 +344,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.tree_convergence_patience, 8)
         self.assertEqual(arguments.actor_batch_size, 16)
         self.assertEqual(arguments.precision, "bf16")
+        self.assertEqual(arguments.inference_engine, "auto")
         self.assertTrue(arguments.heuristic_opponents)
         self.assertIsNone(arguments.warm_start_checkpoint)
         resume = training_parser().parse_args(
