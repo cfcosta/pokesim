@@ -77,6 +77,7 @@ class _ToyServer:
     def __init__(self) -> None:
         self.states: dict[int, tuple[int, int]] = {0: (0, 0)}
         self.next_handle = 1
+        self.batches: list[int] = []
 
     def _snapshot(
         self, handle: int, done: bool = False, result: int | None = None
@@ -116,6 +117,7 @@ class _ToyServer:
         return self._snapshot(child, done=True, result=result)
 
     def search_steps(self, requests: list[tuple[int, int, int, int]]) -> list[Snapshot]:
+        self.batches.append(len(requests))
         return [self.search_step(*request) for request in requests]
 
 
@@ -323,12 +325,51 @@ class TransformerTests(unittest.TestCase):
         self.assertTrue(
             all(result.diagnostics["cross_root_batch_size"] == 2 for result in results)
         )
-        self.assertEqual(max(network.batches), 2)
+        self.assertEqual(max(network.batches), 1)
+        self.assertGreater(max(server.batches), 4)
         self.assertTrue(
             all(result.diagnostics["inference_cache_hits"] > 0 for result in results)
         )
         self.assertTrue(
-            all(result.diagnostics["mean_deep_inference_batch"] >= 2 for result in results)
+            all(result.diagnostics["deep_inference_waves"] > 0 for result in results)
+        )
+        self.assertTrue(
+            all(result.diagnostics["mean_deep_native_batch"] >= 2 for result in results)
+        )
+
+    def test_cross_root_search_pools_shared_networks_across_opponents(self) -> None:
+        server = _ToyServer()
+        server.states[100] = (0, 0)
+        candidate = _ToyNetwork()
+        opponent = _ToyNetwork()
+        config = JointSearchConfig(
+            max_depth=2,
+            inference_batch_size=32,
+            max_actions_per_side=2,
+            expansion_budget=16,
+            chance_resample=1.0,
+            regret_iterations_per_update=4,
+            minimum_expansion_budget=4,
+        )
+        searches = [
+            SimultaneousTreeSearch(
+                server,  # type: ignore[arg-type]
+                candidate,  # type: ignore[arg-type]
+                enemy,  # type: ignore[arg-type]
+                config,
+                random.Random(index + 1),
+                random.Random(index + 101),
+            )
+            for index, enemy in enumerate((candidate, opponent))
+        ]
+        results = SimultaneousTreeSearch.search_many(
+            searches, [server._snapshot(0), server._snapshot(100)]
+        )
+        self.assertEqual(len(results), 2)
+        self.assertTrue(candidate.batches)
+        self.assertTrue(opponent.batches)
+        self.assertTrue(
+            all(result.diagnostics["cross_root_batch_size"] == 2 for result in results)
         )
 
     def test_production_defaults_use_search_at_every_decision(self) -> None:

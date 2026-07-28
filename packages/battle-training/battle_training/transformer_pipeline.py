@@ -271,6 +271,56 @@ def _policy_rollout_many(
     return results
 
 
+def _policy_rollout_actor_many(actors: list[_ActorEpisode]) -> list[SearchResult]:
+    grouped: dict[int, list[tuple[int, int, Any, int, Any]]] = {}
+    for index, actor in enumerate(actors):
+        grouped.setdefault(id(actor.player_network), []).append(
+            (
+                index,
+                0,
+                actor.snapshot.player_features,
+                actor.snapshot.player_mask,
+                actor.player_network,
+            )
+        )
+        grouped.setdefault(id(actor.enemy_network), []).append(
+            (
+                index,
+                1,
+                actor.snapshot.enemy_features,
+                actor.snapshot.enemy_mask,
+                actor.enemy_network,
+            )
+        )
+    outputs: dict[tuple[int, int], tuple[list[float], float]] = {}
+    for items in grouped.values():
+        policies, values = items[0][4].evaluate(
+            [item[2] for item in items], [item[3] for item in items]
+        )
+        for item, policy, value in zip(items, policies, values, strict=True):
+            outputs[(item[0], item[1])] = (policy, value)
+    results = []
+    for index, actor in enumerate(actors):
+        player_policy, player_value = outputs[(index, 0)]
+        enemy_policy, enemy_value = outputs[(index, 1)]
+        value = max(-1.0, min(1.0, (player_value - enemy_value) / 2.0))
+        results.append(
+            SearchResult(
+                tuple(player_policy),
+                tuple(enemy_policy),
+                _sample_policy(player_policy, actor.selection_rng),
+                _sample_policy(enemy_policy, actor.selection_rng),
+                value,
+                0,
+                "network-policy-rollout-v1",
+                None,
+                None,
+                None,
+            )
+        )
+    return results
+
+
 def _policy_rollout(
     player: BattleTransformer,
     enemy: BattleTransformer,
@@ -418,63 +468,50 @@ def _collect_rows(
                 )
             for decision in range(config.episode_budget):
                 searched = decision % config.search_every == 0
-                grouped: dict[tuple[int, int], list[_ActorEpisode]] = {}
-                for actor in active:
-                    key = (id(actor.player_network), id(actor.enemy_network))
-                    grouped.setdefault(key, []).append(actor)
                 results: dict[int, SearchResult] = {}
-                for actors in grouped.values():
-                    player_network = actors[0].player_network
-                    enemy_network = actors[0].enemy_network
-                    if searched:
-                        searches = [
+                if searched:
+                    actor_results = SimultaneousTreeSearch.search_many(
+                        [
                             _new_search(
                                 server,
-                                player_network,
-                                enemy_network,
+                                actor.player_network,
+                                actor.enemy_network,
                                 config,
                                 actor.selection_rng,
                                 actor.chance_rng,
                             )
-                            for actor in actors
-                        ]
-                        actor_results = SimultaneousTreeSearch.search_many(
-                            searches,
-                            [actor.snapshot for actor in actors],
-                            sample_actions=True,
+                            for actor in active
+                        ],
+                        [actor.snapshot for actor in active],
+                        sample_actions=True,
+                    )
+                else:
+                    actor_results = _policy_rollout_actor_many(active)
+                for actor, result in zip(active, actor_results, strict=True):
+                    if actor.episode_kind == "heuristic-opponent":
+                        heuristic = (
+                            actor.enemy_network
+                            if actor.candidate_player
+                            else actor.player_network
                         )
-                    else:
-                        actor_results = _policy_rollout_many(
-                            player_network,
-                            enemy_network,
-                            [actor.snapshot for actor in actors],
-                            [actor.selection_rng for actor in actors],
+                        features = (
+                            actor.snapshot.enemy_features
+                            if actor.candidate_player
+                            else actor.snapshot.player_features
                         )
-                    for actor, result in zip(actors, actor_results, strict=True):
-                        if actor.episode_kind == "heuristic-opponent":
-                            heuristic = (
-                                actor.enemy_network
-                                if actor.candidate_player
-                                else actor.player_network
-                            )
-                            features = (
-                                actor.snapshot.enemy_features
-                                if actor.candidate_player
-                                else actor.snapshot.player_features
-                            )
-                            mask = (
-                                actor.snapshot.enemy_mask
-                                if actor.candidate_player
-                                else actor.snapshot.player_mask
-                            )
-                            policy, _ = heuristic.evaluate([features], [mask])
-                            action = _sample_policy(policy[0], actor.opponent_rng)
-                            result = (
-                                replace(result, enemy_action=action)
-                                if actor.candidate_player
-                                else replace(result, player_action=action)
-                            )
-                        results[actor.episode] = result
+                        mask = (
+                            actor.snapshot.enemy_mask
+                            if actor.candidate_player
+                            else actor.snapshot.player_mask
+                        )
+                        policy, _ = heuristic.evaluate([features], [mask])
+                        action = _sample_policy(policy[0], actor.opponent_rng)
+                        result = (
+                            replace(result, enemy_action=action)
+                            if actor.candidate_player
+                            else replace(result, player_action=action)
+                        )
+                    results[actor.episode] = result
                 for actor in active:
                     result = results[actor.episode]
                     snapshot = actor.snapshot

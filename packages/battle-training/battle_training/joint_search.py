@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import random
-import threading
-from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field, replace
+from collections.abc import Generator, Sequence
+from dataclasses import dataclass, field
 from typing import Any, TypeAlias, cast
 
 from .native import SearchServer, Snapshot
@@ -66,9 +64,9 @@ def _tactical_potential(features: Sequence[int]) -> float:
         statused = 0
         for slot in range(_PARTY_SIZE):
             base = offset + slot * _PARTY_MON_WIDTH
-            hp = features[base + 1]
-            status = features[base + 3]
-            max_hp = features[base + 13]
+            hp = int(features[base + 1])
+            status = int(features[base + 3])
+            max_hp = int(features[base + 13])
             hp_fraction += hp / max(1, max_hp)
             alive += int(hp > 0)
             statused += int(hp > 0 and status != 0)
@@ -315,6 +313,11 @@ class BatchedJointRegretSearch:
             return dtype.str, tobytes()
         return "python-int", tuple(feature)
 
+    def _cache_key(
+        self, network: BattleTransformer, feature: Sequence[int], mask: int
+    ) -> tuple[int, str, bytes | tuple[int, ...], int]:
+        return (id(network), *self._feature_identity(feature), mask)
+
     def _network_batches(
         self,
         network: BattleTransformer,
@@ -323,7 +326,7 @@ class BatchedJointRegretSearch:
         batch_size: int,
     ) -> tuple[list[list[float]], list[float]]:
         keys = [
-            (id(network), *self._feature_identity(feature), mask)
+            self._cache_key(network, feature, mask)
             for feature, mask in zip(features, masks, strict=True)
         ]
         missing: dict[
@@ -588,120 +591,18 @@ class _TreeNode:
     sampled_pairs: set[tuple[int, int]] = field(default_factory=set)
 
 
-@dataclass
-class _InferenceRequest:
-    network: Any
-    features: list[Sequence[int]]
-    masks: list[int]
-    result: tuple[list[list[float]], list[float]] | None = None
-    error: Exception | None = None
+@dataclass(frozen=True)
+class _NativeFrontier:
+    requests: list[tuple[int, int, int, int]]
 
 
-class _InferenceWaveBroker:
-    """Deterministically batches one pending inference call per active root."""
-
-    def __init__(self, worker_ids: list[int], max_batch: int) -> None:
-        self.max_batch = max_batch
-        self.active = set(worker_ids)
-        self.pending: dict[int, _InferenceRequest] = {}
-        self.condition = threading.Condition()
-        self.stopping = False
-        self.calls = 0
-        self.rows = 0
-        self.waves = 0
-        self.worker = threading.Thread(target=self._run, daemon=True)
-        self.worker.start()
-
-    def evaluate(
-        self,
-        worker_id: int,
-        network: Any,
-        features: list[Sequence[int]],
-        masks: list[int],
-    ) -> tuple[list[list[float]], list[float]]:
-        request = _InferenceRequest(network, features, masks)
-        with self.condition:
-            if worker_id not in self.active or worker_id in self.pending:
-                raise RuntimeError("invalid deeper-inference wave submission")
-            self.pending[worker_id] = request
-            self.condition.notify_all()
-            while request.result is None and request.error is None:
-                self.condition.wait()
-        if request.error is not None:
-            raise request.error
-        assert request.result is not None
-        return request.result
-
-    def deregister(self, worker_id: int) -> None:
-        with self.condition:
-            self.active.discard(worker_id)
-            self.condition.notify_all()
-
-    def close(self) -> None:
-        with self.condition:
-            self.stopping = True
-            self.condition.notify_all()
-        self.worker.join()
-
-    def _run(self) -> None:
-        while True:
-            with self.condition:
-                self.condition.wait_for(
-                    lambda: self.stopping
-                    or (self.active and self.active.issubset(self.pending))
-                    or (not self.active and bool(self.pending))
-                )
-                if self.stopping and not self.pending:
-                    return
-                if self.active and not self.active.issubset(self.pending):
-                    continue
-                requests = [self.pending.pop(worker) for worker in sorted(self.pending)]
-            self.waves += 1
-            groups: dict[int, list[_InferenceRequest]] = {}
-            for request in requests:
-                groups.setdefault(id(request.network), []).append(request)
-            for group in groups.values():
-                network = group[0].network
-                features = [row for request in group for row in request.features]
-                masks = [mask for request in group for mask in request.masks]
-                try:
-                    policies: list[list[float]] = []
-                    values: list[float] = []
-                    for start in range(0, len(features), self.max_batch):
-                        batch_policies, batch_values = network.evaluate(
-                            features[start : start + self.max_batch],
-                            masks[start : start + self.max_batch],
-                        )
-                        policies.extend(batch_policies)
-                        values.extend(batch_values)
-                        self.calls += 1
-                        self.rows += len(batch_values)
-                    offset = 0
-                    for request in group:
-                        stop = offset + len(request.features)
-                        request.result = (policies[offset:stop], values[offset:stop])
-                        offset = stop
-                # Every waiter must be released if an inference backend fails.
-                except Exception as error:  # noqa: BLE001
-                    for request in group:
-                        request.error = error
-            with self.condition:
-                self.condition.notify_all()
+@dataclass(frozen=True)
+class _InferenceFrontier:
+    snapshots: list[Snapshot]
 
 
-class _InferenceProxy:
-    def __init__(
-        self, broker: _InferenceWaveBroker, worker_id: int, network: Any
-    ) -> None:
-        self.broker = broker
-        self.worker_id = worker_id
-        self.network = network
-        self.config = network.config
-
-    def evaluate(
-        self, features: list[Sequence[int]], masks: list[int]
-    ) -> tuple[list[list[float]], list[float]]:
-        return self.broker.evaluate(self.worker_id, self.network, features, masks)
+_Frontier: TypeAlias = _NativeFrontier | _InferenceFrontier
+_FrontierResponse: TypeAlias = list[Snapshot] | list[tuple[float, float]]
 
 
 class SimultaneousTreeSearch(BatchedJointRegretSearch):
@@ -756,6 +657,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._deep_inference_calls = 0
         self._deep_inference_rows = 0
         self._deep_inference_waves = 0
+        self._deep_native_calls = 0
+        self._deep_native_rows = 0
+        self._deep_native_waves = 0
 
     def _legal_from_priors(self, mask: int, priors: list[float]) -> list[int]:
         actions = legal_actions(mask, self.action_count)
@@ -914,33 +818,146 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         )
         node.counts[player_action][enemy_action] = count + 1
 
-    def _evaluate_successors(
-        self, snapshots: list[Snapshot]
-    ) -> list[tuple[float, float]]:
-        if any(snapshot.divergence is not None for snapshot in snapshots):
-            raise _TreeDivergence("semantic divergence in tree expansion")
-        active_indexes = [
-            index for index, snapshot in enumerate(snapshots) if not snapshot.done
-        ]
-        active = [snapshots[index] for index in active_indexes]
-        evaluations: dict[int, tuple[list[float], list[float], float]] = {}
-        if active:
-            players, enemies, values = self._evaluate_many(active)
-            for snapshot, player, enemy, value in zip(
-                active, players, enemies, values, strict=True
+    @classmethod
+    def _pooled_evaluate(
+        cls,
+        groups: list[tuple[int, SimultaneousTreeSearch, list[Snapshot]]],
+    ) -> tuple[
+        dict[int, tuple[list[list[float]], list[list[float]], list[float]]],
+        int,
+        int,
+    ]:
+        """Evaluate side-canonical rows once per network identity and exact key."""
+        outputs: dict[
+            tuple[int, int, int], tuple[list[float], float]
+        ] = {}
+        known: dict[
+            tuple[int, str, bytes | tuple[int, ...], int],
+            tuple[list[float], float],
+        ] = {}
+        missing: dict[
+            tuple[int, str, bytes | tuple[int, ...], int], dict[str, Any]
+        ] = {}
+        for group_id, search, snapshots in groups:
+            # Preserve the historical per-root player-block/enemy-block order.
+            for side, network in (
+                (0, search.player_network),
+                (1, search.enemy_network),
             ):
-                evaluation = (player, enemy, value)
-                evaluations[snapshot.handle] = evaluation
-                self._evaluation_cache[snapshot.handle] = evaluation
-        result: list[tuple[float, float]] = []
-        for snapshot in snapshots:
-            if snapshot.done:
-                value = float(snapshot.terminal_return or 0)
-                result.append((value, value))
-            else:
-                leaf_value = evaluations[snapshot.handle][2]
-                result.append((leaf_value, leaf_value))
-        return result
+                for position, snapshot in enumerate(snapshots):
+                    feature = (
+                        snapshot.player_features
+                        if side == 0
+                        else snapshot.enemy_features
+                    )
+                    mask = snapshot.player_mask if side == 0 else snapshot.enemy_mask
+                    key = search._cache_key(network, feature, mask)
+                    cached = search._inference_cache.get(key) or known.get(key)
+                    consumer = (group_id, position, side, search)
+                    if cached is not None:
+                        search._inference_cache_stats["hits"] += 1
+                        search._inference_cache[key] = cached
+                        known[key] = cached
+                        outputs[(group_id, position, side)] = cached
+                    elif key in missing:
+                        search._inference_cache_stats["hits"] += 1
+                        missing[key]["consumers"].append(consumer)
+                    else:
+                        search._inference_cache_stats["misses"] += 1
+                        missing[key] = {
+                            "network": network,
+                            "feature": feature,
+                            "mask": mask,
+                            "consumers": [consumer],
+                        }
+        by_network: dict[int, list[tuple[Any, dict[str, Any]]]] = {}
+        for key, item in missing.items():
+            by_network.setdefault(id(item["network"]), []).append((key, item))
+        calls = rows = 0
+        for items in by_network.values():
+            network = items[0][1]["network"]
+            batch_size = max(
+                consumer[3].config.inference_batch_size
+                for _, item in items
+                for consumer in item["consumers"]
+            )
+            for start in range(0, len(items), batch_size):
+                batch = items[start : start + batch_size]
+                policies, values = network.evaluate(
+                    [item[1]["feature"] for item in batch],
+                    [item[1]["mask"] for item in batch],
+                )
+                calls += 1
+                rows += len(batch)
+                for (key, item), policy, value in zip(
+                    batch, policies, values, strict=True
+                ):
+                    cached = (policy, value)
+                    known[key] = cached
+                    for group_id, position, side, search in item["consumers"]:
+                        search._inference_cache[key] = cached
+                        outputs[(group_id, position, side)] = cached
+        results = {}
+        for group_id, search, snapshots in groups:
+            player_policies = [
+                outputs[(group_id, position, 0)][0]
+                for position in range(len(snapshots))
+            ]
+            enemy_policies = [
+                outputs[(group_id, position, 1)][0]
+                for position in range(len(snapshots))
+            ]
+            values = [
+                max(
+                    -1.0,
+                    min(
+                        1.0,
+                        (
+                            outputs[(group_id, position, 0)][1]
+                            - outputs[(group_id, position, 1)][1]
+                        )
+                        / 2.0,
+                    ),
+                )
+                for position in range(len(snapshots))
+            ]
+            for snapshot, player, enemy, value in zip(
+                snapshots, player_policies, enemy_policies, values, strict=True
+            ):
+                search._evaluation_cache[snapshot.handle] = (player, enemy, value)
+            results[group_id] = (player_policies, enemy_policies, values)
+        return results, calls, rows
+
+    @classmethod
+    def _pooled_successor_values(
+        cls,
+        groups: list[tuple[int, SimultaneousTreeSearch, list[Snapshot]]],
+    ) -> tuple[dict[int, list[tuple[float, float]]], int, int]:
+        if any(
+            snapshot.divergence is not None
+            for _, _, snapshots in groups
+            for snapshot in snapshots
+        ):
+            raise _TreeDivergence("semantic divergence in pooled tree frontier")
+        active_groups = []
+        for group_id, search, snapshots in groups:
+            active = [snapshot for snapshot in snapshots if not snapshot.done]
+            if active:
+                active_groups.append((group_id, search, active))
+        evaluated, calls, rows = cls._pooled_evaluate(active_groups)
+        results = {}
+        for group_id, _, snapshots in groups:
+            active_values = iter(evaluated.get(group_id, ([], [], []))[2])
+            values = []
+            for snapshot in snapshots:
+                value = (
+                    float(snapshot.terminal_return or 0)
+                    if snapshot.done
+                    else next(active_values)
+                )
+                values.append((value, value))
+            results[group_id] = values
+        return results, calls, rows
 
     def _expansion_pairs(
         self, node: _TreeNode, full_matrix: bool
@@ -1018,10 +1035,16 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._solve_node(node)
         return len(successors)
 
-    def _expand(self, node: _TreeNode, full_matrix: bool = False) -> int:
+    def _expand_frontier(
+        self, node: _TreeNode, full_matrix: bool = False
+    ) -> Generator[_Frontier, _FrontierResponse, int]:
         samples, requests = self._expansion_spec(node, full_matrix)
-        successors = self.server.search_steps(requests)
-        evaluated = self._evaluate_successors(successors)
+        response = yield _NativeFrontier(requests)
+        successors = cast(list[Snapshot], response)
+        if any(successor.divergence is not None for successor in successors):
+            raise _TreeDivergence("semantic divergence in tree expansion")
+        response = yield _InferenceFrontier(successors)
+        evaluated = cast(list[tuple[float, float]], response)
         return self._install_expansion(node, samples, successors, evaluated)
 
     def _mixed_policy(
@@ -1033,16 +1056,24 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             result[action] = (1.0 - epsilon) * policy[action] + epsilon / len(legal)
         return result
 
-    def _new_chance_outcome(
+    def _new_chance_outcome_frontier(
         self, node: _TreeNode, player_action: int, enemy_action: int
-    ) -> _TreeOutcome:
-        successor = self.server.search_step(
-            node.snapshot.handle,
-            player_action,
-            enemy_action,
-            self.chance_rng.getrandbits(63),
+    ) -> Generator[_Frontier, _FrontierResponse, _TreeOutcome]:
+        response = yield _NativeFrontier(
+            [
+                (
+                    node.snapshot.handle,
+                    player_action,
+                    enemy_action,
+                    self.chance_rng.getrandbits(63),
+                )
+            ]
         )
-        evaluated = self._evaluate_successors([successor])[0][0]
+        successor = cast(list[Snapshot], response)[0]
+        if successor.divergence is not None:
+            raise _TreeDivergence("semantic divergence in tree simulation")
+        response = yield _InferenceFrontier([successor])
+        evaluated = cast(list[tuple[float, float]], response)[0][0]
         if successor.done:
             delta = 0.0
         else:
@@ -1064,9 +1095,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             * self.config.chance_samples_per_joint
         )
 
-    def _simulate(
+    def _simulate_frontier(
         self, node: _TreeNode, depth: int, remaining: int
-    ) -> tuple[float, int, bool]:
+    ) -> Generator[_Frontier, _FrontierResponse, tuple[float, int, bool]]:
         self._max_depth_reached = max(self._max_depth_reached, depth)
         node.visits += 1
         player_policy = self._mixed_policy(
@@ -1085,7 +1116,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             remaining > 0 and self.selection_rng.random() < self.config.chance_resample
         )
         if fresh:
-            outcome = self._new_chance_outcome(node, player_action, enemy_action)
+            outcome = yield from self._new_chance_outcome_frontier(
+                node, player_action, enemy_action
+            )
             cost = 1
         else:
             outcomes = node.outcomes[pair]
@@ -1105,7 +1138,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             if not child.expanded:
                 expansion_cost = self._joint_cost(child)
                 if cost + expansion_cost <= remaining:
-                    cost += self._expand(child, False)
+                    cost += (yield from self._expand_frontier(child, False))
                     self._max_depth_reached = max(self._max_depth_reached, depth + 1)
                     value = max(
                         -1.0,
@@ -1119,7 +1152,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     )
                     learned = fresh
             else:
-                child_value, child_cost, child_learned = self._simulate(
+                child_value, child_cost, child_learned = yield from self._simulate_frontier(
                     child, depth + 1, remaining - cost
                 )
                 learned = fresh or child_learned
@@ -1169,6 +1202,12 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             "mean_deep_inference_batch": (
                 self._deep_inference_rows / max(1, self._deep_inference_calls)
             ),
+            "deep_native_calls": self._deep_native_calls,
+            "deep_native_rows": self._deep_native_rows,
+            "deep_native_waves": self._deep_native_waves,
+            "mean_deep_native_batch": (
+                self._deep_native_rows / max(1, self._deep_native_calls)
+            ),
         }
         if root is not None:
             diagnostics["root_joint_actions"] = len(root.player_legal) * len(
@@ -1199,7 +1238,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             self._diagnostics(simulations, False, None),
         )
 
-    def _finish_root(
+    def _finish_root_frontier(
         self,
         root: _TreeNode,
         player_prior: list[float],
@@ -1207,7 +1246,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         prior_value: float,
         transitions: int,
         sample_actions: bool,
-    ) -> SearchResult:
+    ) -> Generator[_Frontier, _FrontierResponse, SearchResult]:
         simulations = 0
         converged = False
         previous_player: tuple[float, ...] | None = None
@@ -1216,7 +1255,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         try:
             attempts_without_learning = 0
             while transitions < self.config.expansion_budget:
-                _, cost, learned = self._simulate(
+                _, cost, learned = yield from self._simulate_frontier(
                     root, 0, self.config.expansion_budget - transitions
                 )
                 transitions += cost
@@ -1321,23 +1360,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         )
 
     def search(self, snapshot: Snapshot, sample_actions: bool = True) -> SearchResult:
-        if snapshot.done:
-            raise ValueError("cannot search a terminal state")
-        players, enemies, values = self._evaluate_many([snapshot])
-        root = self._make_node(snapshot, (players[0], enemies[0], values[0]))
-        try:
-            transitions = self._expand(root, True)
-        except _TreeDivergence:
-            return self._fallback(players[0], enemies[0], values[0], 0, 0)
-        self._cross_root_root_leaves = transitions
-        return self._finish_root(
-            root,
-            players[0],
-            enemies[0],
-            values[0],
-            transitions,
-            sample_actions,
-        )
+        return self.search_many([self], [snapshot], sample_actions)[0]
 
     @classmethod
     def _finish_many(
@@ -1357,71 +1380,109 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
     ) -> list[tuple[int, SearchResult]]:
         if not jobs:
             return []
-        if len(jobs) == 1:
-            index, search, root, player, enemy, value, transitions, sample = jobs[0]
-            return [
-                (
-                    index,
-                    search._finish_root(
-                        root, player, enemy, value, transitions, sample
-                    ),
-                )
-            ]
-        broker = _InferenceWaveBroker(
-            [job[0] for job in jobs], jobs[0][1].config.inference_batch_size
-        )
-
-        def finish(
-            job: tuple[
-                int,
-                SimultaneousTreeSearch,
-                _TreeNode,
-                list[float],
-                list[float],
-                float,
-                int,
-                bool,
-            ],
-        ) -> tuple[int, SearchResult]:
-            index, search, root, player, enemy, value, transitions, sample = job
-            player_network = search.player_network
-            enemy_network = search.enemy_network
-            player_proxy = _InferenceProxy(broker, index, player_network)
-            enemy_proxy = (
-                player_proxy
-                if player_network is enemy_network
-                else _InferenceProxy(broker, index, enemy_network)
+        searches = {job[0]: job[1] for job in jobs}
+        generators = {
+            index: search._finish_root_frontier(
+                root, player, enemy, value, transitions, sample
             )
-            search.player_network = cast(Any, player_proxy)
-            search.enemy_network = cast(Any, enemy_proxy)
-            try:
-                result = search._finish_root(
-                    root, player, enemy, value, transitions, sample
-                )
-                return index, result
-            finally:
-                search.player_network = player_network
-                search.enemy_network = enemy_network
-                broker.deregister(index)
-
-        try:
-            with ThreadPoolExecutor(max_workers=len(jobs)) as executor:
-                completed = list(executor.map(finish, jobs))
-        finally:
-            broker.close()
+            for index, search, root, player, enemy, value, transitions, sample in jobs
+        }
+        started: set[int] = set()
+        responses: dict[int, _FrontierResponse] = {}
+        completed: dict[int, SearchResult] = {}
+        inference_calls = inference_rows = inference_waves = 0
+        native_calls = native_rows = native_waves = 0
+        while generators:
+            frontiers: dict[int, _Frontier] = {}
+            for index in sorted(generators):
+                generator = generators[index]
+                try:
+                    if index in started:
+                        frontier = generator.send(responses.pop(index))
+                    else:
+                        frontier = next(generator)
+                        started.add(index)
+                    frontiers[index] = frontier
+                except StopIteration as stop:
+                    completed[index] = stop.value
+            for index in completed.keys() & generators.keys():
+                del generators[index]
+            native = [
+                (index, frontier)
+                for index, frontier in frontiers.items()
+                if isinstance(frontier, _NativeFrontier)
+            ]
+            requests = [
+                request for _, frontier in native for request in frontier.requests
+            ]
+            inference = [
+                (index, searches[index], frontier.snapshots)
+                for index, frontier in frontiers.items()
+                if isinstance(frontier, _InferenceFrontier)
+            ]
+            snapshots = (
+                jobs[0][1].server.search_steps(requests) if requests else None
+            )
+            if inference:
+                values, calls, rows = cls._pooled_successor_values(inference)
+                responses.update(values)
+                inference_calls += calls
+                inference_rows += rows
+                inference_waves += 1
+            if snapshots is not None:
+                offset = 0
+                for index, frontier in native:
+                    stop = offset + len(frontier.requests)
+                    responses[index] = snapshots[offset:stop]
+                    offset = stop
+                native_calls += 1
+                native_rows += len(requests)
+                native_waves += 1
         enriched = []
-        for index, result in completed:
+        for index, result in sorted(completed.items()):
+            search = searches[index]
+            search._deep_inference_calls = inference_calls
+            search._deep_inference_rows = inference_rows
+            search._deep_inference_waves = inference_waves
+            search._deep_native_calls = native_calls
+            search._deep_native_rows = native_rows
+            search._deep_native_waves = native_waves
             diagnostics = dict(result.diagnostics or {})
             diagnostics.update(
                 {
-                    "deep_inference_calls": broker.calls,
-                    "deep_inference_rows": broker.rows,
-                    "deep_inference_waves": broker.waves,
-                    "mean_deep_inference_batch": broker.rows
-                    / max(1, broker.calls),
+                    "inference_cache_hits": search._inference_cache_stats["hits"],
+                    "inference_cache_misses": search._inference_cache_stats["misses"],
+                    "inference_cache_hit_rate": search._inference_cache_stats["hits"]
+                    / max(1, sum(search._inference_cache_stats.values())),
+                    "deep_inference_calls": inference_calls,
+                    "deep_inference_rows": inference_rows,
+                    "deep_inference_waves": inference_waves,
+                    "mean_deep_inference_batch": inference_rows
+                    / max(1, inference_calls),
+                    "deep_native_calls": native_calls,
+                    "deep_native_rows": native_rows,
+                    "deep_native_waves": native_waves,
+                    "mean_deep_native_batch": native_rows / max(1, native_calls),
                 }
             )
-            enriched.append((index, replace(result, diagnostics=diagnostics)))
+            enriched.append(
+                (
+                    index,
+                    SearchResult(
+                        result.player_policy,
+                        result.enemy_policy,
+                        result.player_action,
+                        result.enemy_action,
+                        result.root_value,
+                        result.nodes,
+                        result.solver,
+                        result.exploitability,
+                        result.payoff_spread,
+                        result.payoff_matrix,
+                        diagnostics,
+                    ),
+                )
+            )
         return enriched
 
     @classmethod
@@ -1439,22 +1500,29 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             raise ValueError("cannot search a terminal state")
         if any(
             search.server is not first.server
-            or search.player_network is not first.player_network
-            or search.enemy_network is not first.enemy_network
             or search.config != first.config
+            or search.action_count != first.action_count
             for search in searches[1:]
         ):
-            raise ValueError(
-                "cross-root batches require one server, model pair, and config"
-            )
-        player_priors, enemy_priors, prior_values = first._evaluate_many(snapshots)
+            raise ValueError("cross-root batches require one server and config")
+        root_evaluations, _, _ = cls._pooled_evaluate(
+            [
+                (index, search, [snapshot])
+                for index, (search, snapshot) in enumerate(
+                    zip(searches, snapshots, strict=True)
+                )
+            ]
+        )
+        player_priors = [root_evaluations[index][0][0] for index in range(len(searches))]
+        enemy_priors = [root_evaluations[index][1][0] for index in range(len(searches))]
+        prior_values = [root_evaluations[index][2][0] for index in range(len(searches))]
         roots = [
-            search._make_node(snapshot, evaluation)
-            for search, snapshot, evaluation in zip(
-                searches,
-                snapshots,
-                zip(player_priors, enemy_priors, prior_values, strict=True),
-                strict=True,
+            search._make_node(
+                snapshot,
+                (player_priors[index], enemy_priors[index], prior_values[index]),
+            )
+            for index, (search, snapshot) in enumerate(
+                zip(searches, snapshots, strict=True)
             )
         ]
         specs = [
@@ -1475,24 +1543,14 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             )
             for left, right in offsets
         ]
-        active = [
-            successor
-            for is_good, (left, right) in zip(good, offsets, strict=True)
+        root_groups = [
+            (index, searches[index], successors[left:right])
+            for index, ((left, right), is_good) in enumerate(
+                zip(offsets, good, strict=True)
+            )
             if is_good
-            for successor in successors[left:right]
-            if not successor.done
         ]
-        evaluations: dict[int, tuple[list[float], list[float], float]] = {}
-        if active:
-            policies, enemy_policies, values = first._evaluate_many(active)
-            evaluations = {
-                snapshot.handle: evaluation
-                for snapshot, evaluation in zip(
-                    active,
-                    zip(policies, enemy_policies, values, strict=True),
-                    strict=True,
-                )
-            }
+        root_values, _, _ = cls._pooled_successor_values(root_groups)
         results: list[SearchResult | None] = [None] * len(searches)
         finish_jobs = []
         batch_size = len(searches)
@@ -1512,17 +1570,8 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     0,
                 )
                 continue
-            evaluated: list[tuple[float, float]] = []
-            for successor in root_successors:
-                if successor.done:
-                    value = float(successor.terminal_return or 0)
-                else:
-                    evaluation = evaluations[successor.handle]
-                    search._evaluation_cache[successor.handle] = evaluation
-                    value = evaluation[2]
-                evaluated.append((value, value))
             transitions = search._install_expansion(
-                root, spec[0], root_successors, evaluated
+                root, spec[0], root_successors, root_values[index]
             )
             finish_jobs.append(
                 (
