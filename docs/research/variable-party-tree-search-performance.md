@@ -140,10 +140,42 @@ nix develop -c python tools/benchmark-native-search.py \
 ```
 
 The remaining native cost includes mechanics execution, two feature
-projections, JSON construction and transport, and Python decoding. A packed
-binary observation protocol and direct array-building projection are the next
-native-specific candidates, but their maximum whole-search benefit is smaller
-than cross-root neural frontier batching.
+projections, JSON construction and transport, and Python decoding. Its maximum
+whole-search benefit remains smaller than cross-root neural frontier batching.
+
+## Native optimization sequence
+
+Four follow-up changes were measured and committed independently:
+
+1. **Packed observations.** Each 492-field vector is transported as
+   little-endian UInt16 data in a Base64 JSON field, with a lossless Nat-array
+   fallback. A mutation-friendly Lean encoder reduced a 96-transition response
+   from about 318 KiB to 276 KiB and improved native throughput by roughly 5%.
+2. **Direct array projection.** The encoder now fills a preallocated 492-element
+   array in schema order instead of constructing and flattening intermediate
+   lists. All 36 ordered party-size roots and 108 reset/branch/episode snapshots
+   matched the prior implementation. Batch-96 throughput improved by 1.23×.
+3. **Parallel immutable batches.** Independent transitions and packed snapshot
+   rendering run in deterministic eight-way chunks for batches of at least 16.
+   Smaller and dependent-handle batches retain sequential semantics. Batches
+   from 16 through 96 improved by 3.1–3.3×, while a production tree's native
+   phase improved by about 1.44× because most deeper requests remain small.
+4. **Handle-only compaction.** Python reuses the observations returned by the
+   real episode transition while Lean returns only deterministic replacement
+   handles. Sixteen-root compaction fell from about 2.71 ms to 48 µs, roughly
+   56×, while the old full-snapshot command remains available for compatibility.
+
+Together, relative to the already fingerprint-optimized server, the four
+changes improve native transitions by about 1.15× for scalar and eight-way
+requests and 3.9× for batches of 32–96. On the eight-root production-tree probe,
+native wall time fell from 0.547 to 0.299 seconds (**1.83×**) and total search
+wall time fell from 2.958 to 2.750 seconds (**1.08×**). Neural time was unchanged
+and now dominates more strongly.
+
+The next native-specific pass should profile the post-optimization server before
+adding complexity. True binary framing could remove Base64 and the remaining
+JSON arrays, but the higher-impact system change is still cross-root scheduling
+of deeper neural frontiers.
 
 ## End-to-end collection
 
