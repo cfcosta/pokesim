@@ -117,40 +117,7 @@ private def verdictId : Outcome.EpisodePhase → Nat
       | some .draw => 3
   | .battling => 0
 
-private def monFeatures (mon : MonState) : List Nat :=
-  [mon.species.toNat, mon.hp.toNat, mon.boxLevel.toNat, mon.status.toNat,
-   mon.type1.toNat, mon.type2.toNat, mon.catchRate.toNat] ++
-  (List.range Wram.numMoves).map (fun slot => (mon.moves.getD slot 0).toNat) ++
-  [mon.dvs.toNat, mon.level.toNat, mon.maxHp.toNat, mon.attack.toNat,
-   mon.defense.toNat, mon.speed.toNat, mon.special.toNat] ++
-  (List.range Wram.numMoves).map (fun slot => (mon.pp.getD slot 0).toNat)
-
 private def zeroMonFeatures : List Nat := List.replicate 22 0
-
-private def partyMonFeatures (side : Full.SideState) (index : Nat) : List Nat :=
-  match side.party.mons[index]? with
-  | some mon => monFeatures mon
-  | none => zeroMonFeatures
-
-private def activeFeatures (side : Battle.SideState) : List Nat :=
-  monFeatures side.active ++
-  [side.unmodified.attack.toNat, side.unmodified.defense.toNat,
-   side.unmodified.speed.toNat, side.unmodified.special.toNat,
-   side.stages.attack.toNat, side.stages.defense.toNat, side.stages.speed.toNat,
-   side.stages.special.toNat, side.stages.accuracy.toNat, side.stages.evasion.toNat,
-   side.stages.padding0.toNat, side.stages.padding1.toNat,
-   side.volatile.status1.toNat, side.volatile.status2.toNat,
-   side.volatile.status3.toNat, side.volatile.numAttacksLeft.toNat,
-   side.volatile.confusedCounter.toNat, side.volatile.toxicCounter.toNat,
-   side.volatile.disabledMove.toNat, side.volatile.disabledMoveNumber.toNat,
-   side.volatile.substituteHp.toNat, side.volatile.bideAccumulated.toNat,
-   boolNat side.volatile.minimized, side.originalSpecies.toNat,
-   side.partyPosition.toNat, side.actualCatchRate.toNat]
-
-private def fullSideFeatures (side : Full.SideState) : List Nat :=
-  ((List.range Wram.partyLength).flatMap fun index =>
-    partyMonFeatures side index) ++
-  [side.activeIndex] ++ activeFeatures side.active
 
 private def effectiveness (moveType target1 target2 : UInt8) : Nat :=
   let first := TypeChart.matchup moveType target1 |>.toNat
@@ -163,49 +130,128 @@ private def tacticalScore (move : MoveId) (target : MonState) : Nat :=
   data.power.toNat * effectiveness data.type target.type1 target.type2 *
     data.accuracy.toNat / 1000
 
+private def bestTacticalScore (attacker target : MonState) : Nat := Id.run do
+  let mut best := 0
+  for slot in [:Wram.numMoves] do
+    best := max best (tacticalScore (attacker.moves.getD slot 0) target)
+  return best
+
+private def appendMonFeatures (output : Array Nat) (mon : MonState) : Array Nat := Id.run do
+  let mut output := output
+  output := output.push mon.species.toNat
+  output := output.push mon.hp.toNat
+  output := output.push mon.boxLevel.toNat
+  output := output.push mon.status.toNat
+  output := output.push mon.type1.toNat
+  output := output.push mon.type2.toNat
+  output := output.push mon.catchRate.toNat
+  output := output.push (mon.moves.getD 0 0).toNat
+  output := output.push (mon.moves.getD 1 0).toNat
+  output := output.push (mon.moves.getD 2 0).toNat
+  output := output.push (mon.moves.getD 3 0).toNat
+  output := output.push mon.dvs.toNat
+  output := output.push mon.level.toNat
+  output := output.push mon.maxHp.toNat
+  output := output.push mon.attack.toNat
+  output := output.push mon.defense.toNat
+  output := output.push mon.speed.toNat
+  output := output.push mon.special.toNat
+  output := output.push (mon.pp.getD 0 0).toNat
+  output := output.push (mon.pp.getD 1 0).toNat
+  output := output.push (mon.pp.getD 2 0).toNat
+  return output.push (mon.pp.getD 3 0).toNat
+
+private def appendZeroMonFeatures (output : Array Nat) : Array Nat := Id.run do
+  let mut output := output
+  for _ in [:22] do
+    output := output.push 0
+  return output
+
+private def appendActiveFeatures (output : Array Nat) (side : Battle.SideState) : Array Nat :=
+    Id.run do
+  let mut output := appendMonFeatures output side.active
+  output := output.push side.unmodified.attack.toNat
+  output := output.push side.unmodified.defense.toNat
+  output := output.push side.unmodified.speed.toNat
+  output := output.push side.unmodified.special.toNat
+  output := output.push side.stages.attack.toNat
+  output := output.push side.stages.defense.toNat
+  output := output.push side.stages.speed.toNat
+  output := output.push side.stages.special.toNat
+  output := output.push side.stages.accuracy.toNat
+  output := output.push side.stages.evasion.toNat
+  output := output.push side.stages.padding0.toNat
+  output := output.push side.stages.padding1.toNat
+  output := output.push side.volatile.status1.toNat
+  output := output.push side.volatile.status2.toNat
+  output := output.push side.volatile.status3.toNat
+  output := output.push side.volatile.numAttacksLeft.toNat
+  output := output.push side.volatile.confusedCounter.toNat
+  output := output.push side.volatile.toxicCounter.toNat
+  output := output.push side.volatile.disabledMove.toNat
+  output := output.push side.volatile.disabledMoveNumber.toNat
+  output := output.push side.volatile.substituteHp.toNat
+  output := output.push side.volatile.bideAccumulated.toNat
+  output := output.push (boolNat side.volatile.minimized)
+  output := output.push side.originalSpecies.toNat
+  output := output.push side.partyPosition.toNat
+  return output.push side.actualCatchRate.toNat
+
+private def appendFullSideFeatures (output : Array Nat) (side : Full.SideState) : Array Nat :=
+    Id.run do
+  let mut output := output
+  for index in [:Wram.partyLength] do
+    output := match side.party.mons[index]? with
+      | some mon => appendMonFeatures output mon
+      | none => appendZeroMonFeatures output
+  output := output.push side.activeIndex
+  return appendActiveFeatures output side.active
+
 /-- Static canonical move descriptors make type and effect relationships
 learnable without asking a sub-million-parameter network to rediscover the ROM
 move table from sparse terminal labels. These are deterministic projections of
 state move IDs and the current target, not additional mechanics state. -/
-private def movePolicyFeatures (attacker target : MonState) : List Nat :=
-  (List.range Wram.numMoves).flatMap fun slot =>
+private def appendMovePolicyFeatures (output : Array Nat) (attacker target : MonState) :
+    Array Nat := Id.run do
+  let mut output := output
+  for slot in [:Wram.numMoves] do
     let move := attacker.moves.getD slot 0
     let data := Data.moveData move
-    [data.effect.toNat, data.power.toNat, data.type.toNat, data.accuracy.toNat,
-     effectiveness data.type target.type1 target.type2,
-     tacticalScore move target]
-
-private def bestTacticalScore (attacker target : MonState) : Nat :=
-  (List.range Wram.numMoves).foldl (fun best slot =>
-    max best (tacticalScore (attacker.moves.getD slot 0) target)) 0
+    output := output.push data.effect.toNat
+    output := output.push data.power.toNat
+    output := output.push data.type.toNat
+    output := output.push data.accuracy.toNat
+    output := output.push (effectiveness data.type target.type1 target.type2)
+    output := output.push (tacticalScore move target)
+  return output
 
 /-- For every legal party slot, expose both its best outgoing static matchup and
 the opposing active mon's best incoming matchup. All six switches remain legal
 and search-visible; these fields only remove an avoidable representation
 learning bottleneck. -/
-private def switchPolicyFeatures (side opponent : Full.SideState) : List Nat :=
+private def appendSwitchPolicyFeatures (output : Array Nat) (side opponent : Full.SideState) :
+    Array Nat := Id.run do
+  let mut output := output
   let attacker := opponent.active.active
-  (List.range Wram.partyLength).flatMap fun index =>
+  for index in [:Wram.partyLength] do
     match side.party.mons[index]? with
-    | none => [0, 0]
+    | none =>
+        output := output.push 0
+        output := output.push 0
     | some candidate =>
-        [bestTacticalScore candidate attacker,
-         bestTacticalScore attacker candidate]
+        output := output.push (bestTacticalScore candidate attacker)
+        output := output.push (bestTacticalScore attacker candidate)
+  return output
 
-private def partyShapeFeatures (own opponent : Full.SideState) : List Nat :=
-  [own.party.mons.size, opponent.party.mons.size] ++
-  (List.range Wram.partyLength).map
-    (fun index => boolNat (decide (index < own.party.mons.size))) ++
-  (List.range Wram.partyLength).map
-    (fun index => boolNat (decide (index < opponent.party.mons.size)))
+private def appendSelectionFeatures (output : Array Nat)
+    (scratch : Full.Selection.MoveScratch) : Array Nat :=
+  output.push scratch.selectedMove.toNat |>.push scratch.loadedMove.toNat
+    |>.push scratch.highlightedSlot.toNat |>.push scratch.effect.toNat
+    |>.push scratch.power.toNat |>.push scratch.type.toNat
+    |>.push scratch.accuracy.toNat |>.push scratch.pp.toNat
 
-private def selectionFeatures (scratch : Full.Selection.MoveScratch) : List Nat :=
-  [scratch.selectedMove.toNat, scratch.loadedMove.toNat,
-   scratch.highlightedSlot.toNat, scratch.effect.toNat, scratch.power.toNat,
-   scratch.type.toNat, scratch.accuracy.toNat, scratch.pp.toNat]
-
-private def bcdFeatures (value : Full.Money.Bcd3) : List Nat :=
-  [value.high.toNat, value.middle.toNat, value.low.toNat]
+private def appendBcdFeatures (output : Array Nat) (value : Full.Money.Bcd3) : Array Nat :=
+  output.push value.high.toNat |>.push value.middle.toNat |>.push value.low.toNat
 
 private def sideState (state : Full.Environment.State) : Side → Full.SideState
   | .player => state.engine.battle.player
@@ -233,32 +279,52 @@ def featureVector (state : Full.Environment.State) (view : Side)
   let opponent := sideState state view.other
   let battle := state.engine.battle
   let engine := state.engine
-  let global :=
-    [modeId battle.mode, battle.turn, phaseId battle.phase, verdictId battle.phase,
-     optionSide view engine.forcedReplacement,
-     optionSide view engine.queuedReplacement,
-     (lastMove state view).toNat, (lastMove state view.other).toNat,
-     engine.sharedDamage.toNat, (lockedDamage state view).toNat,
-     (lockedDamage state view.other).toNat,
-     engine.playerId.toNat, engine.badges.toNat, engine.runAttempts.toNat,
-     optionSide view engine.canceledAction, engine.aiLayer2Encouragement.toNat,
-     boolNat engine.trainerAiItem,
-     optionSide view requestActor, sourceSlot, continuationId continuation,
-     state.canEvolveFlags.toNat, state.gainExpFlags.toNat,
-     state.foughtFlags.toNat, boolNat state.hasExpAll,
-     state.pendingLearning.length]
-  let otIds := (List.range Wram.partyLength).map fun index =>
-    (engine.playerOtIds.getD index 0).toNat
-  let policyFeatures :=
-    movePolicyFeatures own.active.active opponent.active.active ++
-    movePolicyFeatures opponent.active.active own.active.active ++
-    switchPolicyFeatures own opponent
-  (fullSideFeatures own ++ fullSideFeatures opponent ++ policyFeatures ++
-    selectionFeatures (selection state view) ++
-    selectionFeatures (selection state view.other) ++
-    bcdFeatures engine.payDayMoney ++ bcdFeatures engine.playerMoney ++
-    bcdFeatures engine.trainerPrize ++ otIds ++ global ++
-    partyShapeFeatures own opponent).toArray
+  Id.run do
+    let mut output := Array.mkEmpty 492
+    output := appendFullSideFeatures output own
+    output := appendFullSideFeatures output opponent
+    output := appendMovePolicyFeatures output own.active.active opponent.active.active
+    output := appendMovePolicyFeatures output opponent.active.active own.active.active
+    output := appendSwitchPolicyFeatures output own opponent
+    output := appendSelectionFeatures output (selection state view)
+    output := appendSelectionFeatures output (selection state view.other)
+    output := appendBcdFeatures output engine.payDayMoney
+    output := appendBcdFeatures output engine.playerMoney
+    output := appendBcdFeatures output engine.trainerPrize
+    for index in [:Wram.partyLength] do
+      output := output.push (engine.playerOtIds.getD index 0).toNat
+    output := output.push (modeId battle.mode)
+    output := output.push battle.turn
+    output := output.push (phaseId battle.phase)
+    output := output.push (verdictId battle.phase)
+    output := output.push (optionSide view engine.forcedReplacement)
+    output := output.push (optionSide view engine.queuedReplacement)
+    output := output.push (lastMove state view).toNat
+    output := output.push (lastMove state view.other).toNat
+    output := output.push engine.sharedDamage.toNat
+    output := output.push (lockedDamage state view).toNat
+    output := output.push (lockedDamage state view.other).toNat
+    output := output.push engine.playerId.toNat
+    output := output.push engine.badges.toNat
+    output := output.push engine.runAttempts.toNat
+    output := output.push (optionSide view engine.canceledAction)
+    output := output.push engine.aiLayer2Encouragement.toNat
+    output := output.push (boolNat engine.trainerAiItem)
+    output := output.push (optionSide view requestActor)
+    output := output.push sourceSlot
+    output := output.push (continuationId continuation)
+    output := output.push state.canEvolveFlags.toNat
+    output := output.push state.gainExpFlags.toNat
+    output := output.push state.foughtFlags.toNat
+    output := output.push (boolNat state.hasExpAll)
+    output := output.push state.pendingLearning.length
+    output := output.push own.party.mons.size
+    output := output.push opponent.party.mons.size
+    for index in [:Wram.partyLength] do
+      output := output.push (boolNat (decide (index < own.party.mons.size)))
+    for index in [:Wram.partyLength] do
+      output := output.push (boolNat (decide (index < opponent.party.mons.size)))
+    return output
 
 private def fnvOffset : UInt64 := 0xcbf29ce484222325
 private def fnvPrime : UInt64 := 0x100000001b3

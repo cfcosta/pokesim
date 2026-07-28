@@ -126,8 +126,9 @@ def main() -> int:
         'def schemaVersion : String := "full-link-party-state-v4"',
         "#guard featureCount == 492",
         "continuationId continuation",
-        "partyShapeFeatures own opponent",
-        "partyMonFeatures side index",
+        "appendFullSideFeatures output own",
+        "output := output.push own.party.mons.size",
+        "match side.party.mons[index]?",
         "sampled_link_reset_satisfies_profile",
     ]
     for fragment in required_fragments:
