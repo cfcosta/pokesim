@@ -59,6 +59,41 @@ private def SearchState.requestName : SearchState → String
 private def naturalsJson (values : Array Nat) : String :=
   "[" ++ String.intercalate "," (values.toList.map toString) ++ "]"
 
+private def base64Char (value : Nat) : Char :=
+  if value < 26 then Char.ofNat ('A'.toNat + value)
+  else if value < 52 then Char.ofNat ('a'.toNat + value - 26)
+  else if value < 62 then Char.ofNat ('0'.toNat + value - 52)
+  else if value == 62 then '+' else '/'
+
+private def base64Encode (bytes : Array UInt8) : String := Id.run do
+  let mut encoded := ""
+  for index in List.range ((bytes.size + 2) / 3) do
+    let offset := index * 3
+    let remaining := bytes.size - offset
+    let first := (bytes.getD offset 0).toNat
+    let second := (bytes.getD (offset + 1) 0).toNat
+    let third := (bytes.getD (offset + 2) 0).toNat
+    encoded := encoded.push (base64Char (first >>> 2))
+    encoded := encoded.push (base64Char (((first &&& 3) <<< 4) ||| (second >>> 4)))
+    encoded := encoded.push (if remaining > 1 then
+      base64Char (((second &&& 15) <<< 2) ||| (third >>> 6)) else '=')
+    encoded := encoded.push (if remaining > 2 then base64Char (third &&& 63) else '=')
+  return encoded
+
+private def packedUInt16 (values : Array Nat) : Option String := do
+  let mut bytes := Array.mkEmpty (values.size * 2)
+  for value in values do
+    if value > UInt16.size - 1 then none
+    bytes := bytes.push value.toUInt8
+    bytes := bytes.push (value >>> 8).toUInt8
+  pure (base64Encode bytes)
+
+#guard base64Encode #[0] == "AA=="
+#guard base64Encode #[0, 1] == "AAE="
+#guard base64Encode #[0, 1, 2] == "AAEC"
+#guard packedUInt16 #[0x1234, 0xabcd] == some "NBLNqw=="
+#guard packedUInt16 #[UInt16.size] == none
+
 private def boolJson (value : Bool) : String := if value then "true" else "false"
 
 private def actionMask (actions : Array Full.Action) : Nat :=
@@ -101,6 +136,11 @@ private def snapshotFields (search : SearchState) (withHashes : Bool := true) : 
     search.continuation
   let enemy := FullTraining.featureVector state .enemy search.requestActor search.sourceSlot
     search.continuation
+  let features := match packedUInt16 player, packedUInt16 enemy with
+    | some player, some enemy =>
+        s!"\"feature_encoding\":\"u16le-base64\",\"player_features\":\"{player}\",\"enemy_features\":\"{enemy}\""
+    | _, _ =>
+        s!"\"feature_encoding\":\"json-nat-array\",\"player_features\":{naturalsJson player},\"enemy_features\":{naturalsJson enemy}"
   let hashes := if withHashes then
       s!",\"player_hash\":\"{FullTraining.fingerprintFeatures player}\",\"enemy_hash\":\"{FullTraining.fingerprintFeatures enemy}\""
     else ",\"player_hash\":\"\",\"enemy_hash\":\"\""
@@ -110,7 +150,7 @@ private def snapshotFields (search : SearchState) (withHashes : Bool := true) : 
   let divergence := match search.divergence with
     | none => "null"
     | some reason => s!"\"{reason}\""
-  s!"\"player_features\":{naturalsJson player},\"enemy_features\":{naturalsJson enemy},\"player_mask\":{legalMask search .player},\"enemy_mask\":{legalMask search .enemy}{hashes},\"turn\":{state.engine.battle.turn},\"request\":\"{search.requestName}\",\"divergence\":{divergence},\"terminal\":{boolJson terminal},\"done\":{boolJson done},\"return\":{result}"
+  s!"{features},\"player_mask\":{legalMask search .player},\"enemy_mask\":{legalMask search .enemy}{hashes},\"turn\":{state.engine.battle.turn},\"request\":\"{search.requestName}\",\"divergence\":{divergence},\"terminal\":{boolJson terminal},\"done\":{boolJson done},\"return\":{result}"
 
 private def snapshotJson (handle : Nat) (state : SearchState)
     (withHashes : Bool := true) : String :=

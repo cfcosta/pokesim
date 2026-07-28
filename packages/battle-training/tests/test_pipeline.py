@@ -27,7 +27,7 @@ from battle_training.joint_search import (
     solve_zero_sum_regret,
 )
 from battle_training.model import MoveValueModel
-from battle_training.native import Snapshot
+from battle_training.native import Snapshot, _decode_features
 from battle_training.network import (
     BattleTransformer,
     TransformerConfig,
@@ -176,6 +176,12 @@ class MoveValueModelTests(unittest.TestCase):
 
 
 class TransformerTests(unittest.TestCase):
+    def test_native_feature_decoding_supports_packed_and_fallback_rows(self) -> None:
+        packed = {"feature_encoding": "u16le-base64", "player_features": "NBLNqw=="}
+        fallback = {"player_features": [0x1234, 0xABCD]}
+        self.assertEqual(_decode_features(packed, "player"), (0x1234, 0xABCD))
+        self.assertEqual(_decode_features(fallback, "player"), (0x1234, 0xABCD))
+
     def test_regret_matching_finds_matching_pennies_equilibrium(self) -> None:
         payoff = [
             [1.0, -1.0, 0.0, 0.0],

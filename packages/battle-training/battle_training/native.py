@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import selectors
+import struct
 import subprocess
 from dataclasses import dataclass
 from typing import Any, Self
@@ -29,6 +31,19 @@ class NativeRequestTimeout(RuntimeError):
         self.seconds = seconds
 
 
+def _decode_features(response: dict[str, Any], side: str) -> tuple[int, ...]:
+    values = response[f"{side}_features"]
+    encoding = response.get("feature_encoding", "json-nat-array")
+    if encoding == "json-nat-array":
+        return tuple(values)
+    if encoding != "u16le-base64" or not isinstance(values, str):
+        raise ValueError(f"unsupported native feature encoding: {encoding!r}")
+    packed = base64.b64decode(values, validate=True)
+    if len(packed) % 2:
+        raise ValueError("packed native features have odd byte length")
+    return struct.unpack(f"<{len(packed) // 2}H", packed)
+
+
 @dataclass(frozen=True)
 class Snapshot:
     handle: int
@@ -49,8 +64,8 @@ class Snapshot:
     def from_response(cls, response: dict[str, Any]) -> Snapshot:
         return cls(
             handle=response["handle"],
-            player_features=tuple(response["player_features"]),
-            enemy_features=tuple(response["enemy_features"]),
+            player_features=_decode_features(response, "player"),
+            enemy_features=_decode_features(response, "enemy"),
             player_mask=response["player_mask"],
             enemy_mask=response["enemy_mask"],
             player_hash=response["player_hash"],
