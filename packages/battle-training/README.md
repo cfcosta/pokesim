@@ -66,6 +66,23 @@ nix develop -c python packages/battle-training/train.py transformer-train \
   --output artifacts/training/run-001
 ```
 
+An interrupted run resumes from its last complete checkpoint without repeating
+accepted work or changing its saved configuration:
+
+```sh
+nix develop -c python packages/battle-training/train.py transformer-resume \
+  --output artifacts/training/run-001
+```
+
+Each checkpoint is published atomically and contains the post-promotion model,
+AdamW state, RNG state, collection metrics, and training metrics. Resume checks
+the contiguous checkpoint/shard prefix and their hashes, rebuilds the historical
+opponent window, and restarts at the next iteration. If interruption occurred
+after collection but before checkpoint publication, the incomplete shard and
+failure metric are moved under `attempts/` for audit and that iteration is
+regenerated deterministically. Mid-battle continuation is intentionally not
+claimed; only complete iterations are committed restart boundaries.
+
 Strict-FP32 batch size 512 exceeded the card's 11.63 GiB capacity. Under BF16,
 batch 128 peaked at 1.26 GiB and delivered 3.77× the strict-FP32 training
 throughput. BF16 batch 512 fit at 4.76 GiB but was only 10.5% faster than BF16

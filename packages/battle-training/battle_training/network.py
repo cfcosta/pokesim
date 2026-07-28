@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import copy
+import os
+import tempfile
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import torch
 from torch import Tensor, nn
@@ -147,32 +150,55 @@ def configure_determinism(seed: int) -> None:
     torch.use_deterministic_algorithms(True)
 
 
+def load_checkpoint(path: Path, device: torch.device) -> dict[str, Any]:
+    payload = torch.load(path, map_location=device, weights_only=False)
+    if payload.get("format") != "battle-transformer-policy-value-v1":
+        raise ValueError("unknown transformer checkpoint format")
+    return payload
+
+
 def save_network(
     path: Path,
     network: BattleTransformer,
     optimizer: torch.optim.Optimizer | None,
     metadata: dict[str, object],
 ) -> None:
+    """Publish a checkpoint atomically without replacing an existing artifact."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         raise FileExistsError(path)
-    torch.save(
-        {
-            "format": "battle-transformer-policy-value-v1",
-            "config": asdict(network.config),
-            "model": network.state_dict(),
-            "optimizer": None if optimizer is None else optimizer.state_dict(),
-            "metadata": metadata,
-            "torch_rng": torch.random.get_rng_state(),
-        },
-        path,
-    )
+    payload = {
+        "format": "battle-transformer-policy-value-v1",
+        "config": asdict(network.config),
+        "model": network.state_dict(),
+        "optimizer": None if optimizer is None else optimizer.state_dict(),
+        "metadata": metadata,
+        "torch_rng": torch.random.get_rng_state(),
+    }
+    temporary_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w+b",
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+            delete=False,
+        ) as temporary:
+            temporary_name = temporary.name
+            torch.save(payload, temporary)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        try:
+            os.link(temporary_name, path)
+        except FileExistsError as error:
+            raise FileExistsError(path) from error
+    finally:
+        if temporary_name is not None:
+            Path(temporary_name).unlink(missing_ok=True)
 
 
 def load_network(path: Path, device: torch.device) -> BattleTransformer:
-    payload = torch.load(path, map_location=device, weights_only=False)
-    if payload.get("format") != "battle-transformer-policy-value-v1":
-        raise ValueError("unknown transformer checkpoint format")
+    payload = load_checkpoint(path, device)
     raw_config = dict(payload["config"])
     # Checkpoints written before precision became explicit executed in strict FP32.
     raw_config.setdefault("precision", "fp32")

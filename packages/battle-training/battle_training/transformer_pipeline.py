@@ -31,6 +31,7 @@ from .network import (
     TransformerConfig,
     choose_device,
     configure_determinism,
+    load_checkpoint,
     load_network,
     save_network,
 )
@@ -757,10 +758,160 @@ def _collection_quality(
     return {"pass": not reasons, "reasons": reasons}
 
 
+def _iteration_numbers(directory: Path, prefix: str, suffix: str) -> set[int]:
+    numbers: set[int] = set()
+    for path in directory.glob(f"{prefix}*{suffix}"):
+        raw = path.name.removeprefix(prefix).removesuffix(suffix)
+        if raw.isdigit():
+            numbers.add(int(raw))
+    return numbers
+
+
+def _archive_incomplete_iteration(
+    root: Path, iteration: int, artifacts: list[Path]
+) -> None:
+    if not artifacts:
+        return
+    attempts = root / "attempts"
+    attempt = 1
+    while True:
+        destination = attempts / f"iteration-{iteration:03d}-attempt-{attempt:03d}"
+        if not destination.exists():
+            break
+        attempt += 1
+    records = []
+    for source in artifacts:
+        relative = source.relative_to(root)
+        records.append(
+            {
+                "path": relative.as_posix(),
+                "bytes": source.stat().st_size,
+                "sha256": sha256(source),
+            }
+        )
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(target)
+    write_json(
+        destination / "resume.json",
+        {
+            "reason": "incomplete-iteration-without-checkpoint",
+            "iteration": iteration,
+            "artifacts": records,
+        },
+    )
+
+
+def _load_completed_prefix(
+    root: Path,
+) -> tuple[
+    int,
+    list[Path],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[int],
+]:
+    checkpoint_dir = root / "checkpoints"
+    shard_dir = root / "shards"
+    metric_dir = root / "metrics"
+    checkpoint_numbers = _iteration_numbers(checkpoint_dir, "policy-", ".pt") - {0}
+    if checkpoint_numbers:
+        completed = max(checkpoint_numbers)
+        expected = set(range(1, completed + 1))
+        if checkpoint_numbers != expected:
+            raise ValueError("resume checkpoints are not a contiguous iteration prefix")
+    else:
+        completed = 0
+
+    shard_numbers = _iteration_numbers(shard_dir, "iteration-", ".jsonl")
+    metric_numbers = _iteration_numbers(metric_dir, "iteration-", ".json")
+    orphan_numbers = (shard_numbers | metric_numbers) - checkpoint_numbers
+    if orphan_numbers:
+        if orphan_numbers != {completed + 1}:
+            raise ValueError("resume found noncontiguous incomplete iteration artifacts")
+        iteration = completed + 1
+        artifacts = [
+            path
+            for path in (
+                shard_dir / f"iteration-{iteration:03d}.jsonl",
+                metric_dir / f"iteration-{iteration:03d}.json",
+            )
+            if path.is_file()
+        ]
+        _archive_incomplete_iteration(root, iteration, artifacts)
+        shard_numbers.discard(iteration)
+        metric_numbers.discard(iteration)
+
+    if shard_numbers != checkpoint_numbers:
+        raise ValueError("each completed checkpoint must have exactly one replay shard")
+
+    shards: list[Path] = []
+    collection: list[dict[str, Any]] = []
+    training: list[dict[str, Any]] = []
+    accepted: list[int] = []
+    for iteration in range(1, completed + 1):
+        checkpoint = checkpoint_dir / f"policy-{iteration:03d}.pt"
+        shard = shard_dir / f"iteration-{iteration:03d}.jsonl"
+        payload = load_checkpoint(checkpoint, torch.device("cpu"))
+        metadata = payload.get("metadata")
+        if not isinstance(metadata, dict) or metadata.get("iteration") != iteration:
+            raise ValueError(f"checkpoint {iteration} has invalid iteration metadata")
+        collection_metrics = metadata.get("collection")
+        training_metrics = metadata.get("training")
+        if not isinstance(collection_metrics, dict) or not isinstance(
+            training_metrics, dict
+        ):
+            raise TypeError(f"checkpoint {iteration} lacks resumable metrics")
+        if collection_metrics.get("sha256") != sha256(shard):
+            raise ValueError(f"checkpoint {iteration} replay shard hash mismatch")
+        expected_metric = {
+            "collection": collection_metrics,
+            "training": training_metrics,
+            "promotion": training_metrics.get("promotion"),
+        }
+        metric = metric_dir / f"iteration-{iteration:03d}.json"
+        if metric.is_file():
+            if json.loads(metric.read_text()) != expected_metric:
+                raise ValueError(f"iteration {iteration} metric disagrees with checkpoint")
+        else:
+            write_json(metric, expected_metric)
+        shards.append(shard)
+        collection.append(collection_metrics)
+        training.append(training_metrics)
+        promotion = training_metrics.get("promotion")
+        if isinstance(promotion, dict) and promotion.get("accepted") is True:
+            accepted.append(iteration)
+    return completed, shards, collection, training, accepted
+
+
+def _resume_config(root: Path) -> TransformerPipelineConfig:
+    run_path = root / "run.json"
+    if not run_path.is_file():
+        raise FileNotFoundError(f"resume metadata is missing: {run_path}")
+    run = json.loads(run_path.read_text())
+    if run.get("pipeline") != _pipeline_id():
+        raise ValueError("resume pipeline version differs from the current implementation")
+    if run.get("profile") != FULL_PROFILE or run.get("schema") != FULL_SCHEMA:
+        raise ValueError("resume mechanics profile or tensor schema differs")
+    raw_config = dict(run["config"])
+    raw_config.setdefault("precision", "fp32")
+    return TransformerPipelineConfig(**raw_config)
+
+
+def resume_transformer_pipeline(root: Path) -> dict[str, Any]:
+    """Continue an interrupted run from its last committed iteration."""
+    return run_transformer_pipeline(root, _resume_config(root), resume=True)
+
+
 def run_transformer_pipeline(
-    root: Path, config: TransformerPipelineConfig
+    root: Path, config: TransformerPipelineConfig, *, resume: bool = False
 ) -> dict[str, Any]:
-    if root.exists() and any(root.iterdir()):
+    if resume:
+        if not root.is_dir():
+            raise FileNotFoundError(f"resume output directory is missing: {root}")
+        if (root / "summary.json").exists() or (root / "manifest.json").exists():
+            raise ValueError("training run is already complete")
+    elif root.exists() and any(root.iterdir()):
         raise FileExistsError(f"output directory is not empty: {root}")
     if config.arena_episodes < 4 or config.arena_episodes % 2:
         raise ValueError("arena_episodes must be an even number of at least four")
@@ -832,21 +983,6 @@ def run_transformer_pipeline(
         raise RuntimeError("bf16 training requires a bf16-capable CUDA device")
     if config.precision == "bf16" and device.type not in {"cpu", "cuda"}:
         raise RuntimeError(f"bf16 training is unsupported on {device.type}")
-    opponents: list[tuple[BattleTransformer, str]] = []
-    opponent_metadata: list[dict[str, Any]] = []
-    for index, source_name in enumerate(config.opponent_checkpoints):
-        opponent_source = Path(source_name).resolve()
-        opponent_sha = sha256(opponent_source)
-        opponent_copy = root / "opponents" / f"fixed-{index:03d}.pt"
-        write_new(opponent_copy, opponent_source.read_bytes())
-        opponents.append((load_network(opponent_copy, device), opponent_sha))
-        opponent_metadata.append(
-            {
-                "kind": "fixed-checkpoint",
-                "checkpoint": opponent_copy.relative_to(root).as_posix(),
-                "sha256": opponent_sha,
-            }
-        )
     model_config = TransformerConfig(
         feature_count=feature_count,
         action_count=action_count,
@@ -856,43 +992,115 @@ def run_transformer_pipeline(
         feedforward=config.feedforward,
         precision=config.precision,
     )
-    network = BattleTransformer(model_config).to(device)
-    network.eval()
-    initial = network.detached_copy(device)
-    write_json(
-        root / "run.json",
-        {
-            "pipeline": _pipeline_id(),
-            "profile": FULL_PROFILE,
-            "schema": FULL_SCHEMA,
-            "party_size": FULL_PARTY_SIZE,
-            "chance": "fresh-root-v1",
-            "search_solver": "simultaneous-matrix-tree-rmplus-v1",
-            "config": asdict(config),
-            "network": asdict(model_config),
-            "parameter_count": sum(
-                parameter.numel() for parameter in network.parameters()
-            ),
-            "opponents": opponent_metadata,
-            "torch": torch.__version__,
-            "device": str(device),
-            "device_name": torch.cuda.get_device_name(device)
-            if device.type == "cuda"
-            else "cpu",
-        },
-    )
+    opponents: list[tuple[BattleTransformer, str]] = []
+    opponent_metadata: list[dict[str, Any]] = []
     initial_checkpoint = root / "checkpoints" / "policy-000.pt"
-    save_network(initial_checkpoint, network, None, {"iteration": 0, "kind": "initial"})
+
+    if resume:
+        run_metadata = json.loads((root / "run.json").read_text())
+        if run_metadata.get("config") != asdict(config):
+            raise ValueError("resume configuration differs from immutable run metadata")
+        if run_metadata.get("network") != asdict(model_config):
+            raise ValueError("resume network shape differs from the native protocol")
+        for metadata in run_metadata.get("opponents", []):
+            opponent_copy = root / metadata["checkpoint"]
+            opponent_sha = sha256(opponent_copy)
+            if opponent_sha != metadata["sha256"]:
+                raise ValueError("resume fixed-opponent hash mismatch")
+            opponents.append((load_network(opponent_copy, device), opponent_sha))
+            opponent_metadata.append(metadata)
+        if not initial_checkpoint.is_file():
+            raise FileNotFoundError("resume initial checkpoint is missing")
+        completed, shards, collection, training, accepted_iterations = (
+            _load_completed_prefix(root)
+        )
+        if completed >= config.iterations:
+            raise ValueError("all configured training iterations are already complete")
+        latest_checkpoint = root / "checkpoints" / f"policy-{completed:03d}.pt"
+        network = load_network(latest_checkpoint, device)
+        if network.config != model_config:
+            raise ValueError("resume checkpoint network configuration differs")
+        optimizer = torch.optim.AdamW(
+            network.parameters(),
+            lr=config.learning_rate,
+            weight_decay=config.weight_decay,
+        )
+        if completed:
+            latest_payload = load_checkpoint(latest_checkpoint, device)
+            optimizer_state = latest_payload.get("optimizer")
+            if optimizer_state is None:
+                raise ValueError("resume checkpoint lacks AdamW state")
+            optimizer.load_state_dict(optimizer_state)
+            torch_rng = latest_payload.get("torch_rng")
+            if isinstance(torch_rng, Tensor):
+                torch.random.set_rng_state(torch_rng.cpu())
+        first_iteration = completed + 1
+    else:
+        for index, source_name in enumerate(config.opponent_checkpoints):
+            opponent_source = Path(source_name).resolve()
+            opponent_sha = sha256(opponent_source)
+            opponent_copy = root / "opponents" / f"fixed-{index:03d}.pt"
+            write_new(opponent_copy, opponent_source.read_bytes())
+            opponents.append((load_network(opponent_copy, device), opponent_sha))
+            opponent_metadata.append(
+                {
+                    "kind": "fixed-checkpoint",
+                    "checkpoint": opponent_copy.relative_to(root).as_posix(),
+                    "sha256": opponent_sha,
+                }
+            )
+        network = BattleTransformer(model_config).to(device)
+        network.eval()
+        write_json(
+            root / "run.json",
+            {
+                "pipeline": _pipeline_id(),
+                "profile": FULL_PROFILE,
+                "schema": FULL_SCHEMA,
+                "party_size": FULL_PARTY_SIZE,
+                "chance": "fresh-root-v1",
+                "search_solver": "simultaneous-matrix-tree-rmplus-v1",
+                "config": asdict(config),
+                "network": asdict(model_config),
+                "parameter_count": sum(
+                    parameter.numel() for parameter in network.parameters()
+                ),
+                "opponents": opponent_metadata,
+                "torch": torch.__version__,
+                "device": str(device),
+                "device_name": torch.cuda.get_device_name(device)
+                if device.type == "cuda"
+                else "cpu",
+            },
+        )
+        save_network(
+            initial_checkpoint,
+            network,
+            None,
+            {"iteration": 0, "kind": "initial"},
+        )
+        shards = []
+        collection = []
+        training = []
+        accepted_iterations = []
+        optimizer = torch.optim.AdamW(
+            network.parameters(),
+            lr=config.learning_rate,
+            weight_decay=config.weight_decay,
+        )
+        first_iteration = 1
+
+    initial = load_network(initial_checkpoint, device)
     initial_identity = sha256(initial_checkpoint)
     initial_anchor = initial.detached_copy(device)
-    historical: list[tuple[BattleTransformer, str]] = []
-    shards: list[Path] = []
-    collection: list[dict[str, Any]] = []
-    training: list[dict[str, Any]] = []
-    optimizer = torch.optim.AdamW(
-        network.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
-    )
-    for iteration in range(1, config.iterations + 1):
+    historical = [
+        (
+            load_network(root / "checkpoints" / f"policy-{iteration:03d}.pt", device),
+            sha256(root / "checkpoints" / f"policy-{iteration:03d}.pt"),
+        )
+        for iteration in accepted_iterations[-(config.historical_window + 1) :]
+    ]
+    for iteration in range(first_iteration, config.iterations + 1):
         population = opponents + [(initial_anchor, initial_identity)]
         if config.historical_window:
             population.extend(historical[:-1][-config.historical_window :])

@@ -11,6 +11,7 @@ from .network import choose_device, load_network
 from .pipeline import PipelineConfig, run_pipeline, verify_run
 from .transformer_pipeline import (
     TransformerPipelineConfig,
+    resume_transformer_pipeline,
     run_transformer_pipeline,
     verify_transformer_run,
 )
@@ -84,6 +85,8 @@ def parser() -> argparse.ArgumentParser:
     _pipeline_parser(subparsers, "tabular-train")
     _transformer_parser(subparsers, "transformer-smoke")
     _transformer_parser(subparsers, "transformer-train")
+    resume = subparsers.add_parser("transformer-resume")
+    resume.add_argument("--output", type=Path, required=True)
     arena = subparsers.add_parser("arena")
     arena.add_argument("--candidate", type=Path, required=True)
     arena.add_argument("--baseline", type=Path, required=True)
@@ -134,6 +137,8 @@ def main(argv: list[str] | None = None) -> int:
             report = verify_transformer_run(arguments.run.resolve())
         else:
             report = verify_run(arguments.run.resolve())
+    elif arguments.command == "transformer-resume":
+        report = resume_transformer_pipeline(arguments.output.resolve())
     elif arguments.command.startswith("transformer-"):
         if (
             arguments.iterations < 1

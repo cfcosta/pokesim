@@ -241,6 +241,8 @@ When neural evaluation is added, workers send batches of leaf tensors and legal 
 
 The learner may be implemented in PyTorch or another external ML stack. It does not import, mutate, or reimplement mechanics. It consumes versioned shards, samples replay positions, updates the network, and publishes immutable checkpoints with optimizer state and run metadata.
 
+The production runner commits each completed iteration through an atomic checkpoint containing the post-promotion model, AdamW state, RNG state, and the metrics needed to reconstruct the completed prefix. `transformer-resume` validates checkpoint and shard continuity, restores the historical-opponent window, and continues at the next iteration under the immutable saved configuration. An uncommitted partial iteration is archived and replayed from its beginning; the system does not claim mid-battle checkpointing.
+
 The production PyTorch implementation uses BF16 autocast for transformer and head matrix operations. Parameters, gradients, AdamW state, returned logits/values, masks, softmax, policy/value losses, and reductions remain FP32. On the RTX 3080 Ti this increased batch-128 training throughput by 3.77x, reduced peak allocation from 2.24 to 1.26 GiB, and improved a matched small actor workload by 1.35x. Precision is checkpoint metadata; pre-v5 checkpoints load as FP32 rather than silently changing their policy. See the [precision benchmark](../research/full6v6-precision-benchmark.md).
 
 ### Replay storage
@@ -305,7 +307,7 @@ The restricted implementation now has sampled stochastic simultaneous MCTS with 
 
 ### M3: AlphaZero-style learner
 
-The restricted implementation now trains a side-canonical transformer with search-policy cross-entropy, terminal-value MSE, AdamW, replay shards, and model/optimizer checkpoints. Multi-worker batched inference, replay-window sampling, resumption, and comparisons against network-only, best-response PUCT, and regret MCTS remain open.
+The restricted implementation now trains a side-canonical transformer with search-policy cross-entropy, terminal-value MSE, AdamW, replay shards, resumable model/optimizer checkpoints, and replay-window sampling. Multi-worker batched inference and comparisons against network-only, best-response PUCT, and regret MCTS remain open.
 
 ### M4: League training
 

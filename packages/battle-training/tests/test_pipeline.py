@@ -12,7 +12,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
 from battle_training.arena import _mean_ci95, _paired_coordinates, skill_probe_report
-from battle_training.artifacts import build_manifest, verify_manifest, write_json
+from battle_training.artifacts import (
+    build_manifest,
+    sha256,
+    verify_manifest,
+    write_json,
+)
 from battle_training.cli import parser as training_parser
 from battle_training.joint_search import (
     JointSearchConfig,
@@ -23,8 +28,17 @@ from battle_training.joint_search import (
 )
 from battle_training.model import MoveValueModel
 from battle_training.native import Snapshot
-from battle_training.network import BattleTransformer, TransformerConfig, load_network
-from battle_training.transformer_pipeline import _load_examples, _scheduled_for_opponent
+from battle_training.network import (
+    BattleTransformer,
+    TransformerConfig,
+    load_network,
+    save_network,
+)
+from battle_training.transformer_pipeline import (
+    _load_completed_prefix,
+    _load_examples,
+    _scheduled_for_opponent,
+)
 
 
 def _toy_features() -> tuple[int, ...]:
@@ -312,6 +326,70 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.tree_convergence_patience, 8)
         self.assertEqual(arguments.actor_batch_size, 16)
         self.assertEqual(arguments.precision, "bf16")
+        resume = training_parser().parse_args(
+            ["transformer-resume", "--output", "/tmp/overnight"]
+        )
+        self.assertEqual(resume.command, "transformer-resume")
+
+    def test_resume_loads_complete_prefix_and_archives_partial_iteration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = TransformerConfig(
+                feature_count=8,
+                action_count=2,
+                d_model=8,
+                heads=2,
+                layers=1,
+                feedforward=16,
+                precision="fp32",
+            )
+            network = BattleTransformer(config)
+            optimizer = torch.optim.AdamW(network.parameters(), lr=1e-3)
+            save_network(
+                root / "checkpoints" / "policy-000.pt",
+                network,
+                None,
+                {"iteration": 0, "kind": "initial"},
+            )
+            shard = root / "shards" / "iteration-001.jsonl"
+            shard.parent.mkdir(parents=True)
+            shard.write_text('{"type":"meta"}\n')
+            collection = {"sha256": sha256(shard), "quality": {"pass": True}}
+            training = {"promotion": {"accepted": False}}
+            save_network(
+                root / "checkpoints" / "policy-001.pt",
+                network,
+                optimizer,
+                {
+                    "iteration": 1,
+                    "source_shards": ["shards/iteration-001.jsonl"],
+                    "collection": collection,
+                    "training": training,
+                },
+            )
+            partial_shard = root / "shards" / "iteration-002.jsonl"
+            partial_shard.write_text('{"type":"meta"}\n')
+            write_json(
+                root / "metrics" / "iteration-002.json",
+                {"collection": {"status": "failed"}},
+            )
+
+            completed, shards, collections, trainings, accepted = (
+                _load_completed_prefix(root)
+            )
+
+            self.assertEqual(completed, 1)
+            self.assertEqual(shards, [shard])
+            self.assertEqual(collections, [collection])
+            self.assertEqual(trainings, [training])
+            self.assertEqual(accepted, [])
+            self.assertTrue((root / "metrics" / "iteration-001.json").is_file())
+            self.assertFalse(partial_shard.exists())
+            attempt = root / "attempts" / "iteration-002-attempt-001"
+            self.assertTrue((attempt / "shards" / partial_shard.name).is_file())
+            self.assertTrue(
+                (attempt / "metrics" / "iteration-002.json").is_file()
+            )
 
     def test_paired_arena_reuses_resets_and_spans_seeds(self) -> None:
         self.assertEqual(_paired_coordinates(100, 8, 0), _paired_coordinates(100, 8, 1))

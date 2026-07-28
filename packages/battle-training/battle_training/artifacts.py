@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -13,9 +15,30 @@ def canonical_json(value: Any) -> bytes:
 
 
 def write_new(path: Path, data: bytes) -> None:
+    """Publish immutable bytes atomically, leaving no partial final artifact."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("xb") as output:
-        output.write(data)
+    if path.exists():
+        raise FileExistsError(path)
+    temporary_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w+b",
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+            delete=False,
+        ) as temporary:
+            temporary_name = temporary.name
+            temporary.write(data)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        try:
+            os.link(temporary_name, path)
+        except FileExistsError as error:
+            raise FileExistsError(path) from error
+    finally:
+        if temporary_name is not None:
+            Path(temporary_name).unlink(missing_ok=True)
 
 
 def write_json(path: Path, value: Any) -> None:
