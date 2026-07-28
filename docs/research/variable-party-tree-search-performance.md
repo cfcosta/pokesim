@@ -84,7 +84,66 @@ The same production profile issued 338 native requests. Of these, 181 were
 single-transition requests caused by fresh chance outcomes. Scalar native calls
 accounted for only 0.077 seconds in this sample, so batching neural frontiers is
 the larger immediate opportunity. Native execution and JSON feature transport
-still impose a roughly 25% floor.
+imposed a roughly 25% floor in this baseline.
+
+## Native follow-up
+
+The server was already a release build. A verbose Lake replay showed every Lean
+generated C module compiled with `gcc -O3 -DNDEBUG`; an accidental debug build
+was not responsible for native time.
+
+Profiling the response path found that every speculative search leaf built each
+492-field side-canonical vector twice: once for JSON and again inside its FNV
+fingerprint. The fingerprint is needed for committed replay rows, but
+speculative branches never become rows. The optimized protocol now hashes the
+already-materialized vectors for full snapshots and emits empty hash values for
+speculative `batch` responses. Reset, episode, and compaction responses retain
+exactly the previous fingerprints.
+
+A 60-repeat native-only benchmark measured:
+
+| Batch | Baseline µs/transition | Optimized µs/transition | Speedup |
+|---:|---:|---:|---:|
+| 1 | 305.21 | 200.09 | 1.53× |
+| 8 | 316.67 | 192.74 | 1.64× |
+| 32 | 303.10 | 193.06 | 1.57× |
+| 96 | 303.47 | 192.23 | 1.58× |
+
+A staged measurement attributed most of the improvement to hashing the existing
+vectors rather than constructing them again; suppressing the speculative FNV
+calculation supplied the remaining 7–10%.
+
+On four interleaved production-tree A/B runs over identical roots, models, and
+search seeds, median native wall time fell from 0.724 to 0.497 seconds per eight
+roots (**1.46×**). Holding the separately measured neural and Python time
+constant, this removes about 11–13% of whole-search wall time. Full and
+speculative responses were compared field-for-field. Full snapshots were
+identical, while speculative snapshots differed only by their intentionally
+empty hash values.
+
+Compiler and runtime experiments were smaller or neutral:
+
+- `-march=x86-64-v3 -mtune=znver4` did not improve throughput;
+- GCC LTO improved the native microbenchmark by roughly 3–8%, but made each
+  executable link serially for about 17 seconds and would recover only around
+  1–2% of whole-search time, so it was not retained;
+- jemalloc and pinning the process to either Ryzen 7950X3D CCD did not improve
+  the representative batch-96 workload;
+- retaining one epoll selector per server instead of creating it per request
+  changed throughput by less than 2% and was not retained.
+
+Reproduce the current native microbenchmark with:
+
+```sh
+nix develop -c python tools/benchmark-native-search.py \
+  --output /tmp/native-search.json
+```
+
+The remaining native cost includes mechanics execution, two feature
+projections, JSON construction and transport, and Python decoding. A packed
+binary observation protocol and direct array-building projection are the next
+native-specific candidates, but their maximum whole-search benefit is smaller
+than cross-root neural frontier batching.
 
 ## End-to-end collection
 

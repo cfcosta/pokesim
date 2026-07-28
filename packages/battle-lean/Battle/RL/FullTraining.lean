@@ -268,10 +268,13 @@ private def hashNat (hash : UInt64) (value : Nat) : UInt64 :=
     let byte := (value.toUInt64 >>> (shift * 8).toUInt64).toUInt8
     (hash ^^^ byte.toUInt64) * fnvPrime) hash
 
+def fingerprintFeatures (features : Array Nat) : UInt64 :=
+  features.foldl hashNat fnvOffset
+
 def fingerprint (state : Full.Environment.State) (view : Side)
     (requestActor : Option Side := none) (sourceSlot : Nat := 0)
     (continuation : Option Full.Action := none) : UInt64 :=
-  (featureVector state view requestActor sourceSlot continuation).foldl hashNat fnvOffset
+  fingerprintFeatures (featureVector state view requestActor sourceSlot continuation)
 
 private def sampleState : Full.Environment.State :=
   Full.Environment.resetSized Wram.partyLength

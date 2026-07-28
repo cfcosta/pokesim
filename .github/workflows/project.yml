@@ -55,6 +55,11 @@ jobs:
               assert compact[1].player_hash == first.player_hash
               def first_action(mask):
                   return next(action for action in range(13) if mask & (1 << action))
+              speculative = server.search_steps([
+                  (compact[0].handle, first_action(compact[0].player_mask),
+                   first_action(compact[0].enemy_mask), 4)
+              ])[0]
+              assert speculative.player_hash == speculative.enemy_hash == ""
               stepped = server.episode_steps([
                   (state.handle, first_action(state.player_mask),
                    first_action(state.enemy_mask))

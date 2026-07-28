@@ -92,25 +92,33 @@ private def playerReturn (state : Full.Environment.State) : Int :=
       | some .draw | none => 0
   | _ => 0
 
-private def snapshotFields (search : SearchState) : String :=
+/-- Speculative tree leaves do not become replay rows, so their compact batch
+response omits fingerprints. Episode, reset, and compaction responses retain the
+same schema-local fingerprints computed from the already-materialized vectors. -/
+private def snapshotFields (search : SearchState) (withHashes : Bool := true) : String :=
   let state := search.base
   let player := FullTraining.featureVector state .player search.requestActor search.sourceSlot
     search.continuation
   let enemy := FullTraining.featureVector state .enemy search.requestActor search.sourceSlot
     search.continuation
+  let hashes := if withHashes then
+      s!",\"player_hash\":\"{FullTraining.fingerprintFeatures player}\",\"enemy_hash\":\"{FullTraining.fingerprintFeatures enemy}\""
+    else ",\"player_hash\":\"\",\"enemy_hash\":\"\""
   let done := Full.Environment.done state
   let terminal := state.engine.battle.phase.isTerminal
   let result := if done then toString (playerReturn state) else "null"
   let divergence := match search.divergence with
     | none => "null"
     | some reason => s!"\"{reason}\""
-  s!"\"player_features\":{naturalsJson player},\"enemy_features\":{naturalsJson enemy},\"player_mask\":{legalMask search .player},\"enemy_mask\":{legalMask search .enemy},\"player_hash\":\"{FullTraining.fingerprint state .player search.requestActor search.sourceSlot search.continuation}\",\"enemy_hash\":\"{FullTraining.fingerprint state .enemy search.requestActor search.sourceSlot search.continuation}\",\"turn\":{state.engine.battle.turn},\"request\":\"{search.requestName}\",\"divergence\":{divergence},\"terminal\":{boolJson terminal},\"done\":{boolJson done},\"return\":{result}"
+  s!"\"player_features\":{naturalsJson player},\"enemy_features\":{naturalsJson enemy},\"player_mask\":{legalMask search .player},\"enemy_mask\":{legalMask search .enemy}{hashes},\"turn\":{state.engine.battle.turn},\"request\":\"{search.requestName}\",\"divergence\":{divergence},\"terminal\":{boolJson terminal},\"done\":{boolJson done},\"return\":{result}"
 
-private def snapshotJson (handle : Nat) (state : SearchState) : String :=
-  "{" ++ s!"\"handle\":{handle},{snapshotFields state}" ++ "}"
+private def snapshotJson (handle : Nat) (state : SearchState)
+    (withHashes : Bool := true) : String :=
+  "{" ++ s!"\"handle\":{handle},{snapshotFields state withHashes}" ++ "}"
 
-private def success (request : String) (handle : Nat) (state : SearchState) : String :=
-  "{" ++ s!"\"id\":\"{request}\",\"ok\":true,\"handle\":{handle},{snapshotFields state}" ++ "}"
+private def success (request : String) (handle : Nat) (state : SearchState)
+    (withHashes : Bool := true) : String :=
+  "{" ++ s!"\"id\":\"{request}\",\"ok\":true,\"handle\":{handle},{snapshotFields state withHashes}" ++ "}"
 
 private def simpleSuccess (request fields : String) : String :=
   "{" ++ s!"\"id\":\"{request}\",\"ok\":true{fields}" ++ "}"
@@ -424,7 +432,7 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
                       serve input output states
                   | .transitioned next =>
                       let nextHandle := states.size
-                      emit output (success request nextHandle next)
+                      emit output (success request nextHandle next (mode == "episode"))
                       serve input output (states.push next)
         | _, _, _, _, _ =>
             emit output (failure request "invalid-step")
@@ -438,7 +446,7 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
                 serve input output states
             | .ok (nextStates, results) =>
                 let snapshots := results.toList.map fun result =>
-                  snapshotJson result.1 result.2
+                  snapshotJson result.1 result.2 false
                 emit output (simpleSuccess request
                   s!",\"snapshots\":[{String.intercalate "," snapshots}]")
                 serve input output nextStates

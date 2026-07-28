@@ -189,11 +189,9 @@ class SearchServer:
     def search_step(
         self, handle: int, player_action: int, enemy_action: int, chance_seed: int
     ) -> Snapshot:
-        return self._snapshot(
-            self._request(
-                f"step|{handle}|{player_action}|{enemy_action}|fresh|{chance_seed}"
-            )
-        )
+        return self.search_steps(
+            [(handle, player_action, enemy_action, chance_seed)]
+        )[0]
 
     def search_steps(self, requests: list[tuple[int, int, int, int]]) -> list[Snapshot]:
         if not requests:
@@ -211,9 +209,7 @@ class SearchServer:
     def episode_step(
         self, handle: int, player_action: int, enemy_action: int
     ) -> Snapshot:
-        return self._snapshot(
-            self._request(f"step|{handle}|{player_action}|{enemy_action}|episode|0")
-        )
+        return self.episode_steps([(handle, player_action, enemy_action)])[0]
 
     def episode_steps(self, requests: list[tuple[int, int, int]]) -> list[Snapshot]:
         if not requests:
