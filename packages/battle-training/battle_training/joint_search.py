@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 from collections.abc import Generator, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias, cast
 
@@ -660,6 +661,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._deep_native_calls = 0
         self._deep_native_rows = 0
         self._deep_native_waves = 0
+        self._deep_overlap_waves = 0
 
     def _legal_from_priors(self, mask: int, priors: list[float]) -> list[int]:
         actions = legal_actions(mask, self.action_count)
@@ -1208,6 +1210,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             "mean_deep_native_batch": (
                 self._deep_native_rows / max(1, self._deep_native_calls)
             ),
+            "deep_overlap_waves": self._deep_overlap_waves,
         }
         if root is not None:
             diagnostics["root_joint_actions"] = len(root.player_legal) * len(
@@ -1391,7 +1394,8 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         responses: dict[int, _FrontierResponse] = {}
         completed: dict[int, SearchResult] = {}
         inference_calls = inference_rows = inference_waves = 0
-        native_calls = native_rows = native_waves = 0
+        native_calls = native_rows = native_waves = overlap_waves = 0
+        native_executor = ThreadPoolExecutor(max_workers=1)
         while generators:
             frontiers: dict[int, _Frontier] = {}
             for index in sorted(generators):
@@ -1412,23 +1416,61 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 for index, frontier in frontiers.items()
                 if isinstance(frontier, _NativeFrontier)
             ]
-            requests = [
-                request for _, frontier in native for request in frontier.requests
-            ]
             inference = [
                 (index, searches[index], frontier.snapshots)
                 for index, frontier in frontiers.items()
                 if isinstance(frontier, _InferenceFrontier)
             ]
-            snapshots = (
-                jobs[0][1].server.search_steps(requests) if requests else None
-            )
+            if native and not inference and len(native) > 1:
+                split = len(native) // 2
+                leading, native = native[:split], native[split:]
+                leading_requests = [
+                    request
+                    for _, frontier in leading
+                    for request in frontier.requests
+                ]
+                leading_snapshots = jobs[0][1].server.search_steps(leading_requests)
+                native_calls += 1
+                native_rows += len(leading_requests)
+                native_waves += 1
+                offset = 0
+                for index, frontier in leading:
+                    stop = offset + len(frontier.requests)
+                    try:
+                        next_frontier = generators[index].send(
+                            leading_snapshots[offset:stop]
+                        )
+                    except StopIteration as stopped:
+                        completed[index] = stopped.value
+                        del generators[index]
+                    else:
+                        if isinstance(next_frontier, _InferenceFrontier):
+                            inference.append(
+                                (index, searches[index], next_frontier.snapshots)
+                            )
+                        else:
+                            native.append((index, next_frontier))
+                    offset = stop
+            requests = [
+                request for _, frontier in native for request in frontier.requests
+            ]
+            pending_native: Future[list[Snapshot]] | None = None
+            snapshots: list[Snapshot] | None = None
+            if requests and inference:
+                pending_native = native_executor.submit(
+                    jobs[0][1].server.search_steps, requests
+                )
+                overlap_waves += 1
+            elif requests:
+                snapshots = jobs[0][1].server.search_steps(requests)
             if inference:
                 values, calls, rows = cls._pooled_successor_values(inference)
                 responses.update(values)
                 inference_calls += calls
                 inference_rows += rows
                 inference_waves += 1
+            if pending_native is not None:
+                snapshots = pending_native.result()
             if snapshots is not None:
                 offset = 0
                 for index, frontier in native:
@@ -1438,6 +1480,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 native_calls += 1
                 native_rows += len(requests)
                 native_waves += 1
+        native_executor.shutdown()
         enriched = []
         for index, result in sorted(completed.items()):
             search = searches[index]
@@ -1447,6 +1490,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             search._deep_native_calls = native_calls
             search._deep_native_rows = native_rows
             search._deep_native_waves = native_waves
+            search._deep_overlap_waves = overlap_waves
             diagnostics = dict(result.diagnostics or {})
             diagnostics.update(
                 {
@@ -1463,6 +1507,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     "deep_native_rows": native_rows,
                     "deep_native_waves": native_waves,
                     "mean_deep_native_batch": native_rows / max(1, native_calls),
+                    "deep_overlap_waves": overlap_waves,
                 }
             )
             enriched.append(

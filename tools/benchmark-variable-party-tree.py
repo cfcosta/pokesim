@@ -207,6 +207,15 @@ def search_profile(
         "inference_cache_misses": max(
             row["inference_cache_misses"] for row in diagnostics
         ),
+        "deep_inference_calls": max(row["deep_inference_calls"] for row in diagnostics),
+        "mean_deep_inference_batch": max(
+            row["mean_deep_inference_batch"] for row in diagnostics
+        ),
+        "deep_native_calls": max(row["deep_native_calls"] for row in diagnostics),
+        "mean_deep_native_batch": max(
+            row["mean_deep_native_batch"] for row in diagnostics
+        ),
+        "deep_overlap_waves": max(row["deep_overlap_waves"] for row in diagnostics),
         "root_joint_actions": [row["root_joint_actions"] for row in diagnostics],
         "mean_exploitability": sum(result.exploitability or 0.0 for result in results)
         / roots,

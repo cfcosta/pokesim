@@ -334,7 +334,10 @@ class TransformerTests(unittest.TestCase):
             all(result.diagnostics["deep_inference_waves"] > 0 for result in results)
         )
         self.assertTrue(
-            all(result.diagnostics["mean_deep_native_batch"] >= 2 for result in results)
+            all(result.diagnostics["mean_deep_native_batch"] >= 1 for result in results)
+        )
+        self.assertTrue(
+            all(result.diagnostics["deep_overlap_waves"] > 0 for result in results)
         )
 
     def test_cross_root_search_pools_shared_networks_across_opponents(self) -> None:
