@@ -241,6 +241,58 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(arguments.port, 8765)
         self.assertFalse(arguments.open_browser)
 
+    def test_dashboard_marks_a_dead_training_process_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "monitor-state.json").write_text(
+                json.dumps(
+                    {
+                        "stage": "collection",
+                        "pid": 2**31 - 1,
+                        "iteration": 1,
+                    }
+                )
+            )
+            status = build_dashboard_snapshot(root)["status"]
+            self.assertEqual(status["stage"], "failed")
+            self.assertEqual(status["last_stage"], "collection")
+
+    def test_dashboard_aggregates_live_selfplay_results(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            progress = root / ".monitor"
+            progress.mkdir()
+            for process, player_wins in ((0, 3), (1, 2)):
+                (progress / f"actor-{process:02d}.json").write_text(
+                    json.dumps(
+                        {
+                            "process": process,
+                            "completed": 4,
+                            "total": 10,
+                            "finished": 4,
+                            "player_wins": player_wins,
+                            "enemy_wins": 4 - player_wins,
+                            "transitions": 20,
+                            "ordinary_actions": 16,
+                            "voluntary_switches": 2,
+                            "party_size_counts": {"1v1": 4},
+                            "recent_battles": [
+                                {
+                                    "episode": process,
+                                    "stop": "finished",
+                                    "return": 1,
+                                }
+                            ],
+                        }
+                    )
+                )
+            collection = build_dashboard_snapshot(root)["collection"]
+            self.assertEqual(collection["completed"], 8)
+            self.assertEqual(collection["player_wins"], 5)
+            self.assertEqual(collection["party_size_counts"]["1v1"], 8)
+            self.assertEqual(collection["voluntary_switch_rate"], 0.125)
+            self.assertEqual(len(collection["recent_battles"]), 2)
+
 
 class TransformerTests(unittest.TestCase):
     def test_inference_engine_auto_falls_back_to_eager_on_cpu(self) -> None:

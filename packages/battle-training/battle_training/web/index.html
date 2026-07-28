@@ -102,6 +102,23 @@
         </div>
       </article>
 
+      <article class="panel span-3 collection-panel">
+        <header class="panel-header">
+          <div><span class="label">Live collection</span><h2>Self-play battles</h2></div>
+          <span id="collection-record" class="muted">Waiting for results</span>
+        </header>
+        <div class="collection-progress" aria-label="Self-play collection progress">
+          <span id="collection-progress-bar"></span>
+        </div>
+        <div id="collection-results" class="collection-results"></div>
+        <div class="table-wrap collection-table">
+          <table>
+            <thead><tr><th>Episode</th><th>Population</th><th>Candidate</th><th>Party</th><th>Result</th><th>Turns</th><th>Stop</th></tr></thead>
+            <tbody id="selfplay-battles"><tr><td colspan="7" class="empty-cell">No completed self-play battles yet</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+
       <article class="panel gates-panel">
         <header class="panel-header"><div><span class="label">Quality control</span><h2>Promotion gates</h2></div></header>
         <div id="gates" class="gate-list empty-state">No completed promotion</div>

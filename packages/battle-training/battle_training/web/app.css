@@ -221,6 +221,15 @@ main { width: min(1520px, 100%); margin: 0 auto; padding: 24px clamp(16px, 3vw, 
 .heat-cell { border: 1px solid rgba(240,77,85,0.12); }
 .heat-label { color: var(--muted); }
 
+.collection-progress { height: 7px; margin-bottom: 14px; overflow: hidden; border-radius: 5px; background: rgba(255,255,255,0.07); }
+.collection-progress span { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--blue), #8fc7ff); transition: width 220ms ease-out; }
+.collection-results { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.collection-table { margin-top: 18px; }
+.population-name { max-width: 230px; overflow: hidden; color: var(--muted); text-overflow: ellipsis; }
+.result-win { color: var(--green); font-weight: 700; }
+.result-loss { color: var(--red); font-weight: 700; }
+.result-draw { color: var(--gold); font-weight: 700; }
+
 .gate-list, .probe-list { display: grid; gap: 8px; }
 .gate, .probe { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 11px; border: 1px solid var(--border); border-radius: var(--inner-radius); background: var(--surface-soft); font-size: 0.72rem; }
 .gate span:last-child, .probe span:last-child { font-weight: 700; }
@@ -265,6 +274,7 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 20px
   .span-2, .span-3 { grid-column: auto; }
   .kpi { min-height: 105px; }
   .battle-stats { grid-template-columns: repeat(2, 1fr); }
+  .collection-results { grid-template-columns: repeat(2, 1fr); }
   .heatmap-wrap { grid-template-columns: 1fr; }
   .campaign-grid { grid-template-columns: repeat(2, 1fr); }
   footer { padding: 18px; flex-direction: column; }

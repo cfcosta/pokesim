@@ -91,8 +91,8 @@ change the listener. The page polls local artifacts every two seconds and shows:
 - live stage, iteration, and per-actor collection progress;
 - checkpoint identity, architecture, precision, device, and parameter count;
 - policy/value losses and promotion confidence history;
-- collection completion, battle length, switching, search, and 36-party-size
-  coverage;
+- live self-play results, recent battle outcomes, opponents, turns, examples,
+  native transitions, battle length, switching, search, and 36-party-size coverage;
 - recent paired promotion battles, strata, campaign cases, and skill probes;
 - accepted/rejected updates and every promotion quality gate.
 

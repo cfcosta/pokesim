@@ -104,12 +104,81 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def _process_alive(pid: object) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _iteration_number(path: Path) -> int:
     return int(path.stem.removeprefix("iteration-"))
 
 
 def _checkpoint_number(path: Path) -> int:
     return int(path.stem.removeprefix("policy-"))
+
+
+def _aggregate_actor_progress(actors: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not actors:
+        return None
+    summed = (
+        "completed",
+        "total",
+        "finished",
+        "truncated",
+        "semantic_divergences",
+        "transitions",
+        "examples",
+        "player_wins",
+        "enemy_wins",
+        "draws",
+        "candidate_wins",
+        "candidate_losses",
+        "candidate_draws",
+        "voluntary_switches",
+        "ordinary_actions",
+        "deep_search_decisions",
+        "root_only_decisions",
+        "mirror_episodes",
+        "opponent_episodes",
+    )
+    result = {
+        name: sum(int(actor.get(name, 0)) for actor in actors) for name in summed
+    }
+    completed = result["completed"]
+    result["mean_decisions"] = (
+        sum(
+            float(actor.get("mean_decisions", 0.0))
+            * int(actor.get("completed", 0))
+            for actor in actors
+        )
+        / completed
+        if completed
+        else 0.0
+    )
+    result["voluntary_switch_rate"] = result["voluntary_switches"] / max(
+        1, result["ordinary_actions"]
+    )
+    for field in ("party_size_counts", "opponent_counts"):
+        counts: dict[str, int] = {}
+        for actor in actors:
+            for name, value in actor.get(field, {}).items():
+                counts[name] = counts.get(name, 0) + int(value)
+        result[field] = counts
+    recent = [battle for actor in actors for battle in actor.get("recent_battles", [])]
+    result["recent_battles"] = sorted(
+        recent, key=lambda battle: int(battle.get("episode", -1)), reverse=True
+    )[:20]
+    result["updated_at"] = max(
+        (str(actor.get("updated_at", "")) for actor in actors), default=""
+    )
+    return result
 
 
 def build_dashboard_snapshot(root: Path) -> dict[str, Any]:
@@ -122,6 +191,15 @@ def build_dashboard_snapshot(root: Path) -> dict[str, Any]:
         "iteration": summary.get("iterations") if summary else None,
         "updated_at": None,
     }
+    if status.get("stage") not in {"completed", "failed"} and not _process_alive(
+        status.get("pid")
+    ):
+        status = {
+            **status,
+            "last_stage": status.get("stage"),
+            "stage": "failed",
+            "message": "Training process exited before completing the iteration",
+        }
     metric_paths = sorted(
         (root / "metrics").glob("iteration-*.json")
         if (root / "metrics").is_dir()
@@ -155,6 +233,7 @@ def build_dashboard_snapshot(root: Path) -> dict[str, Any]:
     )
     actors = [value for path in actor_paths if (value := _read_json(path)) is not None]
     latest = iterations[-1] if iterations else None
+    live_collection = _aggregate_actor_progress(actors)
     return {
         "generated_at": _now(),
         "root": str(root),
@@ -172,6 +251,7 @@ def build_dashboard_snapshot(root: Path) -> dict[str, Any]:
             "checkpoint": checkpoint,
         },
         "actors": actors,
+        "collection": live_collection or (latest or {}).get("collection"),
         "iterations": iterations,
         "latest": latest,
     }

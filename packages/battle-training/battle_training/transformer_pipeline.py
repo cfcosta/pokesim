@@ -422,6 +422,59 @@ def _collect_rows_single(
         for player in range(1, FULL_PARTY_SIZE + 1)
         for enemy in range(1, FULL_PARTY_SIZE + 1)
     }
+    player_wins = enemy_wins = draws = 0
+    candidate_wins = candidate_losses = candidate_draws = 0
+    total_decisions = ordinary_actions = voluntary_switches = 0
+    recent_battles: list[dict[str, Any]] = []
+
+    def append_episode(
+        actor: _ActorEpisode,
+        stop: str,
+        decisions: int,
+        reward: int | None = None,
+        reason: str | None = None,
+    ) -> None:
+        nonlocal player_wins, enemy_wins, draws
+        nonlocal candidate_wins, candidate_losses, candidate_draws, total_decisions
+        candidate_return = (
+            reward if actor.candidate_player else -reward
+        ) if reward is not None and actor.episode_kind != "mirror" else None
+        record: dict[str, Any] = {
+            "type": "episode",
+            "episode": actor.episode,
+            "stop": stop,
+            "return": reward,
+            "candidate_return": candidate_return,
+            "decisions": decisions,
+            "player_party_size": actor.player_size,
+            "enemy_party_size": actor.enemy_size,
+            "episode_kind": actor.episode_kind,
+            "opponent": actor.opponent_identity or "self-play",
+            "candidate_side": (
+                "both"
+                if actor.episode_kind == "mirror"
+                else "player" if actor.candidate_player else "enemy"
+            ),
+        }
+        if reason is not None:
+            record["reason"] = reason
+        rows.append(record)
+        total_decisions += decisions
+        if reward == 1:
+            player_wins += 1
+        elif reward == -1:
+            enemy_wins += 1
+        elif reward == 0:
+            draws += 1
+        if candidate_return == 1:
+            candidate_wins += 1
+        elif candidate_return == -1:
+            candidate_losses += 1
+        elif candidate_return == 0:
+            candidate_draws += 1
+        recent_battles.append({name: value for name, value in record.items() if name != "type"})
+        del recent_battles[:-12]
+
     with SearchServer() as server:
         for batch_start in range(0, len(episode_indices), config.actor_batch_size):
             batch = episode_indices[batch_start : batch_start + config.actor_batch_size]
@@ -621,17 +674,11 @@ def _collect_rows_single(
                 survivors: list[_ActorEpisode] = []
                 for actor, snapshot in zip(active, next_snapshots, strict=True):
                     if snapshot.divergence is not None:
-                        rows.append(
-                            {
-                                "type": "episode",
-                                "episode": actor.episode,
-                                "stop": "semantic-divergence",
-                                "reason": snapshot.divergence,
-                                "return": None,
-                                "decisions": decision + 1,
-                                "player_party_size": actor.player_size,
-                                "enemy_party_size": actor.enemy_size,
-                            }
+                        append_episode(
+                            actor,
+                            "semantic-divergence",
+                            decision + 1,
+                            reason=snapshot.divergence,
                         )
                         semantic_divergences += 1
                     elif snapshot.done:
@@ -640,19 +687,12 @@ def _collect_rows_single(
                             row["value"] = (
                                 reward if row["side"] == "player" else -reward
                             )
+                            if row["request"] == "battle":
+                                ordinary_actions += 1
+                                voluntary_switches += row["action"] in range(4, 10)
                         rows.extend(actor.pending)
                         examples += len(actor.pending)
-                        rows.append(
-                            {
-                                "type": "episode",
-                                "episode": actor.episode,
-                                "stop": "finished",
-                                "return": reward,
-                                "decisions": decision + 1,
-                                "player_party_size": actor.player_size,
-                                "enemy_party_size": actor.enemy_size,
-                            }
-                        )
+                        append_episode(actor, "finished", decision + 1, reward)
                         finished += 1
                     else:
                         actor.snapshot = snapshot
@@ -666,17 +706,7 @@ def _collect_rows_single(
                 for actor, snapshot in zip(active, compacted, strict=True):
                     actor.snapshot = snapshot
             for actor in active:
-                rows.append(
-                    {
-                        "type": "episode",
-                        "episode": actor.episode,
-                        "stop": "truncated",
-                        "return": None,
-                        "decisions": config.episode_budget,
-                        "player_party_size": actor.player_size,
-                        "enemy_party_size": actor.enemy_size,
-                    }
-                )
+                append_episode(actor, "truncated", config.episode_budget)
                 truncated += 1
             completed_episodes += len(batch)
             if progress_path is not None:
@@ -689,6 +719,25 @@ def _collect_rows_single(
                     truncated=truncated,
                     semantic_divergences=semantic_divergences,
                     transitions=transitions,
+                    examples=examples,
+                    player_wins=player_wins,
+                    enemy_wins=enemy_wins,
+                    draws=draws,
+                    candidate_wins=candidate_wins,
+                    candidate_losses=candidate_losses,
+                    candidate_draws=candidate_draws,
+                    mean_decisions=total_decisions / completed_episodes,
+                    voluntary_switches=voluntary_switches,
+                    ordinary_actions=ordinary_actions,
+                    voluntary_switch_rate=voluntary_switches
+                    / max(1, ordinary_actions),
+                    deep_search_decisions=deep_search_decisions,
+                    root_only_decisions=root_only_decisions,
+                    mirror_episodes=mirror_episodes,
+                    opponent_episodes=opponent_episodes,
+                    opponent_counts=opponent_counts,
+                    party_size_counts=party_size_counts,
+                    recent_battles=recent_battles,
                 )
     _jsonl(path, rows)
     if not examples:
@@ -707,6 +756,15 @@ def _collect_rows_single(
         "finished": finished,
         "truncated": truncated,
         "semantic_divergences": semantic_divergences,
+        "player_wins": player_wins,
+        "enemy_wins": enemy_wins,
+        "draws": draws,
+        "candidate_wins": candidate_wins,
+        "candidate_losses": candidate_losses,
+        "candidate_draws": candidate_draws,
+        "recent_battles": recent_battles,
+        "voluntary_switches": voluntary_switches,
+        "ordinary_actions": ordinary_actions,
         "examples": examples,
         "transitions": transitions,
         "deep_search_decisions": deep_search_decisions,

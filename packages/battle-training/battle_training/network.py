@@ -16,6 +16,9 @@ from torch import Tensor, nn
 
 from . import FEATURE_COUNT
 
+_INFERENCE_BUCKETS = (2, 4, 8, 16, 32, 64, 96, 128, 192, 256)
+_COMPILED_RECOMPILE_LIMIT = 32
+
 
 @dataclass(frozen=True)
 class TransformerConfig:
@@ -157,13 +160,19 @@ class BattleTransformer(nn.Module):
             driver = Path("/run/opengl-driver/lib")
             if "TRITON_LIBCUDA_PATH" not in os.environ and driver.is_dir():
                 os.environ["TRITON_LIBCUDA_PATH"] = str(driver)
+            # The ten intentional static batch shapes exceed Dynamo's default
+            # eight-entry per-frame recompilation limit in production search.
+            torch._dynamo.config.recompile_limit = max(
+                torch._dynamo.config.recompile_limit,
+                _COMPILED_RECOMPILE_LIMIT,
+            )
         if selected != self._inference_engine:
             self._compiled_forwards.clear()
             self._inference_engine = selected
 
     @staticmethod
     def _inference_bucket(batch: int) -> int:
-        for bucket in (2, 4, 8, 16, 32, 64, 96, 128, 192, 256):
+        for bucket in _INFERENCE_BUCKETS:
             if batch <= bucket:
                 return bucket
         return batch

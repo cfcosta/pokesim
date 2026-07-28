@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from .arena import ArenaConfig, write_arena_report
-from .monitor import serve_monitor
+from .monitor import serve_monitor, write_monitor_state
 from .network import choose_device, load_network
 from .pipeline import PipelineConfig, run_pipeline, verify_run
 from .transformer_pipeline import (
@@ -16,6 +16,11 @@ from .transformer_pipeline import (
     run_transformer_pipeline,
     verify_transformer_run,
 )
+
+
+def _failure_message(error: Exception) -> str:
+    details = str(error).splitlines()
+    return f"{type(error).__name__}: {details[0] if details else 'no detail'}"
 
 
 def _pipeline_parser(subparsers: argparse._SubParsersAction, name: str) -> None:
@@ -173,7 +178,15 @@ def main(argv: list[str] | None = None) -> int:
         else:
             report = verify_run(arguments.run.resolve())
     elif arguments.command == "transformer-resume":
-        report = resume_transformer_pipeline(arguments.output.resolve())
+        try:
+            report = resume_transformer_pipeline(arguments.output.resolve())
+        except Exception as error:
+            write_monitor_state(
+                arguments.output.resolve(),
+                "failed",
+                message=_failure_message(error),
+            )
+            raise
     elif arguments.command.startswith("transformer-"):
         if (
             arguments.iterations < 1
@@ -237,7 +250,15 @@ def main(argv: list[str] | None = None) -> int:
             ),
             heuristic_opponents=arguments.heuristic_opponents,
         )
-        report = run_transformer_pipeline(arguments.output.resolve(), config)
+        try:
+            report = run_transformer_pipeline(arguments.output.resolve(), config)
+        except Exception as error:
+            write_monitor_state(
+                arguments.output.resolve(),
+                "failed",
+                message=_failure_message(error),
+            )
+            raise
     else:
         if (
             arguments.iterations < 1

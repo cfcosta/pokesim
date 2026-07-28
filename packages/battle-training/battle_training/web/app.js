@@ -94,7 +94,7 @@ function renderKpis(data) {
   const model = data.model || {};
   const checkpoint = model.checkpoint;
   const latest = data.latest;
-  const collection = latest?.collection;
+  const collection = data.collection || latest?.collection;
   const promotion = latestPromotion(data);
   const network = model.network || {};
 
@@ -228,7 +228,7 @@ function renderActors(data) {
 }
 
 function renderBattlePopulation(data) {
-  const collection = data.latest?.collection;
+  const collection = data.collection || data.latest?.collection;
   const root = $("battle-stats");
   clear(root);
   const stats = [
@@ -258,6 +258,73 @@ function renderBattlePopulation(data) {
       cell.title = `${player}v${enemy}: ${count} battles`;
       heatmap.append(cell);
     }
+  }
+}
+
+function selfplayOutcome(battle) {
+  if (battle.stop !== "finished") return title(battle.stop);
+  const result = battle.candidate_side === "both" ? battle.return : battle.candidate_return;
+  if (result === 1) return "Win";
+  if (result === -1) return "Loss";
+  if (result === 0) return "Draw";
+  return "—";
+}
+
+function renderSelfplay(data) {
+  const collection = data.collection;
+  const body = $("selfplay-battles");
+  const stats = $("collection-results");
+  clear(body);
+  clear(stats);
+  const completed = collection?.completed ?? ((collection?.finished || 0) + (collection?.truncated || 0) + (collection?.semantic_divergences || 0));
+  const total = collection?.total ?? completed;
+  const ratio = total ? completed / total : 0;
+  $("collection-progress-bar").style.width = `${Math.min(100, ratio * 100)}%`;
+  text($("collection-record"), collection ? `${number(completed)} / ${number(total)} battles · ${number(collection.finished)} returned` : "Waiting for results");
+
+  const summaries = [
+    ["Player W–L–D", collection ? `${number(collection.player_wins)}–${number(collection.enemy_wins)}–${number(collection.draws)}` : "—"],
+    ["Candidate vs population", collection ? `${number(collection.candidate_wins)}–${number(collection.candidate_losses)}–${number(collection.candidate_draws)}` : "—"],
+    ["Examples", collection ? compact(collection.examples) : "—"],
+    ["Native transitions", collection ? compact(collection.transitions) : "—"],
+    ["Nonreturns", collection ? number((collection.truncated || 0) + (collection.semantic_divergences || 0)) : "—"],
+  ];
+  for (const [name, value] of summaries) {
+    const card = element("div", "mini-stat");
+    card.append(element("span", "", name), element("strong", "", value));
+    stats.append(card);
+  }
+
+  const battles = collection?.recent_battles || [];
+  if (!battles.length) {
+    const row = element("tr");
+    const cell = element("td", "empty-cell", "No completed self-play battles yet");
+    cell.colSpan = 7;
+    row.append(cell);
+    body.append(row);
+    return;
+  }
+  for (const battle of battles) {
+    const outcome = selfplayOutcome(battle);
+    const population = battle.episode_kind === "mirror" ? "Mirror self-play" : battle.opponent;
+    const values = [
+      `#${battle.episode}`,
+      population || title(battle.episode_kind),
+      title(battle.candidate_side),
+      `${battle.player_party_size}v${battle.enemy_party_size}`,
+      outcome,
+      number(battle.decisions),
+      battle.reason ? `${title(battle.stop)} · ${battle.reason}` : title(battle.stop),
+    ];
+    const row = element("tr");
+    values.forEach((value, index) => {
+      let className = index === 1 ? "population-name" : "";
+      if (index === 4) className = outcome === "Win" ? "result-win" : outcome === "Loss" ? "result-loss" : outcome === "Draw" ? "result-draw" : "";
+      const cell = element("td", className, value);
+      if (index === 1) cell.title = value;
+      row.append(cell);
+    });
+    body.append(row);
   }
 }
 
@@ -398,6 +465,7 @@ function render(data) {
   renderModel(data);
   renderActors(data);
   renderBattlePopulation(data);
+  renderSelfplay(data);
   renderGates(data);
   renderPromotionBattles(data);
   renderCampaign(data);
