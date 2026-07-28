@@ -48,7 +48,7 @@ def main() -> int:
         root = server.reset(arguments.seed, 17, 6, 6)
         player_actions = legal_actions(root.player_mask)
         enemy_actions = legal_actions(root.enemy_mask)
-        for batch_size in (1, 8, 32, 96):
+        for batch_size in (1, 8, 16, 32, 96):
             requests = [
                 (
                     root.handle,

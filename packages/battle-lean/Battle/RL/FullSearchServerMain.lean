@@ -302,22 +302,68 @@ private def parseBatchSpec (raw : String) : Option (Nat × Nat × Nat × Nat) :=
   | some handle, some player, some enemy, some seed => some (handle, player, enemy, seed)
   | _, _, _, _ => none
 
-private def runBatch (freshChance : Bool) : List String → Array SearchState →
+private def parallelBatchThreshold : Nat := 16
+private def parallelBatchWorkers : Nat := 8
+
+private def parallelMapChunks (values : Array α) (transform : α → β) : Array β :=
+    if values.size < parallelBatchThreshold then values.map transform else Id.run do
+  let workerCount := min parallelBatchWorkers values.size
+  let chunkSize := (values.size + workerCount - 1) / workerCount
+  let mut tasks : Array (Task (Array β)) := Array.mkEmpty workerCount
+  for worker in [:workerCount] do
+    let start := worker * chunkSize
+    let stop := min values.size (start + chunkSize)
+    if start < stop then
+      let chunk := values.extract start stop
+      tasks := tasks.push (Task.spawn fun _ => chunk.map transform)
+  let mut output := Array.mkEmpty values.size
+  for task in tasks do
+    for value in task.get do
+      output := output.push value
+  return output
+
+private def evaluateBatchRequest (freshChance : Bool) (states : Array SearchState)
+    (request : Nat × Nat × Nat × Nat) : Except String SearchState :=
+  let (handle, playerId, enemyId, chanceSeed) := request
+  match states[handle]? with
+  | none => .error "invalid-handle"
+  | some state =>
+      let chance := if freshChance then some chanceSeed else none
+      match stepNative state playerId enemyId chance with
+      | .failed reason => .error reason
+      | .transitioned next => .ok next
+
+private def runBatchSequential (freshChance : Bool) : List String → Array SearchState →
     Array (Nat × SearchState) → Except String (Array SearchState × Array (Nat × SearchState))
   | [], states, results => .ok (states, results)
   | raw :: rest, states, results =>
       match parseBatchSpec raw with
       | none => .error "invalid-batch-step"
-      | some (handle, playerId, enemyId, chanceSeed) =>
-          match states[handle]? with
-          | none => .error "invalid-handle"
-          | some state =>
-              let chance := if freshChance then some chanceSeed else none
-              match stepNative state playerId enemyId chance with
-              | .failed reason => .error reason
-              | .transitioned next =>
-                  let nextHandle := states.size
-                  runBatch freshChance rest (states.push next) (results.push (nextHandle, next))
+      | some request =>
+          match evaluateBatchRequest freshChance states request with
+          | .error reason => .error reason
+          | .ok next =>
+              let handle := states.size
+              runBatchSequential freshChance rest (states.push next) (results.push (handle, next))
+
+private def runBatch (freshChance : Bool) (raw : List String) (states : Array SearchState) :
+    Except String (Array SearchState × Array (Nat × SearchState)) := do
+  if raw.length < parallelBatchThreshold then
+    runBatchSequential freshChance raw states #[]
+  else
+    let requests ← raw.mapM fun request =>
+      match parseBatchSpec request with
+      | some parsed => .ok parsed
+      | none => .error "invalid-batch-step"
+    let requests := requests.toArray
+    if requests.all fun request => request.1 < states.size then
+      let transitions := parallelMapChunks requests (evaluateBatchRequest freshChance states)
+      transitions.foldlM (fun (states, results) transition => do
+        let next ← transition
+        let handle := states.size
+        pure (states.push next, results.push (handle, next))) (states, #[])
+    else
+      runBatchSequential freshChance raw states #[]
 
 private def compactStates (handles : List Nat) (states : Array SearchState) :
     Option (Array SearchState) :=
@@ -480,15 +526,15 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
     | some "batch" =>
         match token tokens 2 with
         | some rawBatch =>
-            match runBatch true (rawBatch.splitOn ";") states #[] with
+            match runBatch true (rawBatch.splitOn ";") states with
             | .error reason =>
                 emit output (failure request reason)
                 serve input output states
             | .ok (nextStates, results) =>
-                let snapshots := results.toList.map fun result =>
+                let snapshots := parallelMapChunks results fun result =>
                   snapshotJson result.1 result.2 false
                 emit output (simpleSuccess request
-                  s!",\"snapshots\":[{String.intercalate "," snapshots}]")
+                  s!",\"snapshots\":[{String.intercalate "," snapshots.toList}]")
                 serve input output nextStates
         | none =>
             emit output (failure request "invalid-batch")
@@ -496,15 +542,15 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
     | some "batch-episode" =>
         match token tokens 2 with
         | some rawBatch =>
-            match runBatch false (rawBatch.splitOn ";") states #[] with
+            match runBatch false (rawBatch.splitOn ";") states with
             | .error reason =>
                 emit output (failure request reason)
                 serve input output states
             | .ok (nextStates, results) =>
-                let snapshots := results.toList.map fun result =>
+                let snapshots := parallelMapChunks results fun result =>
                   snapshotJson result.1 result.2
                 emit output (simpleSuccess request
-                  s!",\"snapshots\":[{String.intercalate "," snapshots}]")
+                  s!",\"snapshots\":[{String.intercalate "," snapshots.toList}]")
                 serve input output nextStates
         | none =>
             emit output (failure request "invalid-batch-episode")
