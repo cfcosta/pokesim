@@ -10,7 +10,7 @@ import shutil
 import tempfile
 from collections.abc import Iterable
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +27,7 @@ from . import (
 )
 from .arena import (
     ArenaConfig,
+    _compact_inspection,
     run_campaign_arena,
     run_paired_arena,
     run_traced_arena,
@@ -162,10 +163,12 @@ class _ActorEpisode:
     chance_rng: random.Random
     opponent_rng: random.Random
     tier_rng: random.Random
+    initial: dict[str, Any] | None = None
+    timeline: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _pipeline_id() -> str:
-    return "transformer-variable-party-bf16-tree-v10"
+    return "transformer-variable-party-bf16-tree-v11"
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
@@ -351,6 +354,21 @@ def _policy_entropy(policy: list[float]) -> float:
     )
 
 
+def _top_policy(policy: list[float], legal_mask: int) -> list[dict[str, Any]]:
+    ranked = sorted(
+        (
+            (action, float(probability))
+            for action, probability in enumerate(policy)
+            if legal_mask & (1 << action)
+        ),
+        key=lambda item: (-item[1], item[0]),
+    )
+    return [
+        {"action": action, "probability": probability}
+        for action, probability in ranked[:3]
+    ]
+
+
 def _jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     payload = b"".join(
         (json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n").encode()
@@ -374,7 +392,9 @@ def _collect_rows_single(
     if not episode_indices:
         raise ValueError("collection worker requires at least one episode")
     if progress_path is not None:
-        write_actor_progress(progress_path, process, 0, len(episode_indices))
+        write_actor_progress(
+            progress_path, process, 0, len(episode_indices), iteration=iteration
+        )
     completed_episodes = 0
     meta: dict[str, Any] = {
         "type": "meta",
@@ -460,6 +480,8 @@ def _collect_rows_single(
                 if actor.episode_kind == "mirror"
                 else "player" if actor.candidate_player else "enemy"
             ),
+            "initial": actor.initial,
+            "timeline": actor.timeline,
         }
         if reason is not None:
             record["reason"] = reason
@@ -550,6 +572,11 @@ def _collect_rows_single(
                         ),
                     )
                 )
+            inspections = server.inspect_many(
+                [actor.snapshot.handle for actor in active]
+            )
+            for actor, inspection in zip(active, inspections, strict=True):
+                actor.initial = _compact_inspection(inspection)
             for decision in range(config.episode_budget):
                 searched = decision % config.search_every == 0
                 results: dict[int, SearchResult] = {}
@@ -615,6 +642,42 @@ def _collect_rows_single(
                             root_only_decisions += 1
                     else:
                         target_kind = "policy-rollout"
+                    search_diagnostics = result.diagnostics or {}
+                    actor.timeline.append(
+                        {
+                            "turn": decision + 1,
+                            "request": snapshot.request,
+                            "target_kind": target_kind,
+                            "root_value": result.root_value,
+                            "exploitability": result.exploitability,
+                            "payoff_spread": result.payoff_spread,
+                            "player_action": result.player_action,
+                            "enemy_action": result.enemy_action,
+                            "player_legal_mask": snapshot.player_mask,
+                            "enemy_legal_mask": snapshot.enemy_mask,
+                            "player_state_hash": snapshot.player_hash,
+                            "enemy_state_hash": snapshot.enemy_hash,
+                            "player_top_policy": _top_policy(
+                                list(result.player_policy), snapshot.player_mask
+                            ),
+                            "enemy_top_policy": _top_policy(
+                                list(result.enemy_policy), snapshot.enemy_mask
+                            ),
+                            "tree_nodes": search_diagnostics.get("tree_nodes"),
+                            "tree_simulations": search_diagnostics.get(
+                                "tree_simulations"
+                            ),
+                            "tree_max_depth": search_diagnostics.get(
+                                "tree_max_depth"
+                            ),
+                            "chance_outcomes": search_diagnostics.get(
+                                "chance_outcomes"
+                            ),
+                            "tree_converged": search_diagnostics.get(
+                                "tree_converged"
+                            ),
+                        }
+                    )
                     player_row = {
                         "type": "example",
                         "episode": actor.episode,
@@ -720,6 +783,7 @@ def _collect_rows_single(
                     process,
                     completed_episodes,
                     len(episode_indices),
+                    iteration=iteration,
                     finished=finished,
                     truncated=truncated,
                     semantic_divergences=semantic_divergences,
@@ -945,6 +1009,17 @@ def _merge_collection_rows(
     )
     _jsonl(path, [meta, *rows])
     example_rows = [row for row in rows if row["type"] == "example"]
+    episode_rows = [row for row in rows if row["type"] == "episode"]
+    recent_battles = [
+        {
+            name: value
+            for name, value in row.items()
+            if name not in {"type", "initial", "timeline"}
+        }
+        for row in sorted(
+            episode_rows, key=lambda row: int(row["episode"]), reverse=True
+        )[:20]
+    ]
     tree_rows = [row for row in example_rows if "tree_nodes" in row]
     exploitabilities = [
         row["search_exploitability"]
@@ -980,6 +1055,19 @@ def _merge_collection_rows(
         "finished": total("finished"),
         "truncated": total("truncated"),
         "semantic_divergences": total("semantic_divergences"),
+        "player_wins": sum(row.get("return") == 1 for row in episode_rows),
+        "enemy_wins": sum(row.get("return") == -1 for row in episode_rows),
+        "draws": sum(row.get("return") == 0 for row in episode_rows),
+        "candidate_wins": sum(
+            row.get("candidate_return") == 1 for row in episode_rows
+        ),
+        "candidate_losses": sum(
+            row.get("candidate_return") == -1 for row in episode_rows
+        ),
+        "candidate_draws": sum(
+            row.get("candidate_return") == 0 for row in episode_rows
+        ),
+        "recent_battles": recent_battles,
         "examples": len(example_rows),
         "transitions": transitions,
         "deep_search_decisions": total("deep_search_decisions"),
@@ -2006,7 +2094,31 @@ def run_transformer_pipeline(
             config.episode_budget,
             config.seed + 70_000_000 + iteration * 10_007,
             config.promotion_seed_count,
+            capture_details=True,
         )
+        promotion_detail_path = (
+            root / "matches" / f"promotion-{iteration:03d}.json"
+        )
+        write_json(
+            promotion_detail_path,
+            {
+                "iteration": iteration,
+                "pairing": promotion["pairing"],
+                "side_swap_complete": promotion["side_swap_complete"],
+                "battles": promotion["battles"],
+            },
+        )
+        promotion["detail_artifact"] = promotion_detail_path.relative_to(
+            root
+        ).as_posix()
+        promotion["battles"] = [
+            {
+                name: value
+                for name, value in battle.items()
+                if name not in {"initial", "final", "timeline"}
+            }
+            for battle in promotion["battles"]
+        ]
         live_promotion = {
             "games": promotion["games"],
             "wins": promotion["wins"],

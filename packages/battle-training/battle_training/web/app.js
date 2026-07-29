@@ -363,6 +363,7 @@ function renderSelfplay(data) {
   }
 
   const battles = collection?.recent_battles || [];
+  const iteration = collection?.iteration || data.status?.iteration || data.latest?.iteration;
   if (!battles.length) {
     const row = element("tr");
     const cell = element("td", "empty-cell", "No completed self-play battles yet");
@@ -391,6 +392,7 @@ function renderSelfplay(data) {
       if (index === 1) cell.title = value;
       row.append(cell);
     });
+    makeMatchLink(row, "selfplay", iteration, battle.episode);
     body.append(row);
   }
 }
@@ -421,6 +423,150 @@ function renderGates(data) {
   text(badge, accepted ? "Promoted" : "Incumbent kept");
 }
 
+function actionLabel(action) {
+  if (action === null || action === undefined) return "—";
+  if (action < 4) return `Move ${action + 1}`;
+  if (action < 10) return `Switch to slot ${action - 3}`;
+  if (action === 10) return "No action";
+  if (action === 11) return "Struggle";
+  if (action === 12) return "Run";
+  return `Action ${action}`;
+}
+
+function makeMatchLink(row, kind, iteration, match) {
+  row.classList.add("match-link");
+  row.tabIndex = 0;
+  row.setAttribute("role", "button");
+  row.setAttribute("aria-label", `Open ${kind} match ${match} details`);
+  const open = () => openMatchPane(kind, iteration, match);
+  row.addEventListener("click", open);
+  row.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      open();
+    }
+  });
+}
+
+function renderTeamState(root, label, state) {
+  if (!state?.player || !state?.enemy) return;
+  const section = element("section", "match-section");
+  section.append(element("h3", "", label));
+  const teams = element("div", "team-grid");
+  for (const [sideName, sideLabel] of [["player", "Player team"], ["enemy", "Enemy team"]]) {
+    const side = state[sideName];
+    const card = element("div", "team-card");
+    card.append(element("h4", "", `${sideLabel} · active slot ${Number(side.active) + 1}`));
+    const list = element("ul", "team-list");
+    for (const [index, member] of (side.party || []).entries()) {
+      const item = element("li");
+      item.append(
+        element("strong", "", `${index === side.active ? "● " : ""}${member.name} · L${member.level}`),
+        element("span", "", `${member.hp}/${member.max_hp} HP${member.status ? ` · status ${member.status}` : ""}`),
+      );
+      list.append(item);
+    }
+    card.append(list);
+    if (side.moves?.length) {
+      card.append(element("p", "move-list", `Active moves: ${side.moves.map((move) => move.name).join(" · ")}`));
+    }
+    teams.append(card);
+  }
+  section.append(teams);
+  root.append(section);
+}
+
+function policyPreview(rows) {
+  if (!rows?.length) return "";
+  return rows.map((row) => `${actionLabel(row.action)} ${pct(row.probability)}`).join(" · ");
+}
+
+function renderMatchDetail(detail) {
+  const body = $("match-pane-body");
+  clear(body);
+  const promotion = detail.kind === "promotion";
+  const identity = promotion ? `Promotion game ${detail.game}` : `Self-play episode ${detail.episode}`;
+  text($("match-pane-label"), promotion ? "Paired promotion" : "Training collection");
+  text($("match-pane-title"), identity);
+
+  const result = promotion ? outcomeLabel(detail) : selfplayOutcome(detail);
+  const summaries = [
+    ["Iteration", number(detail.iteration)],
+    ["Result", result],
+    ["Party", `${detail.player_party_size}v${detail.enemy_party_size}`],
+    ["Stop", title(detail.stop)],
+    ["Candidate side", title(detail.candidate_side)],
+    [promotion ? "Pair" : "Population", promotion ? `#${detail.pair}` : (detail.opponent || title(detail.episode_kind))],
+    ["Turns", number(detail.timeline?.length ?? detail.decisions)],
+    ["Return", detail.candidate_return ?? detail.return_ ?? detail.return ?? "—"],
+  ];
+  const grid = element("div", "match-summary-grid");
+  for (const [name, value] of summaries) {
+    const card = element("div", "mini-stat");
+    card.append(element("span", "", name), element("strong", "", String(value ?? "—")));
+    grid.append(card);
+  }
+  body.append(grid);
+  renderTeamState(body, "Initial state", detail.initial);
+  renderTeamState(body, "Final recorded state", detail.final);
+
+  const timeline = detail.timeline || [];
+  const section = element("section", "match-section");
+  section.append(element("h3", "", "Decision timeline"));
+  if (!timeline.length) {
+    section.append(element("p", "empty-state", "A decision timeline was not recorded for this historical match."));
+    body.append(section);
+    return;
+  }
+  const wrap = element("div", "table-wrap timeline-table");
+  const table = element("table");
+  const head = element("thead");
+  const headerRow = element("tr");
+  for (const heading of ["Turn", "Request", "Player", "Enemy", "Search", "Top policies"]) headerRow.append(element("th", "", heading));
+  head.append(headerRow);
+  const tbody = element("tbody");
+  for (const turn of timeline) {
+    const row = element("tr");
+    const search = turn.root_value == null
+      ? "—"
+      : `v ${number(turn.root_value, 3)}${turn.exploitability == null ? "" : ` · ε ${number(turn.exploitability, 3)}`}${turn.tree_nodes == null ? "" : ` · ${number(turn.tree_nodes)} nodes / d${number(turn.tree_max_depth)}`}`;
+    const policies = element("td", "policy-preview");
+    const playerPolicy = policyPreview(turn.player_top_policy);
+    const enemyPolicy = policyPreview(turn.enemy_top_policy);
+    policies.textContent = playerPolicy || enemyPolicy ? `P: ${playerPolicy || "—"}\nE: ${enemyPolicy || "—"}` : "—";
+    row.append(
+      element("td", "", number(turn.turn)),
+      element("td", "", title(turn.request)),
+      element("td", "", actionLabel(turn.player_action)),
+      element("td", "", actionLabel(turn.enemy_action)),
+      element("td", "", search),
+      policies,
+    );
+    tbody.append(row);
+  }
+  table.append(head, tbody);
+  wrap.append(table);
+  section.append(wrap);
+  body.append(section);
+}
+
+async function openMatchPane(kind, iteration, match) {
+  const pane = $("match-pane");
+  text($("match-pane-label"), "Recorded match");
+  text($("match-pane-title"), "Loading details…");
+  clear($("match-pane-body"));
+  $("match-pane-body").append(element("p", "empty-state", "Reading the immutable match record…"));
+  if (!pane.open) pane.showModal();
+  try {
+    const response = await fetch(`/api/match?kind=${encodeURIComponent(kind)}&iteration=${iteration}&match=${match}`, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Match detail unavailable (HTTP ${response.status})`);
+    renderMatchDetail(await response.json());
+  } catch (error) {
+    clear($("match-pane-body"));
+    $("match-pane-body").append(element("p", "empty-state", error.message));
+  }
+}
+
 function outcomeLabel(battle) {
   if (battle.stop !== "finished") return title(battle.stop);
   if (battle.candidate_return === 1) return "Win";
@@ -434,6 +580,7 @@ function renderPromotionBattles(data) {
   clear(body);
   text($("battle-record"), promotion ? `${number(promotion.wins)}–${number(promotion.losses)} · ${number(promotion.draws)} draws` : "—");
   const battles = promotion?.battles || [];
+  const iteration = data.status?.promotion ? data.status.iteration : data.latest?.iteration;
   if (!battles.length) {
     const row = element("tr");
     const cell = element("td", "empty-cell", "No battle-level records yet");
@@ -457,6 +604,7 @@ function renderPromotionBattles(data) {
       const cell = element("td", index === 3 ? (outcome === "Win" ? "pass" : outcome === "Loss" ? "fail" : "") : "", value);
       row.append(cell);
     });
+    makeMatchLink(row, "promotion", iteration, battle.game);
     body.append(row);
   }
 }
@@ -552,6 +700,11 @@ async function refresh() {
     text($("last-updated"), error.message);
   }
 }
+
+$("match-pane-close").addEventListener("click", () => $("match-pane").close());
+$("match-pane").addEventListener("click", (event) => {
+  if (event.target === $("match-pane")) $("match-pane").close();
+});
 
 refresh();
 window.setInterval(refresh, 2000);

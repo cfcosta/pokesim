@@ -247,6 +247,8 @@ table { width: 100%; border-collapse: collapse; font-size: 0.72rem; font-variant
 th { padding: 0 12px 10px; color: var(--muted); font-size: 0.64rem; font-weight: 650; letter-spacing: 0.055em; text-align: left; text-transform: uppercase; white-space: nowrap; }
 td { padding: 11px 12px; border-top: 1px solid var(--border); white-space: nowrap; }
 tbody tr:hover { background: rgba(255,255,255,0.018); }
+tr.match-link { cursor: pointer; outline: none; }
+tr.match-link:hover, tr.match-link:focus-visible { background: rgba(78,160,255,0.07); box-shadow: inset 3px 0 0 var(--blue); }
 .empty-cell, .empty-state { color: var(--muted); font-size: 0.73rem; }
 .empty-cell { height: 86px; text-align: center; }
 
@@ -256,6 +258,29 @@ tbody tr:hover { background: rgba(255,255,255,0.018); }
 .campaign-case strong { display: block; margin-top: 5px; font-size: 0.88rem; font-variant-numeric: tabular-nums; }
 .campaign-case.pass-case { border-color: rgba(82,199,137,0.23); }
 .campaign-case.fail-case { border-color: rgba(240,77,85,0.22); }
+
+.match-pane { width: min(760px, 94vw); height: 100dvh; max-width: none; max-height: none; margin: 0 0 0 auto; padding: 0; border: 0; color: var(--text); background: var(--surface); box-shadow: -20px 0 70px rgba(0,0,0,0.45); }
+.match-pane::backdrop { background: rgba(5,7,11,0.7); backdrop-filter: blur(3px); }
+.match-pane[open] { animation: pane-in 180ms ease-out; }
+.match-pane-shell { min-height: 100%; }
+.match-pane-header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 22px 24px; border-bottom: 1px solid var(--border); background: rgba(18,22,30,0.96); backdrop-filter: blur(12px); }
+.match-pane-header h2 { margin: 4px 0 0; font-size: 1.15rem; }
+.pane-close { padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: 7px; color: var(--text); background: var(--surface-soft); cursor: pointer; }
+.pane-close:hover { border-color: var(--blue); }
+.match-pane-body { display: grid; gap: 18px; padding: 24px; }
+.match-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.match-section { display: grid; gap: 10px; }
+.match-section h3 { margin: 0; font-size: 0.84rem; }
+.team-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.team-card { padding: 12px; border: 1px solid var(--border); border-radius: var(--inner-radius); background: var(--surface-soft); }
+.team-card h4 { margin: 0 0 9px; font-size: 0.75rem; }
+.team-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.team-list li { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 0.68rem; }
+.team-list strong { color: var(--text); font-weight: 650; }
+.move-list { margin: 10px 0 0; color: var(--muted); font-size: 0.66rem; line-height: 1.5; }
+.timeline-table td { vertical-align: top; white-space: normal; }
+.policy-preview { color: var(--muted); font-size: 0.62rem; line-height: 1.45; white-space: pre-line !important; }
+@keyframes pane-in { from { transform: translateX(24px); opacity: 0.75; } to { transform: translateX(0); opacity: 1; } }
 
 footer { display: flex; justify-content: space-between; gap: 20px; padding: 20px clamp(20px, 4vw, 56px); border-top: 1px solid var(--border); color: var(--muted); font-size: 0.65rem; }
 
@@ -281,11 +306,13 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 20px
   .battle-stats { grid-template-columns: repeat(2, 1fr); }
   .collection-results { grid-template-columns: repeat(2, 1fr); }
   .diagnostic-grid { grid-template-columns: repeat(2, 1fr); }
+  .match-summary-grid { grid-template-columns: repeat(2, 1fr); }
+  .team-grid { grid-template-columns: 1fr; }
   .heatmap-wrap { grid-template-columns: 1fr; }
   .campaign-grid { grid-template-columns: repeat(2, 1fr); }
   footer { padding: 18px; flex-direction: column; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
 }

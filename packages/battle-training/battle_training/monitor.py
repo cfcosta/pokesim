@@ -13,7 +13,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .artifacts import sha256
 
@@ -175,6 +175,9 @@ def _aggregate_actor_progress(actors: list[dict[str, Any]]) -> dict[str, Any] | 
     result["recent_battles"] = sorted(
         recent, key=lambda battle: int(battle.get("episode", -1)), reverse=True
     )[:20]
+    result["iteration"] = max(
+        (int(actor.get("iteration", 0)) for actor in actors), default=0
+    )
     result["updated_at"] = max(
         (str(actor.get("updated_at", "")) for actor in actors), default=""
     )
@@ -259,6 +262,46 @@ def build_dashboard_snapshot(root: Path) -> dict[str, Any]:
     }
 
 
+def build_match_detail(
+    root: Path, kind: str, iteration: int, match: int
+) -> dict[str, Any] | None:
+    """Load one recorded match without projecting all timelines every poll."""
+    root = root.resolve()
+    if iteration < 1 or match < 0:
+        raise ValueError("iteration and match must be nonnegative")
+    if kind == "selfplay":
+        for path in sorted((root / ".monitor").glob("actor-*.json")):
+            actor = _read_json(path) or {}
+            if int(actor.get("iteration", -1)) != iteration:
+                continue
+            for battle in actor.get("recent_battles", []):
+                if int(battle.get("episode", -1)) == match:
+                    return {"kind": kind, "iteration": iteration, **battle}
+        shard = root / "shards" / f"iteration-{iteration:03d}.jsonl"
+        try:
+            with shard.open() as source:
+                for line in source:
+                    row = json.loads(line)
+                    if row.get("type") == "episode" and row.get("episode") == match:
+                        return {"kind": kind, "iteration": iteration, **row}
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return None
+        return None
+    if kind == "promotion":
+        detail = _read_json(root / "matches" / f"promotion-{iteration:03d}.json")
+        if detail is not None:
+            for battle in detail.get("battles", []):
+                if int(battle.get("game", -1)) == match:
+                    return {"kind": kind, "iteration": iteration, **battle}
+        metric = _read_json(root / "metrics" / f"iteration-{iteration:03d}.json")
+        if metric is not None:
+            for battle in metric.get("promotion", {}).get("battles", []):
+                if int(battle.get("game", -1)) == match:
+                    return {"kind": kind, "iteration": iteration, **battle}
+        return None
+    raise ValueError("match kind must be selfplay or promotion")
+
+
 class DashboardStore:
     def __init__(self, root: Path) -> None:
         self.root = root.resolve()
@@ -292,6 +335,9 @@ class DashboardStore:
                 self._snapshot = build_dashboard_snapshot(self.root)
                 self._signature = signature
             return self._snapshot
+
+    def match(self, kind: str, iteration: int, match: int) -> dict[str, Any] | None:
+        return build_match_detail(self.root, kind, iteration, match)
 
 
 class _MonitorServer(ThreadingHTTPServer):
@@ -335,6 +381,30 @@ class _MonitorHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/health":
             self._send(HTTPStatus.OK, b'{"ok":true}', "application/json")
+            return
+        if path == "/api/match":
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                kind = query.get("kind", [""])[0]
+                iteration = int(query.get("iteration", [""])[0])
+                match = int(query.get("match", [""])[0])
+                detail = self.server.store.match(kind, iteration, match)
+            except (TypeError, ValueError):
+                self._send(
+                    HTTPStatus.BAD_REQUEST,
+                    b'{"error":"invalid match query"}',
+                    "application/json",
+                )
+                return
+            if detail is None:
+                self._send(
+                    HTTPStatus.NOT_FOUND,
+                    b'{"error":"match detail unavailable"}',
+                    "application/json",
+                )
+                return
+            payload = json.dumps(detail, separators=(",", ":")).encode()
+            self._send(HTTPStatus.OK, payload, "application/json; charset=utf-8")
             return
         static = _STATIC_FILES.get(path)
         if static is None:

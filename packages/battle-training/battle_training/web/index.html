@@ -173,6 +173,16 @@
     </section>
   </main>
 
+  <dialog id="match-pane" class="match-pane" aria-labelledby="match-pane-title">
+    <div class="match-pane-shell">
+      <header class="match-pane-header">
+        <div><span id="match-pane-label" class="label">Recorded match</span><h2 id="match-pane-title">Match details</h2></div>
+        <button id="match-pane-close" class="pane-close" type="button" aria-label="Close match details">Close</button>
+      </header>
+      <div id="match-pane-body" class="match-pane-body"><p class="empty-state">Select a battle to inspect it.</p></div>
+    </div>
+  </dialog>
+
   <footer>
     <span>Read-only artifact projection</span>
     <span id="pipeline-footer">Pipeline unavailable</span>

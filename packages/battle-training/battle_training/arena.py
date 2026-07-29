@@ -153,6 +153,9 @@ class _FastArenaEpisode:
     snapshot: Any
     result: int | None = None
     stop: str = "truncated"
+    initial: dict[str, Any] | None = None
+    final: dict[str, Any] | None = None
+    timeline: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -162,6 +165,25 @@ class _TracedArenaEpisode(_FastArenaEpisode):
     replay_path: Path | None = None
     candidate_metrics: SkillMetrics = field(default_factory=SkillMetrics)
     baseline_metrics: SkillMetrics = field(default_factory=SkillMetrics)
+
+
+def _compact_inspection(inspection: dict[str, Any]) -> dict[str, Any]:
+    def side(name: str) -> dict[str, Any]:
+        source = inspection[name]
+        return {
+            "active": source["active"],
+            "party": [dict(member) for member in source["party"]],
+            "moves": [dict(move) for move in source["moves"]],
+            "stages": list(source["stages"]),
+            "volatile": list(source["volatile"]),
+        }
+
+    return {
+        "request": inspection["request"],
+        "player": side("player"),
+        "enemy": side("enemy"),
+        "events": [dict(event) for event in inspection.get("events", [])],
+    }
 
 
 def _sample_policy(probabilities: list[float], rng: random.Random) -> int:
@@ -527,6 +549,7 @@ def _run_fast_arena_games(
     seed_count: int,
     campaign: bool,
     batch_size: int = 256,
+    capture_details: bool = False,
 ) -> list[_FastArenaEpisode]:
     completed: list[_FastArenaEpisode] = []
     server = SearchServer()
@@ -580,11 +603,35 @@ def _run_fast_arena_games(
                             episode.player_size,
                             episode.enemy_size,
                         )
+                if capture_details:
+                    inspections = server.inspect_many(
+                        [episode.snapshot.handle for episode in episodes]
+                    )
+                    for episode, inspection in zip(
+                        episodes, inspections, strict=True
+                    ):
+                        episode.initial = _compact_inspection(inspection)
                 active = episodes.copy()
-                for _ in range(budget):
+                for decision in range(budget):
                     if not active:
                         break
                     actions = _network_actions_many(active, batch_size)
+                    if capture_details:
+                        for episode, (player_action, enemy_action) in zip(
+                            active, actions, strict=True
+                        ):
+                            episode.timeline.append(
+                                {
+                                    "turn": decision + 1,
+                                    "request": episode.snapshot.request,
+                                    "player_action": player_action,
+                                    "enemy_action": enemy_action,
+                                    "player_legal_mask": episode.snapshot.player_mask,
+                                    "enemy_legal_mask": episode.snapshot.enemy_mask,
+                                    "player_state_hash": episode.snapshot.player_hash,
+                                    "enemy_state_hash": episode.snapshot.enemy_hash,
+                                }
+                            )
                     snapshots = server.episode_steps(
                         [
                             (episode.snapshot.handle, player_action, enemy_action)
@@ -594,15 +641,26 @@ def _run_fast_arena_games(
                         ]
                     )
                     survivors = []
+                    stopped = []
                     for episode, snapshot in zip(active, snapshots, strict=True):
                         episode.snapshot = snapshot
                         if snapshot.divergence is not None:
                             episode.stop = "semantic-divergence"
+                            stopped.append(episode)
                         elif snapshot.done:
                             episode.result = snapshot.terminal_return
                             episode.stop = "finished"
+                            stopped.append(episode)
                         else:
                             survivors.append(episode)
+                    if capture_details and stopped:
+                        inspections = server.inspect_many(
+                            [episode.snapshot.handle for episode in stopped]
+                        )
+                        for episode, inspection in zip(
+                            stopped, inspections, strict=True
+                        ):
+                            episode.final = _compact_inspection(inspection)
                     active = survivors
                     if active:
                         compacted = server.compact_many(
@@ -610,6 +668,12 @@ def _run_fast_arena_games(
                         )
                         for episode, snapshot in zip(active, compacted, strict=True):
                             episode.snapshot = snapshot
+                if capture_details and active:
+                    inspections = server.inspect_many(
+                        [episode.snapshot.handle for episode in active]
+                    )
+                    for episode, inspection in zip(active, inspections, strict=True):
+                        episode.final = _compact_inspection(inspection)
             except NativeRequestTimeout:
                 for episode in episodes:
                     if episode.stop == "truncated":
@@ -631,6 +695,7 @@ def run_paired_arena(
     seed_count: int = 8,
     *,
     campaign: bool = False,
+    capture_details: bool = False,
 ) -> dict[str, Any]:
     """Fast paired, side-swapped evaluation with nonfinishes scored as losses."""
     if games < 2 or games % 2:
@@ -654,7 +719,14 @@ def run_paired_arena(
         index: [] for index in range(len(_CAMPAIGN_NAMES))
     }
     episodes = _run_fast_arena_games(
-        candidate, baseline, games, budget, seed, seed_count, campaign
+        candidate,
+        baseline,
+        games,
+        budget,
+        seed,
+        seed_count,
+        campaign,
+        capture_details=capture_details,
     )
     for pair in range(games // 2):
         first, second = episodes[2 * pair : 2 * pair + 2]
@@ -693,23 +765,24 @@ def run_paired_arena(
             truncated += 1
             score = 0.0
         game_scores.append(score)
-        battles.append(
-            {
-                "game": episode.game,
-                "pair": episode.game // 2,
-                "candidate_side": (
-                    "player" if episode.candidate_player else "enemy"
-                ),
-                "player_party_size": episode.player_size,
-                "enemy_party_size": episode.enemy_size,
-                "campaign": (
-                    _CAMPAIGN_NAMES[episode.campaign_index] if campaign else None
-                ),
-                "stop": episode.stop,
-                "candidate_return": candidate_result,
-                "score": score,
-            }
-        )
+        battle = {
+            "game": episode.game,
+            "pair": episode.game // 2,
+            "candidate_side": "player" if episode.candidate_player else "enemy",
+            "player_party_size": episode.player_size,
+            "enemy_party_size": episode.enemy_size,
+            "campaign": (
+                _CAMPAIGN_NAMES[episode.campaign_index] if campaign else None
+            ),
+            "stop": episode.stop,
+            "candidate_return": candidate_result,
+            "score": score,
+        }
+        if capture_details:
+            battle["initial"] = episode.initial
+            battle["final"] = episode.final
+            battle["timeline"] = episode.timeline
+        battles.append(battle)
         pair_score.append(score)
         if len(pair_score) == 2:
             paired = sum(pair_score) / 2

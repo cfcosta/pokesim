@@ -96,13 +96,17 @@ change the listener. The page polls local artifacts every two seconds and shows:
   policy diagnostics, and promotion confidence history;
 - live self-play results, recent battle outcomes, opponents, turns, examples,
   native transitions, battle length, switching, search, and 36-party-size coverage;
-- recent paired promotion battles, strata, campaign cases, and skill probes;
+- clickable self-play and promotion battles with teams, outcome provenance,
+  actions, search summaries, and recorded initial/final state;
+- promotion strata, campaign cases, and skill probes;
 - accepted/rejected updates and every promotion quality gate.
 
 Training updates `monitor-state.json` and `.monitor/actor-*.json` atomically. The
 monitor never imports mechanics state, mutates checkpoints, or controls the
 trainer. These transient files are removed before the immutable final manifest;
 a completed dashboard is reconstructed from `summary.json` and iteration metrics.
+Detailed timelines are loaded only when a battle row is opened, keeping the
+two-second dashboard poll compact.
 
 Each checkpoint is published atomically and contains the post-promotion model,
 AdamW state, RNG state, collection metrics, and training metrics. Resume checks
@@ -121,7 +125,7 @@ batch 128, so 128 remains the production default.
 Use `--device cpu`, `--device cuda`, or `--device auto`. BF16 is the default;
 `--precision fp32` remains available for differential checks and older
 checkpoints without precision metadata retain their original FP32 contract.
-The v10 pipeline defaults `--inference-engine auto`: CUDA uses bucketed compiled
+The v11 pipeline defaults `--inference-engine auto`: CUDA uses bucketed compiled
 inference through static batches up to 256 while CPU uses eager execution.
 `--inference-engine eager` remains available for differential checks and
 historical artifact verification. Production collection defaults to two spawned
@@ -168,7 +172,7 @@ held-out type, status, and switch probes. It also reports and gates 1–2, 3–4
 5–6, and unequal-party strata, plus a nine-team fixed campaign suite covering
 Brock through Giovanni and Lance. The campaign teams use canonical natural
 moves and fixed DVs inside the link quotient; they do not claim trainer AI or
-item equivalence. The v10 pipeline separates a persistent shadow learner from the
+item equivalence. The v11 pipeline separates a persistent shadow learner from the
 quality-gated deployed incumbent. Inconclusive evaluations retain the incumbent
 but carry the learner parameters and AdamW state into the next collection
 iteration, allowing small updates to compound without weakening deployment. Each

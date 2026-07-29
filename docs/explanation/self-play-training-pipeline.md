@@ -243,7 +243,7 @@ The learner may be implemented in PyTorch or another external ML stack. It does 
 
 The v4 tensor appends own/opponent party counts and twelve side-canonical presence bits to the 478 v3 fields. Absent party and switch descriptors are zero; a fainted member remains present with HP zero. Training rotates through every ordered `1v1` through `6v6` size pair, so equal-size self-play cannot hide one-sided roster disadvantages. Promotion separately gates 1–2, 3–4, 5–6, unequal-party, and fixed campaign-team results.
 
-The v10 production runner keeps two explicit lineages. A persistent shadow learner and its AdamW state accumulate every completed update; a deployed incumbent changes only after promotion. Each atomic checkpoint stores the deployed model, shadow model, learner optimizer, RNG state, and metrics needed to reconstruct the completed prefix. `transformer-resume` validates checkpoint and shard continuity, restores both model lineages and the historical-opponent window, and continues at the next iteration under the immutable saved configuration. An uncommitted partial iteration is archived and replayed from its beginning; the system does not claim mid-battle checkpointing.
+The v11 production runner keeps two explicit lineages. A persistent shadow learner and its AdamW state accumulate every completed update; a deployed incumbent changes only after promotion. Each atomic checkpoint stores the deployed model, shadow model, learner optimizer, RNG state, and metrics needed to reconstruct the completed prefix. `transformer-resume` validates checkpoint and shard continuity, restores both model lineages and the historical-opponent window, and continues at the next iteration under the immutable saved configuration. An uncommitted partial iteration is archived and replayed from its beginning; the system does not claim mid-battle checkpointing.
 
 Each training epoch reports separately backpropagated shared-trunk policy and value gradient norms, their norm ratio, cosine, and negative-cosine frequency. A deterministic whole-battle split withholds complete shard/episode groups from optimization and reports equal-row and equal-battle value MSE against a zero predictor, plus held-out policy KL and top-action agreement. These diagnostics are written to stdout, immutable iteration metrics, and the read-only monitor; row-random validation is not used.
 
@@ -258,6 +258,11 @@ immutable artifacts. The `monitor` command projects both sets into a loopback we
 dashboard; it has no mechanics handles, trainer control endpoint, or write API.
 Transient heartbeats are removed before the final manifest, after which the
 same dashboard is reconstructed from immutable summaries and iteration metrics.
+Self-play episode rows retain compact search/action timelines and initial teams;
+promotion timelines additionally retain final state. The monitor loads one detail
+record on demand when a table row is opened instead of transferring every timeline
+in its polling response. This remains a read-only artifact projection, not a
+second mechanics implementation or a claim of Showdown replay equivalence.
 
 ### Replay storage
 

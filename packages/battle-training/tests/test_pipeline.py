@@ -32,7 +32,11 @@ from battle_training.joint_search import (
     solve_zero_sum_regret,
 )
 from battle_training.model import MoveValueModel
-from battle_training.monitor import build_dashboard_snapshot, write_monitor_state
+from battle_training.monitor import (
+    build_dashboard_snapshot,
+    build_match_detail,
+    write_monitor_state,
+)
 from battle_training.native import Snapshot, _decode_features
 from battle_training.network import (
     BattleTransformer,
@@ -263,6 +267,31 @@ class MonitorTests(unittest.TestCase):
             status = build_dashboard_snapshot(root)["status"]
             self.assertEqual(status["stage"], "failed")
             self.assertEqual(status["last_stage"], "collection")
+
+    def test_monitor_loads_match_details_without_polling_all_timelines(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            progress = root / ".monitor"
+            progress.mkdir()
+            (progress / "actor-00.json").write_text(
+                json.dumps(
+                    {
+                        "iteration": 2,
+                        "recent_battles": [
+                            {"episode": 7, "timeline": [{"turn": 1}]}
+                        ],
+                    }
+                )
+            )
+            live = build_match_detail(root, "selfplay", 2, 7)
+            self.assertEqual(live["timeline"], [{"turn": 1}])
+            write_json(
+                root / "matches" / "promotion-002.json",
+                {"battles": [{"game": 3, "timeline": [{"turn": 4}]}]},
+            )
+            promotion = build_match_detail(root, "promotion", 2, 3)
+            self.assertEqual(promotion["timeline"], [{"turn": 4}])
+            self.assertIsNone(build_match_detail(root, "promotion", 2, 4))
 
     def test_dashboard_aggregates_live_selfplay_results(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
