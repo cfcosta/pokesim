@@ -3,6 +3,7 @@ Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.Rom.HazeDispatchRoutine
+import Battle.Rom.FlyRoutine
 import Battle.Full.OldMan
 import Battle.Full.Recall
 
@@ -53,6 +54,7 @@ def retainedLayoutMatches (rom : CanonicalRom) : Bool :=
     TransformRoutine.windowAgrees rom.bytes &&
     HazeRoutine.windowAgrees rom.bytes &&
     HazeDispatchRoutine.windowAgrees rom.bytes &&
+    FlyRoutine.windowAgrees rom.bytes &&
     Battle.Full.OldMan.windowAgrees rom.bytes &&
     Battle.Full.Recall.windowAgrees rom.bytes
 

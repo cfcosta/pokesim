@@ -149,9 +149,9 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 
 ## Action legality and turn consumption
 
-- [x] full-menu bypass only for Rage/recharge/Thrash/charge continuation (`Battle.Full.fullMenuBypass`, `automatic_and_post_fight_locks_are_separate`)
+- [x] full-menu bypass for Rage/recharge/Thrash/charge continuation admits only `.noAction` (`Battle.Full.fullMenuBypass`, `menu_bypass_only_no_action`, `charging_forces_no_action`)
 - [x] Fight-without-slot behavior for sleep/freeze/Bide/trapping states (`Battle.Full.fightSkipsMoveMenu`, represented by legal `.noAction` after Fight commit)
-- [x] switch/item/run remain selectable in those post-menu lock states (`Battle.Full.trapped_switch_remains_protocol_selectable`, `ordinary_item_exact`, `trainer_run_selectable`)
+- [x] switch/item/run remain selectable when the top-level menu was shown before those post-Fight gates (`Battle.Full.ordinary_switch_exact`, `ordinary_item_exact`, `trainer_run_selectable`)
 - [x] ordinary Fight/move-slot availability (`Battle.Full.ordinary_fight_exact`)
 - [x] selectable move has PP and is not disabled (`Battle.Full.usableMoveSlot`, `ordinary_fight_exact`)
 - [x] Struggle when no selectable move remains (`Battle.Full.mustStruggle`, `legal_fight_not_exhausted`)
@@ -165,7 +165,7 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [x] Safari actions (`Battle.Full.Safari.Action`, `act`, `Battle.Full.Environment.resolveSafari`)
 - [x] successful item consumes action (`Battle.Full.Engine.step` item branch composes through `executePair`; `finish_turn_increments`)
 - [x] successful switch consumes action (`Battle.Full.Engine.step` switch commit composes through `executePair`; `finish_turn_increments`)
-- [x] failed wild run consumes action (`Battle.Full.Engine.failed_run_nonfight_finishes_turn`, `Battle.Full.Environment.resolveRun`)
+- [x] failed wild run consumes action (`Battle.Full.Engine.failed_run_nonmove_finishes_turn`, `Battle.Full.Environment.resolveRun`)
 - [x] canceled/failed menu operation does not consume action (`Battle.Full.Selection.cancelFight`, `Battle.Full.Engine.StepResult.ineffectiveAction`)
 - [x] `CANNOT_MOVE` when trapped after top-level selection (`Battle.Full.Engine.executeCommitted` emits `Status.CannotActReason.trapped` before non-Fight action effect)
 - [x] replacement choice after faint (`Battle.Full.Action.forced_switch_exact`, `Battle.Full.Engine.forcedReplacement`)
@@ -414,7 +414,7 @@ Every effect ID, including unused slots, needs a table/data theorem. Every used 
 - [x] all Metronome eligibility/rejections are covered (`Battle.Full.Effects.metronomeAccepts`, `metronome_eligibility_boundaries`)
 - [x] Mirror Move/Metronome move-record reloads and PP compensation are explicit (`Battle.Full.Engine.installGeneratedLoadedMove`, `incrementNestedPp`, `generated_move_retains_wrapper`)
 - [x] transformed player Mirror Move/Metronome increments original party PP but transformed decrement skips it (`Battle.Full.Engine.transformed_nested_party_pp_increment`, `incrementNestedPp`)
-- [x] enemy Mirror Move/Metronome PP increment despite ordinary enemy PP not decrementing (`Battle.Full.Engine.incrementNestedPp`, `enemy_pp_not_decremented`)
+- [x] enemy Mirror Move/Metronome PP increment despite ordinary non-link enemy PP not decrementing (`Battle.Full.Engine.incrementNestedPp`, `nonlink_enemy_pp_not_decremented`)
 - [x] ordinary player Mimic choice versus enemy/link random Mimic is covered (`Battle.Full.Effects.applyBefore`, `Battle.Full.Engine.resumeMimic`)
 - [x] Mimic replaces only active move ID and retains that slot's existing PP byte (`Battle.Full.Effects.mimic_replace_preserves_pp`)
 - [x] direct Confusion blocks Substitute while Confusion's damaging side effect can pass through a surviving Substitute (`Battle.Full.Engine.substitute_mist_dream_gates`, `Battle.Full.Effects.applyAfter` confusion-side branch)
@@ -431,8 +431,10 @@ Exceptional move-ID checks include at least Quick Attack, Counter, Metronome, Mi
 - [x] Thrash/Petal Dance 2/3 turn selection (`Battle.Full.Effects.bide_thrash_lock_witnesses`)
 - [x] post-Thrash confusion duration 2–5 (`Battle.Full.Effects.confusion_duration_boundaries`, `Battle.Full.Engine.advanceMoveLock`)
 - [x] charge first/second turn and first-turn omission from last-used-move scratch (`Battle.Full.Effects.charge_invulnerability_witnesses`, `Battle.Full.Engine.executeMove` charging branch preserves last-used scratch)
-- [x] Fly/Dig invulnerability (`Battle.Full.Effects.charge_invulnerability_witnesses`)
-- [x] directly selected charge-turn PP deferred until attack turn (`Battle.Full.Engine.charge_pp_is_deferred`)
+- [x] Fly/Dig first turn sets charge plus invulnerability and the successful continuation clears both (`Battle.Full.Effects.charge_invulnerability_witnesses`, `Battle.Full.Status.successful_charge_clears_both`)
+- [x] charge continuation bypasses policy selection, executes the retained move, and decrements PP only on the attack turn (`Battle.Full.charging_forces_no_action`, `Battle.Full.Engine.charge_continuation_protocol`, `charge_pp_is_deferred`, `player_pp_decrements`)
+- [x] canonical Red windows and decoded SM83 execution for Fly setup, menu bypass, and both charge-bit clears (`Battle.Rom.FlyRoutine.RequiredFlyBytes`, `decoded_charge_control`, `player_continuation_exact`, `player_continuation_result`)
+- [x] episode-606 deterministic regression: Pidgeot's Fly setup exposes only action 10; continuation executes Fly, clears `$50`, and changes PP 15→14 (`tools/check-episode-606-fly.py`)
 - [x] charge state is unbound: Mirror Move/Metronome-generated charge continues with retained wrapper, generated loaded move, and original selected slot (`Battle.Full.Engine.generated_move_retains_wrapper`, `installGeneratedLoadedMove`)
 - [x] nested wrapper PP versus disobedient replacement PP ordering (`Battle.Full.Engine.incrementNestedPp`, `transformed_nested_party_pp_increment`, `disobedience_charges_original_slot`)
 - [x] full-paralysis/self-confusion/selected-disabled charge cleanup clears charging but leaves Fly/Dig invulnerability until volatile reset (`Battle.Full.Status.interrupted_charge_leaves_invulnerability`)
@@ -590,7 +592,7 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 - [x] minimum-score filtering algorithm and malformed leading-zero divergence (`Battle.Full.TrainerController.feedMove`, `minimumCandidateScore`, `all_blank_move_selection_diverges`)
 - [x] exact 63/64/63/66 byte slot buckets and rejection among nonzero candidate slots (`slot_bucket_cardinalities`, `SelectsMove`)
 - [x] blank and disabled retry (`Battle.Full.TrainerController.SelectsMove.reject`, `feedMove`)
-- [x] unlimited enemy PP behavior (`Battle.Full.Engine.enemy_pp_not_decremented`)
+- [x] unlimited non-link enemy PP behavior (`Battle.Full.Engine.nonlink_enemy_pp_not_decremented`); the synchronized link quotient decrements the remote cartridge owner's row (`link_enemy_pp_decrements`)
 
 ### Action AI
 
@@ -722,7 +724,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] stale Quick Attack/Counter ordering survives player send-out because only loaded `wPlayerMoveNum`, not `wPlayerSelectedMove`, is cleared (`Battle.Full.Engine.send_out_clears_move_but_retains_record`, `send_out_retains_stale_priority`)
 - [x] Jump Kick miss recoil based on zeroed damage (`Battle.Full.Engine.jumpKick_zeroed_damage_recoil`)
 - [x] Substitute self-damage turn-flip interaction (`Battle.Full.Engine.turn_flipped_self_damage_selects_opponent`)
-- [x] enemy PP not decremented (`Battle.Full.Engine.enemy_pp_not_decremented`)
+- [x] ordinary non-link enemy PP not decremented; link-opponent PP decremented in the synchronized paired-cartridge quotient (`Battle.Full.Engine.nonlink_enemy_pp_not_decremented`, `link_enemy_pp_decrements`)
 - [x] disabled-move/PP-Up-bit Struggle-selection anomaly (`Battle.Full.disabled_pp_up_struggle_anomaly`)
 - [x] sleep wake consumes turn (`Battle.Full.Status.waking_consumes_turn`)
 - [x] frozen target Fire defrost before side-effect RNG (`Battle.Full.Effects.fire_defrost_precedes_side_rng`)

@@ -35,7 +35,7 @@ jobs:
           trap 'rm -rf "$out"' EXIT
           nix develop -c python -m unittest discover -s packages/battle-training/tests
           nix develop -c python packages/battle-training/train.py transformer-smoke \
-            --output "$out" --device cpu --iterations 1 --episodes 2 \
+            --output "$out" --device cpu --iterations 1 --episodes 4 \
             --arena-episodes 4 --chance-samples-per-joint 1 \
             --search-depth 1 --budget 64 --epochs 1 \
             --d-model 32 --heads 4 --layers 1 --feedforward 64
@@ -75,6 +75,7 @@ jobs:
               campaign = server.reset_campaign(3, 0, 0)
               assert len(server.inspect(campaign.handle)["enemy"]["party"]) == 2
           PY
+          nix develop -c python tools/check-episode-606-fly.py
       - name: Check canonical address/range closure
         run: python3 tools/check-pokered-closure.py
       - name: Check full training-state field audit

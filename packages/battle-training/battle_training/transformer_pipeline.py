@@ -175,7 +175,7 @@ class _ActorEpisode:
 
 
 def _pipeline_id() -> str:
-    return "transformer-variable-party-bf16-tree-v12"
+    return "transformer-variable-party-bf16-tree-v13"
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:

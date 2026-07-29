@@ -56,6 +56,7 @@ These documents record twelve codebase, processor, and proof-architecture review
 - [Full-link training-state audit](research/full-training-markov-audit.md) — field-by-field Markov review, the Mimic continuation alias, v3 schema fix, profile invariants, and remaining injectivity proof.
 - [Full-party training precision benchmark](research/full6v6-precision-benchmark.md) — FP32/BF16 throughput, memory, inference, numerical drift, and the BF16 production decision.
 - [Battle-horizon truncation audit](research/battle-horizon-truncation-audit.md) — historical tail distribution, party-size evidence, horizon semantics, and the 512-decision production boundary.
+- [Episode 606 Fly audit](research/episode-606-fly-audit.md) — trace divergence, canonical charge-control bytes, automatic retained-move repair, proofs, and deterministic replay.
 - [ROM-to-model equivalence audit](research/rom-model-equivalence-audit.md) — exact theorem boundary, active-struct projection, missing simulations, and shortest honest closure path.
 
 ## Documentation modes

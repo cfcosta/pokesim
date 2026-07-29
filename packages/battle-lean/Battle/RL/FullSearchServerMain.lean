@@ -379,8 +379,20 @@ private def actionJson (side : Side) (action : Full.Action) : String :=
   let id := (FullTraining.actionId action).getD 255
   jsonObject s!"\"kind\":\"action\",\"side\":{sideCode side},\"action\":{id}"
 
-private def statusBlockedJson (side : Side) : String :=
-  jsonObject s!"\"kind\":\"status-blocked\",\"side\":{sideCode side}"
+private def cannotActReason : Full.Status.CannotActReason → String
+  | .fastAsleep => "fast-asleep"
+  | .wokeUp => "woke-up"
+  | .frozen => "frozen"
+  | .trapped => "trapped"
+  | .flinched => "flinched"
+  | .recharge => "recharge"
+  | .selectedMoveDisabled => "move-disabled"
+  | .fullyParalyzed => "fully-paralyzed"
+  | .confusionSelfHit => "confusion-self-hit"
+
+private def statusBlockedJson (side : Side)
+    (reason : Full.Status.CannotActReason) : String :=
+  jsonObject s!"\"kind\":\"status-blocked\",\"side\":{sideCode side},\"reason\":\"{cannotActReason reason}\""
 
 private def effectJson : Full.Effects.Event → Option String
   | .statusApplied status =>
@@ -389,18 +401,29 @@ private def effectJson : Full.Effects.Event → Option String
       some (jsonObject s!"\"kind\":\"stage-changed\",\"side\":{sideCode target},\"stat\":{stat},\"amount\":{amount}")
   | .healed amount =>
       some (jsonObject s!"\"kind\":\"healed\",\"amount\":{amount}")
+  | .recoil amount =>
+      some (jsonObject s!"\"kind\":\"recoil\",\"amount\":{amount}")
   | .screen => some (jsonObject "\"kind\":\"screen\"")
   | .transformed => some (jsonObject "\"kind\":\"transformed\"")
   | .seeded => some (jsonObject "\"kind\":\"seeded\"")
   | .disabled _ _ => some (jsonObject "\"kind\":\"disabled\"")
-  | .rawRng _ _ | .recoil _ | .signal _ => none
+  | .rawRng _ _ | .signal _ => none
 
 private def eventJson : Full.Engine.Event → Option String
   | .action side action => some (actionJson side action)
+  | .moveExecuted side move =>
+      some (jsonObject s!"\"kind\":\"move-executed\",\"side\":{sideCode side},\"move_id\":{move},\"move\":\"{Showdown.moveName move}\"")
+  | .missed side =>
+      some (jsonObject s!"\"kind\":\"missed\",\"side\":{sideCode side}")
+  | .ineffective side =>
+      some (jsonObject s!"\"kind\":\"ineffective\",\"side\":{sideCode side}")
   | .effect event => effectJson event
-  | .statusBlocked side _ => some (statusBlockedJson side)
+  | .statusBlocked side reason => some (statusBlockedJson side reason)
+  | .damage _ 0 _ => none
   | .damage side amount hp =>
       some (jsonObject s!"\"kind\":\"damage\",\"side\":{sideCode side},\"amount\":{amount},\"hp\":{hp}")
+  | .residualDamage side amount hp =>
+      some (jsonObject s!"\"kind\":\"residual-damage\",\"side\":{sideCode side},\"amount\":{amount},\"hp\":{hp}")
   | .substituteDamage side amount remaining =>
       some (jsonObject s!"\"kind\":\"substitute-damage\",\"side\":{sideCode side},\"amount\":{amount},\"hp\":{remaining}")
   | .fainted side =>

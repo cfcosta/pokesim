@@ -73,12 +73,44 @@ theorem interrupted_charge_leaves_invulnerability :
 /-- A successful second charge turn clears both charging and invulnerability.
 Interrupted charge turns use `clearInterruptedLocks` and deliberately leave the
 invulnerability bit behind. -/
-private def clearSuccessfulCharge (side : Battle.SideState) : Battle.SideState :=
+def clearSuccessfulCharge (side : Battle.SideState) : Battle.SideState :=
   if side.volatile.chargingUp then
     let mask := bitMask Wram.BattleStatus1.chargingUp |||
       bitMask Wram.BattleStatus1.invulnerable
     replaceVolatile side { side.volatile with status1 := side.volatile.status1 &&& ~~~mask }
   else side
+
+private theorem clear_charge_byte (value : UInt8) :
+    let mask := bitMask Wram.BattleStatus1.chargingUp |||
+      bitMask Wram.BattleStatus1.invulnerable
+    bitSet (value &&& ~~~mask) Wram.BattleStatus1.chargingUp = false ∧
+      bitSet (value &&& ~~~mask) Wram.BattleStatus1.invulnerable = false := by
+  have checked : (List.range 256).all (fun raw =>
+      let mask := bitMask Wram.BattleStatus1.chargingUp |||
+        bitMask Wram.BattleStatus1.invulnerable
+      (bitSet (raw.toUInt8 &&& ~~~mask) Wram.BattleStatus1.chargingUp == false) &&
+        (bitSet (raw.toUInt8 &&& ~~~mask) Wram.BattleStatus1.invulnerable == false)) = true := by
+    native_decide
+  have item := (List.all_eq_true.mp checked) value.toNat
+    (List.mem_range.mpr value.toNat_lt)
+  have parts := Bool.and_eq_true_iff.mp item
+  have charging := beq_iff_eq.mp parts.1
+  have invulnerable := beq_iff_eq.mp parts.2
+  have round : value.toNat.toUInt8 = value := by
+    apply UInt8.toNat.inj
+    simp
+  rw [round] at charging invulnerable
+  exact ⟨charging, invulnerable⟩
+
+/-- On an uninterrupted second Fly/Dig/charge turn, the status gate clears both
+`CHARGING_UP` and `INVULNERABLE` before the retained move executes. -/
+theorem successful_charge_clears_both (side : Battle.SideState)
+    (charging : side.volatile.chargingUp = true) :
+    (clearSuccessfulCharge side).volatile.chargingUp = false ∧
+      bitSet (clearSuccessfulCharge side).volatile.status1
+        Wram.BattleStatus1.invulnerable = false := by
+  simp only [clearSuccessfulCharge, charging, if_true, replaceVolatile]
+  exact clear_charge_byte side.volatile.status1
 
 def tickDisable (volatile : Volatile) : Volatile :=
   if volatile.disabledMove == 0 then volatile

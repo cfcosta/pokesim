@@ -46,10 +46,14 @@ structure State where
 
 inductive Event where
   | action (side : Side) (action : Full.Action)
+  | moveExecuted (side : Side) (move : MoveId)
+  | missed (side : Side)
+  | ineffective (side : Side)
   | rng (site : String) (raw : UInt8)
   | effect (event : Effects.Event)
   | statusBlocked (side : Side) (reason : Status.CannotActReason)
   | damage (side : Side) (amount hpAfter : UInt16)
+  | residualDamage (side : Side) (amount hpAfter : UInt16)
   | substituteDamage (side : Side) (amount remaining : UInt8)
   | fainted (side : Side)
   | forcedReplacement (side : Side)
@@ -192,30 +196,63 @@ def moveOfAction (state : State) (who : Side) : Full.Action → Option (MoveId �
   | .fight slot => some ((side state who).active.active.moves.getD slot.val 0, slot)
   | .struggle => some (165, 0)
   | .noAction =>
-      let volatile := (side state who).active.volatile
-      if volatile.chargingUp || volatile.trapping ||
-          bitSet volatile.status1 Wram.BattleStatus1.storingEnergy ||
-          bitSet volatile.status1 Wram.BattleStatus1.thrashingAbout ||
-          bitSet volatile.status2 Wram.BattleStatus2.usingRage then
-        let value := (selection state who).highlightedSlot.toNat % 4
-        some ((selection state who).loadedMove, ⟨value, Nat.mod_lt _ (by omega)⟩)
-      else none
+      let value := (selection state who).highlightedSlot.toNat % 4
+      some ((selection state who).loadedMove, ⟨value, Nat.mod_lt _ (by omega)⟩)
   | _ => none
+
+/-- A menu-bypass command reloads the move and slot retained by the cartridge's
+selection scratch; it never chooses a fresh move. -/
+@[simp] theorem no_action_uses_retained_move (state : State) (who : Side) :
+    (moveOfAction state who .noAction).map Prod.fst =
+      some (selection state who).loadedMove := by
+  simp [moveOfAction]
 
 def decrementMovePp (state : State) (who : Side) (slot : Fin 4)
     (isStruggle : Bool) : State :=
-  if isStruggle || who == .enemy then state
+  if isStruggle || (who == .enemy && state.battle.mode != .link) then state
   else
     let current := side state who
     let mon := current.active.active
     let mon := { mon with pp := mon.pp.modify slot.val decrementPp }
     setSide state who { current with active := { current.active with active := mon } }
 
-@[simp] theorem enemy_pp_not_decremented (state : State) (slot : Fin 4)
-    (isStruggle : Bool) :
+/-- Player-owned PP is decremented at the retained slot. Charge moves invoke
+this on their automatic continuation rather than on the setup turn. -/
+theorem player_pp_decrements (state : State) (slot : Fin 4)
+    (inBounds : slot.val < (side state .player).active.active.pp.size) :
+    let before := (side state .player).active.active.pp.getD slot.val 0
+    ((side (decrementMovePp state .player slot false) .player).active.active.pp.getD
+      slot.val 0) = decrementPp before := by
+  have playerNotEnemy : (Side.player == Side.enemy) = false := by native_decide
+  change slot.val < state.battle.player.active.active.pp.size at inBounds
+  simp [decrementMovePp, playerNotEnemy, side, setSide, Full.State.side,
+    Full.State.setSide, Array.getD, inBounds, Array.getElem_modify_self]
+
+@[simp] theorem nonlink_enemy_pp_not_decremented (state : State) (slot : Fin 4)
+    (isStruggle : Bool) (nonlink : state.battle.mode ≠ .link) :
     decrementMovePp state .enemy slot isStruggle = state := by
   have enemySelf : (Side.enemy == Side.enemy) = true := by native_decide
-  simp [decrementMovePp, enemySelf]
+  have modeBool : (state.battle.mode != BattleMode.link) = true := by
+    cases mode : state.battle.mode <;> try native_decide
+    exact (nonlink mode).elim
+  simp [decrementMovePp, enemySelf, modeBool]
+
+/-- On an actual cartridge `DecrementPP` mutates only the local player. The
+synchronized training quotient represents each cable endpoint's local party,
+so its enemy-authoritative row receives the decrement that occurs on the other
+cartridge. -/
+theorem link_enemy_pp_decrements (state : State) (slot : Fin 4)
+    (link : state.battle.mode = .link)
+    (inBounds : slot.val < (side state .enemy).active.active.pp.size) :
+    let before := (side state .enemy).active.active.pp.getD slot.val 0
+    ((side (decrementMovePp state .enemy slot false) .enemy).active.active.pp.getD
+      slot.val 0) = decrementPp before := by
+  have enemySelf : (Side.enemy == Side.enemy) = true := by native_decide
+  have linkSelf : (BattleMode.link != BattleMode.link) = false := by native_decide
+  change slot.val < state.battle.enemy.active.active.pp.size at inBounds
+  simp [decrementMovePp, enemySelf, link, linkSelf, side, setSide,
+    Full.State.side, Full.State.setSide, Array.getD, inBounds,
+    Array.getElem_modify_self]
 
 private def effectiveSpeed (fullSide : Full.SideState) : UInt16 :=
   fullSide.active.active.speed
@@ -719,7 +756,13 @@ private def applyResidual (state : State) (who : Side) : State × List Event :=
   let result := Status.applyResiduals (side state who).active (side state who.other).active
   let state := setSide state who { side state who with active := result.actor }
   let state := setSide state who.other { side state who.other with active := result.opponent }
-  if result.actor.active.fainted then recordFaint state who else (state, [])
+  let residualDamage := result.poisonOrBurnDamage + result.leechSeedDamage
+  let residualEvents := if residualDamage == 0 then [] else
+    [.residualDamage who residualDamage result.actor.active.hp]
+  if result.actor.active.fainted then
+    let (state, faintEvents) := recordFaint state who
+    (state, residualEvents ++ faintEvents)
+  else (state, residualEvents)
 
 def clearTrappingLock (state : State) (who : Side) : State :=
   let current := side state who
@@ -845,6 +888,26 @@ def decrementsPpNow (mechanic : EffectPlan.Mechanic) (action : Full.Action) : Bo
       decrementsPpNow (.charge true) .noAction = true := by
   native_decide
 
+private def prependMoveExecuted (who : Side) (move : MoveId) : StepResult → StepResult
+  | .transitioned state events => .transitioned state (.moveExecuted who move :: events)
+  | .capturePending state ball events =>
+      .capturePending state ball (.moveExecuted who move :: events)
+  | .rngStuck state events => .rngStuck state (.moveExecuted who move :: events)
+  | .divisionFreeze state events => .divisionFreeze state (.moveExecuted who move :: events)
+  | .nestedMove state side nested events =>
+      .nestedMove state side nested (.moveExecuted who move :: events)
+  | .mimicPending state side slot next events =>
+      .mimicPending state side slot next (.moveExecuted who move :: events)
+  | .runPending state side next events =>
+      .runPending state side next (.moveExecuted who move :: events)
+  | .wildFaintRunPending state events =>
+      .wildFaintRunPending state (.moveExecuted who move :: events)
+  | .disobediencePending state machine next events =>
+      .disobediencePending state machine next (.moveExecuted who move :: events)
+  | .invalidAction state side => .invalidAction state side
+  | .ineffectiveAction state side => .ineffectiveAction state side
+  | .inactive state => .inactive state
+
 private def executeMove (state : State) (who : Side) (action : Full.Action)
     (moveId : MoveId) (slot : Fin 4) (attacker : Battle.SideState)
     (attackerFull defenderFull : Full.SideState) (rng : Rng.LinkRng)
@@ -896,7 +959,10 @@ match damageResult with
         resolveAccuracy mechanic move attacker defenderFull.active rng
       else (true, rng, [])
     let hit := accuracyHit && !typeMiss
-    let context := effectsContext state who moveId slot attacker defenderFull.active rng
+    let hitEvents := if !accuracyHit then [.missed who]
+      else if typeMiss then [.ineffective who] else []
+    let context := effectsContext state who moveId slot
+      (side state who).active (side state who.other).active rng
     let before := if action == .noAction then
       match mechanic with
       | .bide | .thrash | .charge _ | .trapping => { context := context }
@@ -907,7 +973,7 @@ match damageResult with
       { state with canceledAction := some who.other } else state
     match before.signal with
     | .rngStuck => .rngStuck state (critEvents ++ damageEvents ++ handlerGateEvents ++
-        accuracyEvents ++ before.events.map .effect)
+        accuracyEvents ++ hitEvents ++ before.events.map .effect)
     | .charging _ => .transitioned state
         (critEvents ++ before.events.map .effect)
     | .escaped =>
@@ -923,13 +989,13 @@ match damageResult with
         let state := recordExecutedMove state who moveId generated
         let (state, events) := applyResidual state who
         .transitioned state (critEvents ++ damageEvents ++ handlerGateEvents ++
-          accuracyEvents ++ before.events.map .effect ++ events)
+          accuracyEvents ++ hitEvents ++ before.events.map .effect ++ events)
     | _ =>
         if mechanic == .jumpKick && !hit then
           let crash := applyJumpKickCrash state who
           let state := recordExecutedMove crash.state who moveId generated
           let events := critEvents ++ damageEvents ++ handlerGateEvents ++ accuracyEvents ++
-            before.events.map .effect ++ crash.events
+            hitEvents ++ before.events.map .effect ++ crash.events
           if crash.userFainted then
             let (state, faintEvents) := recordFaint state who
             .transitioned state (events ++ faintEvents)
@@ -966,7 +1032,7 @@ match damageResult with
           let state := recordExecutedMove state who moveId generated
           let (state, lockEvents) := advanceMoveLock state who
           let events := critEvents ++ damageEvents ++ handlerGateEvents ++ accuracyEvents ++
-            before.events.map .effect ++
+            hitEvents ++ before.events.map .effect ++
             applied.events ++ extra.events ++ after.events.map .effect ++ lockEvents
           let userFainted := (side state who).active.active.fainted
           if targetFainted && userFainted then
@@ -1041,13 +1107,15 @@ private def attack (state : State) (who : Side) (action : Full.Action)
                 disabledMoveNumber := attacker.volatile.disabledMoveNumber }
             let machine := Disobedience.start input
             match machine.phase with
-            | .done _ => executeMove state who action moveId slot attacker attackerFull defenderFull rng false
+            | .done _ => prependMoveExecuted who moveId
+                (executeMove state who action moveId slot attacker attackerFull defenderFull rng false)
             | _ => .disobediencePending installed machine none []
           else
             let generatedContinuation := action == .noAction &&
               (selection state who).loadedMove != (selection state who).selectedMove
-            executeMove state who action moveId slot attacker attackerFull defenderFull rng
-              (overrideMove.isSome || generatedContinuation)
+            prependMoveExecuted who moveId
+              (executeMove state who action moveId slot attacker attackerFull defenderFull rng
+                (overrideMove.isSome || generatedContinuation))
 
 
 def switchAiLayer (current : UInt8) (who : Side) (forced : Bool) : UInt8 :=
@@ -1139,8 +1207,52 @@ private def isFight : Full.Action → Bool
   | .fight _ | .struggle => true
   | _ => false
 
+/-- Automatic cartridge turns enter the retained move/status pipeline even
+though no menu action is transmitted. Fly/Dig, Bide, Thrash, trapping, and Rage
+can execute the retained move; recharge, sleep/freeze, or trapping may instead
+stop at their cartridge status gate. -/
+def executesMove (state : State) (who : Side) (action : Full.Action) : Bool :=
+  isFight action || (action == .noAction && state.battle.mode != .oldMan &&
+    (Full.fullMenuBypass (side state who) ||
+      Full.fightSkipsMoveMenu (side state who)
+        (side state who.other).active.volatile.trapping))
+
+@[simp] theorem charging_no_action_executes (state : State) (who : Side)
+    (ordinary : state.battle.mode ≠ .oldMan)
+    (charging : (side state who).active.volatile.chargingUp = true) :
+    executesMove state who .noAction = true := by
+  have modeBool : (state.battle.mode != BattleMode.oldMan) = true := by
+    cases mode : state.battle.mode <;> try native_decide
+    exact (ordinary mode).elim
+  have actionSelf : (Full.Action.noAction == Full.Action.noAction) = true := by
+    native_decide
+  simp [executesMove, modeBool, actionSelf, Full.fullMenuBypass, charging]
+
+/-- The second turn of a charge mechanic is an executed, retained-move command
+whose PP-decrement gate is enabled. Together with
+`Status.successful_charge_clears_both`, this is the automatic continuation
+protocol used by Fly in episode 606. -/
+theorem charge_continuation_protocol (state : State) (who : Side)
+    (ordinary : state.battle.mode ≠ .oldMan)
+    (charging : (side state who).active.volatile.chargingUp = true)
+    (invulnerable : Bool)
+    (charge : (EffectPlan.plan
+      (Data.moveData (selection state who).loadedMove).effect).mechanic =
+        .charge invulnerable) :
+    executesMove state who .noAction = true ∧
+      (moveOfAction state who .noAction).map Prod.fst =
+        some (selection state who).loadedMove ∧
+      decrementsPpNow
+        (EffectPlan.plan
+          (Data.moveData (selection state who).loadedMove).effect).mechanic
+        .noAction = true := by
+  refine ⟨charging_no_action_executes state who ordinary charging,
+    no_action_uses_retained_move state who, ?_⟩
+  rw [charge]
+  rfl
+
 def orderingMove (state : State) (who : Side) (action : Full.Action) : Step.ResolvedMove :=
-  if isFight action then
+  if executesMove state who action then
     (moveOfAction state who action).map (fun pair => resolveMove pair.1) |>.getD (resolveMove 165)
   else resolveMove (selection state who).selectedMove
 
@@ -1204,10 +1316,12 @@ private def prependAction (who : Side) (action : Full.Action) : StepResult → S
   | .inactive state => .inactive state
 
 private def executeCommitted (state : State) (who : Side) (action : Full.Action) : StepResult :=
-  let state := if who == .enemy && isFight action then beginEnemyExecution state else state
+  let state := if who == .enemy && executesMove state who action then
+    beginEnemyExecution state else state
   if state.canceledAction == some who then
     .transitioned { state with canceledAction := none } []
-  else if isFight action then prependAction who action (attack state who action)
+  else if executesMove state who action then
+    prependAction who action (attack state who action)
   else
     let (state, events) := applyResidual state who
     if (side state who.other).active.volatile.trapping then
@@ -1232,6 +1346,75 @@ private def prependEvents (prior : List Event) : StepResult → StepResult
 
 def finishTurn (state : State) : State :=
   { state with battle := { state.battle with turn := state.battle.turn + 1 } }
+
+private def clearDecisionFlinch (side : Full.SideState) : Full.SideState :=
+  let mask := ~~~((1 <<< Wram.BattleStatus1.flinched).toUInt8)
+  { side with active := { side.active with volatile :=
+      { side.active.volatile with status1 := side.active.volatile.status1 &&& mask } } }
+
+private theorem clear_flinch_byte (value : UInt8) :
+    bitSet (value &&& ~~~((1 <<< Wram.BattleStatus1.flinched).toUInt8))
+      Wram.BattleStatus1.flinched = false := by
+  have checked : (List.range 256).all (fun raw =>
+      bitSet (raw.toUInt8 &&&
+        ~~~((1 <<< Wram.BattleStatus1.flinched).toUInt8))
+          Wram.BattleStatus1.flinched == false) = true := by
+    native_decide
+  have item := (List.all_eq_true.mp checked) value.toNat
+    (List.mem_range.mpr value.toNat_lt)
+  have itemEq := beq_iff_eq.mp item
+  have round : value.toNat.toUInt8 = value := by
+    apply UInt8.toNat.inj
+    simp
+  rw [round] at itemEq
+  exact itemEq
+
+@[simp] private theorem clear_decision_flinch_clears (side : Full.SideState) :
+    (clearDecisionFlinch side).active.volatile.flinched = false := by
+  exact clear_flinch_byte side.active.volatile.status1
+
+/-- `MainInBattleLoop` clears both flinch bits before ordinary move selection,
+except when the local player is already committed to Rage or recharge. Forced
+replacement remains before that loop boundary. In the synchronized link
+quotient, `.player` is the local cartridge owner and both mirrored flinch bits
+are normalized at this same observable boundary. -/
+def prepareDecision (state : State) : State :=
+  let playerVolatile := (side state .player).active.volatile
+  if state.forcedReplacement.isSome || playerVolatile.recharging ||
+      bitSet playerVolatile.status2 Wram.BattleStatus2.usingRage then state
+  else
+    setSide (setSide state .player (clearDecisionFlinch (side state .player)))
+      .enemy (clearDecisionFlinch (side state .enemy))
+
+@[simp] theorem prepare_decision_preserves_forced_replacement (state : State)
+    (forced : state.forcedReplacement.isSome = true) :
+    prepareDecision state = state := by
+  simp [prepareDecision, forced]
+
+@[simp] theorem prepare_decision_preserves_rage_or_recharge (state : State)
+    (committed : ((side state .player).active.volatile.recharging ||
+      bitSet (side state .player).active.volatile.status2
+        Wram.BattleStatus2.usingRage) = true) :
+    prepareDecision state = state := by
+  by_cases forced : state.forcedReplacement.isSome
+  · simp [prepareDecision, forced]
+  · simp [prepareDecision, forced, committed]
+
+/-- A late flinch set after the target has already acted cannot leak into the
+next ordinary cartridge turn. This is the exact consequence of the two `res
+FLINCHED` instructions in `MainInBattleLoop`. -/
+theorem prepare_decision_clears_both_flinches (state : State)
+    (ordinary : state.forcedReplacement.isSome = false)
+    (notRecharge : (side state .player).active.volatile.recharging = false)
+    (notRage : bitSet (side state .player).active.volatile.status2
+      Wram.BattleStatus2.usingRage = false) :
+    (side (prepareDecision state) .player).active.volatile.flinched = false ∧
+      (side (prepareDecision state) .enemy).active.volatile.flinched = false := by
+  unfold prepareDecision
+  rw [ordinary]
+  simp only [Bool.false_or]
+  rw [notRecharge, notRage]
+  simp [side, setSide, Full.State.side, Full.State.setSide]
 
 @[simp] theorem finish_turn_increments (state : State) :
     (finishTurn state).battle.turn = state.battle.turn + 1 := by
@@ -1270,6 +1453,7 @@ switch/item actions commit before attacks, so attacks target the loaded mon. -/
 def step (state : State) (playerAction enemyAction : Full.Action) : StepResult :=
   match state.battle.phase with
   | .battling =>
+      let state := prepareDecision state
       if !Full.legal (actionContext state .player) playerAction then .invalidAction state .player
       else if !Full.legal (actionContext state .enemy) enemyAction then .invalidAction state .enemy
       else
@@ -1399,11 +1583,13 @@ def resumeDisobedience (state : State) (machine : Disobedience.Machine)
         else .fight slot
       let completed := match result with
         | .obeyed _ move =>
-            executeMove state .player action move slot player.active player defender
-              state.battle.rng false
+            prependMoveExecuted .player move
+              (executeMove state .player action move slot player.active player defender
+                state.battle.rng false)
         | .alternate _ move =>
-            executeMove state .player action move slot player.active player defender
-              state.battle.rng false
+            prependMoveExecuted .player move
+              (executeMove state .player action move slot player.active player defender
+                state.battle.rng false)
         | .nap status =>
             let mon := { player.active.active with status }
             let state := setSide state .player { player with active := { player.active with active := mon } }
@@ -1433,15 +1619,17 @@ def resumeDisobedience (state : State) (machine : Disobedience.Machine)
 /-- Continue after a failed wild run; the opponent executes the action already
 selected for that turn. -/
 def resumeFailedRun (state : State) (runner : Side) (opponentAction : Full.Action) : StepResult :=
-  let result := if isFight opponentAction then attack state runner.other opponentAction
+  let result := if executesMove state runner.other opponentAction then
+    attack state runner.other opponentAction
     else .transitioned state []
   match result with
   | .transitioned state events => .transitioned (finishTurn state) events
   | result => result
 
-@[simp] theorem failed_run_nonfight_finishes_turn (state : State) (runner : Side) :
+@[simp] theorem failed_run_nonmove_finishes_turn (state : State) (runner : Side)
+    (notMove : executesMove state runner.other .noAction = false) :
     resumeFailedRun state runner .noAction = .transitioned (finishTurn state) [] := by
-  simp [resumeFailedRun, isFight]
+  simp [resumeFailedRun, notMove]
 
 /-- Complete the ordinary-player Mimic menu. The copied move replaces Mimic's
 selected slot without changing that slot's PP byte. Invalid/blank target slots

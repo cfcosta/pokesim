@@ -728,6 +728,7 @@ function collapseBattleEvents(events, turn) {
       );
       if (lethalDamage !== -1) return [];
     }
+    if (event.kind === "damage" && Number(event.amount) === 0) return [];
     if (event.kind === "damage" && Number(event.hp) === 0) return [{ ...event, kind: "damage-faint" }];
     return [event];
   });
@@ -740,14 +741,14 @@ function renderActionEvent(turn, side, rosters, before, activeSlots, recordedAct
   const actor = rosterMember(rosters, before, side, actorSlot);
   const actorRef = pokemonReference(actor, side, choice?.actor || sideTitle(side));
   if (choice?.kind === "move" && choice.move) {
-    return eventLine("action", side, "Move", [actorRef, " used ", element("strong", "event-move", choice.move.name), "."]);
+    return eventLine("action", side, "Move selected", [actorRef, " selected ", element("strong", "event-move", choice.move.name), "."]);
   }
   if (choice?.kind === "switch") {
     const target = rosterMember(rosters, before, side, Number(choice.target_slot));
     return eventLine("action", side, "Switch chosen", [actorRef, " committed to switch to ", pokemonReference(target, side, choice.target || "another Pokémon"), "."]);
   }
-  if (choice?.kind === "struggle") return eventLine("action", side, "Move", [actorRef, " used ", element("strong", "event-move", "Struggle"), "."]);
-  if (choice?.kind === "no-action") return eventLine("action", side, "Waiting", [actorRef, " had no action this step."]);
+  if (choice?.kind === "struggle") return eventLine("action", side, "Move selected", [actorRef, " selected ", element("strong", "event-move", "Struggle"), "."]);
+  if (choice?.kind === "no-action") return eventLine("action", side, "Automatic turn", [actorRef, " bypassed move selection."]);
   if (choice?.kind === "run") return eventLine("action", side, "Run", [actorRef, " attempted to leave the battle."]);
   return eventLine("action", side, "Action", [actorRef, ` selected ${actionLabel(action)}.`]);
 }
@@ -756,7 +757,7 @@ function renderMechanicsEvent(event, turn, rosters, before, after, activeSlots, 
   const explicitSide = event.side === undefined ? null : Number(event.side);
   const inferredStatusSide = event.kind === "status-applied" ? inferStatusSide(before, after, event.value) : null;
   const side = explicitSide ?? inferredStatusSide ?? (
-    ["healed", "screen", "transformed", "disobedience"].includes(event.kind) ? lastActionSide :
+    ["healed", "recoil", "screen", "transformed", "disobedience"].includes(event.kind) ? lastActionSide :
       ["seeded", "disabled"].includes(event.kind) && lastActionSide !== null ? 1 - lastActionSide : null
   );
   const member = side === null ? null : activeMember(rosters, before, side, activeSlots);
@@ -765,7 +766,11 @@ function renderMechanicsEvent(event, turn, rosters, before, after, activeSlots, 
   if (event.kind === "action" && explicitSide !== null) {
     return renderActionEvent(turn, explicitSide, rosters, before, activeSlots, event.action);
   }
+  if (event.kind === "move-executed") return eventLine("action", side, "Move used", [ref, " used ", element("strong", "event-move", event.move || `move ${number(event.move_id)}`), "."]);
+  if (event.kind === "missed") return eventLine("miss", side, "Missed", [ref, "'s move missed its target."]);
+  if (event.kind === "ineffective") return eventLine("miss", side, "No effect", [ref, "'s move did not affect its target."]);
   if (event.kind === "damage") return eventLine("damage", side, "Damage", [ref, ` lost ${number(event.amount)} HP and has ${number(event.hp)} HP left.`]);
+  if (event.kind === "residual-damage") return eventLine("damage", side, "Residual damage", [ref, ` lost ${number(event.amount)} HP from its status or Leech Seed and has ${number(event.hp)} HP left.`]);
   if (event.kind === "damage-faint") return eventLine("faint", side, "Knocked out", [ref, ` lost ${number(event.amount)} HP and fainted.`]);
   if (event.kind === "substitute-damage") return eventLine("damage", side, "Substitute", [ref, `'s substitute absorbed ${number(event.amount)} damage and has ${number(event.hp)} HP left.`]);
   if (event.kind === "faint") return eventLine("faint", side, "Fainted", [ref, " fainted."]);
@@ -786,11 +791,13 @@ function renderMechanicsEvent(event, turn, rosters, before, after, activeSlots, 
     return eventLine("status", side, "Status changed", side === null ? [`A Pokémon changed from ${previous} to ${condition}.`] : [ref, ` changed from ${previous} to ${condition}.`]);
   }
   if (event.kind === "status-blocked") {
-    const condition = side === null ? "its status" : statusLabel(before?.[sideKey(side)]?.status);
+    const condition = event.reason ? title(event.reason) :
+      side === null ? "its status" : statusLabel(before?.[sideKey(side)]?.status);
     return eventLine("status", side, "Unable to move", [ref, ` could not act because of ${condition}.`]);
   }
   if (event.kind === "stage-changed") return eventLine("status", side, "Stat changed", [ref, `: ${stageDescription(event, side, before, after, lastActionSide)}`]);
   if (event.kind === "healed") return eventLine("heal", side, "Recovered", side === null ? [`A Pokémon recovered ${number(event.amount)} HP.`] : [ref, ` recovered ${number(event.amount)} HP.`]);
+  if (event.kind === "recoil") return eventLine("damage", side, "Recoil", side === null ? [`A Pokémon took ${number(event.amount)} recoil damage.`] : [ref, ` took ${number(event.amount)} recoil damage.`]);
   if (event.kind === "screen") return eventLine("status", side, "Screen", side === null ? ["A defensive screen was established."] : [ref, " established a defensive screen."]);
   if (event.kind === "transformed") return eventLine("status", side, "Transform", side === null ? ["Transform completed."] : [ref, " transformed."]);
   if (event.kind === "seeded") return eventLine("status", side, "Leech Seed", side === null ? ["Leech Seed took hold."] : [ref, " was seeded."]);

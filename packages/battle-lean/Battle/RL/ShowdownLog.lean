@@ -165,7 +165,16 @@ private def flushAction (observation : Environment.Observation)
 private def renderAction (observation : Environment.Observation)
     (state : RenderState) (side : Side) (action : Full.Action) : RenderState :=
   let state := flushAction observation state
-  { state with actor := some side, pendingAction := some (side, action) }
+  match action with
+  | .fight _ | .struggle | .noAction =>
+      { state with actor := some side, pendingAction := none }
+  | _ => { state with actor := some side, pendingAction := some (side, action) }
+
+private def renderExecutedMove (observation : Environment.Observation)
+    (state : RenderState) (side : Side) (move : MoveId) : RenderState :=
+  let state := flushAction observation state
+  let state := { state with actor := some side, pendingAction := none }
+  addLine state s!"|move|{identAt observation side (renderActive state side)}|{Showdown.moveName move}|{identAt observation side.other (renderActive state side.other)}"
 
 private def renderEffect (context : TeamContext) (observation : Environment.Observation)
     (state : RenderState) : Effects.Event → RenderState
@@ -211,6 +220,13 @@ private def renderEffect (context : TeamContext) (observation : Environment.Obse
 private def renderEvent (context : TeamContext) (observation after : Environment.Observation)
     (state : RenderState) : Engine.Event → RenderState
   | .action side action => renderAction observation state side action
+  | .moveExecuted side move => renderExecutedMove observation state side move
+  | .missed side =>
+      let state := flushAction observation state
+      addLine state s!"|-miss|{identAt observation side.other (renderActive state side.other)}"
+  | .ineffective side =>
+      let state := flushAction observation state
+      addLine state s!"|-immune|{identAt observation side.other (renderActive state side.other)}"
   | .rng _ _ => flushAction observation state
   | .effect event => renderEffect context observation (flushAction observation state) event
   | .statusBlocked side reason =>
@@ -222,6 +238,11 @@ private def renderEvent (context : TeamContext) (observation after : Environment
       let state := setRenderHp state side index hpAfter
       if amount == 0 then state
       else addLine state s!"|-damage|{identAt observation side index}|{condition context side index hpAfter.toNat (renderStatus state side)}"
+  | .residualDamage side _ hpAfter =>
+      let state := flushAction observation state
+      let index := renderActive state side
+      let state := setRenderHp state side index hpAfter
+      addLine state s!"|-damage|{identAt observation side index}|{condition context side index hpAfter.toNat (renderStatus state side)}"
   | .substituteDamage side _ remaining =>
       let state := flushAction observation state
       addLine state s!"|-message|{playerName side}'s substitute has {remaining.toNat} HP remaining."

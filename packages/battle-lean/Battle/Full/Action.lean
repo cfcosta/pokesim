@@ -86,6 +86,8 @@ def legal (context : ActionContext) (action : Action) : Bool :=
     | .run => context.mode == .link ||
         (context.owner == .player && context.mode == .wild)
     | _ => false
+  else if fullMenuBypass context.side then
+    action == .noAction
   else
     match context.mode with
     | .safari =>
@@ -121,6 +123,38 @@ def legalActions (context : ActionContext) : Array Action :=
 
 /-! ## Legality theorems -/
 
+/-- Cartridge menu bypass exposes exactly the automatic continuation action;
+policy code cannot reselect Fly/Dig, switch, or choose another move while the
+first-turn charge bit is set. -/
+theorem menu_bypass_only_no_action (context : ActionContext)
+    (notForced : context.forcedReplacement = false)
+    (bypass : fullMenuBypass context.side = true) (action : Action) :
+    legal context action = (action == .noAction) := by
+  unfold legal
+  rw [notForced]
+  simp only [Bool.false_eq_true, if_false]
+  rw [bypass]
+  simp only [if_true]
+
+@[simp] theorem charging_forces_no_action (context : ActionContext)
+    (notForced : context.forcedReplacement = false)
+    (charging : context.side.active.volatile.chargingUp = true) :
+    legal context .noAction = true ∧
+      (∀ slot, legal context (.fight slot) = false) ∧
+      (∀ target, legal context (.switch target) = false) := by
+  have bypass : fullMenuBypass context.side = true := by
+    simp [fullMenuBypass, charging]
+  constructor
+  · rw [menu_bypass_only_no_action context notForced bypass]
+    native_decide
+  · constructor
+    · intro slot
+      rw [menu_bypass_only_no_action context notForced bypass]
+      rfl
+    · intro target
+      rw [menu_bypass_only_no_action context notForced bypass]
+      rfl
+
 @[simp] theorem automatic_and_post_fight_locks_are_separate (side : Full.SideState) :
     fullMenuBypass side =
       (side.active.volatile.recharging || side.active.volatile.chargingUp ||
@@ -148,7 +182,8 @@ theorem forced_switch_exact (context : ActionContext) (target : Fin 6)
 
 theorem ordinary_fight_exact (context : ActionContext) (slot : Fin 4)
     (mode : context.mode = .wild ∨ context.mode = .trainer ∨ context.mode = .link)
-    (notForced : context.forcedReplacement = false) :
+    (notForced : context.forcedReplacement = false)
+    (menu : fullMenuBypass context.side = false) :
     legal context (.fight slot) =
       (!mustStruggle context.side && usableMoveSlot context.side slot.val) := by
   rcases mode with mode | mode | mode
@@ -156,28 +191,44 @@ theorem ordinary_fight_exact (context : ActionContext) (slot : Fin 4)
     unfold legal
     rw [notForced]
     simp only [Bool.false_eq_true, if_false]
+    rw [menu]
+    simp only [Bool.false_eq_true, if_false]
     rw [mode]
 
-theorem trapped_switch_remains_protocol_selectable (context : ActionContext)
+theorem ordinary_switch_exact (context : ActionContext)
     (target : Fin 6) (ordinary : context.mode = .wild ∨ context.mode = .trainer ∨
-      context.mode = .link) (notForced : context.forcedReplacement = false) :
+      context.mode = .link) (notForced : context.forcedReplacement = false)
+    (menu : fullMenuBypass context.side = false) :
     legal context (.switch target) = context.side.canSwitchTo target.val := by
   rcases ordinary with ordinary | ordinary | ordinary
   all_goals
     unfold legal
     rw [notForced]
     simp only [Bool.false_eq_true, if_false]
+    rw [menu]
+    simp only [Bool.false_eq_true, if_false]
     rw [ordinary]
 
-@[simp] theorem trainer_run_selectable (side : Full.SideState) (bag : Items.Bag) :
-    legal { side, bag, mode := .trainer } .run = true := rfl
+@[simp] theorem trainer_run_selectable (side : Full.SideState) (bag : Items.Bag)
+    (menu : fullMenuBypass side = false) :
+    legal { side, bag, mode := .trainer } .run = true := by
+  unfold legal
+  simp only [Bool.false_eq_true, if_false]
+  rw [menu]
+  rfl
 
 @[simp] theorem ordinary_item_exact (side : Full.SideState) (bag : Items.Bag)
     (mode : BattleMode) (request : Items.Request)
-    (ordinary : mode = .wild ∨ mode = .trainer) :
+    (ordinary : mode = .wild ∨ mode = .trainer)
+    (menu : fullMenuBypass side = false) :
     legal { side, bag, mode } (.item request) =
       itemSelectable { side, bag, mode } request := by
-  rcases ordinary with rfl | rfl <;> rfl
+  rcases ordinary with rfl | rfl
+  all_goals
+    unfold legal
+    simp only [Bool.false_eq_true, if_false]
+    rw [menu]
+    rfl
 
 /-- A fight slot can be legal only when Struggle is not required. -/
 theorem legal_fight_not_exhausted (context : ActionContext) (slot : Fin 4)
@@ -187,13 +238,23 @@ theorem legal_fight_not_exhausted (context : ActionContext) (slot : Fin 4)
     (notForced : context.forcedReplacement = false) :
     mustStruggle context.side = false := by
   unfold legal at fight
-  simp [notForced] at fight
-  cases mode : context.mode <;> simp_all
+  rw [notForced] at fight
+  simp only [Bool.false_eq_true, if_false] at fight
+  split at fight
+  · change false = true at fight
+    contradiction
+  · cases mode : context.mode <;> simp_all
 
 /-- Link mode never admits an item. -/
 theorem link_item_illegal (side : Full.SideState) (bag : Items.Bag)
     (request : Items.Request) :
     legal { side, bag, mode := .link } (.item request) = false := by
-  rfl
+  unfold legal
+  simp only [Bool.false_eq_true, if_false]
+  split
+  · rfl
+  · have notLink : (BattleMode.link != BattleMode.link) = false := by
+      native_decide
+    simp [itemSelectable, notLink]
 
 end Battle.Full

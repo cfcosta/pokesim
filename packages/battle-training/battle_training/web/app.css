@@ -310,7 +310,7 @@ tr.match-link:hover, tr.match-link:focus-visible { background: rgba(78,160,255,0
 .battle-event::before { content: ""; position: absolute; z-index: 1; top: 13px; left: -22px; width: 9px; height: 9px; border: 2px solid var(--surface-soft); border-radius: 50%; background: var(--event-color); box-shadow: 0 0 0 2px color-mix(in srgb, var(--event-color) 20%, transparent); }
 .battle-event.event-action.side-player { --event-color: var(--blue); }
 .battle-event.event-action.side-enemy { --event-color: var(--red); }
-.battle-event.event-damage { --event-color: var(--gold); }
+.battle-event.event-damage, .battle-event.event-miss { --event-color: var(--gold); }
 .battle-event.event-faint { --event-color: var(--red); }
 .battle-event.event-switch, .battle-event.event-replacement { --event-color: var(--blue); }
 .battle-event.event-status { --event-color: #b17cff; }

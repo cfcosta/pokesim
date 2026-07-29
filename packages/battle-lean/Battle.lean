@@ -77,6 +77,7 @@ import Battle.Rom.LeechSeedRoutine
 import Battle.Rom.TransformRoutine
 import Battle.Rom.HazeRoutine
 import Battle.Rom.HazeDispatchRoutine
+import Battle.Rom.FlyRoutine
 import Battle.Diff
 import Battle.Driver
 import Battle.DriverInvariant
