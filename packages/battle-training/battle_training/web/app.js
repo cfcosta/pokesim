@@ -187,6 +187,8 @@ function renderModel(data) {
   const network = model.network || {};
   const rows = [
     ["Pipeline", model.pipeline],
+    ["Learner", model.learning_lineage || "legacy rollback"],
+    ["Deployment", model.deployment_lineage || "quality gated"],
     ["Observation", `${network.feature_count || "—"} fields`],
     ["Sequence", network.feature_count ? `${Math.ceil(network.feature_count / (network.token_group_size || 1)) + 1} tokens` : "—"],
     ["Encoder", network.layers ? `${network.layers} layers / ${network.heads} heads` : "—"],

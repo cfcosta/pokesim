@@ -32,6 +32,7 @@ from battle_training.native import Snapshot, _decode_features
 from battle_training.network import (
     BattleTransformer,
     TransformerConfig,
+    load_checkpoint,
     load_network,
     save_network,
     warm_start_network,
@@ -543,7 +544,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.epochs, 2)
         self.assertEqual(arguments.batch_size, 128)
         self.assertEqual(arguments.learning_rate, 2e-4)
-        self.assertEqual(arguments.promotion_games, 1024)
+        self.assertEqual(arguments.promotion_games, 8192)
         self.assertEqual(arguments.probe_games, 256)
         self.assertEqual(arguments.campaign_games, 288)
         self.assertEqual(arguments.tree_expansion_budget, 320)
@@ -669,6 +670,44 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(
             {_training_party_sizes(2, episode) for episode in range(36)}, expected
         )
+
+    def test_checkpoint_separates_deployed_and_shadow_models(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config = TransformerConfig(
+                feature_count=8,
+                action_count=2,
+                d_model=8,
+                heads=2,
+                layers=1,
+                feedforward=16,
+                precision="fp32",
+            )
+            deployed = BattleTransformer(config)
+            learner = deployed.detached_copy(torch.device("cpu"))
+            with torch.no_grad():
+                learner.policy.bias.add_(1.0)
+            path = Path(temporary) / "lineage.pt"
+            save_network(
+                path,
+                deployed,
+                None,
+                {"iteration": 1},
+                {"learner_model": learner.state_dict()},
+            )
+            loaded_deployed = load_network(path, torch.device("cpu"))
+            payload = load_checkpoint(path, torch.device("cpu"))
+            self.assertTrue(
+                torch.equal(loaded_deployed.policy.bias, deployed.policy.bias)
+            )
+            self.assertTrue(
+                torch.equal(payload["learner_model"]["policy.bias"], learner.policy.bias)
+            )
+            self.assertFalse(
+                torch.equal(
+                    payload["learner_model"]["policy.bias"],
+                    loaded_deployed.policy.bias,
+                )
+            )
 
     def test_v3_checkpoint_warm_starts_v4_position_table(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

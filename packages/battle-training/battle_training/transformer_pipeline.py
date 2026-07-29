@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import math
 import multiprocessing
@@ -64,7 +63,7 @@ class TransformerPipelineConfig:
     opponent_checkpoints: tuple[str, ...] = ()
     opponent_fraction: float = 0.5
     historical_window: int = 4
-    promotion_games: int = 1024
+    promotion_games: int = 8192
     promotion_seed_count: int = 8
     probe_games: int = 256
     probe_seed_count: int = 8
@@ -159,7 +158,7 @@ class _ActorEpisode:
 
 
 def _pipeline_id() -> str:
-    return "transformer-variable-party-bf16-tree-v8"
+    return "transformer-variable-party-bf16-tree-v9"
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
@@ -1472,9 +1471,9 @@ def run_transformer_pipeline(
     if not 0.0 <= config.minimum_promotion_score <= 1.0:
         raise ValueError("minimum_promotion_score must be in [0, 1]")
     if config.enforce_quality_gate:
-        if config.promotion_games < 1024:
+        if config.promotion_games < 8192:
             raise ValueError(
-                "quality-gated training requires at least 1024 promotion games"
+                "quality-gated training requires at least 8192 promotion games"
             )
         if config.minimum_promotion_score < 0.50:
             raise ValueError(
@@ -1545,23 +1544,29 @@ def run_transformer_pipeline(
         if completed >= config.iterations:
             raise ValueError("all configured training iterations are already complete")
         latest_checkpoint = root / "checkpoints" / f"policy-{completed:03d}.pt"
-        network = load_network(latest_checkpoint, device)
-        if network.config != model_config:
+        incumbent_network = load_network(latest_checkpoint, device)
+        if incumbent_network.config != model_config:
             raise ValueError("resume checkpoint network configuration differs")
+        latest_payload = load_checkpoint(latest_checkpoint, device)
+        learner_state = latest_payload.get("learner_model")
+        if not isinstance(learner_state, dict):
+            raise ValueError("resume checkpoint lacks persistent learner state")
+        network = BattleTransformer(model_config).to(device)
+        network.load_state_dict(learner_state)
+        network.eval()
         optimizer = torch.optim.AdamW(
             network.parameters(),
             lr=config.learning_rate,
             weight_decay=config.weight_decay,
         )
         if completed:
-            latest_payload = load_checkpoint(latest_checkpoint, device)
             optimizer_state = latest_payload.get("optimizer")
             if optimizer_state is None:
                 raise ValueError("resume checkpoint lacks AdamW state")
             optimizer.load_state_dict(optimizer_state)
-            torch_rng = latest_payload.get("torch_rng")
-            if isinstance(torch_rng, Tensor):
-                torch.random.set_rng_state(torch_rng.cpu())
+        torch_rng = latest_payload.get("torch_rng")
+        if isinstance(torch_rng, Tensor):
+            torch.random.set_rng_state(torch_rng.cpu())
         first_iteration = completed + 1
     else:
         for index, source_name in enumerate(config.opponent_checkpoints):
@@ -1602,6 +1607,7 @@ def run_transformer_pipeline(
         else:
             network = BattleTransformer(model_config).to(device)
             network.eval()
+        incumbent_network = network.detached_copy(device)
         write_json(
             root / "run.json",
             {
@@ -1612,6 +1618,8 @@ def run_transformer_pipeline(
                 "party_size_schedule": "all-ordered-1to6-v1",
                 "chance": "fresh-root-v1",
                 "search_solver": "simultaneous-matrix-tree-rmplus-v1",
+                "learning_lineage": "persistent-shadow-v1",
+                "deployment_lineage": "quality-gated-incumbent-v1",
                 "config": asdict(config),
                 "network": asdict(model_config),
                 "parameter_count": sum(
@@ -1628,13 +1636,15 @@ def run_transformer_pipeline(
         )
         save_network(
             initial_checkpoint,
-            network,
+            incumbent_network,
             None,
             {
                 "iteration": 0,
                 "kind": "initial",
                 "warm_start": warm_start_metadata,
+                "learning_lineage": "persistent-shadow-v1",
             },
+            {"learner_model": network.state_dict()},
         )
         shards = []
         collection = []
@@ -1650,6 +1660,11 @@ def run_transformer_pipeline(
     initial = load_network(initial_checkpoint, device)
     initial_identity = sha256(initial_checkpoint)
     initial_anchor = initial.detached_copy(device)
+    incumbent_identity = (
+        sha256(root / "checkpoints" / f"policy-{accepted_iterations[-1]:03d}.pt")
+        if accepted_iterations
+        else initial_identity
+    )
     historical = [
         (
             load_network(root / "checkpoints" / f"policy-{iteration:03d}.pt", device),
@@ -1658,7 +1673,7 @@ def run_transformer_pipeline(
         for iteration in accepted_iterations[-(config.historical_window + 1) :]
     ]
     _configure_inference(
-        [network, initial, initial_anchor]
+        [network, incumbent_network, initial, initial_anchor]
         + [model for model, _ in opponents]
         + [model for model, _ in historical],
         config.inference_engine,
@@ -1670,7 +1685,9 @@ def run_transformer_pipeline(
         message="Models loaded; collection is ready",
     )
     for iteration in range(first_iteration, config.iterations + 1):
-        population = opponents + [(initial_anchor, initial_identity)]
+        population = opponents + [(incumbent_network, incumbent_identity)]
+        if incumbent_identity != initial_identity:
+            population.append((initial_anchor, initial_identity))
         if config.historical_window:
             population.extend(historical[:-1][-config.historical_window :])
         population = list(
@@ -1724,9 +1741,6 @@ def run_transformer_pipeline(
                 "transitions": collection_metrics["transitions"],
             },
         )
-        incumbent = network.detached_copy(device)
-        incumbent_state = copy.deepcopy(network.state_dict())
-        optimizer_state = copy.deepcopy(optimizer.state_dict())
         training_metrics = _train_network(
             network, optimizer, training_shards, config, iteration
         )
@@ -1739,7 +1753,7 @@ def run_transformer_pipeline(
         )
         promotion = run_paired_arena(
             network,
-            incumbent,
+            incumbent_network,
             config.promotion_games,
             config.episode_budget,
             config.seed + 70_000_000 + iteration * 10_007,
@@ -1768,7 +1782,7 @@ def run_transformer_pipeline(
         )
         probe_arena = run_traced_arena(
             network,
-            incumbent,
+            incumbent_network,
             ArenaConfig(
                 games=config.probe_games,
                 budget=config.episode_budget,
@@ -1789,7 +1803,7 @@ def run_transformer_pipeline(
         )
         campaign_arena = run_campaign_arena(
             network,
-            incumbent,
+            incumbent_network,
             config.campaign_games,
             config.episode_budget,
             config.seed + 85_000_000 + iteration * 10_019,
@@ -1830,17 +1844,22 @@ def run_transformer_pipeline(
         promotion["campaign_arena"] = campaign_arena
         promotion["campaign_gate"] = campaign_arena["campaign"]["pass"]
         promotion["accepted"] = accepted
-        if not accepted:
-            network.load_state_dict(incumbent_state)
-            optimizer.load_state_dict(optimizer_state)
-            network.eval()
+        promotion["learner_persisted"] = True
+        promotion["deployment_updated"] = accepted
+        if accepted:
+            incumbent_network.load_state_dict(network.state_dict())
+            incumbent_network.eval()
         training_metrics["promotion"] = promotion
         training.append(training_metrics)
         write_monitor_state(
             root,
             "checkpoint",
             iteration=iteration,
-            message="Publishing promoted model" if accepted else "Restoring incumbent model",
+            message=(
+                "Publishing promoted model"
+                if accepted
+                else "Incumbent retained; shadow learner continues"
+            ),
             accepted=accepted,
             promotion_score=promotion_score,
             confidence_low=confidence_low,
@@ -1849,7 +1868,7 @@ def run_transformer_pipeline(
         checkpoint = root / "checkpoints" / f"policy-{iteration:03d}.pt"
         save_network(
             checkpoint,
-            network,
+            incumbent_network,
             optimizer,
             {
                 "iteration": iteration,
@@ -1858,10 +1877,16 @@ def run_transformer_pipeline(
                 ],
                 "collection": collection_metrics,
                 "training": training_metrics,
+                "learning_lineage": "persistent-shadow-v1",
+                "deployment_lineage": "quality-gated-incumbent-v1",
             },
+            {"learner_model": network.state_dict()},
         )
         if accepted:
-            historical.append((network.detached_copy(device), sha256(checkpoint)))
+            incumbent_identity = sha256(checkpoint)
+            historical.append(
+                (incumbent_network.detached_copy(device), incumbent_identity)
+            )
         if len(historical) > config.historical_window + 1:
             historical.pop(0)
         write_json(
@@ -1876,7 +1901,11 @@ def run_transformer_pipeline(
             root,
             "iteration-complete",
             iteration=iteration,
-            message="Candidate promoted" if accepted else "Incumbent retained",
+            message=(
+                "Candidate promoted"
+                if accepted
+                else "Incumbent retained; shadow learner carried forward"
+            ),
             accepted=accepted,
             promotion_score=promotion_score,
             confidence_low=confidence_low,
@@ -1887,7 +1916,8 @@ def run_transformer_pipeline(
         iteration=config.iterations,
         message="Running final model evaluations",
     )
-    distance = _parameter_distance(initial, network)
+    deployed_distance = _parameter_distance(initial, incumbent_network)
+    learner_distance = _parameter_distance(initial, network)
     arena_config = ArenaConfig(
         games=config.arena_episodes,
         budget=config.episode_budget,
@@ -1901,13 +1931,13 @@ def run_transformer_pipeline(
         seed_count=min(8, config.arena_episodes // 2),
     )
     arena = write_arena_report(
-        root / "arena" / "final-vs-initial", network, initial, arena_config
+        root / "arena" / "final-vs-initial", incumbent_network, initial, arena_config
     )
     opponent_arenas = []
     for index, (opponent, identity) in enumerate(opponents):
         result = write_arena_report(
             root / "arena" / f"final-vs-fixed-{index:03d}",
-            network,
+            incumbent_network,
             opponent,
             arena_config,
         )
@@ -1979,9 +2009,15 @@ def run_transformer_pipeline(
         "selfplay_battles": config.iterations * config.selfplay_episodes,
         "mirror_battles": sum(item["mirror_episodes"] for item in collection),
         "opponent_battles": sum(item["opponent_episodes"] for item in collection),
-        "parameter_count": sum(parameter.numel() for parameter in network.parameters()),
+        "parameter_count": sum(
+            parameter.numel() for parameter in incumbent_network.parameters()
+        ),
         "examples": sum(item["examples"] for item in collection),
-        "parameter_l2_delta": distance,
+        "parameter_l2_delta": deployed_distance,
+        "deployed_parameter_l2_delta": deployed_distance,
+        "learner_parameter_l2_delta": learner_distance,
+        "learning_lineage": "persistent-shadow-v1",
+        "deployment_lineage": "quality-gated-incumbent-v1",
         "initial_checkpoint_sha256": sha256(initial_checkpoint),
         "final_checkpoint": f"checkpoints/policy-{config.iterations:03d}.pt",
         "final_checkpoint_sha256": sha256(

@@ -243,7 +243,7 @@ The learner may be implemented in PyTorch or another external ML stack. It does 
 
 The v4 tensor appends own/opponent party counts and twelve side-canonical presence bits to the 478 v3 fields. Absent party and switch descriptors are zero; a fainted member remains present with HP zero. Training rotates through every ordered `1v1` through `6v6` size pair, so equal-size self-play cannot hide one-sided roster disadvantages. Promotion separately gates 1–2, 3–4, 5–6, unequal-party, and fixed campaign-team results.
 
-The production runner commits each completed iteration through an atomic checkpoint containing the post-promotion model, AdamW state, RNG state, and the metrics needed to reconstruct the completed prefix. `transformer-resume` validates checkpoint and shard continuity, restores the historical-opponent window, and continues at the next iteration under the immutable saved configuration. An uncommitted partial iteration is archived and replayed from its beginning; the system does not claim mid-battle checkpointing.
+The v9 production runner keeps two explicit lineages. A persistent shadow learner and its AdamW state accumulate every completed update; a deployed incumbent changes only after promotion. Each atomic checkpoint stores the deployed model, shadow model, learner optimizer, RNG state, and metrics needed to reconstruct the completed prefix. `transformer-resume` validates checkpoint and shard continuity, restores both model lineages and the historical-opponent window, and continues at the next iteration under the immutable saved configuration. An uncommitted partial iteration is archived and replayed from its beginning; the system does not claim mid-battle checkpointing.
 
 The production PyTorch implementation uses BF16 autocast for transformer and head matrix operations. Parameters, gradients, AdamW state, returned logits/values, masks, softmax, policy/value losses, and reductions remain FP32. On the RTX 3080 Ti this increased batch-128 training throughput by 3.77x and reduced peak allocation from 2.24 to 1.26 GiB. The v8 inference path additionally uses NumPy `frombuffer` decoding, pinned UInt16 staging, a device legal-mask table, one fused output transfer, exact observation memoization, and compiled static buckets through 256 rows. Compiled and eager outputs were bit-identical on matched probes. An opt-in grouped-token encoder reduces sequence length from 493 to 63 at group eight and measured a 4.45× batch-96 neural gain, but it changes model semantics and must pass the ordinary promotion suite. `--inference-engine eager` remains available for differential checks. See the [precision benchmark](../research/full6v6-precision-benchmark.md).
 
@@ -295,7 +295,7 @@ A payoff matrix tracks policy-by-policy and profile-by-profile results. A PSRO-s
 
 ## Evaluation
 
-Every promoted checkpoint is evaluated with paired teams, paired randomness, and swapped sides. Reports include confidence intervals and at least:
+Every candidate is evaluated against the deployed incumbent with 8,192 games formed from paired teams, paired randomness, and swapped sides. Reports include confidence intervals and at least:
 
 - win rate against fixed baselines;
 - round-robin payoff matrix against historical checkpoints;

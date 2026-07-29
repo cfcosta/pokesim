@@ -286,6 +286,7 @@ def save_network(
     network: BattleTransformer,
     optimizer: torch.optim.Optimizer | None,
     metadata: dict[str, object],
+    additional_state: dict[str, object] | None = None,
 ) -> None:
     """Publish a checkpoint atomically without replacing an existing artifact."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -299,6 +300,11 @@ def save_network(
         "metadata": metadata,
         "torch_rng": torch.random.get_rng_state(),
     }
+    if additional_state is not None:
+        overlap = payload.keys() & additional_state.keys()
+        if overlap:
+            raise ValueError(f"additional checkpoint state replaces {sorted(overlap)}")
+        payload.update(additional_state)
     temporary_name: str | None = None
     try:
         with tempfile.NamedTemporaryFile(

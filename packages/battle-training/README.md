@@ -118,7 +118,7 @@ batch 128, so 128 remains the production default.
 Use `--device cpu`, `--device cuda`, or `--device auto`. BF16 is the default;
 `--precision fp32` remains available for differential checks and older
 checkpoints without precision metadata retain their original FP32 contract.
-The v8 pipeline defaults `--inference-engine auto`: CUDA uses bucketed compiled
+The v9 pipeline defaults `--inference-engine auto`: CUDA uses bucketed compiled
 inference through static batches up to 256 while CPU uses eager execution.
 `--inference-engine eager` remains available for differential checks and
 historical artifact verification. Production collection defaults to two spawned
@@ -155,17 +155,21 @@ identity and deterministic regeneration reconstructs the same population order.
 Human traces remain external until the server-authoritative replay and search-
 relabeling importer in
 [the trace contract](../../docs/explanation/human-battle-trace-training.md) is
-implemented. Each production update receives at least 1,024 held-out games
-against its incumbent, grouped into 512
-same-reset pairs with model sides swapped across eight root seeds. Truncations
+implemented. Each production update receives at least 8,192 held-out games
+against its incumbent, grouped into 4,096 same-reset pairs with model sides
+swapped across eight root seeds. Truncations
 and semantic cycles score zero. Promotion requires a point score of at least 50%,
 a paired 95% confidence lower bound of at least 50%, and passing separate
 held-out type, status, and switch probes. It also reports and gates 1–2, 3–4,
 5–6, and unequal-party strata, plus a nine-team fixed campaign suite covering
 Brock through Giovanni and Lance. The campaign teams use canonical natural
 moves and fixed DVs inside the link quotient; they do not claim trainer AI or
-item equivalence. Inconclusive updates restore both model and AdamW state. AdamW
-state otherwise persists across collection iterations.
+item equivalence. The v9 pipeline separates a persistent shadow learner from the
+quality-gated deployed incumbent. Inconclusive evaluations retain the incumbent
+but carry the learner parameters and AdamW state into the next collection
+iteration, allowing small updates to compound without weakening deployment. Each
+checkpoint stores both lineages; ordinary checkpoint loading returns the deployed
+model, while resume restores the shadow learner and its optimizer explicitly.
 
 ## Model
 

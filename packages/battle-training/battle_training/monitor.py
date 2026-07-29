@@ -248,6 +248,8 @@ def build_dashboard_snapshot(root: Path) -> dict[str, Any]:
             "pipeline": run.get("pipeline"),
             "profile": run.get("profile"),
             "schema": run.get("schema"),
+            "learning_lineage": run.get("learning_lineage"),
+            "deployment_lineage": run.get("deployment_lineage"),
             "checkpoint": checkpoint,
         },
         "actors": actors,
