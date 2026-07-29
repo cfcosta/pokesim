@@ -42,7 +42,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser = subparsers.add_parser(name)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--iterations", type=int, default=1 if smoke else 30)
-    parser.add_argument("--episodes", type=int, default=4 if smoke else 500)
+    parser.add_argument("--episodes", type=int, default=4 if smoke else 2048)
     parser.add_argument("--arena-episodes", type=int, default=4 if smoke else 1024)
     parser.add_argument("--budget", type=int, default=64 if smoke else 256)
     parser.add_argument("--search-depth", type=int, default=1 if smoke else 4)

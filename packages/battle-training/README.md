@@ -50,8 +50,9 @@ carries an RM+ average-strategy policy target. `--search-every` remains availabl
 for explicit sparse-search experiments, but it is not the production default.
 This preserves complete action consideration without top-k pruning.
 `transformer-train` is the production profile:
-30 iterations of 500 training battles, or 15,000 independently reset random
-variable-party battles. It uses depth-four simultaneous trees, the
+30 iterations of 2,048 training battles, or 61,440 independently reset random
+variable-party battles. Each iteration assigns 56 or 57 battles to every ordered
+party-size matchup. It uses depth-four simultaneous trees, the
 940,430-parameter four-layer, 128-wide model, BF16 autocast, two epochs per iteration, a
 CUDA-safe batch size of 128, and a 1,024-game final arena. Parameters, gradients,
 AdamW state, policy normalization, losses, and reductions remain FP32. The tree

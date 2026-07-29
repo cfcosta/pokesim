@@ -535,9 +535,9 @@ class TransformerTests(unittest.TestCase):
         arguments = training_parser().parse_args(
             ["transformer-train", "--output", "/tmp/overnight"]
         )
-        self.assertEqual(arguments.iterations * arguments.episodes, 15_000)
+        self.assertEqual(arguments.iterations * arguments.episodes, 61_440)
         self.assertEqual(arguments.iterations, 30)
-        self.assertEqual(arguments.episodes, 500)
+        self.assertEqual(arguments.episodes, 2048)
         self.assertEqual(arguments.arena_episodes, 1024)
         self.assertEqual(arguments.search_depth, 4)
         self.assertEqual(arguments.search_every, 1)
