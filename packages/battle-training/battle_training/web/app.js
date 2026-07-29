@@ -2,6 +2,56 @@
 
 const $ = (id) => document.getElementById(id);
 const SVG = "http://www.w3.org/2000/svg";
+const SPRITE_REVISION = "8dfa3d97e953caaafaafd4963eff7621811af08e";
+const SPRITE_BASE = `https://raw.githubusercontent.com/PokeAPI/sprites/${SPRITE_REVISION}/sprites/pokemon/versions/generation-i/red-blue`;
+const TYPE_NAMES = {
+  0x00: "Normal", 0x01: "Fighting", 0x02: "Flying", 0x03: "Poison",
+  0x04: "Ground", 0x05: "Rock", 0x07: "Bug", 0x08: "Ghost",
+  0x14: "Fire", 0x15: "Water", 0x16: "Grass", 0x17: "Electric",
+  0x18: "Psychic", 0x19: "Ice", 0x1a: "Dragon",
+};
+const MOVE_EFFECTS = {
+  0x00: "Deals damage with no additional effect.", 0x02: "May poison the target.",
+  0x03: "Restores HP equal to part of the damage dealt.", 0x04: "May burn the target.",
+  0x05: "May freeze the target.", 0x06: "May paralyze the target.",
+  0x07: "The user faints after the attack.", 0x08: "Only works on a sleeping target and drains HP.",
+  0x09: "Copies the target's last move.", 0x0a: "Raises Attack by one stage.",
+  0x0b: "Raises Defense by one stage.", 0x0c: "Raises Speed by one stage.",
+  0x0d: "Raises Special by one stage.", 0x0e: "Raises accuracy by one stage.",
+  0x0f: "Raises evasion by one stage.", 0x11: "Ignores ordinary accuracy checks.",
+  0x12: "Lowers the target's Attack by one stage.", 0x13: "Lowers the target's Defense by one stage.",
+  0x14: "Lowers the target's Speed by one stage.", 0x15: "Lowers the target's Special by one stage.",
+  0x16: "Lowers the target's accuracy by one stage.", 0x17: "Lowers the target's evasion by one stage.",
+  0x18: "Copies the target's types.", 0x19: "Resets stat stages and several battle effects.",
+  0x1a: "Stores damage, then returns double damage.", 0x1b: "Attacks repeatedly, then may confuse the user.",
+  0x1c: "Ends a wild battle or switches in trainer contexts.", 0x1d: "Hits two to five times.",
+  0x1f: "May make the target flinch.", 0x20: "Puts the target to sleep.",
+  0x21: "May poison the target.", 0x22: "May burn the target.",
+  0x23: "May freeze the target.", 0x24: "May paralyze the target.",
+  0x25: "May make the target flinch.", 0x26: "Attempts a one-hit knockout.",
+  0x27: "Charges on the first turn and attacks on the second.", 0x28: "Removes half of the target's current HP.",
+  0x29: "Deals fixed or level-based damage.", 0x2a: "Traps the target for multiple turns.",
+  0x2b: "Becomes semi-invulnerable, then attacks.", 0x2c: "Hits twice.",
+  0x2d: "The user takes crash damage if it misses.", 0x2e: "Prevents stat reductions.",
+  0x2f: "Raises the user's critical-hit ratio (with Gen-I behavior).", 0x30: "The user takes recoil damage.",
+  0x31: "Confuses the target.", 0x32: "Raises Attack by two stages.",
+  0x33: "Raises Defense by two stages.", 0x34: "Raises Speed by two stages.",
+  0x35: "Raises Special by two stages.", 0x36: "Raises accuracy by two stages.",
+  0x37: "Raises evasion by two stages.", 0x38: "Restores the user's HP.",
+  0x39: "Transforms into the target.", 0x3a: "Lowers the target's Attack by two stages.",
+  0x3b: "Lowers the target's Defense by two stages.", 0x3c: "Lowers the target's Speed by two stages.",
+  0x3d: "Lowers the target's Special by two stages.", 0x3e: "Lowers the target's accuracy by two stages.",
+  0x3f: "Lowers the target's evasion by two stages.", 0x40: "Halves incoming special damage.",
+  0x41: "Halves incoming physical damage.", 0x42: "Poisons the target.",
+  0x43: "Paralyzes the target.", 0x44: "May lower the target's Attack.",
+  0x45: "May lower the target's Defense.", 0x46: "May lower the target's Speed.",
+  0x47: "May lower the target's Special.", 0x4c: "May confuse the target.",
+  0x4d: "Hits twice and may poison the target.", 0x4f: "Creates a substitute using the user's HP.",
+  0x50: "Requires a recharge turn after a successful hit.", 0x51: "Locks the user into Rage and raises Attack when hit.",
+  0x52: "Temporarily copies one of the target's moves.", 0x53: "Calls another move at random.",
+  0x54: "Seeds the target and drains HP each turn.", 0x55: "Has no battle effect.",
+  0x56: "Disables one of the target's moves.",
+};
 const stageProgress = {
   initializing: 0.03,
   ready: 0.06,
@@ -303,6 +353,7 @@ function renderBattlePopulation(data) {
     ["Switch rate", collection ? pct(collection.voluntary_switch_rate) : "—"],
     ["Exploitability", collection ? number(collection.mean_search_exploitability, 3) : "—"],
     ["Deep / root", collection ? `${number(collection.deep_search_decisions)} / ${number(collection.root_only_decisions)}` : "—"],
+    ["Lv. 100 6v6", collection ? `${number(collection.level100_six_vs_six_battles)} / ${number(collection.six_vs_six_battles)}` : "—"],
   ];
   for (const [name, value] of stats) {
     const card = element("div", "mini-stat");
@@ -425,12 +476,12 @@ function renderGates(data) {
 
 function actionLabel(action) {
   if (action === null || action === undefined) return "—";
-  if (action < 4) return `Move ${action + 1}`;
-  if (action < 10) return `Switch to slot ${action - 3}`;
-  if (action === 10) return "No action";
-  if (action === 11) return "Struggle";
-  if (action === 12) return "Run";
-  return `Action ${action}`;
+  if (action < 4) return `move slot ${action + 1}`;
+  if (action < 10) return `switch to slot ${action - 3}`;
+  if (action === 10) return "take no action";
+  if (action === 11) return "use Struggle";
+  if (action === 12) return "attempt to run";
+  return `action ${action}`;
 }
 
 function makeMatchLink(row, kind, iteration, match) {
@@ -448,37 +499,302 @@ function makeMatchLink(row, kind, iteration, match) {
   });
 }
 
-function renderTeamState(root, label, state) {
+function statusLabel(raw) {
+  const value = Number(raw || 0);
+  const labels = [];
+  const sleep = value & 0x07;
+  if (sleep) labels.push(`Sleep ${sleep}`);
+  if (value & 0x08) labels.push("Poisoned");
+  if (value & 0x10) labels.push("Burned");
+  if (value & 0x20) labels.push("Frozen");
+  if (value & 0x40) labels.push("Paralyzed");
+  return labels.length ? labels.join(" · ") : "Healthy";
+}
+
+function maximumPp(move) {
+  const base = Number(move.base_pp || 0);
+  return base + Math.floor(base / 5) * Number(move.pp_ups || 0);
+}
+
+function moveDescription(move) {
+  const power = Number(move.power || 0) ? `Power ${move.power}` : "Status move";
+  const accuracy = `${Math.round(Number(move.accuracy || 0) * 100 / 255)}% accuracy`;
+  const effect = MOVE_EFFECTS[Number(move.effect)] || "Uses its cartridge-defined Gen-I effect.";
+  return `${power} · ${accuracy}. ${effect}`;
+}
+
+function renderMove(move, activeLegal = null) {
+  const item = element("li", `move-card${activeLegal === false ? " move-unavailable" : ""}`);
+  const heading = element("div", "move-heading");
+  heading.append(
+    element("strong", "", move.name),
+    element("span", `type-badge type-${String(TYPE_NAMES[move.type] || "unknown").toLowerCase()}`, TYPE_NAMES[move.type] || `Type ${move.type}`),
+  );
+  const pp = move.pp === undefined ? "PP unavailable" : `${move.pp}/${maximumPp(move)} PP`;
+  item.append(heading, element("p", "move-description", moveDescription(move)), element("span", "move-pp", `${pp}${activeLegal === false ? " · unavailable now" : ""}`));
+  return item;
+}
+
+function pokemonSprite(member, className = "") {
+  if (!member?.dex) return null;
+  const image = document.createElement("img");
+  image.className = className;
+  image.src = `${SPRITE_BASE}/${member.dex}.png`;
+  image.alt = "";
+  image.loading = "eager";
+  image.decoding = "async";
+  image.setAttribute("aria-hidden", "true");
+  image.addEventListener("error", () => image.remove());
+  return image;
+}
+
+function renderPokemon(member, index, side, activeMask, showMoves = true) {
+  const active = index === Number(side.active);
+  const card = element("article", `pokemon-card${active ? " active-pokemon" : ""}${Number(member.hp) === 0 ? " fainted-pokemon" : ""}`);
+  const header = element("div", "pokemon-header");
+  const portrait = element("div", "pokemon-portrait");
+  const image = pokemonSprite(member);
+  if (image) portrait.append(image);
+  const identity = element("div", "pokemon-identity");
+  const nameLine = element("div", "pokemon-name");
+  nameLine.append(element("strong", "", member.name), element("span", "", `Lv. ${member.level}`));
+  if (active) nameLine.append(element("span", "active-badge", "Active"));
+  identity.append(nameLine, element("div", "pokemon-health", `${member.hp}/${member.max_hp} HP · ${statusLabel(member.status)}`));
+  const hpTrack = element("div", "hp-track");
+  const hpFill = element("span");
+  hpFill.style.width = `${Math.max(0, Math.min(100, 100 * Number(member.hp) / Math.max(1, Number(member.max_hp))))}%`;
+  hpTrack.append(hpFill);
+  identity.append(hpTrack);
+  header.append(portrait, identity);
+  card.append(header);
+  if (showMoves) {
+    const moves = member.moves?.length ? member.moves : active ? side.moves || [] : [];
+    const moveList = element("ul", "pokemon-moves");
+    for (const [slot, move] of moves.entries()) {
+      const legal = active && activeMask != null ? Boolean(activeMask & (1 << slot)) : null;
+      moveList.append(renderMove(move, legal));
+    }
+    if (!moves.length) moveList.append(element("li", "empty-state", "Moves were not recorded for this historical state."));
+    card.append(element("div", "moveset-label", "Move slots"), moveList);
+  }
+  return card;
+}
+
+function renderTeamState(root, label, state, masks = {}, showAttribution = true, showMoves = true) {
   if (!state?.player || !state?.enemy) return;
-  const section = element("section", "match-section");
+  const section = element("section", `match-section${showMoves ? "" : " final-team-section"}`);
   section.append(element("h3", "", label));
   const teams = element("div", "team-grid");
   for (const [sideName, sideLabel] of [["player", "Player team"], ["enemy", "Enemy team"]]) {
     const side = state[sideName];
     const card = element("div", "team-card");
-    card.append(element("h4", "", `${sideLabel} · active slot ${Number(side.active) + 1}`));
-    const list = element("ul", "team-list");
-    for (const [index, member] of (side.party || []).entries()) {
-      const item = element("li");
-      item.append(
-        element("strong", "", `${index === side.active ? "● " : ""}${member.name} · L${member.level}`),
-        element("span", "", `${member.hp}/${member.max_hp} HP${member.status ? ` · status ${member.status}` : ""}`),
-      );
-      list.append(item);
-    }
+    const alive = (side.party || []).filter((member) => Number(member.hp) > 0).length;
+    const teamSummary = showMoves ? `${side.party?.length || 0} Pokémon` : `${alive} alive · ${(side.party?.length || 0) - alive} fainted`;
+    card.append(element("h4", "", `${sideLabel} · ${teamSummary}`));
+    const list = element("div", "pokemon-list");
+    for (const [index, member] of (side.party || []).entries()) list.append(renderPokemon(member, index, side, masks[sideName], showMoves));
     card.append(list);
-    if (side.moves?.length) {
-      card.append(element("p", "move-list", `Active moves: ${side.moves.map((move) => move.name).join(" · ")}`));
-    }
     teams.append(card);
   }
   section.append(teams);
+  if (showAttribution) section.append(element("p", "sprite-attribution", "Generation I sprites are loaded from the pinned PokeAPI sprites repository; Pokémon imagery belongs to its respective rights holders."));
   root.append(section);
+}
+
+function choiceText(choice, action) {
+  if (!choice) return title(actionLabel(action));
+  if (choice.kind === "move") return choice.move ? `${choice.actor} used ${choice.move.name}` : `${choice.actor} selected ${actionLabel(action)}`;
+  if (choice.kind === "switch") return `${choice.actor} switched to ${choice.target || `slot ${Number(choice.target_slot) + 1}`}`;
+  if (choice.kind === "struggle") return `${choice.actor} used Struggle`;
+  if (choice.kind === "run") return `${choice.actor} attempted to run`;
+  if (choice.kind === "no-action") return `${choice.actor} took no action`;
+  return `${choice.actor} selected ${actionLabel(action)}`;
 }
 
 function policyPreview(rows) {
   if (!rows?.length) return "";
-  return rows.map((row) => `${actionLabel(row.action)} ${pct(row.probability)}`).join(" · ");
+  return rows.map((row) => `${choiceText(row, row.action)} ${pct(row.probability)}`).join(" · ");
+}
+
+function sideKey(side) {
+  return Number(side) === 0 ? "player" : "enemy";
+}
+
+function sideTitle(side) {
+  return Number(side) === 0 ? "Player" : "Enemy";
+}
+
+function rosterMember(rosters, state, side, slot) {
+  const key = sideKey(side);
+  const recorded = state?.[key]?.party?.[slot] || {};
+  const original = rosters?.[key]?.[slot] || {};
+  return { ...original, ...recorded };
+}
+
+function activeMember(rosters, state, side, activeSlots) {
+  const key = sideKey(side);
+  const slot = activeSlots?.[Number(side)] ?? Number(state?.[key]?.active || 0);
+  return rosterMember(rosters, state, side, slot);
+}
+
+function pokemonReference(member, side, fallback = "Pokémon") {
+  const reference = element("span", `pokemon-ref side-${sideKey(side)}`);
+  const image = pokemonSprite(member, "pokemon-ref-icon");
+  if (image) reference.append(image);
+  reference.append(element("strong", "", member?.name || fallback));
+  return reference;
+}
+
+function appendParts(root, parts) {
+  for (const part of parts) {
+    if (part?.nodeType) root.append(part);
+    else root.append(document.createTextNode(String(part)));
+  }
+}
+
+function eventLine(kind, side, label, parts) {
+  const sideClass = side === null ? "" : ` side-${sideKey(side)}`;
+  const item = element("li", `battle-event event-${kind}${sideClass}`);
+  const content = element("div", "battle-event-content");
+  const meta = element("div", "battle-event-meta");
+  meta.append(element("span", "event-kind", label));
+  if (side !== null) meta.append(element("span", "event-side", sideTitle(side)));
+  const copy = element("p", "battle-event-copy");
+  appendParts(copy, parts);
+  content.append(meta, copy);
+  item.append(content);
+  return item;
+}
+
+function choiceForSide(turn, side) {
+  return Number(side) === 0 ? turn.player_choice : turn.enemy_choice;
+}
+
+function actionForSide(turn, side) {
+  return Number(side) === 0 ? turn.player_action : turn.enemy_action;
+}
+
+function inferChangedSide(before, after, field) {
+  for (const side of [0, 1]) {
+    const key = sideKey(side);
+    if (before?.[key]?.[field] !== after?.[key]?.[field]) return side;
+  }
+  return null;
+}
+
+function renderActionEvent(turn, side, rosters, before, activeSlots, recordedAction) {
+  const choice = choiceForSide(turn, side);
+  const action = choice?.action ?? recordedAction ?? actionForSide(turn, side);
+  const actorSlot = choice?.actor_slot ?? activeSlots[side];
+  const actor = rosterMember(rosters, before, side, actorSlot);
+  const actorRef = pokemonReference(actor, side, choice?.actor || sideTitle(side));
+  if (choice?.kind === "move" && choice.move) {
+    return eventLine("action", side, "Move", [actorRef, " used ", element("strong", "event-move", choice.move.name), "."]);
+  }
+  if (choice?.kind === "switch") {
+    const target = rosterMember(rosters, before, side, Number(choice.target_slot));
+    return eventLine("action", side, "Switch chosen", [actorRef, " committed to switch to ", pokemonReference(target, side, choice.target || "another Pokémon"), "."]);
+  }
+  if (choice?.kind === "struggle") return eventLine("action", side, "Move", [actorRef, " used ", element("strong", "event-move", "Struggle"), "."]);
+  if (choice?.kind === "no-action") return eventLine("action", side, "Waiting", [actorRef, " had no action this step."]);
+  if (choice?.kind === "run") return eventLine("action", side, "Run", [actorRef, " attempted to leave the battle."]);
+  return eventLine("action", side, "Action", [actorRef, ` selected ${actionLabel(action)}.`]);
+}
+
+function renderMechanicsEvent(event, turn, rosters, before, after, activeSlots, lastActionSide) {
+  const explicitSide = event.side === undefined ? null : Number(event.side);
+  const inferredStatusSide = event.kind === "status-applied" ? inferChangedSide(before, after, "status") : null;
+  const side = explicitSide ?? inferredStatusSide ?? (
+    ["healed", "screen", "transformed", "disobedience"].includes(event.kind) ? lastActionSide :
+      ["seeded", "disabled"].includes(event.kind) && lastActionSide !== null ? 1 - lastActionSide : null
+  );
+  const member = side === null ? null : activeMember(rosters, before, side, activeSlots);
+  const ref = side === null ? null : pokemonReference(member, side, sideTitle(side));
+
+  if (event.kind === "action" && explicitSide !== null) {
+    return renderActionEvent(turn, explicitSide, rosters, before, activeSlots, event.action);
+  }
+  if (event.kind === "damage") return eventLine("damage", side, "Damage", [ref, ` lost ${number(event.amount)} HP and has ${number(event.hp)} HP left.`]);
+  if (event.kind === "substitute-damage") return eventLine("damage", side, "Substitute", [ref, `'s substitute absorbed ${number(event.amount)} damage and has ${number(event.hp)} HP left.`]);
+  if (event.kind === "faint") return eventLine("faint", side, "Fainted", [ref, " fainted."]);
+  if (event.kind === "forced-replacement") return eventLine("replacement", side, "Replacement needed", [ref, " fainted, so a replacement must be chosen."]);
+  if (event.kind === "switch") {
+    const outgoing = activeMember(rosters, before, side, activeSlots);
+    const targetSlot = Number(event.target);
+    const incoming = rosterMember(rosters, before, side, targetSlot);
+    activeSlots[side] = targetSlot;
+    return eventLine("switch", side, "Sent out", [pokemonReference(incoming, side, `slot ${targetSlot + 1}`), " entered the battle in place of ", pokemonReference(outgoing, side), "."]);
+  }
+  if (event.kind === "status-applied") {
+    const condition = side === null ? `status byte ${event.value}` : statusLabel(after?.[sideKey(side)]?.status ?? event.value);
+    return eventLine("status", side, "Status", side === null ? [`A Pokémon received ${condition}.`] : [ref, ` became ${condition}.`]);
+  }
+  if (event.kind === "status-blocked") return eventLine("status", side, "Unable to move", [ref, " could not act because of its status."]);
+  if (event.kind === "stage-changed") return eventLine("status", side, "Stats changed", [ref, " had its stat stages changed."]);
+  if (event.kind === "healed") return eventLine("heal", side, "Recovered", side === null ? [`A Pokémon recovered ${number(event.amount)} HP.`] : [ref, ` recovered ${number(event.amount)} HP.`]);
+  if (event.kind === "screen") return eventLine("status", side, "Screen", side === null ? ["A defensive screen was established."] : [ref, " established a defensive screen."]);
+  if (event.kind === "transformed") return eventLine("status", side, "Transform", side === null ? ["Transform completed."] : [ref, " transformed."]);
+  if (event.kind === "seeded") return eventLine("status", side, "Leech Seed", side === null ? ["Leech Seed took hold."] : [ref, " was seeded."]);
+  if (event.kind === "disabled") return eventLine("status", side, "Disabled", side === null ? ["A move was disabled."] : [ref, " had a move disabled."]);
+  if (event.kind === "disobedience") return eventLine("status", side, "Disobeyed", side === null ? ["A Pokémon disobeyed."] : [ref, " disobeyed its command."]);
+  if (event.kind === "terminal") return eventLine("terminal", null, "Battle over", ["The battle reached its final result."]);
+  return eventLine("status", side, title(event.kind), side === null ? [`${title(event.kind)} occurred.`] : [ref, `: ${title(event.kind)}.`]);
+}
+
+function renderTurnState(after, rosters) {
+  if (!after?.player || !after?.enemy) return null;
+  const summary = element("div", "turn-state-grid");
+  for (const side of [0, 1]) {
+    const key = sideKey(side);
+    const slot = Number(after[key].active || 0);
+    const member = rosterMember(rosters, after, side, slot);
+    const hp = Number(after[key].hp ?? member.hp ?? 0);
+    const maxHp = Number(after[key].max_hp ?? member.max_hp ?? 0);
+    const state = element("div", `turn-state-side side-${key}${hp === 0 ? " is-fainted" : ""}`);
+    state.append(pokemonReference(member, side), element("span", "", `${number(hp)}/${number(maxHp)} HP`));
+    const status = statusLabel(after[key].status);
+    if (status !== "Healthy") state.append(element("span", "turn-status", status));
+    summary.append(state);
+  }
+  return summary;
+}
+
+function renderTurn(turn, rosters) {
+  const card = element("article", "turn-card");
+  const header = element("header", "turn-header");
+  header.append(element("strong", "", `Turn ${number(turn.turn)}`), element("span", "", title(turn.request)));
+  const search = turn.root_value == null ? null : `Search value ${number(turn.root_value, 3)}${turn.exploitability == null ? "" : ` · exploitability ${number(turn.exploitability, 3)}`}${turn.tree_nodes == null ? "" : ` · ${number(turn.tree_nodes)} nodes · depth ${number(turn.tree_max_depth)}`}`;
+  if (search) header.append(element("span", "turn-search", search));
+  card.append(header);
+
+  const before = turn.before || {};
+  const after = turn.after || {};
+  const activeSlots = [Number(before.player?.active || 0), Number(before.enemy?.active || 0)];
+  const recorded = after.events || [];
+  const events = recorded.some((event) => event.kind === "action") ? recorded : [
+    { kind: "action", side: 0, action: turn.player_action, synthetic: true },
+    { kind: "action", side: 1, action: turn.enemy_action, synthetic: true },
+    ...recorded,
+  ];
+  const eventList = element("ol", "battle-event-list");
+  let lastActionSide = null;
+  for (const event of events) {
+    if (event.kind === "action" && event.side !== undefined) lastActionSide = Number(event.side);
+    eventList.append(renderMechanicsEvent(event, turn, rosters, before, after, activeSlots, lastActionSide));
+  }
+  card.append(eventList);
+  if (!recorded.length) card.append(element("p", "event-trace-note", "Detailed mechanics events were not recorded for this historical turn; only the committed actions are available."));
+  const state = renderTurnState(after, rosters);
+  if (state) card.append(state);
+
+  const playerPolicy = policyPreview(turn.player_top_policy);
+  const enemyPolicy = policyPreview(turn.enemy_top_policy);
+  if (playerPolicy || enemyPolicy) {
+    const details = element("details", "policy-details");
+    details.append(element("summary", "", "Search policy"), element("p", "", `Player: ${playerPolicy || "—"}`), element("p", "", `Enemy: ${enemyPolicy || "—"}`));
+    card.append(details);
+  }
+  return card;
 }
 
 function renderMatchDetail(detail) {
@@ -491,14 +807,11 @@ function renderMatchDetail(detail) {
 
   const result = promotion ? outcomeLabel(detail) : selfplayOutcome(detail);
   const summaries = [
-    ["Iteration", number(detail.iteration)],
-    ["Result", result],
-    ["Party", `${detail.player_party_size}v${detail.enemy_party_size}`],
-    ["Stop", title(detail.stop)],
-    ["Candidate side", title(detail.candidate_side)],
+    ["Iteration", number(detail.iteration)], ["Result", result],
+    ["Party", `${detail.player_party_size}v${detail.enemy_party_size}`], ["Levels", detail.level_profile === "level100" ? "All Lv. 100" : "Generated range"],
+    ["Stop", detail.reason ? title(detail.reason) : title(detail.stop)], ["Candidate side", title(detail.candidate_side)],
     [promotion ? "Pair" : "Population", promotion ? `#${detail.pair}` : (detail.opponent || title(detail.episode_kind))],
     ["Turns", number(detail.timeline?.length ?? detail.decisions)],
-    ["Return", detail.candidate_return ?? detail.return_ ?? detail.return ?? "—"],
   ];
   const grid = element("div", "match-summary-grid");
   for (const [name, value] of summaries) {
@@ -507,47 +820,24 @@ function renderMatchDetail(detail) {
     grid.append(card);
   }
   body.append(grid);
-  renderTeamState(body, "Initial state", detail.initial);
-  renderTeamState(body, "Final recorded state", detail.final);
+  const firstTurn = detail.timeline?.[0];
+  renderTeamState(body, "Starting teams and move slots", detail.initial, { player: firstTurn?.player_legal_mask, enemy: firstTurn?.enemy_legal_mask });
 
   const timeline = detail.timeline || [];
+  const rosters = {
+    player: detail.initial?.player?.party || [],
+    enemy: detail.initial?.enemy?.party || [],
+  };
   const section = element("section", "match-section");
-  section.append(element("h3", "", "Decision timeline"));
-  if (!timeline.length) {
-    section.append(element("p", "empty-state", "A decision timeline was not recorded for this historical match."));
-    body.append(section);
-    return;
+  section.append(element("h3", "", "Battle log"));
+  if (!timeline.length) section.append(element("p", "empty-state", "A turn-by-turn record was not captured for this historical match."));
+  else {
+    const turns = element("div", "turn-list");
+    for (const turn of timeline) turns.append(renderTurn(turn, rosters));
+    section.append(turns);
   }
-  const wrap = element("div", "table-wrap timeline-table");
-  const table = element("table");
-  const head = element("thead");
-  const headerRow = element("tr");
-  for (const heading of ["Turn", "Request", "Player", "Enemy", "Search", "Top policies"]) headerRow.append(element("th", "", heading));
-  head.append(headerRow);
-  const tbody = element("tbody");
-  for (const turn of timeline) {
-    const row = element("tr");
-    const search = turn.root_value == null
-      ? "—"
-      : `v ${number(turn.root_value, 3)}${turn.exploitability == null ? "" : ` · ε ${number(turn.exploitability, 3)}`}${turn.tree_nodes == null ? "" : ` · ${number(turn.tree_nodes)} nodes / d${number(turn.tree_max_depth)}`}`;
-    const policies = element("td", "policy-preview");
-    const playerPolicy = policyPreview(turn.player_top_policy);
-    const enemyPolicy = policyPreview(turn.enemy_top_policy);
-    policies.textContent = playerPolicy || enemyPolicy ? `P: ${playerPolicy || "—"}\nE: ${enemyPolicy || "—"}` : "—";
-    row.append(
-      element("td", "", number(turn.turn)),
-      element("td", "", title(turn.request)),
-      element("td", "", actionLabel(turn.player_action)),
-      element("td", "", actionLabel(turn.enemy_action)),
-      element("td", "", search),
-      policies,
-    );
-    tbody.append(row);
-  }
-  table.append(head, tbody);
-  wrap.append(table);
-  section.append(wrap);
   body.append(section);
+  renderTeamState(body, "Final recorded teams", detail.final, {}, false, false);
 }
 
 async function openMatchPane(kind, iteration, match) {
