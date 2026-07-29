@@ -31,6 +31,7 @@ These documents record twelve codebase, processor, and proof-architecture review
 - [Stat modifier flow](reference/stat-modifier-flow.md) — stage arithmetic, cap anomalies, badges, and status-penalty targets.
 - [Switch, faint, and participation flow](reference/switch-faint-and-participation.md) — active/party synchronization, reset matrices, EXP flags, replacement, and faint asymmetries.
 - [End-to-end verification closure](reference/end-to-end-closure.md) — concrete driver boundary, transitive range/hardware closure, theorem stack, caller integrations, and release gates.
+- [Universal ROM/model equivalence obligations](reference/universal-equivalence-obligations.md) — exact behavior theorem, current evidence boundary, mandatory obligations, checkpoint simulations, and closure gates.
 - [Standalone SM83 semantics package](reference/sm83-semantics-package.md) — separate dependency boundary, complete decoder/clock/bus semantics, interrupts/HALT/lockup, proof obligations, and conformance corpus.
 - [SM83 implementation specification](reference/sm83-implementation-spec.md) — pinned 512-row catalogue audit, normalized decoder, exact ALU/flag rules, logical M-cycle schedules, metadata dispositions, and theorem matrix.
 - [SM83 microarchitecture and system-boundary contract](reference/sm83-microarchitecture-contract.md) — physical fetched-IR pipeline, IDU/address pins, clock domains, interrupt phases, HALT/STOP/lock, OAM trigger, checkpoints, and three-layer refinements.
