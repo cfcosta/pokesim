@@ -72,6 +72,9 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Batch promotion, campaign, and traced-probe arenas across live games.
 - [x] Serve a read-only live dashboard for model, battle, actor, and promotion state.
 - [x] Open self-play and promotion rows into on-demand recorded match panes.
+- [x] Show complete move slots, PP/status, sprites, named choices, switches, and events.
+- [x] Make exactly 25% of scheduled generated 6v6 pairs fully level 100.
+- [x] Audit horizon stops and raise production/arena decision limits to 512.
 - [x] Add quality-gated grouped-token and tiered-deep-search profiles.
 - [x] Preserve pre-v5 checkpoint execution as FP32.
 - [x] Publish immutable model, optimizer, schema, and SHA-256 checkpoints.

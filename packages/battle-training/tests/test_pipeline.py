@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
 from battle_training.arena import (
+    _evaluation_level100,
     _evaluation_party_sizes,
     _mean_ci95,
     _paired_coordinates,
@@ -51,6 +52,7 @@ from battle_training.transformer_pipeline import (
     _load_completed_prefix,
     _load_examples,
     _scheduled_for_opponent,
+    _training_level100,
     _training_party_sizes,
 )
 
@@ -291,7 +293,13 @@ class MonitorTests(unittest.TestCase):
             )
             promotion = build_match_detail(root, "promotion", 2, 3)
             self.assertEqual(promotion["timeline"], [{"turn": 4}])
-            self.assertIsNone(build_match_detail(root, "promotion", 2, 4))
+            write_json(
+                root / "matches" / "promotion-002" / "game-00004.json",
+                {"game": 4, "timeline": [{"turn": 5}]},
+            )
+            direct = build_match_detail(root, "promotion", 2, 4)
+            self.assertEqual(direct["timeline"], [{"turn": 5}])
+            self.assertIsNone(build_match_detail(root, "promotion", 2, 5))
 
     def test_dashboard_aggregates_live_selfplay_results(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -575,6 +583,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.episodes, 2048)
         self.assertEqual(arguments.arena_episodes, 1024)
         self.assertEqual(arguments.search_depth, 4)
+        self.assertEqual(arguments.budget, 512)
         self.assertEqual(arguments.search_every, 1)
         self.assertEqual(arguments.epochs, 2)
         self.assertEqual(arguments.batch_size, 128)
@@ -667,6 +676,12 @@ class TransformerTests(unittest.TestCase):
         )
         schedule = [_evaluation_party_sizes(pair) for pair in range(512)]
         self.assertEqual(schedule.count((6, 6)), 128)
+        level100 = [_evaluation_level100(pair) for pair in range(512)]
+        self.assertEqual(sum(level100), 32)
+        self.assertTrue(
+            all(not selected or schedule[index] == (6, 6)
+                for index, selected in enumerate(level100))
+        )
         low, high = _mean_ci95([1.0] * 512)
         self.assertEqual((low, high), (1.0, 1.0))
 
@@ -707,6 +722,15 @@ class TransformerTests(unittest.TestCase):
             ]
             self.assertEqual(set(schedule), expected)
             self.assertGreaterEqual(schedule.count((6, 6)), 512)
+            level100 = [
+                _training_level100(iteration, episode)
+                for episode in range(2048)
+            ]
+            self.assertEqual(sum(level100), 128)
+            self.assertTrue(
+                all(not selected or schedule[index] == (6, 6)
+                    for index, selected in enumerate(level100))
+            )
 
     def test_checkpoint_separates_deployed_and_shadow_models(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

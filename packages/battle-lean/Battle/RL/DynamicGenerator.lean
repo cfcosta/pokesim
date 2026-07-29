@@ -247,7 +247,8 @@ trade evolution, or reach Alakazam. Below level 16 it cannot become Kadabra. -/
 four DVs, machine count/order/replacement slots, and per-slot PP Up counts.
 Acquisition replays exact `WriteMonMoves` for the promoted species at the sampled
 level before machine teachings and PP Ups. -/
-def sampleMon (ledger : ResourceLedger) (rng : Rng.LinkRng) :
+private def sampleMonWithLevel (forcedLevel : Option UInt8)
+    (ledger : ResourceLedger) (rng : Rng.LinkRng) :
     MonPlan × MonState × ResourceLedger × Rng.LinkRng :=
   let (speciesByte, rng) := draw rng
   let (levelByte, rng) := draw rng
@@ -264,7 +265,7 @@ def sampleMon (ledger : ResourceLedger) (rng : Rng.LinkRng) :
   let (replacementBits, rng) := draw rng
   let (ppPattern, rng) := draw rng
   let entry := entryOf speciesByte.toNat
-  let level := sampledLevel entry.speciesId levelByte
+  let level := forcedLevel.getD (sampledLevel entry.speciesId levelByte)
   let species := promoteSpecies entry.speciesId level
     firstEvolutionDecision firstEvolutionBranch secondEvolutionDecision secondEvolutionBranch
   let origin : Origin :=
@@ -278,13 +279,24 @@ def sampleMon (ledger : ResourceLedger) (rng : Rng.LinkRng) :
   let state := applyPpPattern ppPattern state
   ({ origin, events := state.2.2 }, state.1, state.2.1, rng)
 
-private def sampleMons : Nat → ResourceLedger → Rng.LinkRng →
-    Array MonPlan × Team × ResourceLedger × Rng.LinkRng
+/-- Ordinary level-distributed mon generation. -/
+def sampleMon (ledger : ResourceLedger) (rng : Rng.LinkRng) :
+    MonPlan × MonState × ResourceLedger × Rng.LinkRng :=
+  sampleMonWithLevel none ledger rng
+
+private def sampleMonsWithLevel (forcedLevel : Option UInt8) :
+    Nat → ResourceLedger → Rng.LinkRng →
+      Array MonPlan × Team × ResourceLedger × Rng.LinkRng
   | 0, ledger, rng => (#[], #[], ledger, rng)
   | count + 1, ledger, rng =>
-      let (plan, mon, ledger, rng) := sampleMon ledger rng
-      let (plans, mons, ledger, rng) := sampleMons count ledger rng
+      let (plan, mon, ledger, rng) := sampleMonWithLevel forcedLevel ledger rng
+      let (plans, mons, ledger, rng) :=
+        sampleMonsWithLevel forcedLevel count ledger rng
       (#[plan] ++ plans, #[mon] ++ mons, ledger, rng)
+
+private def sampleMons : Nat → ResourceLedger → Rng.LinkRng →
+    Array MonPlan × Team × ResourceLedger × Rng.LinkRng :=
+  sampleMonsWithLevel none
 
 private def fallbackOrigin : Origin :=
   { species := (entryOf 0).speciesId, level := 100
@@ -331,6 +343,34 @@ def defaultLedger : ResourceLedger := ResourceLedger.oneEach 18
 def sampleSized (requested : Nat) (rng : Rng.LinkRng) : Sample :=
   sampleSizedWithLedger requested defaultLedger rng
 
+/-- Generate a requested-size progression-witnessed party whose members are all
+level 100. The ordinary level byte is still consumed, preserving stream shape;
+only the level-selection policy changes. -/
+def sampleSizedLevel100 (requested : Nat) (rng : Rng.LinkRng) : Sample :=
+  let count := max 1 (min maxPartySize requested)
+  let (plans, candidate, remaining, rng) :=
+    sampleMonsWithLevel (some 100) count defaultLedger rng
+  let history : TeamHistory := { initialLedger := defaultLedger, plans }
+  if replayed : replayTeam history = some (candidate, remaining) then
+    if legal : teamLegal genDex .canonical candidate = true then
+      { team := ⟨candidate, legal⟩, rng, repaired := false, history
+        remainingLedger := remaining, historyReplays := replayed }
+    else fallbackSample defaultLedger rng
+  else fallbackSample defaultLedger rng
+
+/-- Level-100 generation retains canonical learnset legality for every seed. -/
+theorem sampleSizedLevel100_sound (requested : Nat) (rng : Rng.LinkRng) :
+    teamLegal genDex .canonical (sampleSizedLevel100 requested rng).team.1 = true :=
+  (sampleSizedLevel100 requested rng).team.2
+
+/-- Level-100 generation retains the stronger ordered resource replay witness. -/
+theorem sampleSizedLevel100_progression_witnessed (requested : Nat)
+    (rng : Rng.LinkRng) :
+    replayTeam (sampleSizedLevel100 requested rng).history =
+      some ((sampleSizedLevel100 requested rng).team.1,
+        (sampleSizedLevel100 requested rng).remainingLedger) :=
+  (sampleSizedLevel100 requested rng).historyReplays
+
 /-- Fully dynamic party generation: the first byte chooses size 1–6 and the
 remaining cursor chooses the progression-witnessed team. -/
 def sample (rng : Rng.LinkRng) : Sample :=
@@ -368,5 +408,8 @@ private def sample0 : Sample := sample Rng.seed0
 #guard !(sampleSized 6 Rng.seed0).repaired
 #guard (sampleSized 6 Rng.seed0).team.1.all (monLegal genDex .canonical)
 #guard (sampleSized 6 Rng.seed0).history.plans.size == 6
+#guard (sampleSizedLevel100 6 Rng.seed0).team.1.size == 6
+#guard (sampleSizedLevel100 6 Rng.seed0).team.1.all (fun mon => mon.level == 100)
+#guard !(sampleSizedLevel100 6 Rng.seed0).repaired
 
 end Battle.RL.DynamicGenerator

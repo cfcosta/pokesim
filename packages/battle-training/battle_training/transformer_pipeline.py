@@ -22,12 +22,16 @@ from . import (
     FULL_PARTY_SIZE,
     FULL_PROFILE,
     FULL_SCHEMA,
+    GENERATED_LEVEL_SCHEDULE,
     GENERATED_PARTY_SCHEDULE,
+    generated_level100,
     generated_party_sizes,
 )
 from .arena import (
     ArenaConfig,
+    _choice_detail,
     _compact_inspection,
+    _compact_turn_inspection,
     run_campaign_arena,
     run_paired_arena,
     run_traced_arena,
@@ -157,6 +161,7 @@ class _ActorEpisode:
     candidate_player: bool
     player_size: int
     enemy_size: int
+    level100: bool
     snapshot: Snapshot
     pending: list[dict[str, Any]]
     selection_rng: random.Random
@@ -164,11 +169,13 @@ class _ActorEpisode:
     opponent_rng: random.Random
     tier_rng: random.Random
     initial: dict[str, Any] | None = None
+    final: dict[str, Any] | None = None
+    inspection: dict[str, Any] | None = None
     timeline: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _pipeline_id() -> str:
-    return "transformer-variable-party-bf16-tree-v11"
+    return "transformer-variable-party-bf16-tree-v12"
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
@@ -182,9 +189,17 @@ def _scheduled_for_opponent(episode: int, fraction: float) -> bool:
     return math.floor((episode + 1) * fraction) > math.floor(episode * fraction)
 
 
+def _training_party_index(iteration: int, episode: int) -> int:
+    return episode + (iteration - 1) * 13
+
+
 def _training_party_sizes(iteration: int, episode: int) -> tuple[int, int]:
     """Reserve at least 25% 6v6 while cycling all other ordered matchups."""
-    return generated_party_sizes(episode + (iteration - 1) * 13)
+    return generated_party_sizes(_training_party_index(iteration, episode))
+
+
+def _training_level100(iteration: int, episode: int) -> bool:
+    return generated_level100(_training_party_index(iteration, episode))
 
 
 def _new_search(
@@ -354,7 +369,12 @@ def _policy_entropy(policy: list[float]) -> float:
     )
 
 
-def _top_policy(policy: list[float], legal_mask: int) -> list[dict[str, Any]]:
+def _top_policy(
+    policy: list[float],
+    legal_mask: int,
+    inspection: dict[str, Any],
+    side_name: str,
+) -> list[dict[str, Any]]:
     ranked = sorted(
         (
             (action, float(probability))
@@ -364,7 +384,10 @@ def _top_policy(policy: list[float], legal_mask: int) -> list[dict[str, Any]]:
         key=lambda item: (-item[1], item[0]),
     )
     return [
-        {"action": action, "probability": probability}
+        {
+            **_choice_detail(inspection, side_name, action),
+            "probability": probability,
+        }
         for action, probability in ranked[:3]
     ]
 
@@ -410,6 +433,7 @@ def _collect_rows_single(
         "seed": config.seed,
         "max_party_size": FULL_PARTY_SIZE,
         "party_size_schedule": GENERATED_PARTY_SCHEDULE,
+        "level_schedule": GENERATED_LEVEL_SCHEDULE,
         "chance_samples_per_joint": config.chance_samples_per_joint,
         "regret_iterations": config.regret_iterations,
         "inference_batch_size": config.inference_batch_size,
@@ -449,6 +473,7 @@ def _collect_rows_single(
     }
     player_wins = enemy_wins = draws = 0
     candidate_wins = candidate_losses = candidate_draws = 0
+    scheduled_level100_six_vs_six = 0
     total_decisions = ordinary_actions = voluntary_switches = 0
     recent_battles: list[dict[str, Any]] = []
 
@@ -473,6 +498,7 @@ def _collect_rows_single(
             "decisions": decisions,
             "player_party_size": actor.player_size,
             "enemy_party_size": actor.enemy_size,
+            "level_profile": "level100" if actor.level100 else "distributed",
             "episode_kind": actor.episode_kind,
             "opponent": actor.opponent_identity or "self-play",
             "candidate_side": (
@@ -481,6 +507,7 @@ def _collect_rows_single(
                 else "player" if actor.candidate_player else "enemy"
             ),
             "initial": actor.initial,
+            "final": actor.final,
             "timeline": actor.timeline,
         }
         if reason is not None:
@@ -538,12 +565,24 @@ def _collect_rows_single(
                     mirror_episodes += 1
                 reset_seed = config.seed + iteration * 10_000
                 player_size, enemy_size = _training_party_sizes(iteration, episode)
+                level100 = _training_level100(iteration, episode)
                 party_size_counts[f"{player_size}v{enemy_size}"] += 1
+                scheduled_level100_six_vs_six += int(level100)
                 snapshot = (
-                    server.reset(reset_seed, episode, player_size, enemy_size)
+                    server.reset(
+                        reset_seed,
+                        episode,
+                        player_size,
+                        enemy_size,
+                        level100=level100,
+                    )
                     if offset == 0
                     else server.reset_append(
-                        reset_seed, episode, player_size, enemy_size
+                        reset_seed,
+                        episode,
+                        player_size,
+                        enemy_size,
+                        level100=level100,
                     )
                 )
                 active.append(
@@ -556,6 +595,7 @@ def _collect_rows_single(
                         candidate_player=candidate_player,
                         player_size=player_size,
                         enemy_size=enemy_size,
+                        level100=level100,
                         snapshot=snapshot,
                         pending=[],
                         selection_rng=random.Random(
@@ -576,6 +616,7 @@ def _collect_rows_single(
                 [actor.snapshot.handle for actor in active]
             )
             for actor, inspection in zip(active, inspections, strict=True):
+                actor.inspection = inspection
                 actor.initial = _compact_inspection(inspection)
             for decision in range(config.episode_budget):
                 searched = decision % config.search_every == 0
@@ -647,21 +688,34 @@ def _collect_rows_single(
                         {
                             "turn": decision + 1,
                             "request": snapshot.request,
+                            "before": _compact_turn_inspection(actor.inspection),
                             "target_kind": target_kind,
                             "root_value": result.root_value,
                             "exploitability": result.exploitability,
                             "payoff_spread": result.payoff_spread,
                             "player_action": result.player_action,
                             "enemy_action": result.enemy_action,
+                            "player_choice": _choice_detail(
+                                actor.inspection, "player", result.player_action
+                            ),
+                            "enemy_choice": _choice_detail(
+                                actor.inspection, "enemy", result.enemy_action
+                            ),
                             "player_legal_mask": snapshot.player_mask,
                             "enemy_legal_mask": snapshot.enemy_mask,
                             "player_state_hash": snapshot.player_hash,
                             "enemy_state_hash": snapshot.enemy_hash,
                             "player_top_policy": _top_policy(
-                                list(result.player_policy), snapshot.player_mask
+                                list(result.player_policy),
+                                snapshot.player_mask,
+                                actor.inspection,
+                                "player",
                             ),
                             "enemy_top_policy": _top_policy(
-                                list(result.enemy_policy), snapshot.enemy_mask
+                                list(result.enemy_policy),
+                                snapshot.enemy_mask,
+                                actor.inspection,
+                                "enemy",
                             ),
                             "tree_nodes": search_diagnostics.get("tree_nodes"),
                             "tree_simulations": search_diagnostics.get(
@@ -739,9 +793,18 @@ def _collect_rows_single(
                     ]
                 )
                 transitions += len(active)
+                inspections = server.inspect_many(
+                    [snapshot.handle for snapshot in next_snapshots]
+                )
+                for actor, inspection in zip(active, inspections, strict=True):
+                    actor.inspection = inspection
+                    actor.timeline[-1]["after"] = _compact_turn_inspection(
+                        inspection
+                    )
                 survivors: list[_ActorEpisode] = []
                 for actor, snapshot in zip(active, next_snapshots, strict=True):
                     if snapshot.divergence is not None:
+                        actor.final = _compact_inspection(actor.inspection)
                         append_episode(
                             actor,
                             "semantic-divergence",
@@ -750,6 +813,7 @@ def _collect_rows_single(
                         )
                         semantic_divergences += 1
                     elif snapshot.done:
+                        actor.final = _compact_inspection(actor.inspection)
                         reward = int(snapshot.terminal_return or 0)
                         for row in actor.pending:
                             row["value"] = (
@@ -774,7 +838,13 @@ def _collect_rows_single(
                 for actor, snapshot in zip(active, compacted, strict=True):
                     actor.snapshot = snapshot
             for actor in active:
-                append_episode(actor, "truncated", config.episode_budget)
+                actor.final = _compact_inspection(actor.inspection)
+                append_episode(
+                    actor,
+                    "truncated",
+                    config.episode_budget,
+                    reason=f"decision-horizon-{config.episode_budget}",
+                )
                 truncated += 1
             completed_episodes += len(batch)
             if progress_path is not None:
@@ -806,6 +876,8 @@ def _collect_rows_single(
                     opponent_episodes=opponent_episodes,
                     opponent_counts=opponent_counts,
                     party_size_counts=party_size_counts,
+                    six_vs_six_battles=party_size_counts.get("6v6", 0),
+                    level100_six_vs_six_battles=scheduled_level100_six_vs_six,
                     recent_battles=recent_battles,
                 )
     _jsonl(path, rows)
@@ -822,11 +894,24 @@ def _collect_rows_single(
     ]
     tree_rows = [row for row in example_rows if "tree_nodes" in row]
     six_vs_six_battles = party_size_counts.get("6v6", 0)
+    level100_six_vs_six_battles = sum(
+        row["type"] == "episode"
+        and row["player_party_size"] == FULL_PARTY_SIZE
+        and row["enemy_party_size"] == FULL_PARTY_SIZE
+        and row["level_profile"] == "level100"
+        for row in rows
+    )
     if (
         len(episode_indices) == config.selfplay_episodes
         and six_vs_six_battles * 4 < len(episode_indices)
     ):
         raise RuntimeError("collection schedule fell below 25% 6v6")
+    if (
+        len(episode_indices) == config.selfplay_episodes
+        and six_vs_six_battles >= 4
+        and level100_six_vs_six_battles * 4 != six_vs_six_battles
+    ):
+        raise RuntimeError("collection schedule is not exactly 25% level-100 6v6")
     return {
         "finished": finished,
         "truncated": truncated,
@@ -839,8 +924,11 @@ def _collect_rows_single(
         "candidate_draws": candidate_draws,
         "recent_battles": recent_battles,
         "party_size_schedule": GENERATED_PARTY_SCHEDULE,
+        "level_schedule": GENERATED_LEVEL_SCHEDULE,
         "minimum_6v6_fraction": 0.25,
+        "level100_6v6_fraction": 0.25,
         "six_vs_six_battles": six_vs_six_battles,
+        "level100_six_vs_six_battles": level100_six_vs_six_battles,
         "voluntary_switches": voluntary_switches,
         "ordinary_actions": ordinary_actions,
         "examples": examples,
@@ -1014,7 +1102,7 @@ def _merge_collection_rows(
         {
             name: value
             for name, value in row.items()
-            if name not in {"type", "initial", "timeline"}
+            if name not in {"type", "initial", "final", "timeline"}
         }
         for row in sorted(
             episode_rows, key=lambda row: int(row["episode"]), reverse=True
@@ -1049,8 +1137,14 @@ def _merge_collection_rows(
             party_size_counts[name] = party_size_counts.get(name, 0) + count
     transitions = total("transitions")
     six_vs_six_battles = party_size_counts.get("6v6", 0)
+    level100_six_vs_six_battles = total("level100_six_vs_six_battles")
     if six_vs_six_battles * 4 < config.selfplay_episodes:
         raise RuntimeError("collection schedule fell below 25% 6v6")
+    if (
+        six_vs_six_battles >= 4
+        and level100_six_vs_six_battles * 4 != six_vs_six_battles
+    ):
+        raise RuntimeError("collection schedule is not exactly 25% level-100 6v6")
     return {
         "finished": total("finished"),
         "truncated": total("truncated"),
@@ -1079,8 +1173,11 @@ def _merge_collection_rows(
         "opponent_counts": opponent_counts,
         "party_size_counts": party_size_counts,
         "party_size_schedule": GENERATED_PARTY_SCHEDULE,
+        "level_schedule": GENERATED_LEVEL_SCHEDULE,
         "minimum_6v6_fraction": 0.25,
+        "level100_6v6_fraction": 0.25,
         "six_vs_six_battles": six_vs_six_battles,
+        "level100_six_vs_six_battles": level100_six_vs_six_battles,
         "mean_target_entropy": sum(
             _policy_entropy(row["policy"]) for row in example_rows
         )
@@ -1503,7 +1600,15 @@ def _play_game(
     selection_rng: random.Random,
     chance_rng: random.Random,
 ) -> int | None:
-    snapshot = server.reset(config.seed + 90_000_000, episode)
+    pair = episode // 2
+    player_size, enemy_size = generated_party_sizes(pair)
+    snapshot = server.reset(
+        config.seed + 90_000_000,
+        episode,
+        player_size,
+        enemy_size,
+        level100=generated_level100(pair),
+    )
     for _ in range(config.episode_budget):
         search = _new_search(server, player, enemy, config, selection_rng, chance_rng)
         result = search.search(snapshot, sample_actions=True)
@@ -1951,6 +2056,7 @@ def run_transformer_pipeline(
                 "schema": FULL_SCHEMA,
                 "max_party_size": FULL_PARTY_SIZE,
                 "party_size_schedule": GENERATED_PARTY_SCHEDULE,
+                "level_schedule": GENERATED_LEVEL_SCHEDULE,
                 "chance": "fresh-root-v1",
                 "search_solver": "simultaneous-matrix-tree-rmplus-v1",
                 "learning_lineage": "persistent-shadow-v1",
@@ -2096,21 +2202,27 @@ def run_transformer_pipeline(
             config.promotion_seed_count,
             capture_details=True,
         )
-        promotion_detail_path = (
-            root / "matches" / f"promotion-{iteration:03d}.json"
+        promotion_detail_dir = (
+            root / "matches" / f"promotion-{iteration:03d}"
         )
+        for battle in promotion["battles"]:
+            write_json(
+                promotion_detail_dir / f"game-{battle['game']:05d}.json",
+                {"kind": "promotion", "iteration": iteration, **battle},
+            )
         write_json(
-            promotion_detail_path,
+            promotion_detail_dir / "index.json",
             {
                 "iteration": iteration,
                 "pairing": promotion["pairing"],
                 "side_swap_complete": promotion["side_swap_complete"],
-                "battles": promotion["battles"],
+                "games": promotion["games"],
             },
         )
-        promotion["detail_artifact"] = promotion_detail_path.relative_to(
-            root
-        ).as_posix()
+        promotion["detail_artifact"] = (
+            promotion_detail_dir.relative_to(root).as_posix()
+            + "/game-{game:05d}.json"
+        )
         promotion["battles"] = [
             {
                 name: value

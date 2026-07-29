@@ -55,6 +55,7 @@ These documents record twelve codebase, processor, and proof-architecture review
 - [Self-play, reinforcement learning, and search research](research/self-play-rl-search-literature.md) — Pokémon-specific work, AlphaZero, simultaneous MCTS, imperfect-information methods, leagues, and API precedents.
 - [Full-link training-state audit](research/full-training-markov-audit.md) — field-by-field Markov review, the Mimic continuation alias, v3 schema fix, profile invariants, and remaining injectivity proof.
 - [Full-party training precision benchmark](research/full6v6-precision-benchmark.md) — FP32/BF16 throughput, memory, inference, numerical drift, and the BF16 production decision.
+- [Battle-horizon truncation audit](research/battle-horizon-truncation-audit.md) — historical tail distribution, party-size evidence, horizon semantics, and the 512-decision production boundary.
 - [ROM-to-model equivalence audit](research/rom-model-equivalence-audit.md) — exact theorem boundary, active-struct projection, missing simulations, and shortest honest closure path.
 
 ## Documentation modes

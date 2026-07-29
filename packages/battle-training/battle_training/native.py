@@ -202,10 +202,13 @@ class SearchServer:
         episode: int,
         player_size: int = FULL_PARTY_SIZE,
         enemy_size: int = FULL_PARTY_SIZE,
+        *,
+        level100: bool = False,
     ) -> Snapshot:
+        operation = "reset-level100" if level100 else "reset"
         return self._snapshot(
             self._request(
-                f"reset|{root_seed}|{episode}|{player_size}|{enemy_size}"
+                f"{operation}|{root_seed}|{episode}|{player_size}|{enemy_size}"
             )
         )
 
@@ -215,10 +218,13 @@ class SearchServer:
         episode: int,
         player_size: int = FULL_PARTY_SIZE,
         enemy_size: int = FULL_PARTY_SIZE,
+        *,
+        level100: bool = False,
     ) -> Snapshot:
+        operation = "reset-level100-append" if level100 else "reset-append"
         return self._snapshot(
             self._request(
-                f"reset-append|{root_seed}|{episode}|{player_size}|{enemy_size}"
+                f"{operation}|{root_seed}|{episode}|{player_size}|{enemy_size}"
             )
         )
 

@@ -153,6 +153,17 @@ def resetSizedPair (playerRequested enemyRequested : Nat)
   let enemy := RL.DynamicGenerator.sampleSized enemyRequested player.rng
   resetFromSamples player enemy battleRng mode playerBag enemyBag trainerClass
 
+/-- Reset a generated battle whose independently sampled parties are both
+fully level 100. This is a distribution profile for competitive 6v6 strata;
+the teams retain the ordinary ordered progression/resource witnesses. -/
+def resetSizedPairLevel100 (playerRequested enemyRequested : Nat)
+    (generatorRng battleRng : Rng.LinkRng)
+    (mode : BattleMode := .link) (playerBag enemyBag : Items.Bag := [])
+    (trainerClass : UInt8 := 1) : State :=
+  let player := RL.DynamicGenerator.sampleSizedLevel100 playerRequested generatorRng
+  let enemy := RL.DynamicGenerator.sampleSizedLevel100 enemyRequested player.rng
+  resetFromSamples player enemy battleRng mode playerBag enemyBag trainerClass
+
 /-- Equal-size compatibility wrapper around `resetSizedPair`. -/
 def resetSized (requested : Nat) (generatorRng battleRng : Rng.LinkRng)
     (mode : BattleMode := .link) (playerBag enemyBag : Items.Bag := [])

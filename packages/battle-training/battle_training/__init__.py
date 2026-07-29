@@ -14,6 +14,7 @@ FULL_FEATURE_COUNT = 492
 FULL_CAMPAIGN_COUNT = 9
 
 GENERATED_PARTY_SCHEDULE = "minimum-25pct-6v6-all-others-v2"
+GENERATED_LEVEL_SCHEDULE = "quarter-of-6v6-pairs-both-level100-v1"
 _NON_6V6_MATCHUPS = tuple(
     (player, enemy)
     for player in range(1, FULL_PARTY_SIZE + 1)
@@ -30,3 +31,12 @@ def generated_party_sizes(index: int) -> tuple[int, int]:
     if offset == 0:
         return FULL_PARTY_SIZE, FULL_PARTY_SIZE
     return _NON_6V6_MATCHUPS[(block * 3 + offset - 1) % len(_NON_6V6_MATCHUPS)]
+
+
+def generated_level100(index: int) -> bool:
+    """Make exactly one quarter of scheduled 6v6 pairs fully level 100."""
+    player_size, enemy_size = generated_party_sizes(index)
+    if (player_size, enemy_size) != (FULL_PARTY_SIZE, FULL_PARTY_SIZE):
+        return False
+    six_vs_six_index = index // 4
+    return six_vs_six_index % 4 == 0

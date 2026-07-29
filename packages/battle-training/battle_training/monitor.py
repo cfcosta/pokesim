@@ -147,6 +147,8 @@ def _aggregate_actor_progress(actors: list[dict[str, Any]]) -> dict[str, Any] | 
         "root_only_decisions",
         "mirror_episodes",
         "opponent_episodes",
+        "six_vs_six_battles",
+        "level100_six_vs_six_battles",
     )
     result = {
         name: sum(int(actor.get(name, 0)) for actor in actors) for name in summed
@@ -288,6 +290,14 @@ def build_match_detail(
             return None
         return None
     if kind == "promotion":
+        game = _read_json(
+            root
+            / "matches"
+            / f"promotion-{iteration:03d}"
+            / f"game-{match:05d}.json"
+        )
+        if game is not None and int(game.get("game", -1)) == match:
+            return {"kind": kind, "iteration": iteration, **game}
         detail = _read_json(root / "matches" / f"promotion-{iteration:03d}.json")
         if detail is not None:
             for battle in detail.get("battles", []):
@@ -365,8 +375,8 @@ class _MonitorHandler(BaseHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; script-src 'self'; style-src 'self'; "
-            "img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
-            "frame-ancestors 'none'",
+            "img-src 'self' data: https://raw.githubusercontent.com; "
+            "connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
         )
         self.end_headers()
         self.wfile.write(payload)
@@ -426,8 +436,8 @@ class _MonitorHandler(BaseHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; script-src 'self'; style-src 'self'; "
-            "img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
-            "frame-ancestors 'none'",
+            "img-src 'self' data: https://raw.githubusercontent.com; "
+            "connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
         )
         self.end_headers()
         self.wfile.write(payload)

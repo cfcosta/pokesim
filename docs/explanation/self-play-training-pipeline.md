@@ -243,7 +243,7 @@ The learner may be implemented in PyTorch or another external ML stack. It does 
 
 The v4 tensor appends own/opponent party counts and twelve side-canonical presence bits to the 478 v3 fields. Absent party and switch descriptors are zero; a fainted member remains present with HP zero. Training rotates through every ordered `1v1` through `6v6` size pair, so equal-size self-play cannot hide one-sided roster disadvantages. Promotion separately gates 1–2, 3–4, 5–6, unequal-party, and fixed campaign-team results.
 
-The v11 production runner keeps two explicit lineages. A persistent shadow learner and its AdamW state accumulate every completed update; a deployed incumbent changes only after promotion. Each atomic checkpoint stores the deployed model, shadow model, learner optimizer, RNG state, and metrics needed to reconstruct the completed prefix. `transformer-resume` validates checkpoint and shard continuity, restores both model lineages and the historical-opponent window, and continues at the next iteration under the immutable saved configuration. An uncommitted partial iteration is archived and replayed from its beginning; the system does not claim mid-battle checkpointing.
+The v12 production runner keeps two explicit lineages. A persistent shadow learner and its AdamW state accumulate every completed update; a deployed incumbent changes only after promotion. Each atomic checkpoint stores the deployed model, shadow model, learner optimizer, RNG state, and metrics needed to reconstruct the completed prefix. `transformer-resume` validates checkpoint and shard continuity, restores both model lineages and the historical-opponent window, and continues at the next iteration under the immutable saved configuration. An uncommitted partial iteration is archived and replayed from its beginning; the system does not claim mid-battle checkpointing.
 
 Each training epoch reports separately backpropagated shared-trunk policy and value gradient norms, their norm ratio, cosine, and negative-cosine frequency. A deterministic whole-battle split withholds complete shard/episode groups from optimization and reports equal-row and equal-battle value MSE against a zero predictor, plus held-out policy KL and top-action agreement. These diagnostics are written to stdout, immutable iteration metrics, and the read-only monitor; row-random validation is not used.
 
@@ -258,11 +258,17 @@ immutable artifacts. The `monitor` command projects both sets into a loopback we
 dashboard; it has no mechanics handles, trainer control endpoint, or write API.
 Transient heartbeats are removed before the final manifest, after which the
 same dashboard is reconstructed from immutable summaries and iteration metrics.
-Self-play episode rows retain compact search/action timelines and initial teams;
-promotion timelines additionally retain final state. The monitor loads one detail
-record on demand when a table row is opened instead of transferring every timeline
-in its polling response. This remains a read-only artifact projection, not a
-second mechanics implementation or a claim of Showdown replay equivalence.
+Self-play and promotion episode rows retain compact initial/final parties and
+search/action timelines. Every party row includes all four move slots, current
+PP, PP Ups, status, and HP. Each real turn names the acting Pokémon, selected
+move or switch target, post-turn events, HP, and leading search policies. The UI
+loads pinned Red/Blue sprites from the PokeAPI sprites repository without
+vendoring them into the Apache package and falls back to text if unavailable.
+Promotion detail is published as one immutable artifact per game. The monitor
+loads one detail record on demand when a table row is opened instead of parsing
+or transferring every timeline in its polling response. This remains a read-only
+artifact projection, not a second mechanics implementation or a claim of
+Showdown replay equivalence.
 
 ### Replay storage
 
@@ -302,7 +308,7 @@ A payoff matrix tracks policy-by-policy and profile-by-profile results. A PSRO-s
 
 ## Evaluation
 
-Every candidate is evaluated against the deployed incumbent with 1,024 games formed from 512 same-reset pairs. Each pair contains exactly one candidate-player and one candidate-enemy game, and validation fails if that complete side swap is absent. At least 25% of every generated collection, promotion, probe, and final-arena schedule is 6v6; fixed campaign fixtures remain their declared canonical sizes. Reports include confidence intervals and at least:
+Every candidate is evaluated against the deployed incumbent with 1,024 games formed from 512 same-reset pairs. Each pair contains exactly one candidate-player and one candidate-enemy game, and validation fails if that complete side swap is absent. At least 25% of every generated collection, promotion, probe, and final-arena schedule is 6v6; fixed campaign fixtures remain their declared canonical sizes. Exactly one quarter of scheduled generated 6v6 pairs set both progression-witnessed parties to level 100. The ordinary level byte is still consumed to preserve generator-stream shape, while the other generated teams retain their ROM-floor-to-100 distribution. Reports include confidence intervals and at least:
 
 - win rate against fixed baselines;
 - round-robin payoff matrix against historical checkpoints;

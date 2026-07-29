@@ -12,7 +12,9 @@ from . import (
     FULL_CAMPAIGN_COUNT,
     FULL_PARTY_SIZE,
     FULL_PROFILE,
+    GENERATED_LEVEL_SCHEDULE,
     GENERATED_PARTY_SCHEDULE,
+    generated_level100,
     generated_party_sizes,
 )
 from .artifacts import write_json
@@ -47,7 +49,7 @@ _SUCCESS_EVENTS = {
 @dataclass(frozen=True)
 class ArenaConfig:
     games: int
-    budget: int = 256
+    budget: int = 512
     chance_samples_per_joint: int = 1
     search_depth: int = 1
     regret_iterations: int = 256
@@ -149,6 +151,7 @@ class _FastArenaEpisode:
     enemy_rng: random.Random
     player_size: int
     enemy_size: int
+    level100: bool
     campaign_index: int
     snapshot: Any
     result: int | None = None
@@ -156,11 +159,11 @@ class _FastArenaEpisode:
     initial: dict[str, Any] | None = None
     final: dict[str, Any] | None = None
     timeline: list[dict[str, Any]] = field(default_factory=list)
+    inspection: dict[str, Any] | None = None
 
 
 @dataclass
 class _TracedArenaEpisode(_FastArenaEpisode):
-    inspection: dict[str, Any] | None = None
     replay: Replay | None = None
     replay_path: Path | None = None
     candidate_metrics: SkillMetrics = field(default_factory=SkillMetrics)
@@ -182,6 +185,69 @@ def _compact_inspection(inspection: dict[str, Any]) -> dict[str, Any]:
         "request": inspection["request"],
         "player": side("player"),
         "enemy": side("enemy"),
+        "events": [dict(event) for event in inspection.get("events", [])],
+    }
+
+
+def _choice_detail(
+    inspection: dict[str, Any], side_name: str, action: int
+) -> dict[str, Any]:
+    side = inspection[side_name]
+    active_index = int(side["active"])
+    party = side["party"]
+    active = party[active_index]
+    detail: dict[str, Any] = {
+        "action": action,
+        "actor": active["name"],
+        "actor_slot": active_index,
+    }
+    if 0 <= action < 4:
+        moves = side.get("moves", [])
+        move = moves[action] if action < len(moves) else None
+        return {**detail, "kind": "move", "move": dict(move) if move else None}
+    if 4 <= action < 10:
+        target_index = action - 4
+        target = party[target_index] if target_index < len(party) else None
+        return {
+            **detail,
+            "kind": "switch",
+            "target_slot": target_index,
+            "target": target["name"] if target else None,
+        }
+    return {
+        **detail,
+        "kind": {10: "no-action", 11: "struggle", 12: "run"}.get(
+            action, "unknown"
+        ),
+    }
+
+
+def _compact_turn_inspection(inspection: dict[str, Any]) -> dict[str, Any]:
+    def side_state(name: str) -> dict[str, Any]:
+        side = inspection[name]
+        active_index = int(side["active"])
+        active = side["party"][active_index]
+        return {
+            "active": active_index,
+            "name": active["name"],
+            "hp": active["hp"],
+            "max_hp": active["max_hp"],
+            "status": active["status"],
+            "party": [
+                {
+                    "name": member["name"],
+                    "hp": member["hp"],
+                    "max_hp": member["max_hp"],
+                    "status": member["status"],
+                }
+                for member in side["party"]
+            ],
+        }
+
+    return {
+        "request": inspection["request"],
+        "player": side_state("player"),
+        "enemy": side_state("enemy"),
         "events": [dict(event) for event in inspection.get("events", [])],
     }
 
@@ -488,17 +554,32 @@ def _evaluation_party_sizes(pair: int) -> tuple[int, int]:
     return generated_party_sizes(pair)
 
 
+def _evaluation_level100(pair: int) -> bool:
+    return generated_level100(pair)
+
+
 def _generated_party_report(games: int) -> dict[str, Any]:
     six_vs_six_games = 2 * sum(
         _evaluation_party_sizes(pair) == (FULL_PARTY_SIZE, FULL_PARTY_SIZE)
         for pair in range(games // 2)
     )
+    level100_six_vs_six_games = 2 * sum(
+        _evaluation_level100(pair) for pair in range(games // 2)
+    )
     if six_vs_six_games * 4 < games:
         raise RuntimeError("generated arena schedule fell below 25% 6v6")
+    if (
+        six_vs_six_games >= 8
+        and level100_six_vs_six_games * 4 != six_vs_six_games
+    ):
+        raise RuntimeError("generated arena schedule is not exactly 25% level-100 6v6")
     return {
         "party_size_schedule": GENERATED_PARTY_SCHEDULE,
+        "level_schedule": GENERATED_LEVEL_SCHEDULE,
         "minimum_6v6_fraction": 0.25,
+        "level100_6v6_fraction": 0.25,
         "six_vs_six_games": six_vs_six_games,
+        "level100_six_vs_six_games": level100_six_vs_six_games,
         "side_swap_complete": True,
         "candidate_player_games": games // 2,
         "candidate_enemy_games": games // 2,
@@ -577,6 +658,7 @@ def _run_fast_arena_games(
                         ),
                         player_size=player_size,
                         enemy_size=enemy_size,
+                        level100=not campaign and _evaluation_level100(pair),
                         campaign_index=pair % len(_CAMPAIGN_NAMES),
                         snapshot=None,
                     )
@@ -602,6 +684,7 @@ def _run_fast_arena_games(
                             reset_episode,
                             episode.player_size,
                             episode.enemy_size,
+                            level100=episode.level100,
                         )
                 if capture_details:
                     inspections = server.inspect_many(
@@ -610,6 +693,7 @@ def _run_fast_arena_games(
                     for episode, inspection in zip(
                         episodes, inspections, strict=True
                     ):
+                        episode.inspection = inspection
                         episode.initial = _compact_inspection(inspection)
                 active = episodes.copy()
                 for decision in range(budget):
@@ -624,8 +708,17 @@ def _run_fast_arena_games(
                                 {
                                     "turn": decision + 1,
                                     "request": episode.snapshot.request,
+                                    "before": _compact_turn_inspection(
+                                        episode.inspection
+                                    ),
                                     "player_action": player_action,
                                     "enemy_action": enemy_action,
+                                    "player_choice": _choice_detail(
+                                        episode.inspection, "player", player_action
+                                    ),
+                                    "enemy_choice": _choice_detail(
+                                        episode.inspection, "enemy", enemy_action
+                                    ),
                                     "player_legal_mask": episode.snapshot.player_mask,
                                     "enemy_legal_mask": episode.snapshot.enemy_mask,
                                     "player_state_hash": episode.snapshot.player_hash,
@@ -640,6 +733,17 @@ def _run_fast_arena_games(
                             )
                         ]
                     )
+                    if capture_details:
+                        inspections = server.inspect_many(
+                            [snapshot.handle for snapshot in snapshots]
+                        )
+                        for episode, inspection in zip(
+                            active, inspections, strict=True
+                        ):
+                            episode.inspection = inspection
+                            episode.timeline[-1]["after"] = (
+                                _compact_turn_inspection(inspection)
+                            )
                     survivors = []
                     stopped = []
                     for episode, snapshot in zip(active, snapshots, strict=True):
@@ -654,13 +758,8 @@ def _run_fast_arena_games(
                         else:
                             survivors.append(episode)
                     if capture_details and stopped:
-                        inspections = server.inspect_many(
-                            [episode.snapshot.handle for episode in stopped]
-                        )
-                        for episode, inspection in zip(
-                            stopped, inspections, strict=True
-                        ):
-                            episode.final = _compact_inspection(inspection)
+                        for episode in stopped:
+                            episode.final = _compact_inspection(episode.inspection)
                     active = survivors
                     if active:
                         compacted = server.compact_many(
@@ -737,6 +836,7 @@ def run_paired_arena(
             or second.candidate_player
             or first.player_size != second.player_size
             or first.enemy_size != second.enemy_size
+            or first.level100 != second.level100
             or first.campaign_index != second.campaign_index
         ):
             raise RuntimeError("paired arena failed its complete model-side swap")
@@ -771,10 +871,16 @@ def run_paired_arena(
             "candidate_side": "player" if episode.candidate_player else "enemy",
             "player_party_size": episode.player_size,
             "enemy_party_size": episode.enemy_size,
+            "level_profile": "level100" if episode.level100 else "distributed",
             "campaign": (
                 _CAMPAIGN_NAMES[episode.campaign_index] if campaign else None
             ),
             "stop": episode.stop,
+            "reason": (
+                f"decision-horizon-{budget}"
+                if episode.stop == "truncated"
+                else None
+            ),
             "candidate_return": candidate_result,
             "score": score,
         }
@@ -979,6 +1085,7 @@ def _run_traced_arena_batched(
                         ),
                         player_size=player_size,
                         enemy_size=enemy_size,
+                        level100=_evaluation_level100(pair),
                         campaign_index=0,
                         snapshot=None,
                         replay=replay,
@@ -1001,6 +1108,7 @@ def _run_traced_arena_batched(
                         reset_episode,
                         episode.player_size,
                         episode.enemy_size,
+                        level100=episode.level100,
                     )
                 inspections = server.inspect_many(
                     [episode.snapshot.handle for episode in active]
@@ -1270,7 +1378,11 @@ def _run_traced_arena_sequential(
                     config.seed, config.seed_count, episode
                 )
                 snapshot = server.reset(
-                    root_seed, reset_episode, player_size, enemy_size
+                    root_seed,
+                    reset_episode,
+                    player_size,
+                    enemy_size,
+                    level100=_evaluation_level100(pair),
                 )
                 initial = server.inspect(snapshot.handle)
                 initial["player_mask"] = snapshot.player_mask

@@ -418,19 +418,22 @@ private def effectiveness (moveType target1 target2 : UInt8) : Nat :=
   let second := if target1 == target2 then 10 else TypeChart.matchup moveType target2 |>.toNat
   first * second
 
-private def moveJson (move : MoveId) (target : MonState) : String :=
+private def moveJson (move : MoveId) (packedPp : UInt8) (target : MonState) : String :=
   let data := Data.moveData move
-  jsonObject s!"\"id\":{move},\"name\":\"{Showdown.moveName move}\",\"power\":{data.power},\"type\":{data.type},\"effect\":{data.effect},\"accuracy\":{data.accuracy},\"effectiveness\":{effectiveness data.type target.type1 target.type2}"
+  jsonObject s!"\"id\":{move},\"name\":\"{Showdown.moveName move}\",\"power\":{data.power},\"type\":{data.type},\"effect\":{data.effect},\"accuracy\":{data.accuracy},\"base_pp\":{data.pp},\"pp\":{packedPp &&& 0x3f},\"pp_ups\":{packedPp >>> 6},\"effectiveness\":{effectiveness data.type target.type1 target.type2}"
 
-private def monJson (mon : MonState) : String :=
-  jsonObject s!"\"species\":{mon.species},\"name\":\"{Showdown.speciesName mon.species}\",\"level\":{mon.level},\"hp\":{mon.hp},\"max_hp\":{mon.maxHp},\"status\":{mon.status},\"type1\":{mon.type1},\"type2\":{mon.type2}"
+private def monJson (mon target : MonState) : String :=
+  let moves := (Array.range mon.moves.size).toList.map fun slot =>
+    moveJson (mon.moves.getD slot 0) (mon.pp.getD slot 0) target
+  jsonObject s!"\"species\":{mon.species},\"dex\":{Data.internalToDex mon.species},\"name\":\"{Showdown.speciesName mon.species}\",\"level\":{mon.level},\"hp\":{mon.hp},\"max_hp\":{mon.maxHp},\"status\":{mon.status},\"type1\":{mon.type1},\"type2\":{mon.type2},\"moves\":[{String.intercalate "," moves}]"
 
 private def sideInspection (state : Full.Environment.State) (side : Side) : String :=
   let full := state.engine.battle.side side
   let synced := full.syncOutgoing
-  let party := synced.party.mons.toList.map monJson
   let target := state.engine.battle.side side.other |>.active.active
-  let moves := full.active.active.moves.toList.map fun move => moveJson move target
+  let party := synced.party.mons.toList.map fun mon => monJson mon target
+  let moves := (Array.range full.active.active.moves.size).toList.map fun slot =>
+    moveJson (full.active.active.moves.getD slot 0) (full.active.active.pp.getD slot 0) target
   let stages := full.active.stages
   let volatile := full.active.volatile
   jsonObject s!"\"active\":{full.activeIndex},\"party\":[{String.intercalate "," party}],\"moves\":[{String.intercalate "," moves}],\"stages\":[{stages.attack},{stages.defense},{stages.speed},{stages.special},{stages.accuracy},{stages.evasion}],\"volatile\":[{volatile.status1},{volatile.status2},{volatile.status3},{volatile.disabledMove},{volatile.disabledMoveNumber},{volatile.substituteHp},{volatile.bideAccumulated}]"
@@ -476,26 +479,38 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
         | _, _, _ =>
             emit output (failure request "invalid-reset-campaign")
             serve input output states
-    | some "reset" =>
+    | some "reset" | some "reset-level100" =>
         match tokenNat tokens 2, tokenNat tokens 3, tokenNat tokens 4,
             tokenNat tokens 5 with
         | some root, some episode, some playerSize, some enemySize =>
-            let state := Full.Environment.resetSizedPair playerSize enemySize
-              (Training.linkRng root.toUInt64 episode.toUInt64 Training.generatorStream)
-              (Training.linkRng root.toUInt64 episode.toUInt64 Training.battleStream)
+            let generatorRng :=
+              Training.linkRng root.toUInt64 episode.toUInt64 Training.generatorStream
+            let battleRng :=
+              Training.linkRng root.toUInt64 episode.toUInt64 Training.battleStream
+            let state := if token tokens 0 == some "reset-level100" then
+              Full.Environment.resetSizedPairLevel100 playerSize enemySize
+                generatorRng battleRng
+            else
+              Full.Environment.resetSizedPair playerSize enemySize generatorRng battleRng
             let state := SearchState.battle state []
             emit output (success request 0 state)
             serve input output #[state]
         | _, _, _, _ =>
             emit output (failure request "invalid-reset")
             serve input output states
-    | some "reset-append" =>
+    | some "reset-append" | some "reset-level100-append" =>
         match tokenNat tokens 2, tokenNat tokens 3, tokenNat tokens 4,
             tokenNat tokens 5 with
         | some root, some episode, some playerSize, some enemySize =>
-            let state := Full.Environment.resetSizedPair playerSize enemySize
-              (Training.linkRng root.toUInt64 episode.toUInt64 Training.generatorStream)
-              (Training.linkRng root.toUInt64 episode.toUInt64 Training.battleStream)
+            let generatorRng :=
+              Training.linkRng root.toUInt64 episode.toUInt64 Training.generatorStream
+            let battleRng :=
+              Training.linkRng root.toUInt64 episode.toUInt64 Training.battleStream
+            let state := if token tokens 0 == some "reset-level100-append" then
+              Full.Environment.resetSizedPairLevel100 playerSize enemySize
+                generatorRng battleRng
+            else
+              Full.Environment.resetSizedPair playerSize enemySize generatorRng battleRng
             let state := SearchState.battle state []
             let handle := states.size
             emit output (success request handle state)
