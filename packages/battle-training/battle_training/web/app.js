@@ -10,6 +10,7 @@ const TYPE_NAMES = {
   0x14: "Fire", 0x15: "Water", 0x16: "Grass", 0x17: "Electric",
   0x18: "Psychic", 0x19: "Ice", 0x1a: "Dragon",
 };
+const STAT_NAMES = ["Attack", "Defense", "Speed", "Special", "Accuracy", "Evasion"];
 const MOVE_EFFECTS = {
   0x00: "Deals damage with no additional effect.", 0x02: "May poison the target.",
   0x03: "Restores HP equal to part of the damage dealt.", 0x04: "May burn the target.",
@@ -674,12 +675,62 @@ function actionForSide(turn, side) {
   return Number(side) === 0 ? turn.player_action : turn.enemy_action;
 }
 
-function inferChangedSide(before, after, field) {
-  for (const side of [0, 1]) {
+function inferStatusSide(before, after, applied) {
+  const changed = [0, 1].filter((side) => {
     const key = sideKey(side);
-    if (before?.[key]?.[field] !== after?.[key]?.[field]) return side;
+    return before?.[key]?.status !== after?.[key]?.status;
+  });
+  const exact = changed.find((side) => Number(after?.[sideKey(side)]?.status) === Number(applied));
+  return exact ?? changed[0] ?? null;
+}
+
+function stageDescription(event, side, before, after, lastActionSide) {
+  const beforeStages = before?.[sideKey(side)]?.stages;
+  const afterStages = after?.[sideKey(side)]?.stages;
+  let stat = Number.isInteger(Number(event.stat)) ? Number(event.stat) : null;
+  if (stat === null && beforeStages && afterStages) {
+    stat = beforeStages.findIndex((value, index) => Number(value) !== Number(afterStages[index]));
   }
-  return null;
+  const statName = STAT_NAMES[stat] || "A stat";
+  if (stat >= 0 && beforeStages?.[stat] !== undefined && afterStages?.[stat] !== undefined) {
+    const delta = Number(afterStages[stat]) - Number(beforeStages[stat]);
+    if (delta > 0) return `${statName} rose by ${delta === 1 ? "1 stage" : `${delta} stages`}.`;
+    if (delta < 0) return `${statName} fell by ${delta === -1 ? "1 stage" : `${Math.abs(delta)} stages`}.`;
+  }
+  if (event.amount && lastActionSide !== null) {
+    const direction = Number(side) === Number(lastActionSide) ? "rose" : "fell";
+    return `${statName} ${direction} by ${number(event.amount)} ${Number(event.amount) === 1 ? "stage" : "stages"}.`;
+  }
+  return `${statName} changed${event.amount ? ` by ${number(event.amount)} ${Number(event.amount) === 1 ? "stage" : "stages"}` : ""}.`;
+}
+
+function collapseBattleEvents(events, turn) {
+  const skipped = new Set();
+  for (const [index, event] of events.entries()) {
+    if (event.kind !== "action" || event.side === undefined) continue;
+    const side = Number(event.side);
+    const action = Number(event.action ?? actionForSide(turn, side));
+    if (action < 4 || action > 9) continue;
+    const target = action - 4;
+    const switchIndex = events.findIndex((candidate, candidateIndex) =>
+      candidateIndex > index && candidate.kind === "switch" &&
+      Number(candidate.side) === side && Number(candidate.target) === target,
+    );
+    if (switchIndex !== -1) skipped.add(index);
+  }
+
+  return events.flatMap((event, index) => {
+    if (skipped.has(index)) return [];
+    if (event.kind === "faint") {
+      const lethalDamage = events.findIndex((candidate, candidateIndex) =>
+        candidateIndex < index && candidate.kind === "damage" &&
+        Number(candidate.side) === Number(event.side) && Number(candidate.hp) === 0,
+      );
+      if (lethalDamage !== -1) return [];
+    }
+    if (event.kind === "damage" && Number(event.hp) === 0) return [{ ...event, kind: "damage-faint" }];
+    return [event];
+  });
 }
 
 function renderActionEvent(turn, side, rosters, before, activeSlots, recordedAction) {
@@ -703,7 +754,7 @@ function renderActionEvent(turn, side, rosters, before, activeSlots, recordedAct
 
 function renderMechanicsEvent(event, turn, rosters, before, after, activeSlots, lastActionSide) {
   const explicitSide = event.side === undefined ? null : Number(event.side);
-  const inferredStatusSide = event.kind === "status-applied" ? inferChangedSide(before, after, "status") : null;
+  const inferredStatusSide = event.kind === "status-applied" ? inferStatusSide(before, after, event.value) : null;
   const side = explicitSide ?? inferredStatusSide ?? (
     ["healed", "screen", "transformed", "disobedience"].includes(event.kind) ? lastActionSide :
       ["seeded", "disabled"].includes(event.kind) && lastActionSide !== null ? 1 - lastActionSide : null
@@ -715,22 +766,27 @@ function renderMechanicsEvent(event, turn, rosters, before, after, activeSlots, 
     return renderActionEvent(turn, explicitSide, rosters, before, activeSlots, event.action);
   }
   if (event.kind === "damage") return eventLine("damage", side, "Damage", [ref, ` lost ${number(event.amount)} HP and has ${number(event.hp)} HP left.`]);
+  if (event.kind === "damage-faint") return eventLine("faint", side, "Knocked out", [ref, ` lost ${number(event.amount)} HP and fainted.`]);
   if (event.kind === "substitute-damage") return eventLine("damage", side, "Substitute", [ref, `'s substitute absorbed ${number(event.amount)} damage and has ${number(event.hp)} HP left.`]);
   if (event.kind === "faint") return eventLine("faint", side, "Fainted", [ref, " fainted."]);
-  if (event.kind === "forced-replacement") return eventLine("replacement", side, "Replacement needed", [ref, " fainted, so a replacement must be chosen."]);
+  if (event.kind === "forced-replacement") return eventLine("replacement", side, "Replacement needed", [sideTitle(side), " must choose a replacement for ", ref, "."]);
   if (event.kind === "switch") {
     const outgoing = activeMember(rosters, before, side, activeSlots);
     const targetSlot = Number(event.target);
     const incoming = rosterMember(rosters, before, side, targetSlot);
     activeSlots[side] = targetSlot;
-    return eventLine("switch", side, "Sent out", [pokemonReference(incoming, side, `slot ${targetSlot + 1}`), " entered the battle in place of ", pokemonReference(outgoing, side), "."]);
+    return eventLine("switch", side, "Switched", [pokemonReference(outgoing, side), " was withdrawn; ", pokemonReference(incoming, side, `slot ${targetSlot + 1}`), " entered the battle."]);
   }
   if (event.kind === "status-applied") {
-    const condition = side === null ? `status byte ${event.value}` : statusLabel(after?.[sideKey(side)]?.status ?? event.value);
-    return eventLine("status", side, "Status", side === null ? [`A Pokémon received ${condition}.`] : [ref, ` became ${condition}.`]);
+    const previous = side === null ? "Healthy" : statusLabel(before?.[sideKey(side)]?.status);
+    const condition = side === null ? statusLabel(event.value) : statusLabel(after?.[sideKey(side)]?.status ?? event.value);
+    return eventLine("status", side, "Status changed", side === null ? [`A Pokémon changed from ${previous} to ${condition}.`] : [ref, ` changed from ${previous} to ${condition}.`]);
   }
-  if (event.kind === "status-blocked") return eventLine("status", side, "Unable to move", [ref, " could not act because of its status."]);
-  if (event.kind === "stage-changed") return eventLine("status", side, "Stats changed", [ref, " had its stat stages changed."]);
+  if (event.kind === "status-blocked") {
+    const condition = side === null ? "its status" : statusLabel(before?.[sideKey(side)]?.status);
+    return eventLine("status", side, "Unable to move", [ref, ` could not act because of ${condition}.`]);
+  }
+  if (event.kind === "stage-changed") return eventLine("status", side, "Stat changed", [ref, `: ${stageDescription(event, side, before, after, lastActionSide)}`]);
   if (event.kind === "healed") return eventLine("heal", side, "Recovered", side === null ? [`A Pokémon recovered ${number(event.amount)} HP.`] : [ref, ` recovered ${number(event.amount)} HP.`]);
   if (event.kind === "screen") return eventLine("status", side, "Screen", side === null ? ["A defensive screen was established."] : [ref, " established a defensive screen."]);
   if (event.kind === "transformed") return eventLine("status", side, "Transform", side === null ? ["Transform completed."] : [ref, " transformed."]);
@@ -760,41 +816,38 @@ function renderTurnState(after, rosters) {
 }
 
 function renderTurn(turn, rosters) {
-  const card = element("article", "turn-card");
-  const header = element("header", "turn-header");
-  header.append(element("strong", "", `Turn ${number(turn.turn)}`), element("span", "", title(turn.request)));
-  const search = turn.root_value == null ? null : `Search value ${number(turn.root_value, 3)}${turn.exploitability == null ? "" : ` · exploitability ${number(turn.exploitability, 3)}`}${turn.tree_nodes == null ? "" : ` · ${number(turn.tree_nodes)} nodes · depth ${number(turn.tree_max_depth)}`}`;
-  if (search) header.append(element("span", "turn-search", search));
-  card.append(header);
-
   const before = turn.before || {};
   const after = turn.after || {};
   const activeSlots = [Number(before.player?.active || 0), Number(before.enemy?.active || 0)];
-  const recorded = after.events || [];
+  const rawEvents = after.events || [];
+  const recorded = collapseBattleEvents(rawEvents, turn);
   const events = recorded.some((event) => event.kind === "action") ? recorded : [
     { kind: "action", side: 0, action: turn.player_action, synthetic: true },
     { kind: "action", side: 1, action: turn.enemy_action, synthetic: true },
     ...recorded,
   ];
-  const eventList = element("ol", "battle-event-list");
-  let lastActionSide = null;
-  for (const event of events) {
-    if (event.kind === "action" && event.side !== undefined) lastActionSide = Number(event.side);
-    eventList.append(renderMechanicsEvent(event, turn, rosters, before, after, activeSlots, lastActionSide));
-  }
-  card.append(eventList);
-  if (!recorded.length) card.append(element("p", "event-trace-note", "Detailed mechanics events were not recorded for this historical turn; only the committed actions are available."));
-  const state = renderTurnState(after, rosters);
-  if (state) card.append(state);
-
+  const search = turn.root_value == null ? null : `Search value ${number(turn.root_value, 3)}${turn.exploitability == null ? "" : ` · exploitability ${number(turn.exploitability, 3)}`}${turn.tree_nodes == null ? "" : ` · ${number(turn.tree_nodes)} nodes · depth ${number(turn.tree_max_depth)}`}`;
+  const turnMarker = eventLine("turn", null, `Turn ${number(turn.turn)}`, [element("strong", "turn-request", title(turn.request)), search ? ` · ${search}` : ""]);
   const playerPolicy = policyPreview(turn.player_top_policy);
   const enemyPolicy = policyPreview(turn.enemy_top_policy);
   if (playerPolicy || enemyPolicy) {
-    const details = element("details", "policy-details");
+    const details = element("details", "policy-details turn-policy-details");
     details.append(element("summary", "", "Search policy"), element("p", "", `Player: ${playerPolicy || "—"}`), element("p", "", `Enemy: ${enemyPolicy || "—"}`));
-    card.append(details);
+    turnMarker.append(details);
   }
-  return card;
+
+  const output = [turnMarker];
+  let lastActionSide = null;
+  for (const event of events) {
+    if (event.kind === "action" && event.side !== undefined) lastActionSide = Number(event.side);
+    output.push(renderMechanicsEvent(event, turn, rosters, before, after, activeSlots, lastActionSide));
+  }
+  if (!rawEvents.length) {
+    output.push(eventLine("note", null, "Reduced trace", ["Detailed mechanics events were not recorded; only the committed actions are available."]));
+  }
+  const state = renderTurnState(after, rosters);
+  if (state) output.push(eventLine("state", null, "After turn", [state]));
+  return output;
 }
 
 function renderMatchDetail(detail) {
@@ -832,9 +885,9 @@ function renderMatchDetail(detail) {
   section.append(element("h3", "", "Battle log"));
   if (!timeline.length) section.append(element("p", "empty-state", "A turn-by-turn record was not captured for this historical match."));
   else {
-    const turns = element("div", "turn-list");
-    for (const turn of timeline) turns.append(renderTurn(turn, rosters));
-    section.append(turns);
+    const events = element("ol", "battle-event-list battle-timeline");
+    for (const turn of timeline) events.append(...renderTurn(turn, rosters));
+    section.append(events);
   }
   body.append(section);
   renderTeamState(body, "Final recorded teams", detail.final, {}, false, false);

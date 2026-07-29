@@ -385,8 +385,8 @@ private def statusBlockedJson (side : Side) : String :=
 private def effectJson : Full.Effects.Event → Option String
   | .statusApplied status =>
       some (jsonObject s!"\"kind\":\"status-applied\",\"value\":{status}")
-  | .stageChanged target _ _ =>
-      some (jsonObject s!"\"kind\":\"stage-changed\",\"side\":{sideCode target}")
+  | .stageChanged target stat amount =>
+      some (jsonObject s!"\"kind\":\"stage-changed\",\"side\":{sideCode target},\"stat\":{stat},\"amount\":{amount}")
   | .healed amount =>
       some (jsonObject s!"\"kind\":\"healed\",\"amount\":{amount}")
   | .screen => some (jsonObject "\"kind\":\"screen\"")
