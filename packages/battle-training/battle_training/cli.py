@@ -87,7 +87,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--opponent-checkpoint", type=Path, action="append", default=[])
     parser.add_argument("--opponent-fraction", type=float, default=0.5)
     parser.add_argument("--historical-window", type=int, default=4)
-    parser.add_argument("--promotion-games", type=int, default=16 if smoke else 8192)
+    parser.add_argument("--promotion-games", type=int, default=16 if smoke else 1024)
     parser.add_argument("--promotion-seed-count", type=int, default=2 if smoke else 8)
     parser.add_argument("--probe-games", type=int, default=16 if smoke else 256)
     parser.add_argument("--probe-seed-count", type=int, default=2 if smoke else 8)

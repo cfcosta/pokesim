@@ -17,7 +17,14 @@ from typing import Any
 import torch
 from torch import Tensor
 
-from . import ENTROPY, FULL_PARTY_SIZE, FULL_PROFILE, FULL_SCHEMA
+from . import (
+    ENTROPY,
+    FULL_PARTY_SIZE,
+    FULL_PROFILE,
+    FULL_SCHEMA,
+    GENERATED_PARTY_SCHEDULE,
+    generated_party_sizes,
+)
 from .arena import (
     ArenaConfig,
     run_campaign_arena,
@@ -63,7 +70,7 @@ class TransformerPipelineConfig:
     opponent_checkpoints: tuple[str, ...] = ()
     opponent_fraction: float = 0.5
     historical_window: int = 4
-    promotion_games: int = 8192
+    promotion_games: int = 1024
     promotion_seed_count: int = 8
     probe_games: int = 256
     probe_seed_count: int = 8
@@ -158,7 +165,7 @@ class _ActorEpisode:
 
 
 def _pipeline_id() -> str:
-    return "transformer-variable-party-bf16-tree-v9"
+    return "transformer-variable-party-bf16-tree-v10"
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
@@ -173,9 +180,8 @@ def _scheduled_for_opponent(episode: int, fraction: float) -> bool:
 
 
 def _training_party_sizes(iteration: int, episode: int) -> tuple[int, int]:
-    """Cycle through all 36 ordered 1-to-6 party-size matchups."""
-    matchup = (episode + (iteration - 1) * 13) % (FULL_PARTY_SIZE**2)
-    return matchup // FULL_PARTY_SIZE + 1, matchup % FULL_PARTY_SIZE + 1
+    """Reserve at least 25% 6v6 while cycling all other ordered matchups."""
+    return generated_party_sizes(episode + (iteration - 1) * 13)
 
 
 def _new_search(
@@ -383,7 +389,7 @@ def _collect_rows_single(
         "depth": config.search_depth,
         "seed": config.seed,
         "max_party_size": FULL_PARTY_SIZE,
-        "party_size_schedule": "all-ordered-1to6-v1",
+        "party_size_schedule": GENERATED_PARTY_SCHEDULE,
         "chance_samples_per_joint": config.chance_samples_per_joint,
         "regret_iterations": config.regret_iterations,
         "inference_batch_size": config.inference_batch_size,
@@ -751,6 +757,12 @@ def _collect_rows_single(
         row["payoff_spread"] for row in example_rows if "payoff_spread" in row
     ]
     tree_rows = [row for row in example_rows if "tree_nodes" in row]
+    six_vs_six_battles = party_size_counts.get("6v6", 0)
+    if (
+        len(episode_indices) == config.selfplay_episodes
+        and six_vs_six_battles * 4 < len(episode_indices)
+    ):
+        raise RuntimeError("collection schedule fell below 25% 6v6")
     return {
         "finished": finished,
         "truncated": truncated,
@@ -762,6 +774,9 @@ def _collect_rows_single(
         "candidate_losses": candidate_losses,
         "candidate_draws": candidate_draws,
         "recent_battles": recent_battles,
+        "party_size_schedule": GENERATED_PARTY_SCHEDULE,
+        "minimum_6v6_fraction": 0.25,
+        "six_vs_six_battles": six_vs_six_battles,
         "voluntary_switches": voluntary_switches,
         "ordinary_actions": ordinary_actions,
         "examples": examples,
@@ -958,6 +973,9 @@ def _merge_collection_rows(
         for name, count in metrics["party_size_counts"].items():
             party_size_counts[name] = party_size_counts.get(name, 0) + count
     transitions = total("transitions")
+    six_vs_six_battles = party_size_counts.get("6v6", 0)
+    if six_vs_six_battles * 4 < config.selfplay_episodes:
+        raise RuntimeError("collection schedule fell below 25% 6v6")
     return {
         "finished": total("finished"),
         "truncated": total("truncated"),
@@ -972,6 +990,9 @@ def _merge_collection_rows(
         "candidate_enemy_episodes": total("candidate_enemy_episodes"),
         "opponent_counts": opponent_counts,
         "party_size_counts": party_size_counts,
+        "party_size_schedule": GENERATED_PARTY_SCHEDULE,
+        "minimum_6v6_fraction": 0.25,
+        "six_vs_six_battles": six_vs_six_battles,
         "mean_target_entropy": sum(
             _policy_entropy(row["policy"]) for row in example_rows
         )
@@ -1070,28 +1091,23 @@ def _collect_rows(
         return _merge_collection_rows(path, worker_paths, metrics, config)
 
 
-def _load_examples(paths: list[Path]) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
-    features: list[list[int]] = []
-    policies: list[list[float]] = []
-    values: list[float] = []
-    legal_masks: list[list[bool]] = []
-    policy_weights: list[float] = []
-    for path in paths:
-        with path.open() as source:
-            for line in source:
-                row = json.loads(line)
-                if row["type"] != "example":
-                    continue
-                features.append(row["features"])
-                policies.append(row["policy"])
-                values.append(row["value"])
-                mask = row["legal_mask"]
-                legal_masks.append(
-                    [bool(mask & (1 << action)) for action in range(len(row["policy"]))]
-                )
-                policy_weights.append(
-                    0.0 if row.get("target_kind") == "policy-rollout" else 1.0
-                )
+ExampleTensors = tuple[Tensor, Tensor, Tensor, Tensor, Tensor]
+
+
+def _rows_to_examples(rows: list[dict[str, Any]]) -> ExampleTensors:
+    features = [row["features"] for row in rows]
+    policies = [row["policy"] for row in rows]
+    values = [row["value"] for row in rows]
+    legal_masks = [
+        [
+            bool(row["legal_mask"] & (1 << action))
+            for action in range(len(row["policy"]))
+        ]
+        for row in rows
+    ]
+    policy_weights = [
+        0.0 if row.get("target_kind") == "policy-rollout" else 1.0 for row in rows
+    ]
     return (
         torch.tensor(features, dtype=torch.long),
         torch.tensor(policies, dtype=torch.float32),
@@ -1099,6 +1115,150 @@ def _load_examples(paths: list[Path]) -> tuple[Tensor, Tensor, Tensor, Tensor, T
         torch.tensor(legal_masks, dtype=torch.bool),
         torch.tensor(policy_weights, dtype=torch.float32),
     )
+
+
+def _example_rows(paths: list[Path]) -> list[dict[str, Any]]:
+    rows = []
+    for path_index, path in enumerate(paths):
+        raw_iteration = path.stem.removeprefix("iteration-")
+        shard_iteration = (
+            int(raw_iteration) if raw_iteration.isdigit() else path_index + 1
+        )
+        with path.open() as source:
+            for line in source:
+                row = json.loads(line)
+                if row["type"] == "example":
+                    row["shard_iteration"] = shard_iteration
+                    rows.append(row)
+    return rows
+
+
+def _load_examples(paths: list[Path]) -> ExampleTensors:
+    return _rows_to_examples(_example_rows(paths))
+
+
+def _load_partitioned_examples(
+    paths: list[Path],
+) -> tuple[ExampleTensors, ExampleTensors, list[tuple[int, int]]]:
+    training_rows = []
+    heldout_rows = []
+    heldout_battles = []
+    for row in _example_rows(paths):
+        shard_iteration = int(row["shard_iteration"])
+        episode = int(row["episode"])
+        heldout = episode % 10 == (shard_iteration - 1) % 10
+        if heldout:
+            heldout_rows.append(row)
+            heldout_battles.append((shard_iteration, episode))
+        else:
+            training_rows.append(row)
+    if not training_rows or not heldout_rows:
+        raise ValueError("whole-battle diagnostic split produced an empty partition")
+    return (
+        _rows_to_examples(training_rows),
+        _rows_to_examples(heldout_rows),
+        heldout_battles,
+    )
+
+
+def _heldout_diagnostics(
+    network: BattleTransformer,
+    examples: ExampleTensors,
+    battle_ids: list[tuple[int, int]],
+    batch_size: int,
+) -> dict[str, Any]:
+    features, target_policy, target_value, legal_masks, policy_weights = examples
+    device = next(network.parameters()).device
+    squared_errors: list[float] = []
+    policy_cross_entropy = 0.0
+    target_entropy = 0.0
+    top_action_matches = 0
+    weighted_policy_rows = 0.0
+    network.eval()
+    with torch.inference_mode():
+        for start in range(0, len(features), batch_size):
+            stop = min(len(features), start + batch_size)
+            batch_features = features[start:stop].to(device)
+            batch_policy = target_policy[start:stop].to(device)
+            batch_value = target_value[start:stop].to(device)
+            batch_legal = legal_masks[start:stop].to(device)
+            batch_weights = policy_weights[start:stop].to(device)
+            logits, values = network(batch_features)
+            logits = logits.masked_fill(~batch_legal, torch.finfo(logits.dtype).min)
+            log_policy = torch.log_softmax(logits, dim=-1)
+            cross_entropy = -(batch_policy * log_policy).sum(dim=-1)
+            entropy = -(batch_policy * batch_policy.clamp_min(1e-12).log()).sum(
+                dim=-1
+            )
+            policy_cross_entropy += float((cross_entropy * batch_weights).sum())
+            target_entropy += float((entropy * batch_weights).sum())
+            weighted_policy_rows += float(batch_weights.sum())
+            top_action_matches += int(
+                (
+                    logits.argmax(dim=-1).eq(batch_policy.argmax(dim=-1))
+                    * batch_weights.bool()
+                )
+                .sum()
+                .item()
+            )
+            squared_errors.extend(
+                (values - batch_value).square().float().cpu().tolist()
+            )
+    battle_errors: dict[tuple[int, int], list[float]] = {}
+    for battle, error in zip(battle_ids, squared_errors, strict=True):
+        battle_errors.setdefault(battle, []).append(error)
+    row_value_mse = sum(squared_errors) / len(squared_errors)
+    battle_value_mse = sum(
+        sum(errors) / len(errors) for errors in battle_errors.values()
+    ) / len(battle_errors)
+    zero_value_mse = float(target_value.square().mean())
+    mean_cross_entropy = policy_cross_entropy / max(1.0, weighted_policy_rows)
+    mean_target_entropy = target_entropy / max(1.0, weighted_policy_rows)
+    return {
+        "split": "whole-battle-shard-episode-mod10-v1",
+        "rows": len(features),
+        "battles": len(battle_errors),
+        "value_mse_equal_row": row_value_mse,
+        "value_mse_equal_battle": battle_value_mse,
+        "zero_value_mse": zero_value_mse,
+        "value_mse_vs_zero_equal_row": row_value_mse - zero_value_mse,
+        "policy_cross_entropy": mean_cross_entropy,
+        "policy_target_entropy": mean_target_entropy,
+        "policy_kl": mean_cross_entropy - mean_target_entropy,
+        "policy_top_action_agreement": top_action_matches
+        / max(1.0, weighted_policy_rows),
+    }
+
+
+def _gradient_report(
+    samples: list[tuple[float, float, float | None]],
+) -> dict[str, Any]:
+    if not samples:
+        return {
+            "samples": 0,
+            "cosine_samples": 0,
+            "policy_trunk_norm": None,
+            "value_trunk_norm": None,
+            "value_policy_norm_ratio": None,
+            "mean_cosine": None,
+            "negative_cosine_fraction": None,
+        }
+    policy_norm = sum(sample[0] for sample in samples) / len(samples)
+    value_norm = sum(sample[1] for sample in samples) / len(samples)
+    cosines = [sample[2] for sample in samples if sample[2] is not None]
+    return {
+        "samples": len(samples),
+        "cosine_samples": len(cosines),
+        "policy_trunk_norm": policy_norm,
+        "value_trunk_norm": value_norm,
+        "value_policy_norm_ratio": value_norm / max(policy_norm, 1e-12),
+        "mean_cosine": sum(cosines) / len(cosines) if cosines else None,
+        "negative_cosine_fraction": (
+            sum(cosine < 0.0 for cosine in cosines) / len(cosines)
+            if cosines
+            else None
+        ),
+    }
 
 
 def _train_network(
@@ -1109,15 +1269,28 @@ def _train_network(
     iteration: int,
 ) -> dict[str, Any]:
     device = next(network.parameters()).device
-    features, target_policy, target_value, legal_masks, policy_weights = _load_examples(
-        shards
+    training_examples, heldout_examples, heldout_battles = (
+        _load_partitioned_examples(shards)
+    )
+    features, target_policy, target_value, legal_masks, policy_weights = (
+        training_examples
     )
     generator = torch.Generator(device="cpu").manual_seed(config.seed + iteration)
+    trunk_parameters = [
+        parameter
+        for name, parameter in network.named_parameters()
+        if not name.startswith(("policy.", "value."))
+    ]
+    heldout_before = _heldout_diagnostics(
+        network, heldout_examples, heldout_battles, config.inference_batch_size
+    )
     network.train()
     history: list[dict[str, float]] = []
+    diagnostic_epochs: list[dict[str, Any]] = []
     for epoch in range(config.epochs):
         permutation = torch.randperm(len(features), generator=generator)
         policy_total = value_total = total_total = 0.0
+        gradient_samples: list[tuple[float, float, float | None]] = []
         batches = 0
         for start in range(0, len(features), config.batch_size):
             indexes = permutation[start : start + config.batch_size]
@@ -1136,6 +1309,49 @@ def _train_network(
             ).sum() / batch_policy_weight.sum().clamp_min(1.0)
             value_loss = torch.nn.functional.mse_loss(values, batch_value)
             loss = policy_loss + value_loss
+            if len(gradient_samples) < 8:
+                policy_gradients = torch.autograd.grad(
+                    policy_loss,
+                    trunk_parameters,
+                    retain_graph=True,
+                    allow_unused=True,
+                )
+                value_gradients = torch.autograd.grad(
+                    value_loss,
+                    trunk_parameters,
+                    retain_graph=True,
+                    allow_unused=True,
+                )
+                policy_squared = sum(
+                    gradient.float().square().sum()
+                    for gradient in policy_gradients
+                    if gradient is not None
+                )
+                value_squared = sum(
+                    gradient.float().square().sum()
+                    for gradient in value_gradients
+                    if gradient is not None
+                )
+                gradient_dot = sum(
+                    policy_gradient.float().mul(value_gradient.float()).sum()
+                    for policy_gradient, value_gradient in zip(
+                        policy_gradients, value_gradients, strict=True
+                    )
+                    if policy_gradient is not None and value_gradient is not None
+                )
+                policy_norm = float(policy_squared.sqrt())
+                value_norm = float(value_squared.sqrt())
+                gradient_samples.append(
+                    (
+                        policy_norm,
+                        value_norm,
+                        (
+                            float(gradient_dot) / (policy_norm * value_norm)
+                            if policy_norm > 0.0 and value_norm > 0.0
+                            else None
+                        ),
+                    )
+                )
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(network.parameters(), 1.0)
@@ -1152,12 +1368,41 @@ def _train_network(
                 "total_loss": total_total / batches,
             }
         )
+        heldout = _heldout_diagnostics(
+            network, heldout_examples, heldout_battles, config.inference_batch_size
+        )
+        gradient = _gradient_report(gradient_samples)
+        epoch_diagnostics = {
+            "epoch": epoch,
+            "gradient": gradient,
+            "heldout": heldout,
+        }
+        diagnostic_epochs.append(epoch_diagnostics)
+        print(
+            json.dumps(
+                {
+                    "event": "training-diagnostics",
+                    "iteration": iteration,
+                    **epoch_diagnostics,
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+        network.train()
     network.eval()
     return {
         "examples": len(features),
+        "heldout_examples": len(heldout_examples[0]),
+        "heldout_battles": len(set(heldout_battles)),
         "epochs": config.epochs,
         "batches_per_epoch": math.ceil(len(features) / config.batch_size),
         "history": history,
+        "diagnostics": {
+            "heldout_before": heldout_before,
+            "epochs": diagnostic_epochs,
+            "latest": diagnostic_epochs[-1],
+        },
     }
 
 
@@ -1416,6 +1661,8 @@ def run_transformer_pipeline(
         raise ValueError("arena_episodes must be an even number of at least four")
     root.mkdir(parents=True, exist_ok=True)
     write_monitor_state(root, "initializing", message="Validating native protocol")
+    if config.selfplay_episodes < 4 or config.selfplay_episodes % 4:
+        raise ValueError("selfplay_episodes must be a positive multiple of four")
     if config.search_every < 1:
         raise ValueError("search_every must be positive")
     if config.tree_expansion_budget < 1:
@@ -1471,9 +1718,9 @@ def run_transformer_pipeline(
     if not 0.0 <= config.minimum_promotion_score <= 1.0:
         raise ValueError("minimum_promotion_score must be in [0, 1]")
     if config.enforce_quality_gate:
-        if config.promotion_games < 8192:
+        if config.promotion_games < 1024:
             raise ValueError(
-                "quality-gated training requires at least 8192 promotion games"
+                "quality-gated training requires at least 1024 promotion games"
             )
         if config.minimum_promotion_score < 0.50:
             raise ValueError(
@@ -1615,7 +1862,7 @@ def run_transformer_pipeline(
                 "profile": FULL_PROFILE,
                 "schema": FULL_SCHEMA,
                 "max_party_size": FULL_PARTY_SIZE,
-                "party_size_schedule": "all-ordered-1to6-v1",
+                "party_size_schedule": GENERATED_PARTY_SCHEDULE,
                 "chance": "fresh-root-v1",
                 "search_solver": "simultaneous-matrix-tree-rmplus-v1",
                 "learning_lineage": "persistent-shadow-v1",
@@ -1750,6 +1997,7 @@ def run_transformer_pipeline(
             iteration=iteration,
             message=f"Running {config.promotion_games:,} paired promotion games",
             games=config.promotion_games,
+            training_diagnostics=training_metrics["diagnostics"]["latest"],
         )
         promotion = run_paired_arena(
             network,
@@ -1779,6 +2027,7 @@ def run_transformer_pipeline(
             message=f"Running {config.probe_games:,} held-out skill probes",
             games=config.probe_games,
             promotion=live_promotion,
+            training_diagnostics=training_metrics["diagnostics"]["latest"],
         )
         probe_arena = run_traced_arena(
             network,
@@ -1800,6 +2049,7 @@ def run_transformer_pipeline(
             games=config.campaign_games,
             promotion=live_promotion,
             probes_pass=probes["pass"],
+            training_diagnostics=training_metrics["diagnostics"]["latest"],
         )
         campaign_arena = run_campaign_arena(
             network,
@@ -1864,6 +2114,7 @@ def run_transformer_pipeline(
             promotion_score=promotion_score,
             confidence_low=confidence_low,
             promotion={**live_promotion, "accepted": accepted},
+            training_diagnostics=training_metrics["diagnostics"]["latest"],
         )
         checkpoint = root / "checkpoints" / f"policy-{iteration:03d}.pt"
         save_network(

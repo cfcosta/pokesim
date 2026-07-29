@@ -33,7 +33,9 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Retain nonterminal stop counts instead of fabricating labels.
 - [x] Verify generated artifacts and deterministic shard replay.
 - [x] Add held-out generated-team type/status/switch probes.
-- [x] Add 8,192-game paired-seed side-swapped confidence intervals.
+- [x] Add 1,024-game paired-seed complete side-swapped confidence intervals.
+- [x] Reserve at least 25% of generated collection and arena games for 6v6.
+- [x] Report trunk-gradient conflict and whole-battle held-out diagnostics.
 - [x] Separate the persistent shadow learner from quality-gated deployment.
 - [x] Add multi-checkpoint fixed baselines and pairwise arena reports.
 - [x] Emit readable Showdown-style arena projections and policy-skill metrics.

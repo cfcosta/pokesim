@@ -182,6 +182,71 @@ function renderCharts(data) {
   ], { min: 0, max: 1, threshold: 0.5, decimals: 0, height: 170 });
 }
 
+function iterationDiagnostics(iteration) {
+  return iteration?.training?.diagnostics?.latest || null;
+}
+
+function renderDiagnostics(data) {
+  const live = data.status?.training_diagnostics;
+  const latest = live || iterationDiagnostics(data.latest);
+  const cards = $("diagnostic-cards");
+  const history = $("diagnostic-history");
+  clear(cards);
+  clear(history);
+  const gradient = latest?.gradient || {};
+  const heldout = latest?.heldout || {};
+  const summaries = [
+    ["Value / policy gradient", number(gradient.value_policy_norm_ratio, 2), (gradient.value_policy_norm_ratio || 0) > 2],
+    ["Gradient cosine", number(gradient.mean_cosine, 3), (gradient.mean_cosine || 0) < 0],
+    ["Conflicting batches", pct(gradient.negative_cosine_fraction), (gradient.negative_cosine_fraction || 0) > 0.5],
+    ["Fresh value MSE", number(heldout.value_mse_equal_row, 3), heldout.value_mse_equal_row > heldout.zero_value_mse],
+    ["Equal-battle MSE", number(heldout.value_mse_equal_battle, 3), heldout.value_mse_equal_battle > heldout.zero_value_mse],
+    ["Policy KL / top action", latest ? `${number(heldout.policy_kl, 3)} / ${pct(heldout.policy_top_action_agreement)}` : "—", false],
+  ];
+  for (const [name, value, alert] of summaries) {
+    const card = element("div", "mini-stat");
+    card.append(element("span", "", name), element("strong", alert ? "diagnostic-alert" : "", value));
+    cards.append(card);
+  }
+  text(
+    $("diagnostic-status"),
+    latest
+      ? `Epoch ${Number(latest.epoch) + 1} · ${number(gradient.samples)} gradient batches · ${number(heldout.battles)} held-out battles`
+      : "Waiting for training",
+  );
+
+  const rows = data.iterations.map((iteration) => [iteration.iteration, iterationDiagnostics(iteration)]).filter(([, diagnostic]) => diagnostic);
+  if (!rows.length) {
+    const row = element("tr");
+    const cell = element("td", "empty-cell", "No optimization diagnostics yet");
+    cell.colSpan = 9;
+    row.append(cell);
+    history.append(row);
+    return;
+  }
+  for (const [iteration, diagnostic] of rows.slice(-10).reverse()) {
+    const g = diagnostic.gradient;
+    const h = diagnostic.heldout;
+    const values = [
+      String(iteration).padStart(3, "0"),
+      number(g.value_policy_norm_ratio, 2),
+      number(g.mean_cosine, 3),
+      pct(g.negative_cosine_fraction),
+      number(h.value_mse_equal_row, 3),
+      number(h.value_mse_equal_battle, 3),
+      number(h.zero_value_mse, 3),
+      number(h.policy_kl, 3),
+      pct(h.policy_top_action_agreement),
+    ];
+    const row = element("tr");
+    values.forEach((value, index) => {
+      const alert = (index === 1 && g.value_policy_norm_ratio > 2) || (index === 2 && g.mean_cosine < 0) || (index === 3 && g.negative_cosine_fraction > 0.5) || (index === 4 && h.value_mse_equal_row > h.zero_value_mse) || (index === 5 && h.value_mse_equal_battle > h.zero_value_mse);
+      row.append(element("td", alert ? "diagnostic-alert" : "", value));
+    });
+    history.append(row);
+  }
+}
+
 function renderModel(data) {
   const model = data.model || {};
   const network = model.network || {};
@@ -464,6 +529,7 @@ function render(data) {
   renderRun(data);
   renderKpis(data);
   renderCharts(data);
+  renderDiagnostics(data);
   renderModel(data);
   renderActors(data);
   renderBattlePopulation(data);

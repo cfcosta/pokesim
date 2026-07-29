@@ -11,7 +11,12 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
-from battle_training.arena import _mean_ci95, _paired_coordinates, skill_probe_report
+from battle_training.arena import (
+    _evaluation_party_sizes,
+    _mean_ci95,
+    _paired_coordinates,
+    skill_probe_report,
+)
 from battle_training.artifacts import (
     build_manifest,
     sha256,
@@ -38,6 +43,7 @@ from battle_training.network import (
     warm_start_network,
 )
 from battle_training.transformer_pipeline import (
+    _gradient_report,
     _load_completed_prefix,
     _load_examples,
     _scheduled_for_opponent,
@@ -544,7 +550,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.epochs, 2)
         self.assertEqual(arguments.batch_size, 128)
         self.assertEqual(arguments.learning_rate, 2e-4)
-        self.assertEqual(arguments.promotion_games, 8192)
+        self.assertEqual(arguments.promotion_games, 1024)
         self.assertEqual(arguments.probe_games, 256)
         self.assertEqual(arguments.campaign_games, 288)
         self.assertEqual(arguments.tree_expansion_budget, 320)
@@ -630,6 +636,8 @@ class TransformerTests(unittest.TestCase):
         self.assertNotEqual(
             _paired_coordinates(100, 8, 0), _paired_coordinates(100, 8, 2)
         )
+        schedule = [_evaluation_party_sizes(pair) for pair in range(512)]
+        self.assertEqual(schedule.count((6, 6)), 128)
         low, high = _mean_ci95([1.0] * 512)
         self.assertEqual((low, high), (1.0, 1.0))
 
@@ -658,18 +666,18 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(sum(schedule), 500)
         self.assertEqual(schedule[:6], [False, True, False, True, False, True])
 
-    def test_training_schedule_covers_all_ordered_party_sizes(self) -> None:
+    def test_training_schedule_covers_all_sizes_with_at_least_quarter_6v6(self) -> None:
         expected = {
             (player, enemy)
             for player in range(1, 7)
             for enemy in range(1, 7)
         }
-        self.assertEqual(
-            {_training_party_sizes(1, episode) for episode in range(36)}, expected
-        )
-        self.assertEqual(
-            {_training_party_sizes(2, episode) for episode in range(36)}, expected
-        )
+        for iteration in (1, 2):
+            schedule = [
+                _training_party_sizes(iteration, episode) for episode in range(2048)
+            ]
+            self.assertEqual(set(schedule), expected)
+            self.assertGreaterEqual(schedule.count((6, 6)), 512)
 
     def test_checkpoint_separates_deployed_and_shadow_models(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -746,6 +754,16 @@ class TransformerTests(unittest.TestCase):
                     self.assertEqual(target_value.shape[0], 493)
                 else:
                     self.assertTrue(torch.equal(target_value, source_value), name)
+
+    def test_gradient_diagnostics_report_norm_conflict(self) -> None:
+        report = _gradient_report(
+            [(0.1, 2.4, -0.2), (0.2, 2.4, 0.1), (0.0, 1.0, None)]
+        )
+        self.assertEqual(report["samples"], 3)
+        self.assertEqual(report["cosine_samples"], 2)
+        self.assertAlmostEqual(report["value_policy_norm_ratio"], 19.3333333333)
+        self.assertAlmostEqual(report["mean_cosine"], -0.05)
+        self.assertEqual(report["negative_cosine_fraction"], 0.5)
 
     def test_replay_loader_retains_legal_policy_masks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

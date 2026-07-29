@@ -203,6 +203,11 @@ main { width: min(1520px, 100%); margin: 0 auto; padding: 24px clamp(16px, 3vw, 
 .definition-list dt { color: var(--muted); font-size: 0.72rem; }
 .definition-list dd { margin: 0; text-align: right; font-size: 0.74rem; font-weight: 650; font-variant-numeric: tabular-nums slashed-zero; }
 
+.diagnostic-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.diagnostic-table { margin-top: 18px; }
+.diagnostic-alert { color: var(--red); }
+.diagnostic-good { color: var(--green); }
+
 .actors { display: grid; gap: 13px; }
 .actor-row { display: grid; gap: 7px; }
 .actor-copy { display: flex; justify-content: space-between; font-size: 0.72rem; }
@@ -275,6 +280,7 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 20px
   .kpi { min-height: 105px; }
   .battle-stats { grid-template-columns: repeat(2, 1fr); }
   .collection-results { grid-template-columns: repeat(2, 1fr); }
+  .diagnostic-grid { grid-template-columns: repeat(2, 1fr); }
   .heatmap-wrap { grid-template-columns: 1fr; }
   .campaign-grid { grid-template-columns: repeat(2, 1fr); }
   footer { padding: 18px; flex-direction: column; }

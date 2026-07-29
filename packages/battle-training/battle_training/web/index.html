@@ -80,6 +80,20 @@
         <dl id="model-contract" class="definition-list"></dl>
       </article>
 
+      <article class="panel span-3 diagnostics-panel">
+        <header class="panel-header">
+          <div><span class="label">Shared-trunk health</span><h2>Optimization diagnostics</h2></div>
+          <span id="diagnostic-status" class="muted">Waiting for training</span>
+        </header>
+        <div id="diagnostic-cards" class="diagnostic-grid"></div>
+        <div class="table-wrap diagnostic-table">
+          <table>
+            <thead><tr><th>Iteration</th><th>Value / policy</th><th>Cosine</th><th>Conflict</th><th>Value MSE row</th><th>Value MSE battle</th><th>Zero baseline</th><th>Policy KL</th><th>Top action</th></tr></thead>
+            <tbody id="diagnostic-history"><tr><td colspan="9" class="empty-cell">No optimization diagnostics yet</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+
       <article class="panel promotion-panel span-2">
         <header class="panel-header">
           <div><span class="label">Incumbent gate</span><h2>Promotion history</h2></div>
@@ -102,6 +116,11 @@
         </div>
       </article>
 
+      <article class="panel gates-panel">
+        <header class="panel-header"><div><span class="label">Quality control</span><h2>Promotion gates</h2></div></header>
+        <div id="gates" class="gate-list empty-state">No completed promotion</div>
+      </article>
+
       <article class="panel span-3 collection-panel">
         <header class="panel-header">
           <div><span class="label">Live collection</span><h2>Self-play battles</h2></div>
@@ -117,11 +136,6 @@
             <tbody id="selfplay-battles"><tr><td colspan="7" class="empty-cell">No completed self-play battles yet</td></tr></tbody>
           </table>
         </div>
-      </article>
-
-      <article class="panel gates-panel">
-        <header class="panel-header"><div><span class="label">Quality control</span><h2>Promotion gates</h2></div></header>
-        <div id="gates" class="gate-list empty-state">No completed promotion</div>
       </article>
 
       <article class="panel span-3">

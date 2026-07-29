@@ -8,14 +8,19 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import FULL_CAMPAIGN_COUNT, FULL_PARTY_SIZE, FULL_PROFILE
+from . import (
+    FULL_CAMPAIGN_COUNT,
+    FULL_PARTY_SIZE,
+    FULL_PROFILE,
+    GENERATED_PARTY_SCHEDULE,
+    generated_party_sizes,
+)
 from .artifacts import write_json
 from .joint_search import JointSearchConfig, SimultaneousTreeSearch
 from .native import NativeRequestTimeout, SearchServer
 from .network import BattleTransformer
 
 _FIXED_DAMAGE_MOVES = {68, 69, 82, 101, 149, 162}
-_MAX_PARTY_SIZE = FULL_PARTY_SIZE
 _CAMPAIGN_NAMES = (
     "Brock",
     "Misty",
@@ -28,15 +33,6 @@ _CAMPAIGN_NAMES = (
     "Lance",
 )
 assert len(_CAMPAIGN_NAMES) == FULL_CAMPAIGN_COUNT
-_PARTY_MATCHUPS = tuple(
-    [(size, size) for size in range(1, _MAX_PARTY_SIZE + 1)]
-    + [
-        (player, enemy)
-        for player in range(1, _MAX_PARTY_SIZE + 1)
-        for enemy in range(1, _MAX_PARTY_SIZE + 1)
-        if player != enemy
-    ]
-)
 _SUCCESS_EVENTS = {
     "status-applied",
     "stage-changed",
@@ -467,7 +463,24 @@ def _mean_ci95(values: list[float]) -> tuple[float, float]:
 
 
 def _evaluation_party_sizes(pair: int) -> tuple[int, int]:
-    return _PARTY_MATCHUPS[pair % len(_PARTY_MATCHUPS)]
+    return generated_party_sizes(pair)
+
+
+def _generated_party_report(games: int) -> dict[str, Any]:
+    six_vs_six_games = 2 * sum(
+        _evaluation_party_sizes(pair) == (FULL_PARTY_SIZE, FULL_PARTY_SIZE)
+        for pair in range(games // 2)
+    )
+    if six_vs_six_games * 4 < games:
+        raise RuntimeError("generated arena schedule fell below 25% 6v6")
+    return {
+        "party_size_schedule": GENERATED_PARTY_SCHEDULE,
+        "minimum_6v6_fraction": 0.25,
+        "six_vs_six_games": six_vs_six_games,
+        "side_swap_complete": True,
+        "candidate_player_games": games // 2,
+        "candidate_enemy_games": games // 2,
+    }
 
 
 def _party_strata(player_size: int, enemy_size: int) -> tuple[str, ...]:
@@ -643,6 +656,18 @@ def run_paired_arena(
     episodes = _run_fast_arena_games(
         candidate, baseline, games, budget, seed, seed_count, campaign
     )
+    for pair in range(games // 2):
+        first, second = episodes[2 * pair : 2 * pair + 2]
+        if (
+            first.game != 2 * pair
+            or second.game != 2 * pair + 1
+            or not first.candidate_player
+            or second.candidate_player
+            or first.player_size != second.player_size
+            or first.enemy_size != second.enemy_size
+            or first.campaign_index != second.campaign_index
+        ):
+            raise RuntimeError("paired arena failed its complete model-side swap")
     for episode in episodes:
         candidate_result = (
             episode.result
@@ -728,9 +753,18 @@ def run_paired_arena(
         "games": games,
         "pairs": games // 2,
         "seed_count": seed_count,
-        "pairing": "same-reset-model-side-swap-v1",
-        "party_size_schedule": (
-            "fixed-campaign-suite-v1" if campaign else "all-ordered-1to6-v1"
+        "pairing": "same-reset-complete-model-side-swap-v2",
+        **(
+            {
+                "side_swap_complete": True,
+                "candidate_player_games": games // 2,
+                "candidate_enemy_games": games // 2,
+                "party_size_schedule": "fixed-campaign-suite-v1",
+                "minimum_6v6_fraction": None,
+                "six_vs_six_games": None,
+            }
+            if campaign
+            else _generated_party_report(games)
         ),
         "strata": None if campaign else _stratified_report(stratum_scores),
         "campaign": campaign_report if campaign else None,
@@ -806,7 +840,7 @@ def _traced_summary(
     return {
         "profile": FULL_PROFILE,
         "max_party_size": FULL_PARTY_SIZE,
-        "party_size_schedule": "all-ordered-1to6-v1",
+        **_generated_party_report(config.games),
         "strata": _stratified_report(stratum_scores),
         "games": config.games,
         "wins": wins,
@@ -1303,7 +1337,7 @@ def _run_traced_arena_sequential(
     return {
         "profile": FULL_PROFILE,
         "max_party_size": FULL_PARTY_SIZE,
-        "party_size_schedule": "all-ordered-1to6-v1",
+        **_generated_party_report(config.games),
         "strata": _stratified_report(stratum_scores),
         "games": config.games,
         "wins": wins,

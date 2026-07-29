@@ -51,8 +51,9 @@ for explicit sparse-search experiments, but it is not the production default.
 This preserves complete action consideration without top-k pruning.
 `transformer-train` is the production profile:
 30 iterations of 2,048 training battles, or 61,440 independently reset random
-variable-party battles. Each iteration assigns 56 or 57 battles to every ordered
-party-size matchup. It uses depth-four simultaneous trees, the
+variable-party battles. Exactly one quarter of generated battles are 6v6; the
+remaining schedule cycles through every other ordered party-size matchup. It uses
+depth-four simultaneous trees, the
 940,430-parameter four-layer, 128-wide model, BF16 autocast, two epochs per iteration, a
 CUDA-safe batch size of 128, and a 1,024-game final arena. Parameters, gradients,
 AdamW state, policy normalization, losses, and reductions remain FP32. The tree
@@ -91,7 +92,8 @@ change the listener. The page polls local artifacts every two seconds and shows:
 
 - live stage, iteration, and per-actor collection progress;
 - checkpoint identity, architecture, precision, device, and parameter count;
-- policy/value losses and promotion confidence history;
+- policy/value losses, trunk-gradient conflict, whole-battle held-out value and
+  policy diagnostics, and promotion confidence history;
 - live self-play results, recent battle outcomes, opponents, turns, examples,
   native transitions, battle length, switching, search, and 36-party-size coverage;
 - recent paired promotion battles, strata, campaign cases, and skill probes;
@@ -119,7 +121,7 @@ batch 128, so 128 remains the production default.
 Use `--device cpu`, `--device cuda`, or `--device auto`. BF16 is the default;
 `--precision fp32` remains available for differential checks and older
 checkpoints without precision metadata retain their original FP32 contract.
-The v9 pipeline defaults `--inference-engine auto`: CUDA uses bucketed compiled
+The v10 pipeline defaults `--inference-engine auto`: CUDA uses bucketed compiled
 inference through static batches up to 256 while CPU uses eager execution.
 `--inference-engine eager` remains available for differential checks and
 historical artifact verification. Production collection defaults to two spawned
@@ -156,16 +158,17 @@ identity and deterministic regeneration reconstructs the same population order.
 Human traces remain external until the server-authoritative replay and search-
 relabeling importer in
 [the trace contract](../../docs/explanation/human-battle-trace-training.md) is
-implemented. Each production update receives at least 8,192 held-out games
-against its incumbent, grouped into 4,096 same-reset pairs with model sides
-swapped across eight root seeds. Truncations
+implemented. Each production update receives 1,024 held-out games against its
+incumbent, grouped into 512 same-reset pairs with a complete model-side swap
+across eight root seeds. Every generated arena and collection schedule reserves
+at least 25% of games for 6v6. Truncations
 and semantic cycles score zero. Promotion requires a point score of at least 50%,
 a paired 95% confidence lower bound of at least 50%, and passing separate
 held-out type, status, and switch probes. It also reports and gates 1–2, 3–4,
 5–6, and unequal-party strata, plus a nine-team fixed campaign suite covering
 Brock through Giovanni and Lance. The campaign teams use canonical natural
 moves and fixed DVs inside the link quotient; they do not claim trainer AI or
-item equivalence. The v9 pipeline separates a persistent shadow learner from the
+item equivalence. The v10 pipeline separates a persistent shadow learner from the
 quality-gated deployed incumbent. Inconclusive evaluations retain the incumbent
 but carry the learner parameters and AdamW state into the next collection
 iteration, allowing small updates to compound without weakening deployment. Each
