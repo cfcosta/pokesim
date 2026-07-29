@@ -79,6 +79,7 @@ import Battle.Rom.HazeRoutine
 import Battle.Rom.HazeDispatchRoutine
 import Battle.Rom.FlyRoutine
 import Battle.Rom.StruggleRoutine
+import Battle.Rom.DamageApplyRoutine
 import Battle.Diff
 import Battle.Driver
 import Battle.DriverInvariant

@@ -244,6 +244,27 @@ def reapplyStatusPenalties (side : Battle.SideState) : Battle.SideState :=
   if side.active.burned then
     setCurrentStat side 0 (UInt16.ofNat (side.active.attack.toNat / 2)) else side
 
+@[simp] private theorem setCurrentStat_preserves_hp (side : Battle.SideState)
+    (stat : Nat) (value : UInt16) :
+    (setCurrentStat side stat value).active.hp = side.active.hp := by
+  simp [setCurrentStat]
+  split <;> rfl
+
+@[simp] private theorem recalculateStat_preserves_hp (side : Battle.SideState)
+    (stat : Nat) (stage : UInt8) :
+    (recalculateStat side stat stage).active.hp = side.active.hp := by
+  simp [recalculateStat]
+
+@[simp] theorem applyBadges_preserves_hp (badges : UInt8) (side : Battle.SideState) :
+    (applyBadges badges side).active.hp = side.active.hp := by
+  simp only [applyBadges]
+  split <;> split <;> split <;> split <;> simp
+
+@[simp] theorem reapplyStatusPenalties_preserves_hp (side : Battle.SideState) :
+    (reapplyStatusPenalties side).active.hp = side.active.hp := by
+  simp only [reapplyStatusPenalties]
+  split <;> split <;> simp
+
 def raiseStage (context : Context) (stat amount : Nat) : Outcome :=
   let old := getStage context.attacker.stages stat
   if old.toNat ≥ 13 then ⟨context, .failed, []⟩
@@ -261,6 +282,26 @@ def raiseStage (context : Context) (stat amount : Nat) : Outcome :=
       let defender := reapplyStatusPenalties context.defender
       let context := withDefender (withAttacker context attacker) defender
       ⟨context, .continue, [.stageChanged context.attackerSide stat amount]⟩
+
+@[simp] theorem raiseStage_preserves_attacker_hp (context : Context)
+    (stat amount : Nat) :
+    (raiseStage context stat amount).context.attacker.active.hp =
+      context.attacker.active.hp := by
+  simp only [raiseStage]
+  all_goals split <;> simp_all [withAttacker, withDefender]
+  all_goals split <;> simp_all
+  all_goals split <;> simp_all
+  all_goals split <;> simp_all
+
+@[simp] theorem raiseStage_preserves_defender_hp (context : Context)
+    (stat amount : Nat) :
+    (raiseStage context stat amount).context.defender.active.hp =
+      context.defender.active.hp := by
+  simp only [raiseStage]
+  all_goals split <;> simp_all [withAttacker, withDefender]
+  all_goals split <;> simp_all
+  all_goals split <;> simp_all [withAttacker, withDefender]
+  all_goals split <;> simp_all [withAttacker, withDefender]
 
 def lowerStage (context : Context) (stat amount : Nat)
     (respectMist : Bool := true) : Outcome :=

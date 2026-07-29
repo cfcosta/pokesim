@@ -107,7 +107,7 @@ mechanics state as `Full.Environment`.
 | UEE-07 | High reactive semantics | A relational high step consumes typed actions, nested answers, ordinary/link randomness, and reactive waits while emitting source/site-labelled events | `Environment.step` is a function over actions and an internal `LinkRng`; ordinary hardware randomness is not an explicit response relation |
 | UEE-08 | Reset/encoding relation | Every admitted high reset encodes to low bytes and establishes `Related`; decoding is unique on projected fields | Supplied-wild predicate is partial; generated RL teams have no cartridge-byte encoding theorem |
 | UEE-09 | RNG/input/link trace coupling | ROM `Random_`/`BattleRandom`, joypad commits, serial bytes, and nested menu choices project to the exact high request trace | Current projection observes raw `rDIV`, `rP1`, and `rSB` reads without proving semantic call sites or returned random bytes |
-| UEE-10 | Checkpoint local simulations | Selection, order, status gate, move, damage, effect, residual, faint, replacement, progression, terminal, and cleanup each preserve `Related` and projected traces | Leaf routine theorems are not composed into one ordinary turn |
+| UEE-10 | Checkpoint local simulations | Selection, order, status gate, move, damage, effect, residual, faint, replacement, progression, terminal, and cleanup each preserve `Related` and projected traces | The bounded player `ApplyDamageToEnemyPokemon` slice now relates decoded execution to high HP/actual-damage words; the remaining fields and checkpoints are not composed into one ordinary turn |
 | UEE-11 | Presentation frames | Each hidden text/animation/audio/HUD summary proves writes, timing, interrupts, controller consumption, MMIO, bank, stack, and divergence | No presentation summary currently has this contract |
 | UEE-12 | Terminal/final compatibility | Pre-cleanup cause/result, epilogue mutations, restored caller frame, carry, bank, stack, and final party agree | Driver checkpoints carry terminal bytes but do not relate complete high state |
 | UEE-13 | Infinite behavior | Silent loops, division freezes, menu traps, HALT/audio/serial waits, and reactive behavior map without using fuel as semantics | Concrete reaction-preservation and high coinductive transitions are absent |
@@ -160,6 +160,15 @@ replacement, ending, and returned checkpoints.
 Each row requires a low machine execution or a transitive set of proved routine
 summaries. A replay fixture, decoded window, handler-pointer equality, or
 high-level theorem alone is not a transition simulation.
+
+`Battle.Rom.DamageApplyRoutine.canonical_player_damage_transition_refines` is
+the first bounded checkpoint slice satisfying both sides in one theorem. Given
+caller-supplied canonical identity/window witnesses, no Substitute, nonzero
+damage, and HP/damage words below 1000, it executes `$0f:$6142` to `$617b`
+through the decoded SM83 semantics and proves equality with
+`Battle.Full.Engine.applyDamage` for target HP and actual `wDamage`. It does not
+establish G1, G2, or G3: the relation omits the rest of WRAM/control state and
+the slice starts after action, RNG, hit, and damage calculation.
 
 ## Dependency gates
 

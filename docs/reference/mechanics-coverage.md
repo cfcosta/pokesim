@@ -294,6 +294,7 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [x] Focus Energy right-shift bug (`Battle.Critical.focus_branch_is_second_right_shift`, `focus_never_improves`, `focus_energy_witness`)
 - [x] critical random-byte rotations (`Battle.Critical.rotateRandom_inverse`, `strict_boundary_iff`)
 - [x] HP subtraction, overkill cap, and shared damage update (`Battle.Step.saturatingSub_overkill`, `saturatingSub_exact`, `Battle.Full.Engine.applyDamage`)
+- [x] bounded decoded-ROM transition from `ApplyDamageToEnemyPokemon` `$0f:$6142` to the `$617b` HP-animation checkpoint agrees with `Battle.Full.Engine.applyDamage` on enemy HP and actual `wDamage` for every nonzero HP/damage word below 1000 on the no-Substitute path (`Battle.Rom.DamageApplyRoutine.canonical_player_damage_transition_refines`; Transition-verified checkpoint slice, not a whole-turn theorem)
 - [x] Substitute damage path, damage-greater-than-255 break, and exact-damage zero-HP survival (`Battle.Full.Engine.substitute_high_byte_breaks`, `substitute_exact_damage_survives`, `Battle.BugWitnesses.decoded_substitute_zero_user_hp_occurs`)
 - [x] substitute break zeroes the attacker's loaded effect while nonbreaking hits retain it (`Battle.Full.Engine.clear_loaded_effect_is_side_local`; invoked only when `DamageApplied.effectNullified`)
 - [x] Rage-building response to surviving direct or Substitute damage (`Battle.Full.Engine.buildRageAfterDamage`, `rage_builds_after_surviving_damage`)

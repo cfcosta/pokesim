@@ -456,6 +456,21 @@ def buildRageAfterDamage (state : State) (attacker : Side) : State :=
     let outcome := Effects.raiseStage context 0 1
     installEffectsContext state targetSide outcome.context
 
+@[simp] theorem buildRageAfterDamage_target_hp (state : State) (attacker : Side) :
+    (side (buildRageAfterDamage state attacker) attacker.other).active.active.hp =
+      (side state attacker.other).active.active.hp := by
+  cases attacker <;>
+    simp [buildRageAfterDamage, effectsContext, installEffectsContext, side,
+      setSide, Side.other, Full.State.side, Full.State.setSide]
+  all_goals split <;> simp
+
+@[simp] theorem buildRageAfterDamage_sharedDamage (state : State) (attacker : Side) :
+    (buildRageAfterDamage state attacker).sharedDamage = state.sharedDamage := by
+  cases attacker <;>
+    simp [buildRageAfterDamage, effectsContext, installEffectsContext, side,
+      setSide, Side.other, Full.State.side, Full.State.setSide]
+  all_goals split <;> simp
+
 theorem rage_builds_after_surviving_damage (state : State) (attacker : Side)
     (rage : bitSet (side state attacker.other).active.volatile.status2
       Wram.BattleStatus2.usingRage = true)
@@ -524,6 +539,27 @@ def applyDamage (state : State) (who : Side) (damage : UInt16) : DamageApplied :
     { state := buildRageAfterDamage state who,
       actualDamage := actual, targetFainted := hp == 0,
       events := [.damage targetWho actual hp] }
+
+/-- On the ordinary no-Substitute path, HP uses saturating subtraction and the
+shared damage word records exactly the HP actually removed. -/
+theorem apply_damage_no_substitute_words (state : State) (who : Side)
+    (damage : UInt16)
+    (noSubstitute : (side state who.other).active.volatile.hasSubstitute = false) :
+    let target := side state who.other
+    let applied := applyDamage state who damage
+    applied.actualDamage = target.active.active.hp -
+        Step.saturatingSub target.active.active.hp damage ∧
+      (side applied.state who.other).active.active.hp =
+        Step.saturatingSub target.active.active.hp damage ∧
+      applied.state.sharedDamage = target.active.active.hp -
+        Step.saturatingSub target.active.active.hp damage := by
+  simp only [applyDamage, noSubstitute, Bool.false_eq_true, ↓reduceIte]
+  constructor
+  · trivial
+  · constructor
+    · rw [buildRageAfterDamage_target_hp]
+      cases who <;> simp [side, setSide, Side.other, Full.State.side, Full.State.setSide]
+    · rw [buildRageAfterDamage_sharedDamage]
 
 /-- Three right shifts of zeroed miss damage, followed by the minimum-one
 fallback in `PrintMoveFailureText`. -/

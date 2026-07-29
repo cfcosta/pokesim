@@ -5,6 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License").
 import Battle.Rom.HazeDispatchRoutine
 import Battle.Rom.FlyRoutine
 import Battle.Rom.StruggleRoutine
+import Battle.Rom.DamageApplyRoutine
 import Battle.Full.OldMan
 import Battle.Full.Recall
 
@@ -57,6 +58,7 @@ def retainedLayoutMatches (rom : CanonicalRom) : Bool :=
     HazeDispatchRoutine.windowAgrees rom.bytes &&
     FlyRoutine.windowAgrees rom.bytes &&
     StruggleRoutine.windowAgrees rom.bytes &&
+    DamageApplyRoutine.windowAgrees rom.bytes &&
     Battle.Full.OldMan.windowAgrees rom.bytes &&
     Battle.Full.Recall.windowAgrees rom.bytes
 

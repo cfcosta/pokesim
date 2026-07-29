@@ -25,4 +25,5 @@ import Battle.Rom.SubstituteRoutine
 import Battle.Rom.LeechSeedRoutine
 import Battle.Rom.TransformRoutine
 import Battle.Rom.HazeRoutine
+import Battle.Rom.DamageApplyRoutine
 import Battle.Rom.Fixture
