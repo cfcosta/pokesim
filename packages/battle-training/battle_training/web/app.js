@@ -752,7 +752,7 @@ function renderActionEvent(turn, side, rosters, before, activeSlots, recordedAct
   return eventLine("action", side, "Action", [actorRef, ` selected ${actionLabel(action)}.`]);
 }
 
-function renderMechanicsEvent(event, turn, rosters, before, after, activeSlots, lastActionSide) {
+function renderMechanicsEvent(event, turn, rosters, before, after, activeSlots, lastActionSide, replacementMember = null) {
   const explicitSide = event.side === undefined ? null : Number(event.side);
   const inferredStatusSide = event.kind === "status-applied" ? inferStatusSide(before, after, event.value) : null;
   const side = explicitSide ?? inferredStatusSide ?? (
@@ -775,6 +775,9 @@ function renderMechanicsEvent(event, turn, rosters, before, after, activeSlots, 
     const targetSlot = Number(event.target);
     const incoming = rosterMember(rosters, before, side, targetSlot);
     activeSlots[side] = targetSlot;
+    if (replacementMember) {
+      return eventLine("switch", side, "Replacement", [pokemonReference(replacementMember, side), " was replaced by ", pokemonReference(incoming, side, `slot ${targetSlot + 1}`), "."]);
+    }
     return eventLine("switch", side, "Switched", [pokemonReference(outgoing, side), " was withdrawn; ", pokemonReference(incoming, side, `slot ${targetSlot + 1}`), " entered the battle."]);
   }
   if (event.kind === "status-applied") {
@@ -815,7 +818,7 @@ function renderTurnState(after, rosters) {
   return summary;
 }
 
-function renderTurn(turn, rosters) {
+function renderTurn(turn, rosters, context) {
   const before = turn.before || {};
   const after = turn.after || {};
   const activeSlots = [Number(before.player?.active || 0), Number(before.enemy?.active || 0)];
@@ -839,8 +842,23 @@ function renderTurn(turn, rosters) {
   const output = [turnMarker];
   let lastActionSide = null;
   for (const event of events) {
-    if (event.kind === "action" && event.side !== undefined) lastActionSide = Number(event.side);
-    output.push(renderMechanicsEvent(event, turn, rosters, before, after, activeSlots, lastActionSide));
+    const eventSide = event.side === undefined ? null : Number(event.side);
+    if (event.kind === "forced-replacement" && eventSide !== null) {
+      context.pendingReplacements.set(eventSide, activeMember(rosters, before, eventSide, activeSlots));
+      continue;
+    }
+    if (event.kind === "action" && eventSide !== null) {
+      lastActionSide = eventSide;
+      const action = Number(event.action ?? actionForSide(turn, eventSide));
+      if (action === 10 && context.pendingReplacements.size) continue;
+      if (action >= 4 && action <= 9 && context.pendingReplacements.has(eventSide)) continue;
+    }
+    const replacement = event.kind === "switch" && eventSide !== null
+      ? context.pendingReplacements.get(eventSide) || null
+      : null;
+    const rendered = renderMechanicsEvent(event, turn, rosters, before, after, activeSlots, lastActionSide, replacement);
+    output.push(rendered);
+    if (replacement) context.pendingReplacements.delete(eventSide);
   }
   if (!rawEvents.length) {
     output.push(eventLine("note", null, "Reduced trace", ["Detailed mechanics events were not recorded; only the committed actions are available."]));
@@ -886,7 +904,8 @@ function renderMatchDetail(detail) {
   if (!timeline.length) section.append(element("p", "empty-state", "A turn-by-turn record was not captured for this historical match."));
   else {
     const events = element("ol", "battle-event-list battle-timeline");
-    for (const turn of timeline) events.append(...renderTurn(turn, rosters));
+    const context = { pendingReplacements: new Map() };
+    for (const turn of timeline) events.append(...renderTurn(turn, rosters, context));
     section.append(events);
   }
   body.append(section);
