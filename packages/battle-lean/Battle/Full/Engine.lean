@@ -163,6 +163,13 @@ def commitSelection (state : State) (who : Side) (action : Full.Action) : State 
       setSelection state who scratch
   | _ => state
 
+/-- Cartridge Struggle preselection installs move `$A5` and its canonical
+recoil row without reading a party move slot. -/
+@[simp] theorem struggle_loads_canonical_move (state : State) (who : Side) :
+    (selection (commitSelection state who .struggle) who).selectedMove = 165 ∧
+      (selection (commitSelection state who .struggle) who).loadedMove = 165 := by
+  cases who <;> exact ⟨rfl, rfl⟩
+
 @[simp] theorem locked_and_forced_selection_stays_stale (state : State) (who : Side)
     (target : Fin 6) (request : Items.Request) :
     selection (commitSelection state who .noAction) who = selection state who ∧
@@ -215,6 +222,11 @@ def decrementMovePp (state : State) (who : Side) (slot : Fin 4)
     let mon := current.active.active
     let mon := { mon with pp := mon.pp.modify slot.val decrementPp }
     setSide state who { current with active := { current.active with active := mon } }
+
+@[simp] theorem struggle_never_decrements_pp (state : State) (who : Side)
+    (slot : Fin 4) :
+    decrementMovePp state who slot true = state := by
+  simp [decrementMovePp]
 
 /-- Player-owned PP is decremented at the retained slot. Charge moves invoke
 this on their automatic continuation rather than on the setup turn. -/

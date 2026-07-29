@@ -9,8 +9,8 @@ import Battle.Full.Items
 
 Unlike the link nybble channel, this policy domain includes ordinary bag items.
 Mode and phase restrictions are explicit; forced replacement admits only living
-reserve switches (plus link forfeit), and Struggle appears only when every
-nonempty move has zero current PP.
+reserve switches (plus link forfeit), and Struggle follows the cartridge's
+`AnyMoveToSelect` scan, including Disable's raw packed-PP anomaly.
 -/
 
 namespace Battle.Full
@@ -55,11 +55,22 @@ def anyMovePpAvailable (disabled : UInt8) (pp : Array UInt8) : Bool :=
 def mustStruggle (side : Full.SideState) : Bool :=
   !anyMovePpAvailable side.active.volatile.disabledMove side.active.active.pp
 
+/-- With slot two disabled and no PP-Up bits elsewhere, a sole disabled
+PP-bearing move leaves no available move and forces Struggle. -/
+@[simp] theorem sole_pp_move_disabled_forces_struggle :
+    anyMovePpAvailable 0x20 #[0, 6, 0, 0] = false := by
+  native_decide
+
 /-- With slot two disabled, slot one's zero-current-PP byte still prevents
 Struggle solely because its PP-Up bit is set. -/
 theorem disabled_pp_up_struggle_anomaly :
     anyMovePpAvailable 0x20 #[0x40, 0, 0, 0] = true ∧
       (#[0x40, 0, 0, 0].all fun packed => packed &&& Wram.ppMask == 0) = true := by
+  native_decide
+
+/-- Without Disable, the cartridge masks PP-Up bits after OR-ing all slots. -/
+@[simp] theorem no_disabled_move_masks_pp_ups :
+    anyMovePpAvailable 0 #[0x40, 0x80, 0xc0, 0] = false := by
   native_decide
 
 /-- Item is policy-reachable in this mode and bag. Handler-level contextual
@@ -229,6 +240,24 @@ theorem ordinary_switch_exact (context : ActionContext)
     simp only [Bool.false_eq_true, if_false]
     rw [menu]
     rfl
+
+/-- At an ordinary battle menu, `AnyMoveToSelect` finding no available move
+makes Struggle legal. -/
+theorem struggle_legal_when_required (context : ActionContext)
+    (ordinary : context.mode = .wild ∨ context.mode = .trainer ∨ context.mode = .link)
+    (notForced : context.forcedReplacement = false)
+    (menu : fullMenuBypass context.side = false)
+    (required : mustStruggle context.side = true) :
+    legal context .struggle = true := by
+  rcases ordinary with ordinary | ordinary | ordinary
+  all_goals
+    unfold legal
+    rw [notForced]
+    simp only [Bool.false_eq_true, if_false]
+    rw [menu]
+    simp only [Bool.false_eq_true, if_false]
+    rw [ordinary]
+    exact required
 
 /-- A fight slot can be legal only when Struggle is not required. -/
 theorem legal_fight_not_exhausted (context : ActionContext) (slot : Fin 4)

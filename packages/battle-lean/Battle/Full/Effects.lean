@@ -753,6 +753,21 @@ def drainDamageWord (damage : UInt16) : UInt16 :=
 @[simp] theorem drain_halves_shared_damage (damage : UInt16) :
     drainDamageWord damage = UInt16.ofNat (max 1 (damage.toNat / 2)) := rfl
 
+/-- Red's recoil routine shifts the shared damage once for Struggle and twice
+for every other recoil move, then raises zero recoil to one. -/
+def recoilDamageWord (move : MoveId) (damage : UInt16) : UInt16 :=
+  let divisor := if move == 165 then 2 else 4
+  UInt16.ofNat (max 1 (damage.toNat / divisor))
+
+@[simp] theorem struggle_recoil_is_half (damage : UInt16) :
+    recoilDamageWord 165 damage = UInt16.ofNat (max 1 (damage.toNat / 2)) := by
+  simp [recoilDamageWord]
+
+@[simp] theorem ordinary_recoil_is_quarter (move : MoveId) (damage : UInt16)
+    (notStruggle : move ≠ 165) :
+    recoilDamageWord move damage = UInt16.ofNat (max 1 (damage.toNat / 4)) := by
+  simp [recoilDamageWord, notStruggle]
+
 /-- Post-damage/remaining effect phase. -/
 def applyAfter (effect moveType : UInt8) (hit targetFainted : Bool)
     (damage : UInt16) (context : Context) : Outcome :=
@@ -829,7 +844,7 @@ def applyAfter (effect moveType : UInt8) (hit targetFainted : Bool)
         else ⟨context, .continue, [event]⟩
   | .recoil =>
       if !hit then { context := context } else
-        let recoil := UInt16.ofNat (max 1 (damage.toNat / 4))
+        let recoil := recoilDamageWord context.move damage
         ⟨damageSelf context recoil, .continue, [.recoil recoil]⟩
   | .confusionSide =>
       if !hit then { context := context }
