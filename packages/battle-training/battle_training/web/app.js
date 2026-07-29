@@ -710,13 +710,25 @@ function collapseBattleEvents(events, turn) {
     if (event.kind !== "action" || event.side === undefined) continue;
     const side = Number(event.side);
     const action = Number(event.action ?? actionForSide(turn, side));
-    if (action < 4 || action > 9) continue;
-    const target = action - 4;
-    const switchIndex = events.findIndex((candidate, candidateIndex) =>
-      candidateIndex > index && candidate.kind === "switch" &&
-      Number(candidate.side) === side && Number(candidate.target) === target,
-    );
-    if (switchIndex !== -1) skipped.add(index);
+    if ((action >= 0 && action <= 3) || action === 11) {
+      const nextActionIndex = events.findIndex((candidate, candidateIndex) =>
+        candidateIndex > index && candidate.kind === "action",
+      );
+      const executedIndex = events.findIndex((candidate, candidateIndex) =>
+        candidateIndex > index && candidate.kind === "move-executed" &&
+        Number(candidate.side) === side,
+      );
+      if (executedIndex !== -1 && (nextActionIndex === -1 || executedIndex < nextActionIndex)) skipped.add(index);
+      continue;
+    }
+    if (action >= 4 && action <= 9) {
+      const target = action - 4;
+      const switchIndex = events.findIndex((candidate, candidateIndex) =>
+        candidateIndex > index && candidate.kind === "switch" &&
+        Number(candidate.side) === side && Number(candidate.target) === target,
+      );
+      if (switchIndex !== -1) skipped.add(index);
+    }
   }
 
   return events.flatMap((event, index) => {
@@ -831,7 +843,7 @@ function renderTurn(turn, rosters, context) {
   const activeSlots = [Number(before.player?.active || 0), Number(before.enemy?.active || 0)];
   const rawEvents = after.events || [];
   const recorded = collapseBattleEvents(rawEvents, turn);
-  const events = recorded.some((event) => event.kind === "action") ? recorded : [
+  const events = rawEvents.some((event) => event.kind === "action") ? recorded : [
     { kind: "action", side: 0, action: turn.player_action, synthetic: true },
     { kind: "action", side: 1, action: turn.enemy_action, synthetic: true },
     ...recorded,
