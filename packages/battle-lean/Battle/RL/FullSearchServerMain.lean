@@ -184,6 +184,18 @@ private def installFreshChance (search : SearchState) (seed : Nat) : SearchState
   | .mimic _ actor source next events => .mimic state actor source next events
   | .diverged _ reason events => .diverged state reason events
 
+/-- The cartridge move menu can remain open forever when `AnyMoveToSelect`
+observes only PP-Up bits outside a disabled slot while every selectable move has
+zero PP. Mimic can likewise expose no source move. Preserve those nonreturning
+nested menus as divergence: they are neither policy decisions nor terminals. -/
+private def classifyOpenState (search : SearchState) : SearchState :=
+  if Full.Environment.done search.base then search
+  else if legalMask search .player == 0 then
+    .diverged search.base "nested-open-player-no-selectable-action" search.events
+  else if legalMask search .enemy == 0 then
+    .diverged search.base "nested-open-enemy-no-selectable-action" search.events
+  else search
+
 private inductive NativeStep where
   | transitioned (state : SearchState)
   | failed (reason : String)
@@ -213,17 +225,41 @@ private def nestedCycleProbe : Full.Environment.State :=
 #guard nestedMirrorCycle nestedCycleProbe .enemy 119
 #guard !nestedMirrorCycle nestedCycleProbe .enemy 118
 
+/-- A concrete witness for the `AnyMoveToSelect` PP-Up anomaly: slot two is
+Disabled, all other slots have zero current PP, but their packed PP-Up bits keep
+the cartridge move menu open. Link forfeit is outside this training profile, so
+there is no policy action that can return from the menu. -/
+private def ppUpNestedOpenProbe : SearchState :=
+  let state := nestedCycleProbe
+  let prior := state.engine.battle.player
+  let mon := { prior.active.active with
+    moves := #[1, 2, 3, 4]
+    pp := #[0, 6, 0xc0, 0x80] }
+  let volatile := { prior.active.volatile with
+    disabledMove := 0x24
+    disabledMoveNumber := 2 }
+  let active := { prior.active with active := mon, volatile }
+  let player := { prior with party := { mons := #[mon] }, activeIndex := 0, active }
+  let battle := { state.engine.battle with player }
+  .battle { state with engine := { state.engine with battle } } []
+
+#guard legalMask ppUpNestedOpenProbe .player == 0
+#guard (classifyOpenState ppUpNestedOpenProbe).divergence ==
+  some "nested-open-player-no-selectable-action"
+
 private partial def normalizeResult (prior : List Full.Engine.Event) :
     Full.Environment.StepResult → NativeStep
   | .transitioned state events =>
-      .transitioned (.battle (Full.Environment.settle state) (prior ++ events))
+      .transitioned (classifyOpenState
+        (.battle (Full.Environment.settle state) (prior ++ events)))
   | .nestedMove state actor move events =>
       if nestedMirrorCycle state actor move then
         .transitioned (.diverged state "nested-mirror-move-cycle" (prior ++ events))
       else
         normalizeResult (prior ++ events) (Full.Environment.resumeNested state actor move)
   | .mimicPending state actor source next events =>
-      .transitioned (.mimic state actor source next (prior ++ events))
+      .transitioned (classifyOpenState
+        (.mimic state actor source next (prior ++ events)))
   | .disobediencePending state machine next events =>
       let (raw, rng) := state.engine.battle.rng.next
       normalizeResult (prior ++ events) (Full.Environment.resolveDisobedience

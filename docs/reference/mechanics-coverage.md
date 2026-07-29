@@ -156,7 +156,7 @@ The complete gate list is [End-to-end verification closure](end-to-end-closure.m
 - [x] selectable move has PP and is not disabled (`Battle.Full.usableMoveSlot`, `ordinary_fight_exact`)
 - [x] Struggle when no selectable move remains (`Battle.Full.mustStruggle`, `legal_fight_not_exhausted`)
 - [x] `AnyMoveToSelect` PP masking differences with/without Disable and PP Up bits (`Battle.Full.anyMovePpAvailable`)
-- [x] potential move-menu trap when disabled handling sees raw PP-Up bits but slots have zero current PP (`Battle.Full.disabled_pp_up_struggle_anomaly`)
+- [x] potential move-menu trap when disabled handling sees raw PP-Up bits but slots have zero current PP (`Battle.Full.disabled_pp_up_struggle_anomaly`); native search classifies the resulting nonreturning nested menu as `nested-open-*-no-selectable-action` rather than evaluating an empty mask or fabricating a terminal label (`FullSearchServerMain`'s `ppUpNestedOpenProbe` guards)
 - [x] player item legality (`Battle.Full.ordinary_item_exact`, `itemSelectable`)
 - [x] item target legality (`Battle.Full.Items.mapTarget`, `out_of_range_target_rejected`)
 - [x] switch target is living and not active (`Battle.Full.SideState.canSwitchTo_sound`)

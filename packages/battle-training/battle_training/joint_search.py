@@ -853,6 +853,14 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                         else snapshot.enemy_features
                     )
                     mask = snapshot.player_mask if side == 0 else snapshot.enemy_mask
+                    if mask == 0:
+                        inspection = search.server.inspect(snapshot.handle)
+                        raise ValueError(
+                            "search reached a nonterminal state with an empty legal mask: "
+                            f"side={side} handle={snapshot.handle} turn={snapshot.turn} "
+                            f"request={snapshot.request} player_mask={snapshot.player_mask} "
+                            f"enemy_mask={snapshot.enemy_mask} inspection={inspection!r}"
+                        )
                     key = search._cache_key(network, feature, mask)
                     cached = search._inference_cache.get(key) or known.get(key)
                     consumer = (group_id, position, side, search)
