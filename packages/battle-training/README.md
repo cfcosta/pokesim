@@ -126,7 +126,7 @@ batch 128, so 128 remains the production default.
 Use `--device cpu`, `--device cuda`, or `--device auto`. BF16 is the default;
 `--precision fp32` remains available for differential checks and older
 checkpoints without precision metadata retain their original FP32 contract.
-The v12 pipeline defaults `--inference-engine auto`: CUDA uses bucketed compiled
+The v15 pipeline defaults `--inference-engine auto`: CUDA uses bucketed compiled
 inference through static batches up to 256 while CPU uses eager execution.
 `--inference-engine eager` remains available for differential checks and
 historical artifact verification. Production collection defaults to two spawned
@@ -154,12 +154,19 @@ nix develop -c python packages/battle-training/train.py transformer-train \
 
 The pipeline copies fixed checkpoints into the immutable run and anchors half
 of default collection against the scratch initialization, a rolling historical
-window, an aggressive tactical heuristic, and a deliberately switch-heavy
-heuristic. On those episodes the candidate still receives an all-action RM+
-policy target, but the opposing real action is sampled from the named heuristic
-rather than the tree's opponent strategy. `--no-heuristic-opponents` disables
-the two deterministic heuristics for ablations. Shards record every opponent
-identity and deterministic regeneration reconstructs the same population order.
+window, an aggressive tactical heuristic, a deliberately switch-heavy
+heuristic, and all 47 canonical Red trainer-class rows. The class heuristics
+preserve the cartridge move-scoring layers, biased `63/64/63/66` move-slot
+buckets, first-match AI type-effectiveness bug, and switch branches representable
+by the 13-action link profile. Trainer items and the per-send-out action counter
+are absent from that profile, so item decisions project to ordinary move
+selection; the exact stateful behavior remains in
+`Battle.Full.TrainerController`. On opponent episodes the candidate still
+receives an all-action RM+ policy target, but the opposing real action is sampled
+from the named heuristic rather than the tree's opponent strategy.
+`--no-heuristic-opponents` disables all deterministic heuristics for ablations.
+Shards record every opponent identity and deterministic regeneration
+reconstructs the same population order.
 Human traces remain external until the server-authoritative replay and search-
 relabeling importer in
 [the trace contract](../../docs/explanation/human-battle-trace-training.md) is
@@ -168,15 +175,23 @@ incumbent, grouped into 512 same-reset pairs with a complete model-side swap
 across eight root seeds. Every generated arena and collection schedule reserves
 at least 25% of games for 6v6. Exactly 25% of the scheduled generated 6v6
 pairs use two fully level-100 teams; the remaining generated teams retain the
-ROM-floor-to-100 level distribution. The production horizon is 512 real
-decisions; reaching it remains an unlabeled truncation rather than a fabricated
+ROM-floor-to-100 level distribution. Production collection groups every two
+games into one same-reset pair. Fixed/checkpoint/heuristic opponents exchange
+candidate controller sides on the second leg while retaining physical team
+placement, so each controller uses both teams. In mirror self-play, where the
+same model already owns both controllers, the second leg instead swaps the exact
+two generated teams across physical sides and uses independent policy/search
+sampling. Pair identity and leg are stored in every episode and example row,
+and collection rejects missing, mismatched, or unswapped pairs. The
+production horizon is 512 real decisions; reaching it remains an unlabeled
+truncation rather than a fabricated
 terminal result. Truncations and semantic cycles score zero. Promotion requires a point score of at least 50%,
 a paired 95% confidence lower bound of at least 50%, and passing separate
 held-out type, status, and switch probes. It also reports and gates 1–2, 3–4,
 5–6, and unequal-party strata, plus a nine-team fixed campaign suite covering
 Brock through Giovanni and Lance. The campaign teams use canonical natural
 moves and fixed DVs inside the link quotient; they do not claim trainer AI or
-item equivalence. The v12 pipeline separates a persistent shadow learner from the
+item equivalence. The v15 pipeline separates a persistent shadow learner from the
 quality-gated deployed incumbent. Inconclusive evaluations retain the incumbent
 but carry the learner parameters and AdamW state into the next collection
 iteration, allowing small updates to compound without weakening deployment. Each

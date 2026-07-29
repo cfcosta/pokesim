@@ -52,6 +52,11 @@ from .network import (
     save_network,
     warm_start_network,
 )
+from .red_ai_heuristics import (
+    TRAINER_CLASS_PROFILES,
+    normalized_trainer_policy,
+    trainer_profile_for_style,
+)
 
 
 @dataclass(frozen=True)
@@ -117,7 +122,11 @@ class _HeuristicNetwork:
         self, features: list[tuple[int, ...]], masks: list[int]
     ) -> tuple[list[list[float]], list[float]]:
         policies = []
+        trainer_profile = trainer_profile_for_style(self.style)
         for row, mask in zip(features, masks, strict=True):
+            if trainer_profile is not None:
+                policies.append(normalized_trainer_policy(row, mask, trainer_profile))
+                continue
             weights = [0.0] * 13
             for action in range(13):
                 if not mask & (1 << action):
@@ -145,15 +154,26 @@ class _HeuristicNetwork:
 
 
 def _heuristic_population() -> list[tuple[_HeuristicNetwork, str]]:
-    return [
+    general = [
         (_HeuristicNetwork("aggressive"), "heuristic-aggressive-v1"),
         (_HeuristicNetwork("switch-heavy"), "heuristic-switch-heavy-v1"),
     ]
+    trainers = [
+        (_HeuristicNetwork(profile.style), profile.identity)
+        for profile in TRAINER_CLASS_PROFILES
+    ]
+    return general + trainers
 
 
 @dataclass
 class _ActorEpisode:
     episode: int
+    pair: int
+    pair_leg: int
+    reset_episode: int
+    pair_player_size: int
+    pair_enemy_size: int
+    teams_swapped: bool
     player_network: Any
     enemy_network: Any
     episode_kind: str
@@ -175,7 +195,7 @@ class _ActorEpisode:
 
 
 def _pipeline_id() -> str:
-    return "transformer-variable-party-bf16-tree-v14"
+    return "transformer-variable-party-bf16-tree-v15"
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
@@ -189,17 +209,91 @@ def _scheduled_for_opponent(episode: int, fraction: float) -> bool:
     return math.floor((episode + 1) * fraction) > math.floor(episode * fraction)
 
 
+def _training_pair(episode: int) -> int:
+    return episode // 2
+
+
+def _training_pair_leg(episode: int) -> int:
+    return episode % 2
+
+
 def _training_party_index(iteration: int, episode: int) -> int:
-    return episode + (iteration - 1) * 13
+    return _training_pair(episode) + (iteration - 1) * 13
 
 
 def _training_party_sizes(iteration: int, episode: int) -> tuple[int, int]:
-    """Reserve at least 25% 6v6 while cycling all other ordered matchups."""
+    """Give both legs the same teams while retaining the full size schedule."""
     return generated_party_sizes(_training_party_index(iteration, episode))
 
 
 def _training_level100(iteration: int, episode: int) -> bool:
     return generated_level100(_training_party_index(iteration, episode))
+
+
+def _validate_collection_pairs(
+    episode_rows: list[dict[str, Any]], expected_games: int
+) -> None:
+    if expected_games % 2:
+        raise RuntimeError("paired collection requires an even game count")
+    by_episode = {int(row["episode"]): row for row in episode_rows}
+    if len(by_episode) != expected_games or set(by_episode) != set(
+        range(expected_games)
+    ):
+        raise RuntimeError(
+            "collection does not contain exactly one row per paired game"
+        )
+    for pair in range(expected_games // 2):
+        first = by_episode[pair * 2]
+        second = by_episode[pair * 2 + 1]
+        if first.get("pair") != pair or second.get("pair") != pair:
+            raise RuntimeError(f"collection pair {pair} has incorrect identity")
+        if first.get("pair_leg") != 0 or second.get("pair_leg") != 1:
+            raise RuntimeError(f"collection pair {pair} has incorrect leg order")
+        shared = (
+            "reset_episode",
+            "pair_player_party_size",
+            "pair_enemy_party_size",
+            "level_profile",
+            "episode_kind",
+            "opponent",
+        )
+        if any(first.get(name) != second.get(name) for name in shared):
+            raise RuntimeError(f"collection pair {pair} does not share one reset")
+        first_initial = first.get("initial") or {}
+        second_initial = second.get("initial") or {}
+        if first["episode_kind"] == "mirror":
+            expected_sizes = (
+                first.get("pair_player_party_size"),
+                first.get("pair_enemy_party_size"),
+            )
+            if (
+                first.get("teams_swapped") is not False
+                or second.get("teams_swapped") is not True
+            ):
+                raise RuntimeError(f"mirror pair {pair} did not swap teams")
+            if (
+                (first.get("player_party_size"), first.get("enemy_party_size"))
+                != expected_sizes
+                or (second.get("enemy_party_size"), second.get("player_party_size"))
+                != expected_sizes
+                or first_initial.get("player") != second_initial.get("enemy")
+                or first_initial.get("enemy") != second_initial.get("player")
+            ):
+                raise RuntimeError(f"mirror pair {pair} is not an exact team swap")
+        else:
+            if first.get("initial") != second.get("initial"):
+                raise RuntimeError(
+                    f"collection pair {pair} has different initial teams"
+                )
+            if first.get("teams_swapped") or second.get("teams_swapped"):
+                raise RuntimeError(f"opponent pair {pair} unexpectedly swapped teams")
+            if {
+                first.get("candidate_side"),
+                second.get("candidate_side"),
+            } != {"player", "enemy"}:
+                raise RuntimeError(
+                    f"collection pair {pair} did not swap candidate sides"
+                )
 
 
 def _new_search(
@@ -451,6 +545,8 @@ def _collect_rows_single(
         "deep_search_schedule": "independent-episode-tier-v1",
         "actor_batch_size": config.actor_batch_size,
         "actor_processes": config.actor_processes,
+        "pairing": "same-reset-opposite-controller-sides-v1",
+        "pairs": config.selfplay_episodes // 2,
     }
     opponents = opponents or []
     if opponents:
@@ -487,11 +583,19 @@ def _collect_rows_single(
         nonlocal player_wins, enemy_wins, draws
         nonlocal candidate_wins, candidate_losses, candidate_draws, total_decisions
         candidate_return = (
-            reward if actor.candidate_player else -reward
-        ) if reward is not None and actor.episode_kind != "mirror" else None
+            (reward if actor.candidate_player else -reward)
+            if reward is not None and actor.episode_kind != "mirror"
+            else None
+        )
         record: dict[str, Any] = {
             "type": "episode",
             "episode": actor.episode,
+            "pair": actor.pair,
+            "pair_leg": actor.pair_leg,
+            "reset_episode": actor.reset_episode,
+            "pair_player_party_size": actor.pair_player_size,
+            "pair_enemy_party_size": actor.pair_enemy_size,
+            "teams_swapped": actor.teams_swapped,
             "stop": stop,
             "return": reward,
             "candidate_return": candidate_return,
@@ -504,7 +608,9 @@ def _collect_rows_single(
             "candidate_side": (
                 "both"
                 if actor.episode_kind == "mirror"
-                else "player" if actor.candidate_player else "enemy"
+                else "player"
+                if actor.candidate_player
+                else "enemy"
             ),
             "initial": actor.initial,
             "final": actor.final,
@@ -526,7 +632,9 @@ def _collect_rows_single(
             candidate_losses += 1
         elif candidate_return == 0:
             candidate_draws += 1
-        recent_battles.append({name: value for name, value in record.items() if name != "type"})
+        recent_battles.append(
+            {name: value for name, value in record.items() if name != "type"}
+        )
         del recent_battles[:-64]
 
     with SearchServer() as server:
@@ -534,16 +642,24 @@ def _collect_rows_single(
             batch = episode_indices[batch_start : batch_start + config.actor_batch_size]
             active: list[_ActorEpisode] = []
             for offset, episode in enumerate(batch):
+                pair = _training_pair(episode)
+                pair_leg = _training_pair_leg(episode)
+                reset_episode = pair
                 versus_opponent = bool(opponents) and _scheduled_for_opponent(
-                    episode, config.opponent_fraction
+                    pair, config.opponent_fraction
                 )
                 opponent_identity: str | None = None
                 if versus_opponent:
-                    opponent_ordinal = math.floor(episode * config.opponent_fraction)
+                    opponent_ordinal = math.floor(pair * config.opponent_fraction)
                     opponent_index = opponent_ordinal % len(opponents)
                     opponent_round = opponent_ordinal // len(opponents)
                     opponent, opponent_identity = opponents[opponent_index]
-                    candidate_player = opponent_round % 2 == 0
+                    first_candidate_player = opponent_round % 2 == 0
+                    candidate_player = (
+                        first_candidate_player
+                        if pair_leg == 0
+                        else not first_candidate_player
+                    )
                     player_network = network if candidate_player else opponent
                     enemy_network = opponent if candidate_player else network
                     episode_kind = (
@@ -564,30 +680,46 @@ def _collect_rows_single(
                     episode_kind = "mirror"
                     mirror_episodes += 1
                 reset_seed = config.seed + iteration * 10_000
-                player_size, enemy_size = _training_party_sizes(iteration, episode)
+                pair_player_size, pair_enemy_size = _training_party_sizes(
+                    iteration, episode
+                )
                 level100 = _training_level100(iteration, episode)
+                teams_swapped = episode_kind == "mirror" and pair_leg == 1
+                player_size, enemy_size = (
+                    (pair_enemy_size, pair_player_size)
+                    if teams_swapped
+                    else (pair_player_size, pair_enemy_size)
+                )
                 party_size_counts[f"{player_size}v{enemy_size}"] += 1
                 scheduled_level100_six_vs_six += int(level100)
                 snapshot = (
                     server.reset(
                         reset_seed,
-                        episode,
-                        player_size,
-                        enemy_size,
+                        reset_episode,
+                        pair_player_size,
+                        pair_enemy_size,
                         level100=level100,
+                        swapped=teams_swapped,
                     )
                     if offset == 0
                     else server.reset_append(
                         reset_seed,
-                        episode,
-                        player_size,
-                        enemy_size,
+                        reset_episode,
+                        pair_player_size,
+                        pair_enemy_size,
                         level100=level100,
+                        swapped=teams_swapped,
                     )
                 )
                 active.append(
                     _ActorEpisode(
                         episode=episode,
+                        pair=pair,
+                        pair_leg=pair_leg,
+                        reset_episode=reset_episode,
+                        pair_player_size=pair_player_size,
+                        pair_enemy_size=pair_enemy_size,
+                        teams_swapped=teams_swapped,
                         player_network=player_network,
                         enemy_network=enemy_network,
                         episode_kind=episode_kind,
@@ -721,20 +853,18 @@ def _collect_rows_single(
                             "tree_simulations": search_diagnostics.get(
                                 "tree_simulations"
                             ),
-                            "tree_max_depth": search_diagnostics.get(
-                                "tree_max_depth"
-                            ),
+                            "tree_max_depth": search_diagnostics.get("tree_max_depth"),
                             "chance_outcomes": search_diagnostics.get(
                                 "chance_outcomes"
                             ),
-                            "tree_converged": search_diagnostics.get(
-                                "tree_converged"
-                            ),
+                            "tree_converged": search_diagnostics.get("tree_converged"),
                         }
                     )
                     player_row = {
                         "type": "example",
                         "episode": actor.episode,
+                        "pair": actor.pair,
+                        "pair_leg": actor.pair_leg,
                         "decision": decision,
                         "side": "player",
                         "state_hash": snapshot.player_hash,
@@ -751,6 +881,8 @@ def _collect_rows_single(
                     enemy_row = {
                         "type": "example",
                         "episode": actor.episode,
+                        "pair": actor.pair,
+                        "pair_leg": actor.pair_leg,
                         "decision": decision,
                         "side": "enemy",
                         "state_hash": snapshot.enemy_hash,
@@ -798,9 +930,7 @@ def _collect_rows_single(
                 )
                 for actor, inspection in zip(active, inspections, strict=True):
                     actor.inspection = inspection
-                    actor.timeline[-1]["after"] = _compact_turn_inspection(
-                        inspection
-                    )
+                    actor.timeline[-1]["after"] = _compact_turn_inspection(inspection)
                 survivors: list[_ActorEpisode] = []
                 for actor, snapshot in zip(active, next_snapshots, strict=True):
                     if snapshot.divergence is not None:
@@ -832,9 +962,7 @@ def _collect_rows_single(
                 active = survivors
                 if not active:
                     break
-                compacted = server.compact_many(
-                    [actor.snapshot for actor in active]
-                )
+                compacted = server.compact_many([actor.snapshot for actor in active])
                 for actor, snapshot in zip(active, compacted, strict=True):
                     actor.snapshot = snapshot
             for actor in active:
@@ -868,8 +996,7 @@ def _collect_rows_single(
                     mean_decisions=total_decisions / completed_episodes,
                     voluntary_switches=voluntary_switches,
                     ordinary_actions=ordinary_actions,
-                    voluntary_switch_rate=voluntary_switches
-                    / max(1, ordinary_actions),
+                    voluntary_switch_rate=voluntary_switches / max(1, ordinary_actions),
                     deep_search_decisions=deep_search_decisions,
                     root_only_decisions=root_only_decisions,
                     mirror_episodes=mirror_episodes,
@@ -893,18 +1020,19 @@ def _collect_rows_single(
         row["payoff_spread"] for row in example_rows if "payoff_spread" in row
     ]
     tree_rows = [row for row in example_rows if "tree_nodes" in row]
+    episode_rows = [row for row in rows if row["type"] == "episode"]
+    if len(episode_indices) == config.selfplay_episodes:
+        _validate_collection_pairs(episode_rows, config.selfplay_episodes)
     six_vs_six_battles = party_size_counts.get("6v6", 0)
     level100_six_vs_six_battles = sum(
-        row["type"] == "episode"
-        and row["player_party_size"] == FULL_PARTY_SIZE
+        row["player_party_size"] == FULL_PARTY_SIZE
         and row["enemy_party_size"] == FULL_PARTY_SIZE
         and row["level_profile"] == "level100"
-        for row in rows
+        for row in episode_rows
     )
-    if (
-        len(episode_indices) == config.selfplay_episodes
-        and six_vs_six_battles * 4 < len(episode_indices)
-    ):
+    if len(
+        episode_indices
+    ) == config.selfplay_episodes and six_vs_six_battles * 4 < len(episode_indices):
         raise RuntimeError("collection schedule fell below 25% 6v6")
     if (
         len(episode_indices) == config.selfplay_episodes
@@ -923,6 +1051,8 @@ def _collect_rows_single(
         "candidate_losses": candidate_losses,
         "candidate_draws": candidate_draws,
         "recent_battles": recent_battles,
+        "pairing": "same-reset-opposite-controller-sides-v1",
+        "pairs": len(episode_indices) // 2,
         "party_size_schedule": GENERATED_PARTY_SCHEDULE,
         "level_schedule": GENERATED_LEVEL_SCHEDULE,
         "minimum_6v6_fraction": 0.25,
@@ -1069,7 +1199,9 @@ def _merge_collection_rows(
     actor_shards = []
     meta: dict[str, Any] | None = None
     for process, worker_path in enumerate(worker_paths):
-        worker_rows = [json.loads(line) for line in worker_path.read_text().splitlines()]
+        worker_rows = [
+            json.loads(line) for line in worker_path.read_text().splitlines()
+        ]
         worker_meta, *data_rows = worker_rows
         if meta is None:
             meta = worker_meta
@@ -1098,6 +1230,7 @@ def _merge_collection_rows(
     _jsonl(path, [meta, *rows])
     example_rows = [row for row in rows if row["type"] == "example"]
     episode_rows = [row for row in rows if row["type"] == "episode"]
+    _validate_collection_pairs(episode_rows, config.selfplay_episodes)
     recent_battles = [
         {
             name: value
@@ -1152,9 +1285,7 @@ def _merge_collection_rows(
         "player_wins": sum(row.get("return") == 1 for row in episode_rows),
         "enemy_wins": sum(row.get("return") == -1 for row in episode_rows),
         "draws": sum(row.get("return") == 0 for row in episode_rows),
-        "candidate_wins": sum(
-            row.get("candidate_return") == 1 for row in episode_rows
-        ),
+        "candidate_wins": sum(row.get("candidate_return") == 1 for row in episode_rows),
         "candidate_losses": sum(
             row.get("candidate_return") == -1 for row in episode_rows
         ),
@@ -1162,6 +1293,8 @@ def _merge_collection_rows(
             row.get("candidate_return") == 0 for row in episode_rows
         ),
         "recent_battles": recent_battles,
+        "pairing": "same-reset-opposite-controller-sides-v1",
+        "pairs": config.selfplay_episodes // 2,
         "examples": len(example_rows),
         "transitions": transitions,
         "deep_search_decisions": total("deep_search_decisions"),
@@ -1236,8 +1369,7 @@ def _collect_rows(
     payload = {
         "candidate": _serialized_model(network),
         "opponents": [
-            (_serialized_model(opponent), identity)
-            for opponent, identity in opponents
+            (_serialized_model(opponent), identity) for opponent, identity in opponents
         ],
     }
     partitions = [
@@ -1372,9 +1504,7 @@ def _heldout_diagnostics(
             logits = logits.masked_fill(~batch_legal, torch.finfo(logits.dtype).min)
             log_policy = torch.log_softmax(logits, dim=-1)
             cross_entropy = -(batch_policy * log_policy).sum(dim=-1)
-            entropy = -(batch_policy * batch_policy.clamp_min(1e-12).log()).sum(
-                dim=-1
-            )
+            entropy = -(batch_policy * batch_policy.clamp_min(1e-12).log()).sum(dim=-1)
             policy_cross_entropy += float((cross_entropy * batch_weights).sum())
             target_entropy += float((entropy * batch_weights).sum())
             weighted_policy_rows += float(batch_weights.sum())
@@ -1439,9 +1569,7 @@ def _gradient_report(
         "value_policy_norm_ratio": value_norm / max(policy_norm, 1e-12),
         "mean_cosine": sum(cosines) / len(cosines) if cosines else None,
         "negative_cosine_fraction": (
-            sum(cosine < 0.0 for cosine in cosines) / len(cosines)
-            if cosines
-            else None
+            sum(cosine < 0.0 for cosine in cosines) / len(cosines) if cosines else None
         ),
     }
 
@@ -1454,8 +1582,8 @@ def _train_network(
     iteration: int,
 ) -> dict[str, Any]:
     device = next(network.parameters()).device
-    training_examples, heldout_examples, heldout_battles = (
-        _load_partitioned_examples(shards)
+    training_examples, heldout_examples, heldout_battles = _load_partitioned_examples(
+        shards
     )
     features, target_policy, target_value, legal_masks, policy_weights = (
         training_examples
@@ -1765,7 +1893,9 @@ def _load_completed_prefix(
     orphan_numbers = (shard_numbers | metric_numbers) - checkpoint_numbers
     if orphan_numbers:
         if orphan_numbers != {completed + 1}:
-            raise ValueError("resume found noncontiguous incomplete iteration artifacts")
+            raise ValueError(
+                "resume found noncontiguous incomplete iteration artifacts"
+            )
         iteration = completed + 1
         artifacts = [
             path
@@ -1809,7 +1939,9 @@ def _load_completed_prefix(
         metric = metric_dir / f"iteration-{iteration:03d}.json"
         if metric.is_file():
             if json.loads(metric.read_text()) != expected_metric:
-                raise ValueError(f"iteration {iteration} metric disagrees with checkpoint")
+                raise ValueError(
+                    f"iteration {iteration} metric disagrees with checkpoint"
+                )
         else:
             write_json(metric, expected_metric)
         shards.append(shard)
@@ -1827,7 +1959,9 @@ def _resume_config(root: Path) -> TransformerPipelineConfig:
         raise FileNotFoundError(f"resume metadata is missing: {run_path}")
     run = json.loads(run_path.read_text())
     if run.get("pipeline") != _pipeline_id():
-        raise ValueError("resume pipeline version differs from the current implementation")
+        raise ValueError(
+            "resume pipeline version differs from the current implementation"
+        )
     if run.get("profile") != FULL_PROFILE or run.get("schema") != FULL_SCHEMA:
         raise ValueError("resume mechanics profile or tensor schema differs")
     raw_config = dict(run["config"])
@@ -2059,6 +2193,7 @@ def run_transformer_pipeline(
                 "level_schedule": GENERATED_LEVEL_SCHEDULE,
                 "chance": "fresh-root-v1",
                 "search_solver": "simultaneous-matrix-tree-rmplus-v1",
+                "collection_pairing": "same-reset-opposite-controller-sides-v1",
                 "learning_lineage": "persistent-shadow-v1",
                 "deployment_lineage": "quality-gated-incumbent-v1",
                 "config": asdict(config),
@@ -2202,9 +2337,7 @@ def run_transformer_pipeline(
             config.promotion_seed_count,
             capture_details=True,
         )
-        promotion_detail_dir = (
-            root / "matches" / f"promotion-{iteration:03d}"
-        )
+        promotion_detail_dir = root / "matches" / f"promotion-{iteration:03d}"
         for battle in promotion["battles"]:
             write_json(
                 promotion_detail_dir / f"game-{battle['game']:05d}.json",
@@ -2220,8 +2353,7 @@ def run_transformer_pipeline(
             },
         )
         promotion["detail_artifact"] = (
-            promotion_detail_dir.relative_to(root).as_posix()
-            + "/game-{game:05d}.json"
+            promotion_detail_dir.relative_to(root).as_posix() + "/game-{game:05d}.json"
         )
         promotion["battles"] = [
             {
@@ -2460,8 +2592,7 @@ def run_transformer_pipeline(
         and all(item["promotion"]["quality_pass"] for item in training)
         and all(item["promotion"]["probe_arena"]["quality_pass"] for item in training)
         and all(
-            item["promotion"]["campaign_arena"]["quality_pass"]
-            for item in training
+            item["promotion"]["campaign_arena"]["quality_pass"] for item in training
         )
     )
     data_quality_pass = evaluation_data_quality_pass

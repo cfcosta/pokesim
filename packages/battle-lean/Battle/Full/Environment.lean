@@ -164,6 +164,43 @@ def resetSizedPairLevel100 (playerRequested enemyRequested : Nat)
   let enemy := RL.DynamicGenerator.sampleSizedLevel100 enemyRequested player.rng
   resetFromSamples player enemy battleRng mode playerBag enemyBag trainerClass
 
+/-- Generate the same ordered pair as `resetSizedPair`, then install the second
+sample on the player side and the first sample on the enemy side. This is the
+second leg of paired mirror collection; generation and battle RNG inputs are
+unchanged. -/
+def resetSizedPairSwapped (playerRequested enemyRequested : Nat)
+    (generatorRng battleRng : Rng.LinkRng) : State :=
+  let player := RL.DynamicGenerator.sampleSized playerRequested generatorRng
+  let enemy := RL.DynamicGenerator.sampleSized enemyRequested player.rng
+  resetFromSamples enemy player battleRng .link [] [] 1
+
+/-- Level-100 counterpart of `resetSizedPairSwapped`. -/
+def resetSizedPairLevel100Swapped (playerRequested enemyRequested : Nat)
+    (generatorRng battleRng : Rng.LinkRng) : State :=
+  let player := RL.DynamicGenerator.sampleSizedLevel100 playerRequested generatorRng
+  let enemy := RL.DynamicGenerator.sampleSizedLevel100 enemyRequested player.rng
+  resetFromSamples enemy player battleRng .link [] [] 1
+
+/-- Swapped and ordinary constructors use the same two generated samples in
+opposite physical positions. -/
+theorem resetSizedPair_swaps_exact_samples (playerRequested enemyRequested : Nat)
+    (generatorRng battleRng : Rng.LinkRng) :
+    let ordinary := resetSizedPair playerRequested enemyRequested generatorRng battleRng
+    let swapped := resetSizedPairSwapped playerRequested enemyRequested generatorRng battleRng
+    swapped.playerReset = ordinary.enemyReset ∧
+      swapped.enemyReset = ordinary.playerReset := by
+  simp [resetSizedPair, resetSizedPairSwapped, resetFromSamples]
+
+@[simp] theorem resetSizedPairLevel100_swaps_exact_samples
+    (playerRequested enemyRequested : Nat) (generatorRng battleRng : Rng.LinkRng) :
+    let ordinary := resetSizedPairLevel100 playerRequested enemyRequested
+      generatorRng battleRng
+    let swapped := resetSizedPairLevel100Swapped playerRequested enemyRequested
+      generatorRng battleRng
+    swapped.playerReset = ordinary.enemyReset ∧
+      swapped.enemyReset = ordinary.playerReset := by
+  simp [resetSizedPairLevel100, resetSizedPairLevel100Swapped, resetFromSamples]
+
 /-- Equal-size compatibility wrapper around `resetSizedPair`. -/
 def resetSized (requested : Nat) (generatorRng battleRng : Rng.LinkRng)
     (mode : BattleMode := .link) (playerBag enemyBag : Items.Bag := [])

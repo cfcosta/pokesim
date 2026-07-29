@@ -306,6 +306,16 @@ The actor scheduler samples from a declared mixture rather than always pairing t
 
 A payoff matrix tracks policy-by-policy and profile-by-profile results. A PSRO-style meta-solver can later choose opponent probabilities. Elo or Glicko is a presentation statistic, not the sole promotion criterion, because a single rating hides cycles.
 
+Collection itself is paired rather than only promotion. Two adjacent games share
+the generated parties, levels, battle reset, and opponent identity. Candidate
+and fixed opponent controllers exchange physical sides while team placement
+stays fixed, preventing a favorable generated team from being credited only to
+one controller. Because mirror self-play already has one model on both
+controllers, its second leg instead installs the exact two generated teams in
+opposite physical positions and uses independent policy/search sampling.
+Artifacts retain pair and leg IDs and reject incomplete, mismatched, or
+incorrectly swapped pairs before training.
+
 ## Evaluation
 
 Every candidate is evaluated against the deployed incumbent with 1,024 games formed from 512 same-reset pairs. Each pair contains exactly one candidate-player and one candidate-enemy game, and validation fails if that complete side swap is absent. At least 25% of every generated collection, promotion, probe, and final-arena schedule is 6v6; fixed campaign fixtures remain their declared canonical sizes. Exactly one quarter of scheduled generated 6v6 pairs set both progression-witnessed parties to level 100. The ordinary level byte is still consumed to preserve generator-stream shape, while the other generated teams retain their ROM-floor-to-100 distribution. Reports include confidence intervals and at least:
@@ -345,7 +355,7 @@ The restricted implementation now trains a side-canonical transformer with searc
 
 ### M4: League training
 
-Historical checkpoint mixtures, aggressive and switch-heavy deterministic opponents, variable one-to-six-member requests, and stratified promotion gates are implemented. Main exploiters, league exploiters, server-authoritative human-trace replay/search relabeling, and payoff-matrix population sampling remain open.
+Historical checkpoint mixtures, aggressive and switch-heavy deterministic opponents, all 47 canonical trainer-class policy projections, variable one-to-six-member requests, and stratified promotion gates are implemented. The trainer projections preserve move scoring and representable switching, while item actions and their finite per-send-out counter remain outside the link action profile. Main exploiters, league exploiters, server-authoritative human-trace replay/search relabeling, and payoff-matrix population sampling remain open.
 
 ### M5: Player-view training
 

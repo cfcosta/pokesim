@@ -538,7 +538,8 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
         | _, _, _ =>
             emit output (failure request "invalid-reset-campaign")
             serve input output states
-    | some "reset" | some "reset-level100" =>
+    | some "reset" | some "reset-level100" |
+      some "reset-swapped" | some "reset-level100-swapped" =>
         match tokenNat tokens 2, tokenNat tokens 3, tokenNat tokens 4,
             tokenNat tokens 5 with
         | some root, some episode, some playerSize, some enemySize =>
@@ -546,18 +547,26 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
               Training.linkRng root.toUInt64 episode.toUInt64 Training.generatorStream
             let battleRng :=
               Training.linkRng root.toUInt64 episode.toUInt64 Training.battleStream
-            let state := if token tokens 0 == some "reset-level100" then
-              Full.Environment.resetSizedPairLevel100 playerSize enemySize
-                generatorRng battleRng
-            else
-              Full.Environment.resetSizedPair playerSize enemySize generatorRng battleRng
+            let state := match token tokens 0 with
+              | some "reset-level100" =>
+                  Full.Environment.resetSizedPairLevel100 playerSize enemySize
+                    generatorRng battleRng
+              | some "reset-swapped" =>
+                  Full.Environment.resetSizedPairSwapped playerSize enemySize
+                    generatorRng battleRng
+              | some "reset-level100-swapped" =>
+                  Full.Environment.resetSizedPairLevel100Swapped playerSize enemySize
+                    generatorRng battleRng
+              | _ =>
+                  Full.Environment.resetSizedPair playerSize enemySize generatorRng battleRng
             let state := SearchState.battle state []
             emit output (success request 0 state)
             serve input output #[state]
         | _, _, _, _ =>
             emit output (failure request "invalid-reset")
             serve input output states
-    | some "reset-append" | some "reset-level100-append" =>
+    | some "reset-append" | some "reset-level100-append" |
+      some "reset-swapped-append" | some "reset-level100-swapped-append" =>
         match tokenNat tokens 2, tokenNat tokens 3, tokenNat tokens 4,
             tokenNat tokens 5 with
         | some root, some episode, some playerSize, some enemySize =>
@@ -565,11 +574,18 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
               Training.linkRng root.toUInt64 episode.toUInt64 Training.generatorStream
             let battleRng :=
               Training.linkRng root.toUInt64 episode.toUInt64 Training.battleStream
-            let state := if token tokens 0 == some "reset-level100-append" then
-              Full.Environment.resetSizedPairLevel100 playerSize enemySize
-                generatorRng battleRng
-            else
-              Full.Environment.resetSizedPair playerSize enemySize generatorRng battleRng
+            let state := match token tokens 0 with
+              | some "reset-level100-append" =>
+                  Full.Environment.resetSizedPairLevel100 playerSize enemySize
+                    generatorRng battleRng
+              | some "reset-swapped-append" =>
+                  Full.Environment.resetSizedPairSwapped playerSize enemySize
+                    generatorRng battleRng
+              | some "reset-level100-swapped-append" =>
+                  Full.Environment.resetSizedPairLevel100Swapped playerSize enemySize
+                    generatorRng battleRng
+              | _ =>
+                  Full.Environment.resetSizedPair playerSize enemySize generatorRng battleRng
             let state := SearchState.battle state []
             let handle := states.size
             emit output (success request handle state)

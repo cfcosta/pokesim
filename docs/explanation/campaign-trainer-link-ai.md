@@ -201,11 +201,17 @@ Promotion is stratified across 1–2, 3–4, 5–6, unequal-party, and fixed cam
 team buckets so aggregate 6v6 strength cannot hide smaller-team regressions.
 
 Self-play strength and human difficulty are related but not identical. The
-population includes historical checkpoints plus aggressive and switch-heavy
-heuristics; human transcripts can be added later under the same observation
-contract. Team construction remains outside the battle-control policy. Trainer
-rosters and levels will therefore be a separate difficulty layer, and a weak
-one-member campaign roster can remain easy despite a strong controller.
+population includes historical checkpoints, aggressive and switch-heavy
+heuristics, and one named policy projection for each of Red's 47 trainer-class
+rows. These projections retain cartridge move scoring, biased slot selection,
+and representable switch branches. They map trainer-item decisions back to move
+selection because items and the stateful per-send-out action counter are outside
+the 13-action link profile; `Battle.Full.TrainerController` remains the exact
+trainer-mode model. Human transcripts can be added later under the same
+observation contract. Team construction remains outside the battle-control
+policy. Trainer rosters and levels will therefore be a separate difficulty
+layer, and a weak one-member campaign roster can remain easy despite a strong
+controller.
 
 A 478-field v3 checkpoint can warm-start v4 by copying compatible tensors and
 existing positional rows, but it is not directly compatible with the deployment

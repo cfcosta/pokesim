@@ -204,8 +204,12 @@ class SearchServer:
         enemy_size: int = FULL_PARTY_SIZE,
         *,
         level100: bool = False,
+        swapped: bool = False,
     ) -> Snapshot:
-        operation = "reset-level100" if level100 else "reset"
+        if level100:
+            operation = "reset-level100-swapped" if swapped else "reset-level100"
+        else:
+            operation = "reset-swapped" if swapped else "reset"
         return self._snapshot(
             self._request(
                 f"{operation}|{root_seed}|{episode}|{player_size}|{enemy_size}"
@@ -220,8 +224,16 @@ class SearchServer:
         enemy_size: int = FULL_PARTY_SIZE,
         *,
         level100: bool = False,
+        swapped: bool = False,
     ) -> Snapshot:
-        operation = "reset-level100-append" if level100 else "reset-append"
+        if level100:
+            operation = (
+                "reset-level100-swapped-append"
+                if swapped
+                else "reset-level100-append"
+            )
+        else:
+            operation = "reset-swapped-append" if swapped else "reset-append"
         return self._snapshot(
             self._request(
                 f"{operation}|{root_seed}|{episode}|{player_size}|{enemy_size}"

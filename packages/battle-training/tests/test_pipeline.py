@@ -47,13 +47,22 @@ from battle_training.network import (
     save_network,
     warm_start_network,
 )
+from battle_training.red_ai_heuristics import (
+    TRAINER_CLASS_PROFILES,
+    normalized_trainer_policy,
+)
 from battle_training.transformer_pipeline import (
     _gradient_report,
+    _heuristic_population,
     _load_completed_prefix,
     _load_examples,
+    _pipeline_id,
     _scheduled_for_opponent,
     _training_level100,
+    _training_pair,
+    _training_pair_leg,
     _training_party_sizes,
+    _validate_collection_pairs,
 )
 
 
@@ -224,9 +233,7 @@ class MonitorTests(unittest.TestCase):
                     {
                         "collection": {"finished": 4, "examples": 20},
                         "training": {
-                            "history": [
-                                {"policy_loss": 1.0, "value_loss": 0.5}
-                            ]
+                            "history": [{"policy_loss": 1.0, "value_loss": 0.5}]
                         },
                         "promotion": {
                             "accepted": True,
@@ -237,9 +244,7 @@ class MonitorTests(unittest.TestCase):
                     }
                 )
             )
-            write_monitor_state(
-                root, "promotion", iteration=2, message="Running arena"
-            )
+            write_monitor_state(root, "promotion", iteration=2, message="Running arena")
             snapshot = build_dashboard_snapshot(root)
             self.assertEqual(snapshot["status"]["stage"], "promotion")
             self.assertEqual(snapshot["model"]["checkpoint"]["iteration"], 1)
@@ -247,9 +252,7 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(len(snapshot["iterations"]), 1)
 
     def test_monitor_cli_defaults_to_loopback(self) -> None:
-        arguments = training_parser().parse_args(
-            ["monitor", "--run", "/tmp/training"]
-        )
+        arguments = training_parser().parse_args(["monitor", "--run", "/tmp/training"])
         self.assertEqual(arguments.host, "127.0.0.1")
         self.assertEqual(arguments.port, 8765)
         self.assertFalse(arguments.open_browser)
@@ -279,9 +282,7 @@ class MonitorTests(unittest.TestCase):
                 json.dumps(
                     {
                         "iteration": 2,
-                        "recent_battles": [
-                            {"episode": 7, "timeline": [{"turn": 1}]}
-                        ],
+                        "recent_battles": [{"episode": 7, "timeline": [{"turn": 1}]}],
                     }
                 )
             )
@@ -346,7 +347,14 @@ class MonitorTests(unittest.TestCase):
 class TransformerTests(unittest.TestCase):
     def test_inference_engine_auto_falls_back_to_eager_on_cpu(self) -> None:
         network = BattleTransformer(
-            TransformerConfig(feature_count=8, action_count=4, d_model=8, heads=2, layers=1, feedforward=16)
+            TransformerConfig(
+                feature_count=8,
+                action_count=4,
+                d_model=8,
+                heads=2,
+                layers=1,
+                feedforward=16,
+            )
         )
         network.configure_inference("auto")
         self.assertEqual(network.inference_engine, "eager")
@@ -670,9 +678,7 @@ class TransformerTests(unittest.TestCase):
             self.assertFalse(partial_shard.exists())
             attempt = root / "attempts" / "iteration-002-attempt-001"
             self.assertTrue((attempt / "shards" / partial_shard.name).is_file())
-            self.assertTrue(
-                (attempt / "metrics" / "iteration-002.json").is_file()
-            )
+            self.assertTrue((attempt / "metrics" / "iteration-002.json").is_file())
 
     def test_paired_arena_reuses_resets_and_spans_seeds(self) -> None:
         self.assertEqual(_paired_coordinates(100, 8, 0), _paired_coordinates(100, 8, 1))
@@ -684,8 +690,10 @@ class TransformerTests(unittest.TestCase):
         level100 = [_evaluation_level100(pair) for pair in range(512)]
         self.assertEqual(sum(level100), 32)
         self.assertTrue(
-            all(not selected or schedule[index] == (6, 6)
-                for index, selected in enumerate(level100))
+            all(
+                not selected or schedule[index] == (6, 6)
+                for index, selected in enumerate(level100)
+            )
         )
         low, high = _mean_ci95([1.0] * 512)
         self.assertEqual((low, high), (1.0, 1.0))
@@ -715,12 +723,95 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(sum(schedule), 500)
         self.assertEqual(schedule[:6], [False, True, False, True, False, True])
 
-    def test_training_schedule_covers_all_sizes_with_at_least_quarter_6v6(self) -> None:
-        expected = {
-            (player, enemy)
-            for player in range(1, 7)
-            for enemy in range(1, 7)
+    def test_training_schedule_pairs_every_reset_and_side_assignment(self) -> None:
+        self.assertEqual(_pipeline_id(), "transformer-variable-party-bf16-tree-v15")
+        for episode in range(0, 128, 2):
+            self.assertEqual(_training_pair(episode), _training_pair(episode + 1))
+            self.assertEqual(
+                (_training_pair_leg(episode), _training_pair_leg(episode + 1)), (0, 1)
+            )
+            self.assertEqual(
+                _training_party_sizes(1, episode),
+                _training_party_sizes(1, episode + 1),
+            )
+            self.assertEqual(
+                _training_level100(1, episode),
+                _training_level100(1, episode + 1),
+            )
+            self.assertEqual(
+                _scheduled_for_opponent(_training_pair(episode), 0.5),
+                _scheduled_for_opponent(_training_pair(episode + 1), 0.5),
+            )
+
+    def test_collection_pair_validator_requires_same_reset_and_side_swap(self) -> None:
+        common = {
+            "pair": 0,
+            "reset_episode": 0,
+            "pair_player_party_size": 2,
+            "pair_enemy_party_size": 5,
+            "teams_swapped": False,
+            "player_party_size": 2,
+            "enemy_party_size": 5,
+            "level_profile": "distributed",
+            "episode_kind": "heuristic-opponent",
+            "opponent": "heuristic-red-trainer-01-youngster-v1",
         }
+        rows = [
+            {
+                **common,
+                "episode": 0,
+                "pair_leg": 0,
+                "candidate_side": "player",
+                "initial": {"player": "team-a", "enemy": "team-b"},
+            },
+            {
+                **common,
+                "episode": 1,
+                "pair_leg": 1,
+                "candidate_side": "enemy",
+                "initial": {"player": "team-a", "enemy": "team-b"},
+            },
+        ]
+        _validate_collection_pairs(rows, 2)
+        rows[1]["initial"] = {"player": "team-c", "enemy": "team-b"}
+        with self.assertRaisesRegex(RuntimeError, "different initial teams"):
+            _validate_collection_pairs(rows, 2)
+
+    def test_collection_pair_validator_accepts_mirror_team_swap(self) -> None:
+        common = {
+            "pair": 0,
+            "reset_episode": 0,
+            "pair_player_party_size": 2,
+            "pair_enemy_party_size": 5,
+            "level_profile": "distributed",
+            "episode_kind": "mirror",
+            "opponent": "self-play",
+            "candidate_side": "both",
+        }
+        rows = [
+            {
+                **common,
+                "episode": 0,
+                "pair_leg": 0,
+                "teams_swapped": False,
+                "player_party_size": 2,
+                "enemy_party_size": 5,
+                "initial": {"player": "team-a", "enemy": "team-b"},
+            },
+            {
+                **common,
+                "episode": 1,
+                "pair_leg": 1,
+                "teams_swapped": True,
+                "player_party_size": 5,
+                "enemy_party_size": 2,
+                "initial": {"player": "team-b", "enemy": "team-a"},
+            },
+        ]
+        _validate_collection_pairs(rows, 2)
+
+    def test_training_schedule_covers_all_sizes_with_at_least_quarter_6v6(self) -> None:
+        expected = {(player, enemy) for player in range(1, 7) for enemy in range(1, 7)}
         for iteration in (1, 2):
             schedule = [
                 _training_party_sizes(iteration, episode) for episode in range(2048)
@@ -728,13 +819,14 @@ class TransformerTests(unittest.TestCase):
             self.assertEqual(set(schedule), expected)
             self.assertGreaterEqual(schedule.count((6, 6)), 512)
             level100 = [
-                _training_level100(iteration, episode)
-                for episode in range(2048)
+                _training_level100(iteration, episode) for episode in range(2048)
             ]
             self.assertEqual(sum(level100), 128)
             self.assertTrue(
-                all(not selected or schedule[index] == (6, 6)
-                    for index, selected in enumerate(level100))
+                all(
+                    not selected or schedule[index] == (6, 6)
+                    for index, selected in enumerate(level100)
+                )
             )
 
     def test_checkpoint_separates_deployed_and_shadow_models(self) -> None:
@@ -766,7 +858,9 @@ class TransformerTests(unittest.TestCase):
                 torch.equal(loaded_deployed.policy.bias, deployed.policy.bias)
             )
             self.assertTrue(
-                torch.equal(payload["learner_model"]["policy.bias"], learner.policy.bias)
+                torch.equal(
+                    payload["learner_model"]["policy.bias"], learner.policy.bias
+                )
             )
             self.assertFalse(
                 torch.equal(
@@ -798,9 +892,7 @@ class TransformerTests(unittest.TestCase):
                 feedforward=32,
                 precision="bf16",
             )
-            target = warm_start_network(
-                source_path, target_config, torch.device("cpu")
-            )
+            target = warm_start_network(source_path, target_config, torch.device("cpu"))
             source_state = source.state_dict()
             target_state = target.state_dict()
             for name, source_value in source_state.items():
@@ -814,9 +906,7 @@ class TransformerTests(unittest.TestCase):
                     self.assertTrue(torch.equal(target_value, source_value), name)
 
     def test_gradient_diagnostics_report_norm_conflict(self) -> None:
-        report = _gradient_report(
-            [(0.1, 2.4, -0.2), (0.2, 2.4, 0.1), (0.0, 1.0, None)]
-        )
+        report = _gradient_report([(0.1, 2.4, -0.2), (0.2, 2.4, 0.1), (0.0, 1.0, None)])
         self.assertEqual(report["samples"], 3)
         self.assertEqual(report["cosine_samples"], 2)
         self.assertAlmostEqual(report["value_policy_norm_ratio"], 19.3333333333)
@@ -974,6 +1064,113 @@ class TransformerTests(unittest.TestCase):
             )
             restored = load_network(path, torch.device("cpu"))
             self.assertEqual(restored.config.precision, "fp32")
+
+
+class RedTrainerHeuristicTests(unittest.TestCase):
+    @staticmethod
+    def _features(
+        *,
+        moves: tuple[int, int, int, int] = (1, 2, 3, 4),
+        descriptors: tuple[tuple[int, int, int], ...] = (
+            (0, 40, 0),
+            (0, 40, 0),
+            (0, 40, 0),
+            (0, 40, 0),
+        ),
+        target_status: int = 0,
+        target_types: tuple[int, int] = (0, 0),
+        hp: int = 100,
+        max_hp: int = 100,
+    ) -> tuple[int, ...]:
+        features = [0] * 492
+        features[134] = hp
+        features[146] = max_hp
+        for slot, move in enumerate(moves):
+            features[140 + slot] = move
+        for slot, (effect, power, move_type) in enumerate(descriptors):
+            base = 362 + slot * 6
+            features[base] = effect
+            features[base + 1] = power
+            features[base + 2] = move_type
+        features[317] = target_status
+        features[318], features[319] = target_types
+        return tuple(features)
+
+    def test_population_contains_every_canonical_trainer_class(self) -> None:
+        self.assertEqual(len(TRAINER_CLASS_PROFILES), 47)
+        self.assertEqual(
+            [profile.class_id for profile in TRAINER_CLASS_PROFILES],
+            list(range(1, 48)),
+        )
+        self.assertEqual(len({profile.slug for profile in TRAINER_CLASS_PROFILES}), 47)
+        population = _heuristic_population()
+        self.assertEqual(len(population), 49)
+        identities = [identity for _, identity in population]
+        self.assertEqual(
+            identities[:2],
+            [
+                "heuristic-aggressive-v1",
+                "heuristic-switch-heavy-v1",
+            ],
+        )
+        self.assertEqual(
+            identities[2:],
+            [profile.identity for profile in TRAINER_CLASS_PROFILES],
+        )
+
+    def test_generic_selection_preserves_biased_slot_buckets(self) -> None:
+        policy = normalized_trainer_policy(
+            self._features(), 0b1111, TRAINER_CLASS_PROFILES[0]
+        )
+        self.assertEqual(policy[:4], [63 / 256, 64 / 256, 63 / 256, 66 / 256])
+        self.assertEqual(sum(policy[4:]), 0.0)
+
+    def test_layer_one_avoids_redundant_status_move(self) -> None:
+        features = self._features(
+            moves=(1, 2, 0, 0),
+            descriptors=((0x01, 0, 0x18), (0, 40, 0), (0, 0, 0), (0, 0, 0)),
+            target_status=0x08,
+        )
+        policy = normalized_trainer_policy(features, 0b0011, TRAINER_CLASS_PROFILES[1])
+        self.assertEqual(policy[0], 0.0)
+        self.assertEqual(policy[1], 1.0)
+
+    def test_layer_three_keeps_first_matching_dual_type_bug(self) -> None:
+        features = self._features(
+            moves=(1, 2, 0, 0),
+            descriptors=((0, 40, 0x03), (0, 40, 0x14), (0, 0, 0), (0, 0, 0)),
+            target_types=(0x07, 0x03),
+        )
+        policy = normalized_trainer_policy(features, 0b0011, TRAINER_CLASS_PROFILES[3])
+        self.assertEqual(policy[0], 0.0)
+        self.assertEqual(policy[1], 1.0)
+
+    def test_representable_switch_routines_keep_cartridge_probabilities(self) -> None:
+        features = self._features(moves=(1, 2, 0, 0))
+        juggler = normalized_trainer_policy(
+            features, 0b1_0000 | 0b0011, TRAINER_CLASS_PROFILES[20]
+        )
+        agatha = normalized_trainer_policy(
+            features, 0b1_0000 | 0b0011, TRAINER_CLASS_PROFILES[45]
+        )
+        self.assertAlmostEqual(juggler[4], 64 / 256)
+        self.assertAlmostEqual(agatha[4], 20 / 256)
+
+    def test_cooltrainer_f_switch_and_item_projection_are_distinct(self) -> None:
+        profile = TRAINER_CLASS_PROFILES[31]
+        switching = normalized_trainer_policy(
+            self._features(moves=(1, 2, 0, 0), hp=15),
+            0b1_0000 | 0b0011,
+            profile,
+        )
+        item_projection = normalized_trainer_policy(
+            self._features(moves=(1, 2, 0, 0), hp=5),
+            0b1_0000 | 0b0011,
+            profile,
+        )
+        self.assertEqual(switching[4], 1.0)
+        self.assertEqual(item_projection[4], 0.0)
+        self.assertAlmostEqual(sum(item_projection[:4]), 1.0)
 
 
 class ManifestTests(unittest.TestCase):
