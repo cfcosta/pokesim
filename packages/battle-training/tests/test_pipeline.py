@@ -325,17 +325,22 @@ class MonitorTests(unittest.TestCase):
                                     "episode": process,
                                     "stop": "finished",
                                     "return": 1,
+                                    "initial": {"player": {}},
+                                    "timeline": [{"turn": 1}],
                                 }
                             ],
                         }
                     )
                 )
-            collection = build_dashboard_snapshot(root)["collection"]
+            dashboard = build_dashboard_snapshot(root)
+            collection = dashboard["collection"]
             self.assertEqual(collection["completed"], 8)
             self.assertEqual(collection["player_wins"], 5)
             self.assertEqual(collection["party_size_counts"]["1v1"], 8)
             self.assertEqual(collection["voluntary_switch_rate"], 0.125)
             self.assertEqual(len(collection["recent_battles"]), 2)
+            self.assertNotIn("timeline", collection["recent_battles"][0])
+            self.assertNotIn("recent_battles", dashboard["actors"][0])
 
 
 class TransformerTests(unittest.TestCase):

@@ -174,9 +174,16 @@ def _aggregate_actor_progress(actors: list[dict[str, Any]]) -> dict[str, Any] | 
                 counts[name] = counts.get(name, 0) + int(value)
         result[field] = counts
     recent = [battle for actor in actors for battle in actor.get("recent_battles", [])]
-    result["recent_battles"] = sorted(
-        recent, key=lambda battle: int(battle.get("episode", -1)), reverse=True
-    )[:20]
+    result["recent_battles"] = [
+        {
+            name: value
+            for name, value in battle.items()
+            if name not in {"initial", "final", "timeline"}
+        }
+        for battle in sorted(
+            recent, key=lambda battle: int(battle.get("episode", -1)), reverse=True
+        )[:20]
+    ]
     result["iteration"] = max(
         (int(actor.get("iteration", 0)) for actor in actors), default=0
     )
@@ -237,6 +244,10 @@ def build_dashboard_snapshot(root: Path) -> dict[str, Any]:
         else []
     )
     actors = [value for path in actor_paths if (value := _read_json(path)) is not None]
+    public_actors = [
+        {name: value for name, value in actor.items() if name != "recent_battles"}
+        for actor in actors
+    ]
     latest = iterations[-1] if iterations else None
     live_collection = _aggregate_actor_progress(actors)
     return {
@@ -257,7 +268,7 @@ def build_dashboard_snapshot(root: Path) -> dict[str, Any]:
             "deployment_lineage": run.get("deployment_lineage"),
             "checkpoint": checkpoint,
         },
-        "actors": actors,
+        "actors": public_actors,
         "collection": live_collection or (latest or {}).get("collection"),
         "iterations": iterations,
         "latest": latest,

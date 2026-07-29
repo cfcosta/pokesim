@@ -527,7 +527,7 @@ def _collect_rows_single(
         elif candidate_return == 0:
             candidate_draws += 1
         recent_battles.append({name: value for name, value in record.items() if name != "type"})
-        del recent_battles[:-12]
+        del recent_battles[:-64]
 
     with SearchServer() as server:
         for batch_start in range(0, len(episode_indices), config.actor_batch_size):
