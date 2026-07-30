@@ -23,6 +23,11 @@ _STATIC_FILES = {
     "/index.html": ("index.html", "text/html; charset=utf-8"),
     "/app.css": ("app.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/emulator-player.js": ("emulator-player.js", "text/javascript; charset=utf-8"),
+    "/sameboy-worker.js": ("sameboy-worker.js", "text/javascript; charset=utf-8"),
+    "/sameboy-core.js": ("sameboy-core.js", "text/javascript; charset=utf-8"),
+    "/sameboy-core.wasm": ("sameboy-core.wasm", "application/wasm"),
+    "/sameboy-LICENSE.txt": ("sameboy-LICENSE.txt", "text/plain; charset=utf-8"),
 }
 
 
@@ -389,9 +394,9 @@ class _MonitorHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
             "img-src 'self' data: https://raw.githubusercontent.com; "
-            "connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+            "connect-src 'self'; worker-src 'self'; base-uri 'none'; frame-ancestors 'none'",
         )
         self.end_headers()
         self.wfile.write(payload)
@@ -450,9 +455,9 @@ class _MonitorHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
             "img-src 'self' data: https://raw.githubusercontent.com; "
-            "connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+            "connect-src 'self'; worker-src 'self'; base-uri 'none'; frame-ancestors 'none'",
         )
         self.end_headers()
         self.wfile.write(payload)

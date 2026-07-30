@@ -141,8 +141,10 @@ profile in M6.
       save-state invariants, and the selected loss policy.
 - [ ] Implement the ROM-to-v4 observation adapter and compare all 492 fields with
       `FullTraining.featureVector` fixtures.
-- [ ] Build the pinned SameBoy browser/WASM wrapper and versioned WebSocket
-      inference service.
+- [x] Build the pinned SameBoy browser/WASM wrapper, local canonical-ROM hash
+      gate, worker framebuffer, joypad controls, and save-state/memory bridge.
+- [ ] Add the versioned WebSocket inference service and patched battle request
+      protocol.
 - [ ] Replay patched-ROM turns through the synchronized Lean model and retain
       every mismatch, nonfinish, and paired-cartridge discrepancy.
 - [ ] Gate deployment on stratified campaign-team arenas and decide roster/level
@@ -155,6 +157,9 @@ The browser-first target is specified in
 It reuses M7's action, adapter, inference, and link-RNG work but has a separate
 boot patch and no campaign state.
 
+- [x] Accept a user-supplied canonical Red ROM or ZIP entirely in-browser,
+      hash-gate it, and boot it through the pinned SameBoy worker without
+      redistributing ROM bytes.
 - [ ] Add a progression-witnessed generator fixed to six level-100 Pokémon and
       prove deterministic replay and canonical legality.
 - [ ] Split root entropy into recorded human-team, model-team, battle-RNG, and

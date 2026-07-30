@@ -919,6 +919,7 @@ function renderTurn(turn, rosters, context) {
 
 function renderMatchDetail(detail) {
   const body = $("match-pane-body");
+  window.BattleEmulator?.dispose();
   clear(body);
   const promotion = detail.kind === "promotion";
   const identity = promotion ? `Promotion game ${detail.game}` : `Self-play episode ${detail.episode}`;
@@ -939,7 +940,22 @@ function renderMatchDetail(detail) {
     card.append(element("span", "", name), element("strong", "", String(value ?? "—")));
     grid.append(card);
   }
-  body.append(grid);
+  const emulatorActions = element("div", "emulator-launch-row");
+  const emulatorCopy = element("div");
+  emulatorCopy.append(element("strong", "", "Open the original game emulator"), element("span", "", "Local SameBoy integration preview · canonical ROM required"));
+  const emulatorButton = element("button", "emulator-launch-button", "Open emulator");
+  emulatorButton.type = "button";
+  const emulatorHost = element("section", "emulator-host");
+  emulatorHost.hidden = true;
+  emulatorButton.addEventListener("click", () => {
+    emulatorHost.hidden = false;
+    emulatorButton.disabled = true;
+    emulatorButton.textContent = "Emulator open";
+    window.BattleEmulator?.mount(emulatorHost, detail);
+    emulatorHost.scrollIntoView({ block: "nearest" });
+  });
+  emulatorActions.append(emulatorCopy, emulatorButton);
+  body.append(grid, emulatorActions, emulatorHost);
   const firstTurn = detail.timeline?.[0];
   renderTeamState(body, "Starting teams and move slots", detail.initial, { player: firstTurn?.player_legal_mask, enemy: firstTurn?.enemy_legal_mask });
 
@@ -1120,9 +1136,15 @@ async function refresh() {
   }
 }
 
-$("match-pane-close").addEventListener("click", () => $("match-pane").close());
+$("match-pane-close").addEventListener("click", () => {
+  window.BattleEmulator?.dispose();
+  $("match-pane").close();
+});
 $("match-pane").addEventListener("click", (event) => {
-  if (event.target === $("match-pane")) $("match-pane").close();
+  if (event.target === $("match-pane")) {
+    window.BattleEmulator?.dispose();
+    $("match-pane").close();
+  }
 });
 
 refresh();
