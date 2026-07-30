@@ -449,6 +449,10 @@ private def eventJson : Full.Engine.Event → Option String
   | .action side action => some (actionJson side action)
   | .moveExecuted side move =>
       some (jsonObject s!"\"kind\":\"move-executed\",\"side\":{sideCode side},\"move_id\":{move},\"move\":\"{Showdown.moveName move}\"")
+  | .criticalHit side =>
+      some (jsonObject s!"\"kind\":\"critical-hit\",\"side\":{sideCode side}")
+  | .superEffective side =>
+      some (jsonObject s!"\"kind\":\"super-effective\",\"side\":{sideCode side}")
   | .missed side =>
       some (jsonObject s!"\"kind\":\"missed\",\"side\":{sideCode side}")
   | .ineffective side =>

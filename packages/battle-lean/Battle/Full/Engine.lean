@@ -47,6 +47,8 @@ structure State where
 inductive Event where
   | action (side : Side) (action : Full.Action)
   | moveExecuted (side : Side) (move : MoveId)
+  | criticalHit (side : Side)
+  | superEffective (side : Side)
   | missed (side : Side)
   | ineffective (side : Side)
   | rng (site : String) (raw : UInt8)
@@ -380,34 +382,40 @@ private def drawPsywave : Nat → Side → UInt8 → Rng.LinkRng →
         | some (accepted, rng, events) =>
             some (accepted, rng, .rng "psywave-rejected" raw :: events)
 
+private def moveIsSuperEffective (moveType target1 target2 : UInt8) : Bool :=
+  let first := TypeChart.matchup moveType target1 |>.toNat
+  let second := if target1 == target2 then 10 else TypeChart.matchup moveType target2 |>.toNat
+  first * second > 100
+
 private def initialDamage (mechanic : EffectPlan.Mechanic) (moveId : MoveId) (who : Side)
     (move : Step.ResolvedMove) (attacker defender : Battle.SideState) (critical : Bool)
     (rng : Rng.LinkRng) :
     Except (DamageStats.Result × List Event)
-      (UInt16 × Rng.LinkRng × List Event × Bool) :=
+      (UInt16 × Rng.LinkRng × List Event × Bool × Bool × Bool) :=
   match Effects.specialDamage mechanic moveId attacker.active defender.active with
-  | .fixedDamage damage => .ok (damage, rng, [], false)
+  | .fixedDamage damage => .ok (damage, rng, [], false, false, false)
   | .oneHitKo =>
       let typed := Damage.adjustDamageForType move.type attacker.active.type1
         attacker.active.type2 defender.active.type1 defender.active.type2 0xFFFF
-      if typed < 2 then .ok (typed, rng, [], typed == 0)
+      let superEffective := moveIsSuperEffective move.type defender.active.type1 defender.active.type2
+      if typed < 2 then .ok (typed, rng, [], typed == 0, false, superEffective)
       else
         match Ordinary.drawDamageFactor rng with
-        | none => .ok (0, rng, [], false)
+        | none => .ok (0, rng, [], false, false, superEffective)
         | some (factor, rng, ordinaryEvents) =>
             let events := ordinaryEvents.map fun event => match event with
               | .rng site raw => Event.rng site raw
               | _ => Event.rng "damage-factor" factor
-            .ok (Damage.randomizeDamage factor typed, rng, events, false)
-  | .failed => .ok (0, rng, [], false)
+            .ok (Damage.randomizeDamage factor typed, rng, events, false, false, superEffective)
+  | .failed => .ok (0, rng, [], false, false, false)
   | .psywave =>
       let bound := UInt8.ofNat (attacker.active.level.toNat + attacker.active.level.toNat / 2)
       match drawPsywave 2305 who bound rng with
-      | none => .ok (0, rng, [], false)
+      | none => .ok (0, rng, [], false, false, false)
       | some (damage, rng, events) =>
-          .ok (UInt16.ofNat damage.toNat, rng, events, false)
+          .ok (UInt16.ofNat damage.toNat, rng, events, false, false, false)
   | _ =>
-      if move.power == 0 then .ok (0, rng, [], false)
+      if move.power == 0 then .ok (0, rng, [], false, false, false)
       else
         let special := TypeChart.isSpecial move.type
         let attack := offensiveStat attacker special critical
@@ -423,15 +431,16 @@ private def initialDamage (mechanic : EffectPlan.Mechanic) (moveId : MoveId) (wh
               (UInt16.ofNat stats.attack.toNat) (UInt16.ofNat defense.toNat)
             let typed := Damage.adjustDamageForType move.type attacker.active.type1 attacker.active.type2
               defender.active.type1 defender.active.type2 base
-            if typed < 2 then .ok (typed, rng, [], typed == 0)
+            let superEffective := moveIsSuperEffective move.type defender.active.type1 defender.active.type2
+            if typed < 2 then .ok (typed, rng, [], typed == 0, critical, superEffective)
             else
               match Ordinary.drawDamageFactor rng with
-              | none => .ok (0, rng, [], false)
+              | none => .ok (0, rng, [], false, critical, superEffective)
               | some (factor, rng, ordinaryEvents) =>
                   let events := ordinaryEvents.map fun event => match event with
                     | .rng site raw => Event.rng site raw
                     | _ => Event.rng "damage-factor" factor
-                  .ok (Damage.randomizeDamage factor typed, rng, events, false)
+                  .ok (Damage.randomizeDamage factor typed, rng, events, false, critical, superEffective)
 
 private def effectsContext (state : State) (who : Side) (move : MoveId) (slot : Fin 4)
     (attacker defender : Battle.SideState) (rng : Rng.LinkRng) : Effects.Context :=
@@ -981,14 +990,14 @@ let continuedBide := action == .noAction && mechanic == .bide
 let counterRejected := counterRejected moveId (selection state who.other) state.sharedDamage
 let emptyBide := continuedBide && (bideReleaseDamage attacker.volatile.bideAccumulated).isNone
 let damageResult := if continuedBide then
-    .ok ((bideReleaseDamage attacker.volatile.bideAccumulated).getD 0, rng, [], false)
-  else if continuedTrap then .ok (lockedDamage state who, rng, [], false)
+    .ok ((bideReleaseDamage attacker.volatile.bideAccumulated).getD 0, rng, [], false, false, false)
+  else if continuedTrap then .ok (lockedDamage state who, rng, [], false, false, false)
   else if moveId == 68 then
-    .ok (counterDamage (selection state who.other) state.sharedDamage, rng, [], false)
+    .ok (counterDamage (selection state who.other) state.sharedDamage, rng, [], false, false, false)
   else initialDamage mechanic moveId who move attacker defenderFull.active critical rng
 match damageResult with
 | .error _ => .divisionFreeze state critEvents
-| .ok (damage, rng, damageEvents, typeMiss) =>
+| .ok (damage, rng, damageEvents, typeMiss, criticalHit, superEffective) =>
     let (handlerGateHit, rng, handlerGateEvents) :=
       if who == .enemy && state.battle.mode != .link then
         match mechanic with
@@ -1008,7 +1017,9 @@ match damageResult with
       else (true, rng, [])
     let hit := accuracyHit && !typeMiss
     let hitEvents := if !accuracyHit then [.missed who]
-      else if typeMiss then [.ineffective who] else []
+      else if typeMiss then [.ineffective who]
+      else (if criticalHit then [.criticalHit who] else []) ++
+        (if superEffective then [.superEffective who] else [])
     let context := effectsContext state who moveId slot
       (side state who).active (side state who.other).active rng
     let before := if action == .noAction then

@@ -352,6 +352,7 @@ function renderBattlePopulation(data) {
   const stats = [
     ["Mean turns", collection ? number(collection.mean_decisions, 1) : "—"],
     ["Switch rate", collection ? pct(collection.voluntary_switch_rate) : "—"],
+    ["Setup use", collection ? `${number(collection.setup_uses)} · ${pct(collection.setup_use_rate)}` : "—"],
     ["Exploitability", collection ? number(collection.mean_search_exploitability, 3) : "—"],
     ["Deep / root", collection ? `${number(collection.deep_search_decisions)} / ${number(collection.root_only_decisions)}` : "—"],
     ["Lv. 100 6v6", collection ? `${number(collection.level100_six_vs_six_battles)} / ${number(collection.six_vs_six_battles)}` : "—"],
@@ -731,8 +732,30 @@ function collapseBattleEvents(events, turn) {
     }
   }
 
+  const moveDetails = new Map();
+  for (const [index, event] of events.entries()) {
+    if (!["critical-hit", "super-effective"].includes(event.kind) || event.side === undefined) continue;
+    let moveIndex = -1;
+    for (let candidateIndex = index - 1; candidateIndex >= 0; candidateIndex -= 1) {
+      const candidate = events[candidateIndex];
+      if (candidate.kind === "action") break;
+      if (candidate.kind === "move-executed") {
+        if (Number(candidate.side) === Number(event.side)) moveIndex = candidateIndex;
+        break;
+      }
+    }
+    if (moveIndex === -1) continue;
+    const details = moveDetails.get(moveIndex) || {};
+    details[event.kind === "critical-hit" ? "critical" : "super_effective"] = true;
+    moveDetails.set(moveIndex, details);
+    skipped.add(index);
+  }
+
   return events.flatMap((event, index) => {
     if (skipped.has(index)) return [];
+    if (event.kind === "move-executed" && moveDetails.has(index)) {
+      return [{ ...event, ...moveDetails.get(index) }];
+    }
     if (event.kind === "faint") {
       const lethalDamage = events.findIndex((candidate, candidateIndex) =>
         candidateIndex < index && candidate.kind === "damage" &&
@@ -778,7 +801,14 @@ function renderMechanicsEvent(event, turn, rosters, before, after, activeSlots, 
   if (event.kind === "action" && explicitSide !== null) {
     return renderActionEvent(turn, explicitSide, rosters, before, activeSlots, event.action);
   }
-  if (event.kind === "move-executed") return eventLine("action", side, "Move used", [ref, " used ", element("strong", "event-move", event.move || `move ${number(event.move_id)}`), "."]);
+  if (event.kind === "move-executed") {
+    const parts = [ref, " used ", element("strong", "event-move", event.move || `move ${number(event.move_id)}`), "."];
+    if (event.critical) parts.push(element("span", "attack-tag attack-critical", "Critical hit"));
+    if (event.super_effective) parts.push(element("span", "attack-tag attack-super-effective", "Super effective"));
+    return eventLine("action", side, "Move used", parts);
+  }
+  if (event.kind === "critical-hit") return eventLine("action", side, "Critical hit", [ref, " landed a critical hit."]);
+  if (event.kind === "super-effective") return eventLine("action", side, "Super effective", [ref, " used a super-effective attack."]);
   if (event.kind === "missed") return eventLine("miss", side, "Missed", [ref, "'s move missed its target."]);
   if (event.kind === "ineffective") return eventLine("miss", side, "No effect", [ref, "'s move did not affect its target."]);
   if (event.kind === "damage") return eventLine("damage", side, "Damage", [ref, ` lost ${number(event.amount)} HP and has ${number(event.hp)} HP left.`]);
@@ -1009,16 +1039,22 @@ function renderProbes(data) {
   clear(root);
   if (!probes) { root.className = "probe-list empty-state"; root.textContent = "No probe evaluation"; return; }
   root.className = "probe-list";
+  const setupCounts = Object.entries(probes.setup?.candidate_move_counts || {})
+    .sort((left, right) => Number(right[1]) - Number(left[1]))
+    .slice(0, 3)
+    .map(([name, count]) => `${name} ${count}`)
+    .join(", ");
   const rows = [
-    ["Type choices", probes.type?.pass, probes.type?.delta],
-    ["Status use", probes.status?.pass, probes.status?.success_rate_delta],
-    ["Switching", probes.switch?.pass, probes.switch?.matchup_improvement_delta],
+    ["Type choices", probes.type?.pass, probes.type?.delta, ""],
+    ["Status use", probes.status?.pass, probes.status?.success_rate_delta, ""],
+    ["Setup moves", probes.setup?.pass, probes.setup?.use_rate_delta, `${number(probes.setup?.candidate_uses)} uses${setupCounts ? ` · ${setupCounts}` : ""}`],
+    ["Switching", probes.switch?.pass, probes.switch?.matchup_improvement_delta, ""],
   ];
-  for (const [name, passed, delta] of rows) {
+  for (const [name, passed, delta, detail] of rows) {
     const row = element("div", "probe");
     const observed = passed == null;
     const status = observed ? "Observed" : passed ? "Pass" : "Fail";
-    row.append(element("span", "", name), element("span", observed ? "pending" : passed ? "pass" : "fail", `${status}${delta == null ? "" : ` · ${delta >= 0 ? "+" : ""}${pct(delta)}`}`));
+    row.append(element("span", "", name), element("span", observed ? "pending" : passed ? "pass" : "fail", `${status}${detail ? ` · ${detail}` : ""}${delta == null ? "" : ` · ${delta >= 0 ? "+" : ""}${pct(delta)}`}`));
     root.append(row);
   }
 }

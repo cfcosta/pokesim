@@ -327,6 +327,9 @@ tr.match-link:hover, tr.match-link:focus-visible { background: rgba(78,160,255,0
 .event-side::before { content: "·"; margin-right: 7px; color: var(--muted); }
 .battle-event-copy { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; min-height: 24px; color: #d9dde4; font-size: 0.68rem; line-height: 1.5; text-wrap: pretty; }
 .event-move, .turn-request { color: var(--text); font-weight: 720; }
+.attack-tag { margin-left: 3px; padding: 1px 6px; border: 1px solid transparent; border-radius: 999px; font-size: 0.56rem; font-weight: 750; letter-spacing: 0.025em; white-space: nowrap; }
+.attack-critical { border-color: color-mix(in srgb, var(--gold) 38%, transparent); background: color-mix(in srgb, var(--gold) 13%, transparent); color: var(--gold); }
+.attack-super-effective { border-color: color-mix(in srgb, var(--red) 38%, transparent); background: color-mix(in srgb, var(--red) 12%, transparent); color: #ff8b91; }
 .pokemon-ref { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 1px 6px 1px 2px; border: 1px solid var(--border); border-radius: 999px; background: rgba(255,255,255,0.035); color: var(--text); white-space: nowrap; }
 .pokemon-ref.side-player { border-color: rgba(104,168,255,0.23); background: var(--blue-soft); }
 .pokemon-ref.side-enemy { border-color: rgba(240,77,85,0.23); background: var(--red-soft); }
