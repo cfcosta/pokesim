@@ -150,6 +150,13 @@ def _aggregate_actor_progress(actors: list[dict[str, Any]]) -> dict[str, Any] | 
         "voluntary_switches",
         "setup_uses",
         "ordinary_actions",
+        "major_status_attempts",
+        "redundant_status_same",
+        "redundant_status_other",
+        "stat_setup_attempts",
+        "capped_stat_setup",
+        "ohko_attempts",
+        "ohko_into_faster",
         "deep_search_decisions",
         "root_only_decisions",
         "mirror_episodes",
@@ -178,6 +185,23 @@ def _aggregate_actor_progress(actors: list[dict[str, Any]]) -> dict[str, Any] | 
     )
     result["setup_use_rate"] = result["setup_uses"] / max(
         1, result["ordinary_actions"]
+    )
+    result["redundant_status_rate"] = (
+        result["redundant_status_same"] + result["redundant_status_other"]
+    ) / max(1, result["major_status_attempts"])
+    result["capped_stat_setup_rate"] = result["capped_stat_setup"] / max(
+        1, result["stat_setup_attempts"]
+    )
+    result["ohko_into_faster_rate"] = result["ohko_into_faster"] / max(
+        1, result["ohko_attempts"]
+    )
+    versions = {
+        str(actor["decision_quality_version"])
+        for actor in actors
+        if actor.get("decision_quality_version")
+    }
+    result["decision_quality_version"] = (
+        next(iter(versions)) if len(versions) == 1 else None
     )
     for field in ("party_size_counts", "opponent_counts", "setup_move_counts"):
         counts: dict[str, int] = {}

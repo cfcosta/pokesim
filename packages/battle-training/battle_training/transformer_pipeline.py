@@ -40,6 +40,10 @@ from .arena import (
     write_arena_report,
 )
 from .artifacts import build_manifest, sha256, verify_manifest, write_json, write_new
+from .decision_quality import (
+    DecisionQualityMetrics,
+    classify_feature_decision,
+)
 from .joint_search import JointSearchConfig, SearchResult, SimultaneousTreeSearch
 from .monitor import write_actor_progress, write_monitor_state
 from .native import NativeRequestTimeout, SearchServer, Snapshot, build_search_server
@@ -113,6 +117,7 @@ class TransformerPipelineConfig:
     warm_start_incumbent_checkpoint: str | None = None
     heuristic_opponents: bool = True
     value_loss_weight: float = 0.25
+    redundant_action_prior_scale: float = 0.25
 
 
 class _HeuristicNetwork:
@@ -352,6 +357,7 @@ def _new_search(
             config.tree_minimum_budget if deep else 1,
             config.tree_convergence_tolerance,
             config.tree_convergence_patience,
+            config.redundant_action_prior_scale,
         ),
         selection_rng,
         chance_rng,
@@ -571,6 +577,9 @@ def _collect_rows_single(
         "tree_convergence_patience": config.tree_convergence_patience,
         "deep_search_fraction": config.deep_search_fraction,
         "deep_search_schedule": "independent-episode-tier-v1",
+        "redundant_action_prior_scale": config.redundant_action_prior_scale,
+        "redundant_action_prior": "non-excluding-static-context-v1",
+        "decision_quality_version": "static-active-context-v1",
         "actor_batch_size": config.actor_batch_size,
         "actor_processes": config.actor_processes,
         "pairing": "same-reset-opposite-controller-sides-v1",
@@ -602,6 +611,7 @@ def _collect_rows_single(
     scheduled_level100_six_vs_six = 0
     total_decisions = ordinary_actions = voluntary_switches = setup_uses = 0
     setup_move_counts: dict[str, int] = {}
+    decision_quality = DecisionQualityMetrics()
     recent_battles: list[dict[str, Any]] = []
 
     def append_episode(
@@ -1013,6 +1023,13 @@ def _collect_rows_single(
                             if row["request"] == "battle":
                                 ordinary_actions += 1
                                 voluntary_switches += row["action"] in range(4, 10)
+                                flags = classify_feature_decision(
+                                    row["features"], row["action"]
+                                )
+                                decision_quality.observe(flags)
+                                labels = flags.labels()
+                                if labels:
+                                    row["decision_quality"] = labels
                                 setup_move = row.get("setup_move")
                                 if setup_move is not None:
                                     setup_uses += 1
@@ -1067,6 +1084,8 @@ def _collect_rows_single(
                     setup_uses=setup_uses,
                     setup_use_rate=setup_uses / max(1, ordinary_actions),
                     setup_move_counts=setup_move_counts,
+                    decision_quality_version="static-active-context-v1",
+                    **decision_quality.report(),
                     deep_search_decisions=deep_search_decisions,
                     root_only_decisions=root_only_decisions,
                     mirror_episodes=mirror_episodes,
@@ -1134,6 +1153,8 @@ def _collect_rows_single(
         "voluntary_switches": voluntary_switches,
         "setup_uses": setup_uses,
         "setup_move_counts": setup_move_counts,
+        "decision_quality_version": "static-active-context-v1",
+        **decision_quality.report(),
         "ordinary_actions": ordinary_actions,
         "examples": examples,
         "transitions": transitions,
@@ -1350,6 +1371,15 @@ def _merge_collection_rows(
         for name, count in metrics["setup_move_counts"].items():
             setup_move_counts[name] = setup_move_counts.get(name, 0) + count
     transitions = total("transitions")
+    decision_quality = DecisionQualityMetrics(
+        major_status_attempts=total("major_status_attempts"),
+        redundant_status_same=total("redundant_status_same"),
+        redundant_status_other=total("redundant_status_other"),
+        stat_setup_attempts=total("stat_setup_attempts"),
+        capped_stat_setup=total("capped_stat_setup"),
+        ohko_attempts=total("ohko_attempts"),
+        ohko_into_faster=total("ohko_into_faster"),
+    )
     six_vs_six_battles = party_size_counts.get("6v6", 0)
     level100_six_vs_six_battles = total("level100_six_vs_six_battles")
     if six_vs_six_battles * 4 < config.selfplay_episodes:
@@ -1396,6 +1426,8 @@ def _merge_collection_rows(
         "level100_six_vs_six_battles": level100_six_vs_six_battles,
         "setup_uses": total("setup_uses"),
         "setup_move_counts": setup_move_counts,
+        "decision_quality_version": "static-active-context-v1",
+        **decision_quality.report(),
         "mean_target_entropy": sum(
             _policy_entropy(row["policy"]) for row in example_rows
         )
@@ -2068,6 +2100,9 @@ def _resume_config(root: Path) -> TransformerPipelineConfig:
         raise ValueError("resume mechanics profile or tensor schema differs")
     raw_config = dict(run["config"])
     raw_config.setdefault("precision", "fp32")
+    # V16 runs created before observational decision-quality probes used raw
+    # network priors. Preserve that exact resume behavior.
+    raw_config.setdefault("redundant_action_prior_scale", 1.0)
     return TransformerPipelineConfig(**raw_config)
 
 
@@ -2128,6 +2163,8 @@ def run_transformer_pipeline(
         raise ValueError("epochs must be positive")
     if not 0.0 < config.value_loss_weight <= 1.0:
         raise ValueError("value_loss_weight must be in (0, 1]")
+    if not 0.0 < config.redundant_action_prior_scale <= 1.0:
+        raise ValueError("redundant_action_prior_scale must be in (0, 1]")
     if config.historical_window < 0:
         raise ValueError("historical_window must be nonnegative")
     if config.promotion_games < 2 or config.promotion_games % 2:
@@ -2201,7 +2238,9 @@ def run_transformer_pipeline(
 
     if resume:
         run_metadata = json.loads((root / "run.json").read_text())
-        if run_metadata.get("config") != asdict(config):
+        saved_config = dict(run_metadata.get("config", {}))
+        saved_config.setdefault("redundant_action_prior_scale", 1.0)
+        if saved_config != asdict(config):
             raise ValueError("resume configuration differs from immutable run metadata")
         if run_metadata.get("network") != asdict(model_config):
             raise ValueError("resume network shape differs from the native protocol")

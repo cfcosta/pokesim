@@ -51,6 +51,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--learning-rate", type=float, default=3e-4 if smoke else 2e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--value-loss-weight", type=float, default=0.25)
+    parser.add_argument("--redundant-action-prior-scale", type=float, default=0.25)
     parser.add_argument("--seed", type=int, default=20260726)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--precision", choices=("bf16", "fp32"), default="bf16")
@@ -248,6 +249,7 @@ def main(argv: list[str] | None = None) -> int:
             precision=arguments.precision,
             inference_engine=arguments.inference_engine,
             value_loss_weight=arguments.value_loss_weight,
+            redundant_action_prior_scale=arguments.redundant_action_prior_scale,
             warm_start_checkpoint=(
                 str(arguments.warm_start_checkpoint.resolve())
                 if arguments.warm_start_checkpoint is not None

@@ -18,6 +18,7 @@ from battle_training.arena import (
     _mean_ci95,
     _paired_coordinates,
     _setup_move_name,
+    _update_side_metrics,
     skill_probe_report,
 )
 from battle_training.artifacts import (
@@ -27,6 +28,11 @@ from battle_training.artifacts import (
     write_json,
 )
 from battle_training.cli import parser as training_parser
+from battle_training.decision_quality import (
+    DecisionQualityMetrics,
+    classify_feature_decision,
+    shape_redundant_action_priors,
+)
 from battle_training.joint_search import (
     JointSearchConfig,
     SimultaneousTreeSearch,
@@ -316,6 +322,7 @@ class MonitorTests(unittest.TestCase):
                     json.dumps(
                         {
                             "process": process,
+                            "decision_quality_version": "static-active-context-v1",
                             "completed": 4,
                             "total": 10,
                             "finished": 4,
@@ -330,6 +337,13 @@ class MonitorTests(unittest.TestCase):
                             "opponent_episodes": 2,
                             "model_opponent_episodes": 1,
                             "heuristic_opponent_episodes": 1,
+                            "major_status_attempts": 4,
+                            "redundant_status_same": 1,
+                            "redundant_status_other": 1,
+                            "stat_setup_attempts": 2,
+                            "capped_stat_setup": 1,
+                            "ohko_attempts": 2,
+                            "ohko_into_faster": 1,
                             "party_size_counts": {"1v1": 4},
                             "recent_battles": [
                                 {
@@ -355,6 +369,12 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(collection["mirror_episodes"], 4)
             self.assertEqual(collection["model_opponent_episodes"], 2)
             self.assertEqual(collection["heuristic_opponent_episodes"], 2)
+            self.assertEqual(collection["redundant_status_rate"], 0.5)
+            self.assertEqual(collection["capped_stat_setup_rate"], 0.5)
+            self.assertEqual(collection["ohko_into_faster_rate"], 0.5)
+            self.assertEqual(
+                collection["decision_quality_version"], "static-active-context-v1"
+            )
             self.assertEqual(len(collection["recent_battles"]), 2)
             self.assertNotIn("timeline", collection["recent_battles"][0])
             self.assertNotIn("recent_battles", dashboard["actors"][0])
@@ -618,6 +638,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.batch_size, 128)
         self.assertEqual(arguments.learning_rate, 2e-4)
         self.assertEqual(arguments.value_loss_weight, 0.25)
+        self.assertEqual(arguments.redundant_action_prior_scale, 0.25)
         self.assertEqual(arguments.model_opponent_share, 0.5)
         self.assertEqual(arguments.promotion_games, 2048)
         self.assertEqual(arguments.probe_games, 256)
@@ -741,9 +762,100 @@ class TransformerTests(unittest.TestCase):
         self.assertFalse(report["switch"]["gated"])
         self.assertEqual(report["gate_version"], "type-status-only-v2")
         self.assertIsNone(report["setup"]["pass"])
+        self.assertIsNone(report["decision_quality"]["pass"])
+        self.assertFalse(report["decision_quality"]["gated"])
         self.assertEqual(report["setup"]["candidate_uses"], 12)
         self.assertEqual(report["setup"]["candidate_move_counts"]["Swords Dance"], 7)
         self.assertTrue(report["pass"])
+
+    def test_decision_quality_probes_classify_static_redundancy(self) -> None:
+        features = [0] * 492
+        features[140] = 86  # own active move 0: Thunder Wave
+        features[317] = 0x40  # opposing active is already paralyzed
+        features[149] = 100  # current own active speed
+        features[330] = 101  # current opposing active speed
+        status = classify_feature_decision(features, 0)
+        self.assertTrue(status.major_status_attempt)
+        self.assertTrue(status.redundant_status_same)
+        self.assertFalse(status.redundant_status_other)
+
+        features[317] = 0x02  # sleep occupies the major-status slot
+        status = classify_feature_decision(features, 0)
+        self.assertFalse(status.redundant_status_same)
+        self.assertTrue(status.redundant_status_other)
+
+        features[140] = 14  # Swords Dance
+        features[159] = 13  # Attack is already +6
+        setup = classify_feature_decision(features, 0)
+        self.assertTrue(setup.stat_setup_attempt)
+        self.assertTrue(setup.capped_stat_setup)
+
+        features[140] = 32  # Horn Drill
+        ohko = classify_feature_decision(features, 0)
+        self.assertTrue(ohko.ohko_attempt)
+        self.assertTrue(ohko.ohko_into_faster)
+        features[330] = 100
+        self.assertFalse(classify_feature_decision(features, 0).ohko_into_faster)
+
+        metrics = DecisionQualityMetrics()
+        for row in (status, setup, ohko):
+            metrics.observe(row)
+        report = metrics.report()
+        self.assertEqual(report["redundant_status_rate"], 1.0)
+        self.assertEqual(report["capped_stat_setup_rate"], 1.0)
+        self.assertEqual(report["ohko_into_faster_rate"], 1.0)
+
+    def test_observational_quality_probes_do_not_enter_gated_denominators(self) -> None:
+        features = [0] * 492
+        features[317] = 0x40
+        features[149] = 100
+        features[330] = 101
+        metrics = SkillMetrics()
+        after = {"events": []}
+
+        features[140] = 86
+        before = {
+            "player_mask": 1,
+            "player": {"moves": [{"id": 86, "name": "Thunder Wave", "power": 0}]},
+        }
+        _update_side_metrics(metrics, 0, 0, features, before, after, "battle")
+
+        features[140] = 14
+        features[159] = 13
+        before["player"]["moves"][0] = {
+            "id": 14,
+            "name": "Swords Dance",
+            "power": 0,
+        }
+        _update_side_metrics(metrics, 0, 0, features, before, after, "battle")
+
+        features[140] = 32
+        before["player"]["moves"][0] = {
+            "id": 32,
+            "name": "Horn Drill",
+            "power": 1,
+        }
+        _update_side_metrics(metrics, 0, 0, features, before, after, "battle")
+
+        report = metrics.report()
+        self.assertEqual(report["status_uses"], 0)
+        self.assertEqual(report["damaging_moves"], 0)
+        self.assertEqual(report["setup_uses"], 1)
+        self.assertEqual(report["redundant_status_same"], 1)
+        self.assertEqual(report["capped_stat_setup"], 1)
+        self.assertEqual(report["ohko_into_faster"], 1)
+
+    def test_redundant_action_shaping_preserves_every_legal_action(self) -> None:
+        features = [0] * 492
+        features[140] = 86  # redundant Thunder Wave
+        features[141] = 34  # ordinary Body Slam
+        features[317] = 0x40
+        policy = [0.4, 0.3, 0.2, 0.1] + [0.0] * 9
+        shaped = shape_redundant_action_priors(policy, features, 0b1111, 0.25)
+        self.assertAlmostEqual(sum(shaped), 1.0)
+        self.assertTrue(all(shaped[action] > 0.0 for action in range(4)))
+        self.assertLess(shaped[0], policy[0])
+        self.assertGreater(shaped[1], policy[1])
 
     def test_setup_move_observation_is_explicit_and_ungated(self) -> None:
         self.assertEqual(

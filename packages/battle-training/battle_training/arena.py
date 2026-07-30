@@ -18,6 +18,10 @@ from . import (
     generated_party_sizes,
 )
 from .artifacts import write_json
+from .decision_quality import (
+    DecisionQualityMetrics,
+    classify_feature_decision,
+)
 from .joint_search import JointSearchConfig, SimultaneousTreeSearch
 from .native import NativeRequestTimeout, SearchServer
 from .network import BattleTransformer
@@ -100,6 +104,9 @@ class SkillMetrics:
     matchup_improving_switches: int = 0
     setup_uses: int = 0
     setup_move_counts: dict[str, int] = field(default_factory=dict)
+    decision_quality: DecisionQualityMetrics = field(
+        default_factory=DecisionQualityMetrics
+    )
     effectiveness_ratios: list[float] = field(default_factory=list)
 
     def merge(self, other: SkillMetrics) -> None:
@@ -120,6 +127,7 @@ class SkillMetrics:
             setattr(self, name, getattr(self, name) + getattr(other, name))
         for name, count in other.setup_move_counts.items():
             self.setup_move_counts[name] = self.setup_move_counts.get(name, 0) + count
+        self.decision_quality.merge(other.decision_quality)
         for ratio in other.effectiveness_ratios:
             self.effectiveness_ratio_sum += ratio
             self.effectiveness_ratios.append(ratio)
@@ -127,6 +135,8 @@ class SkillMetrics:
     def report(self) -> dict[str, Any]:
         result = asdict(self)
         result.pop("effectiveness_ratios")
+        result.pop("decision_quality")
+        result.update(self.decision_quality.report())
         result["mean_move_effectiveness_vs_best"] = (
             self.effectiveness_ratio_sum / self.damaging_moves
             if self.damaging_moves
@@ -432,6 +442,7 @@ def _update_side_metrics(
     metrics: SkillMetrics,
     side_index: int,
     action: int,
+    features: Any,
     before: dict[str, Any],
     after: dict[str, Any],
     request: str,
@@ -441,6 +452,8 @@ def _update_side_metrics(
     if request == "battle":
         metrics.ordinary_actions += 1
     if request == "battle" and 0 <= action < 4:
+        quality_flags = classify_feature_decision(features, action)
+        metrics.decision_quality.observe(quality_flags)
         move = before[side_name]["moves"][action]
         setup_name = _setup_move_name(move)
         if setup_name is not None:
@@ -448,7 +461,7 @@ def _update_side_metrics(
             metrics.setup_move_counts[setup_name] = (
                 metrics.setup_move_counts.get(setup_name, 0) + 1
             )
-        if int(move["power"]) > 0:
+        if int(move["power"]) > 0 and not quality_flags.ohko_into_faster:
             chosen = _move_score(move)
             best = _best_damage_score(before[side_name], mask)
             metrics.damaging_moves += 1
@@ -460,7 +473,11 @@ def _update_side_metrics(
                     metrics.best_effectiveness_choices += 1
             if int(move["effectiveness"]) > 100:
                 metrics.super_effective_choices += 1
-        elif _is_status(move):
+        elif _is_status(move) and not (
+            quality_flags.redundant_status_same
+            or quality_flags.redundant_status_other
+            or quality_flags.capped_stat_setup
+        ):
             metrics.status_uses += 1
             successful, blocked = _effect_actors(after["events"])
             if side_index in successful:
@@ -1221,6 +1238,7 @@ def _run_traced_arena_batched(
                     ):
                         before = episode.inspection
                         assert before is not None
+                        prior_snapshot = episode.snapshot
                         episode.snapshot = snapshot
                         if snapshot.divergence is not None:
                             episode.stop = "semantic-divergence"
@@ -1248,6 +1266,7 @@ def _run_traced_arena_batched(
                             player_metrics,
                             0,
                             player_action,
+                            prior_snapshot.player_features,
                             before,
                             after,
                             before["request"],
@@ -1256,6 +1275,7 @@ def _run_traced_arena_batched(
                             enemy_metrics,
                             1,
                             enemy_action,
+                            prior_snapshot.enemy_features,
                             before,
                             after,
                             before["request"],
@@ -1461,6 +1481,8 @@ def _run_traced_arena_sequential(
                         _action_line(replay, 1, enemy_action, before, snapshot.request)
                         if replay_path is not None:
                             replay_path.write_text(replay.text())
+                    player_features = snapshot.player_features
+                    enemy_features = snapshot.enemy_features
                     snapshot = server.episode_step(
                         snapshot.handle, player_action, enemy_action
                     )
@@ -1487,6 +1509,7 @@ def _run_traced_arena_sequential(
                         player_metrics,
                         0,
                         player_action,
+                        player_features,
                         before,
                         after,
                         before["request"],
@@ -1495,6 +1518,7 @@ def _run_traced_arena_sequential(
                         enemy_metrics,
                         1,
                         enemy_action,
+                        enemy_features,
                         before,
                         after,
                         before["request"],
@@ -1605,6 +1629,20 @@ def skill_probe_report(arena: dict[str, Any]) -> dict[str, Any]:
     status_delta = difference("status_success_rate")
     setup_delta = difference("setup_use_rate")
     switch_delta = difference("matchup_improvement_rate")
+    quality_names = (
+        "major_status_attempts",
+        "redundant_status_same",
+        "redundant_status_other",
+        "redundant_status_rate",
+        "stat_setup_attempts",
+        "capped_stat_setup",
+        "capped_stat_setup_rate",
+        "ohko_attempts",
+        "ohko_into_faster",
+        "ohko_into_faster_rate",
+    )
+    candidate_quality = {name: candidate.get(name, 0) for name in quality_names}
+    baseline_quality = {name: baseline.get(name, 0) for name in quality_names}
     candidate_waste_rate = (
         candidate["status_wasted"] / candidate["status_uses"]
         if candidate["status_uses"]
@@ -1649,6 +1687,12 @@ def skill_probe_report(arena: dict[str, Any]) -> dict[str, Any]:
             "success_rate_delta": status_delta,
             "candidate_waste_rate": candidate_waste_rate,
             "baseline_waste_rate": baseline_waste_rate,
+        },
+        "decision_quality": {
+            "gated": False,
+            "pass": None,
+            "candidate": candidate_quality,
+            "baseline": baseline_quality,
         },
         "setup": {
             "gated": False,

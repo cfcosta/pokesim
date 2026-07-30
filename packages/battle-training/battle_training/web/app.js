@@ -349,6 +349,7 @@ function renderBattlePopulation(data) {
   const collection = data.collection || data.latest?.collection;
   const root = $("battle-stats");
   clear(root);
+  const qualityAvailable = Boolean(collection?.decision_quality_version);
   const stats = [
     ["Mean turns", collection ? number(collection.mean_decisions, 1) : "—"],
     ["Switch rate", collection ? pct(collection.voluntary_switch_rate) : "—"],
@@ -356,6 +357,9 @@ function renderBattlePopulation(data) {
     ["Exploitability", collection ? number(collection.mean_search_exploitability, 3) : "—"],
     ["Deep / root", collection ? `${number(collection.deep_search_decisions)} / ${number(collection.root_only_decisions)}` : "—"],
     ["Mirror / model / AI", collection ? `${number(collection.mirror_episodes)} / ${number(collection.model_opponent_episodes)} / ${number(collection.heuristic_opponent_episodes)}` : "—"],
+    ["Status overlap", qualityAvailable ? `${number((collection.redundant_status_same || 0) + (collection.redundant_status_other || 0))} / ${number(collection.major_status_attempts)} · ${pct(collection.redundant_status_rate)}` : "—"],
+    ["Setup at +6", qualityAvailable ? `${number(collection.capped_stat_setup)} / ${number(collection.stat_setup_attempts)} · ${pct(collection.capped_stat_setup_rate)}` : "—"],
+    ["OHKO vs faster", qualityAvailable ? `${number(collection.ohko_into_faster)} / ${number(collection.ohko_attempts)} · ${pct(collection.ohko_into_faster_rate)}` : "—"],
     ["Lv. 100 6v6", collection ? `${number(collection.level100_six_vs_six_battles)} / ${number(collection.six_vs_six_battles)}` : "—"],
   ];
   for (const [name, value] of stats) {
@@ -1061,9 +1065,18 @@ function renderProbes(data) {
     .slice(0, 3)
     .map(([name, count]) => `${name} ${count}`)
     .join(", ");
+  const quality = probes.decision_quality || {};
+  const candidateQuality = quality.candidate || {};
+  const baselineQuality = quality.baseline || {};
+  const qualityRows = quality.gated === false ? [
+    ["Status overlap", quality.pass, null, `candidate ${pct(candidateQuality.redundant_status_rate)} · baseline ${pct(baselineQuality.redundant_status_rate)}`],
+    ["Setup at +6", quality.pass, null, `candidate ${pct(candidateQuality.capped_stat_setup_rate)} · baseline ${pct(baselineQuality.capped_stat_setup_rate)}`],
+    ["OHKO vs faster", quality.pass, null, `candidate ${pct(candidateQuality.ohko_into_faster_rate)} · baseline ${pct(baselineQuality.ohko_into_faster_rate)}`],
+  ] : [];
   const rows = [
     ["Type choices", probes.type?.pass, probes.type?.delta, ""],
     ["Status use", probes.status?.pass, probes.status?.success_rate_delta, ""],
+    ...qualityRows,
     ["Setup moves", probes.setup?.pass, probes.setup?.use_rate_delta, `${number(probes.setup?.candidate_uses)} uses${setupCounts ? ` · ${setupCounts}` : ""}`],
     ["Switching", probes.switch?.pass, probes.switch?.matchup_improvement_delta, ""],
   ];

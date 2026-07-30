@@ -8,6 +8,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias, cast
 
+from .decision_quality import shape_redundant_action_priors
 from .native import SearchServer, Snapshot
 from .network import BattleTransformer
 
@@ -50,6 +51,7 @@ class JointSearchConfig:
     minimum_expansion_budget: int = 192
     convergence_tolerance: float = 0.005
     convergence_patience: int = 8
+    redundant_action_prior_scale: float = 1.0
 
 
 def legal_actions(mask: int, action_count: int) -> list[int]:
@@ -291,6 +293,8 @@ class BatchedJointRegretSearch:
             raise ValueError("inference batch size must be positive")
         if config.max_actions_per_side < 1:
             raise ValueError("max actions per side must be positive")
+        if not 0.0 < config.redundant_action_prior_scale <= 1.0:
+            raise ValueError("redundant action prior scale must be in (0, 1]")
         self.server = server
         self.player_network = player_network
         self.enemy_network = enemy_network
@@ -388,6 +392,38 @@ class BatchedJointRegretSearch:
                 [snapshot.enemy_mask for snapshot in snapshots],
                 size,
             )
+        player_scale = (
+            self.config.redundant_action_prior_scale
+            if isinstance(self.player_network, BattleTransformer)
+            else 1.0
+        )
+        enemy_scale = (
+            self.config.redundant_action_prior_scale
+            if isinstance(self.enemy_network, BattleTransformer)
+            else 1.0
+        )
+        player_policies = [
+            shape_redundant_action_priors(
+                policy,
+                snapshot.player_features,
+                snapshot.player_mask,
+                player_scale,
+            )
+            if snapshot.request == "battle"
+            else policy
+            for policy, snapshot in zip(player_policies, snapshots, strict=True)
+        ]
+        enemy_policies = [
+            shape_redundant_action_priors(
+                policy,
+                snapshot.enemy_features,
+                snapshot.enemy_mask,
+                enemy_scale,
+            )
+            if snapshot.request == "battle"
+            else policy
+            for policy, snapshot in zip(enemy_policies, snapshots, strict=True)
+        ]
         combined = [
             max(-1.0, min(1.0, (player - enemy) / 2.0))
             for player, enemy in zip(player_values, enemy_values, strict=True)

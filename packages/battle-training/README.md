@@ -194,7 +194,11 @@ truncation rather than a fabricated
 terminal result. Truncations and semantic cycles score zero. Promotion requires a point score of at least 50%,
 a paired 95% confidence lower bound of at least 50%, and passing separate
 held-out type and status probes. Switching rate, completion, and matchup-change
-remain reported diagnostics but do not gate promotion. It also reports and gates 1–2, 3–4,
+remain reported diagnostics but do not gate promotion. Major-status moves into
+an occupied status slot, stat boosts selected at +6, and OHKO moves selected
+against a currently faster target are also observational diagnostics only. They
+are excluded from the gated type/status denominators and do not reject
+collection or promotion. It also reports and gates 1–2, 3–4,
 5–6, and unequal-party strata, plus a nine-team fixed campaign suite covering
 Brock through Giovanni and Lance. The campaign teams use canonical natural
 moves and fixed DVs inside the link quotient; they do not claim trainer AI or
@@ -204,6 +208,11 @@ but carry the learner parameters and AdamW state into the next collection
 iteration, allowing small updates to compound without weakening deployment. Each
 checkpoint stores both lineages; ordinary checkpoint loading returns the deployed
 model, while resume restores the shadow learner and its optimizer explicitly.
+Search gives the three statically redundant action classes a 0.25 neural-prior
+multiplier while preserving nonzero mass and evaluating every legal joint action.
+This is intentionally not a legal-mask rule: simultaneous switching can make a
+status or OHKO choice useful against the incoming target, and exact joint payoffs
+remain authoritative.
 A new same-schema lineage can pass the exported shadow to
 `--warm-start-checkpoint` and the prior quality-gated checkpoint to
 `--warm-start-incumbent-checkpoint`. This preserves the accumulated learner
