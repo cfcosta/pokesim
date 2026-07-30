@@ -1,4 +1,4 @@
-import createSameBoy from "./sameboy-core.js?v=24";
+import createSameBoy from "./sameboy-core.js?v=25";
 
 let core = null;
 let loaded = false;
@@ -137,7 +137,7 @@ function startClock() {
 }
 
 async function initialize(rom) {
-  core ||= await createSameBoy({ locateFile: (path) => path.endsWith(".wasm") ? "/sameboy-core.wasm?v=24" : path });
+  core ||= await createSameBoy({ locateFile: (path) => path.endsWith(".wasm") ? "/sameboy-core.wasm?v=25" : path });
   core._sb_create();
   const bytes = new Uint8Array(rom);
   const pointer = core._malloc(bytes.byteLength);

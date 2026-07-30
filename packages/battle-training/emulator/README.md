@@ -54,8 +54,9 @@ the party menu so move names and switched sprites follow the recording. The
 runtime patch is restored on reset.
 
 At every decision boundary, the adapter compares and then synchronizes party and
-active-mon structures, HP, status, PP, active slots, and link RNG to the
-Lean-validated recording. The completion status reports how many cartridge bytes
+active-mon structures, HP, status, PP, active slots, stat stages, volatile
+multi-turn state and counters, move-selection scratch, shared damage, and link
+RNG to the Lean-validated recording. The completion status reports how many cartridge bytes
 needed correction. This distinction is deliberate: the selected battle is
 reproduced exactly at its recorded semantic boundaries, while presentation-time
 cartridge execution between boundaries remains visible rather than being

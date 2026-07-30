@@ -495,18 +495,28 @@ private def sideInspection (state : Full.Environment.State) (side : Side) : Stri
   let synced := full.syncOutgoing
   let target := state.engine.battle.side side.other |>.active.active
   let party := synced.party.mons.toList.map fun mon => monJson mon target
+  let battle := monJson full.active.active target
   let moves := (Array.range full.active.active.moves.size).toList.map fun slot =>
     moveJson (full.active.active.moves.getD slot 0) (full.active.active.pp.getD slot 0) target
   let stages := full.active.stages
   let volatile := full.active.volatile
-  jsonObject s!"\"active\":{full.activeIndex},\"party\":[{String.intercalate "," party}],\"moves\":[{String.intercalate "," moves}],\"stages\":[{stages.attack},{stages.defense},{stages.speed},{stages.special},{stages.accuracy},{stages.evasion}],\"volatile\":[{volatile.status1},{volatile.status2},{volatile.status3},{volatile.disabledMove},{volatile.disabledMoveNumber},{volatile.substituteHp},{volatile.bideAccumulated}]"
+  let selection := match side with
+    | .player => state.engine.playerSelection
+    | .enemy => state.engine.enemySelection
+  let lastMove := match side with
+    | .player => state.engine.playerLastMove
+    | .enemy => state.engine.enemyLastMove
+  let unmodified := full.active.unmodified
+  let minimized := if volatile.minimized then 1 else 0
+  let replay := jsonObject s!"\"unmodified\":[{full.active.active.level},{full.active.active.maxHp},{unmodified.attack},{unmodified.defense},{unmodified.speed},{unmodified.special}],\"status\":[{volatile.status1},{volatile.status2},{volatile.status3}],\"counters\":[{volatile.numAttacksLeft},{volatile.confusedCounter},{volatile.toxicCounter}],\"disabled\":[{volatile.disabledMove},{volatile.disabledMoveNumber}],\"substitute_hp\":{volatile.substituteHp},\"bide_damage\":{volatile.bideAccumulated},\"minimized\":{minimized},\"selection\":[{selection.loadedMove},{selection.effect},{selection.power},{selection.type},{selection.accuracy},{selection.pp},{selection.selectedMove},{selection.highlightedSlot}],\"last_move\":{lastMove}"
+  jsonObject s!"\"active\":{full.activeIndex},\"party\":[{String.intercalate "," party}],\"battle\":{battle},\"moves\":[{String.intercalate "," moves}],\"stages\":[{stages.attack},{stages.defense},{stages.speed},{stages.special},{stages.accuracy},{stages.evasion}],\"volatile\":[{volatile.status1},{volatile.status2},{volatile.status3},{volatile.disabledMove},{volatile.disabledMoveNumber},{volatile.substituteHp},{volatile.bideAccumulated}],\"replay\":{replay}"
 
 private def inspectionFields (search : SearchState) : String :=
   let state := search.base
   let events := search.events.filterMap eventJson
   let rng := state.engine.battle.rng
   let rngList := rng.list.toList.map toString
-  s!",\"request\":\"{search.requestName}\",\"player\":{sideInspection state .player},\"enemy\":{sideInspection state .enemy},\"rng\":{jsonObject s!"\"list\":[{String.intercalate "," rngList}],\"index\":{rng.index}"},\"events\":[{String.intercalate "," events}]"
+  s!",\"request\":\"{search.requestName}\",\"player\":{sideInspection state .player},\"enemy\":{sideInspection state .enemy},\"rng\":{jsonObject s!"\"list\":[{String.intercalate "," rngList}],\"index\":{rng.index}"},\"shared_damage\":{state.engine.sharedDamage},\"events\":[{String.intercalate "," events}]"
 
 private def emit (output : IO.FS.Stream) (line : String) : IO Unit := do
   output.putStr (line ++ "\n")

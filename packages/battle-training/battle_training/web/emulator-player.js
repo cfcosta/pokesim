@@ -3,6 +3,15 @@
 (() => {
   const CANONICAL_ROM_SHA256 = "5ca7ba01642a3b27b0cc0b5349b52792795b62d3ed977e98a09390659af96b7b";
   const ROM_BYTES = 1024 * 1024;
+  const REPLAY_FAILURES = {
+    "-2": "the cartridge opened the ordinary battle menu during a forced replacement",
+    "-3": "the recorded action was not valid in the cartridge battle menu",
+    "-4": "the cartridge opened move selection for a recorded automatic action",
+    "-5": "the recorded replacement did not match the cartridge replacement request",
+    "-8": "the cartridge reached a terminal screen before consuming every recorded action",
+    "-9": "the canonical-ROM replay patches could not be installed",
+    "-10": "the replay action trampoline was unavailable",
+  };
   let activePlayer = null;
   let sessionRom = null;
 
@@ -232,7 +241,7 @@
       picker.append(pickerCopy, pickerActions);
 
       const decisions = (this.detail.timeline || []).length;
-      const note = node("p", "emulator-note", `The server replays all ${decisions} recorded decisions through the deterministic Lean engine before playback. SameBoy stages both parties and the link RNG in the canonical ROM, injects every recorded choice, and synchronizes HP, status, PP, active slots, and RNG to the validated trace at each decision boundary. Export video restarts the replay at normal speed and downloads a 640×576 browser-encoded video with the original game audio. Any corrected cartridge bytes are reported at completion.`);
+      const note = node("p", "emulator-note", `The server replays all ${decisions} recorded decisions through the deterministic Lean engine before playback. SameBoy stages both parties and the link RNG in the canonical ROM, injects every recorded choice, and synchronizes active Pokémon, volatile multi-turn state, move scratch, and RNG to the validated trace at each decision boundary. Export video restarts the replay at normal speed and downloads a 640×576 browser-encoded video with the original game audio. Any corrected cartridge bytes are reported at completion.`);
       const attribution = node("p", "emulator-attribution");
       attribution.append("SameBoy core pinned at 213a12ce · ", Object.assign(node("a", "", "license"), { href: "/sameboy-LICENSE.txt", target: "_blank", rel: "noreferrer" }), ". No ROM is included with this application.");
       this.root.append(header, screenShell, controls, picker, note, attribution);
@@ -528,7 +537,7 @@
       this.romReady = false;
       this.replayStarted = false;
       this.setStatus("Starting SameBoy…", "loading");
-      this.worker = new Worker("/sameboy-worker.js?v=27", { type: "module" });
+      this.worker = new Worker("/sameboy-worker.js?v=28", { type: "module" });
       this.worker.addEventListener("message", (event) => this.onMessage(event.data));
       this.worker.addEventListener("error", (event) => this.setStatus(event.message || "SameBoy worker failed", "error"));
       const payload = rom.slice().buffer;
@@ -585,7 +594,9 @@
             this.setStatus(`Replay complete · ${total} decisions reproduced · ${message.mismatchCount} boundary bytes resynchronized`, "ready");
           }
         } else if (message.state < 0) {
-          const error = new Error(`Replay adapter stopped with code ${message.state}`);
+          const reason = REPLAY_FAILURES[String(message.state)] || "the cartridge and recorded action stream diverged";
+          const decision = Math.min(message.actionIndex + 1, total);
+          const error = new Error(`Replay stopped at decision ${decision}: ${reason} (code ${message.state})`);
           if (this.exporting) this.failVideoExport(error);
           else this.setStatus(error.message, "error");
         }

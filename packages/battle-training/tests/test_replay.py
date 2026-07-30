@@ -134,19 +134,51 @@ class ReplayManifestTests(unittest.TestCase):
         self.assertEqual((replay.player_size, replay.enemy_size), (3, 6))
         self.assertFalse(_coordinates_for_replay(replay, True).swapped)
 
-    def test_checkpoint_covers_party_active_mon_and_rng(self) -> None:
+    def test_checkpoint_covers_party_active_volatile_and_rng(self) -> None:
         member = mon()
+
+        def side() -> dict[str, object]:
+            return {
+                "active": 0,
+                "party": [member] * 6,
+                "battle": member,
+                "stages": [7, 8, 9, 10, 11, 12],
+                "replay": {
+                    "unmodified": [40, 120, 79, 66, 85, 72],
+                    "status": [0x10, 0x20, 0x40],
+                    "counters": [2, 3, 4],
+                    "disabled": [0x25, 2],
+                    "substitute_hp": 31,
+                    "bide_damage": 0x1234,
+                    "minimized": 1,
+                    "selection": [130, 39, 100, 0, 100, 15, 130, 2],
+                    "last_move": 129,
+                },
+            }
+
         inspection = {
             "request": "battle",
-            "player": {"active": 0, "party": [member]},
-            "enemy": {"active": 0, "party": [member]},
+            "player": side(),
+            "enemy": side(),
             "rng": {"list": list(range(10)), "index": 4},
+            "shared_damage": 0x5678,
         }
         memory = dict(_expected_memory(inspection))
+        self.assertEqual(len(memory), 676)
         self.assertEqual(memory[0xD16B], 130)
         self.assertEqual(memory[0xD014], 130)
         self.assertEqual(memory[0xD8A4], 130)
         self.assertEqual(memory[0xCFE5], 130)
+        self.assertEqual(memory[0xD062], 0x10)
+        self.assertEqual(memory[0xD063], 0x20)
+        self.assertEqual(memory[0xD06A], 2)
+        self.assertEqual(memory[0xCCEE], 2)
+        self.assertEqual(memory[0xD074], 0x12)
+        self.assertEqual(memory[0xD075], 0x34)
+        self.assertEqual(memory[0xCFD2], 130)
+        self.assertEqual(memory[0xCCDC], 130)
+        self.assertEqual(memory[0xD0D7], 0x56)
+        self.assertEqual(memory[0xD0D8], 0x78)
         self.assertEqual(memory[0xCCDE], 4)
         self.assertEqual(
             [memory[0xD148 + index] for index in range(10)], list(range(10))

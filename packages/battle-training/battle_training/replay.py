@@ -24,9 +24,26 @@ _RNG_INDEX = 0xCCDE
 _ACTIVE_HP = {"player": 0xD015, "enemy": 0xCFE6}
 _ACTIVE_STATUS = {"player": 0xD018, "enemy": 0xCFE9}
 _ACTIVE_PP = {"player": 0xD02D, "enemy": 0xCFFE}
+_UNMODIFIED = {"player": 0xCD0F, "enemy": 0xCD23}
+_STAT_STAGES = {"player": 0xCD1A, "enemy": 0xCD2E}
+_BATTLE_STATUS = {"player": 0xD062, "enemy": 0xD067}
+_NUM_ATTACKS_LEFT = {"player": 0xD06A, "enemy": 0xD06F}
+_CONFUSED_COUNTER = {"player": 0xD06B, "enemy": 0xD070}
+_TOXIC_COUNTER = {"player": 0xD06C, "enemy": 0xD071}
+_DISABLED_MOVE = {"player": 0xD06D, "enemy": 0xD072}
+_DISABLED_MOVE_NUMBER = {"player": 0xCCEE, "enemy": 0xCCEF}
+_SUBSTITUTE_HP = {"player": 0xCCD7, "enemy": 0xCCD8}
+_BIDE_DAMAGE = {"player": 0xD074, "enemy": 0xCD05}
+_MINIMIZED = {"player": 0xCCF7, "enemy": 0xCCF3}
+_MOVE_SCRATCH = {"player": 0xCFD2, "enemy": 0xCFCC}
+_SELECTED_MOVE = {"player": 0xCCDC, "enemy": 0xCCDD}
+_MOVE_LIST_INDEX = {"player": 0xCC2E, "enemy": 0xCCE2}
+_USED_MOVE = {"player": 0xCCF1, "enemy": 0xCCF2}
+_SHARED_DAMAGE = 0xD0D7
 _PARTY_MON_SIZE = 0x2C
 _NAME_SIZE = 11
 _MAX_PARTY = 6
+_MAX_CHECKPOINT_BYTES = 768
 _TRAINER_PICTURE_CLASSES = tuple(
     trainer_class for trainer_class in range(1, 48) if trainer_class not in {13, 27}
 )
@@ -192,7 +209,7 @@ def _expected_memory(inspection: dict[str, Any]) -> list[list[int]]:
     expected: dict[int, int] = {}
     for name in ("player", "enemy"):
         side = inspection[name]
-        active = side["party"][int(side["active"])]
+        active = side["battle"]
         expected[_ACTIVE_INDEX[name]] = int(side["active"])
         party_active = _party_mon_bytes(active)
         battle_active = (
@@ -210,10 +227,50 @@ def _expected_memory(inspection: dict[str, Any]) -> list[list[int]]:
             base = _PARTY_MONS[name] + slot * _PARTY_MON_SIZE
             for offset, value in enumerate(_party_mon_bytes(mon)):
                 expected[base + offset] = value
+
+        replay = side["replay"]
+        level, max_hp, attack, defense, speed, special = map(int, replay["unmodified"])
+        unmodified = [level]
+        for value in (max_hp, attack, defense, speed, special):
+            unmodified.extend(_u16(value))
+        for offset, value in enumerate(unmodified):
+            expected[_UNMODIFIED[name] + offset] = value
+        for offset, value in enumerate(side["stages"]):
+            expected[_STAT_STAGES[name] + offset] = int(value)
+        for offset, value in enumerate(replay["status"]):
+            expected[_BATTLE_STATUS[name] + offset] = int(value)
+        num_attacks, confused, toxic = map(int, replay["counters"])
+        expected[_NUM_ATTACKS_LEFT[name]] = num_attacks
+        expected[_CONFUSED_COUNTER[name]] = confused
+        expected[_TOXIC_COUNTER[name]] = toxic
+        disabled, disabled_number = map(int, replay["disabled"])
+        expected[_DISABLED_MOVE[name]] = disabled
+        expected[_DISABLED_MOVE_NUMBER[name]] = disabled_number
+        expected[_SUBSTITUTE_HP[name]] = int(replay["substitute_hp"])
+        bide_high, bide_low = _u16(replay["bide_damage"])
+        expected[_BIDE_DAMAGE[name]] = bide_high
+        expected[_BIDE_DAMAGE[name] + 1] = bide_low
+        expected[_MINIMIZED[name]] = int(replay["minimized"])
+        selection = list(map(int, replay["selection"]))
+        if len(selection) != 8:
+            raise ValueError("recorded replay move scratch must have eight fields")
+        for offset, value in enumerate(selection[:6]):
+            expected[_MOVE_SCRATCH[name] + offset] = value
+        expected[_SELECTED_MOVE[name]] = selection[6]
+        expected[_MOVE_LIST_INDEX[name]] = selection[7]
+        expected[_USED_MOVE[name]] = int(replay["last_move"])
     rng = inspection["rng"]
     for index, value in enumerate(rng["list"]):
         expected[_RNG_LIST + index] = int(value)
     expected[_RNG_INDEX] = int(rng["index"])
+    damage_high, damage_low = _u16(inspection["shared_damage"])
+    expected[_SHARED_DAMAGE] = damage_high
+    expected[_SHARED_DAMAGE + 1] = damage_low
+    if len(expected) > _MAX_CHECKPOINT_BYTES:
+        raise ValueError(
+            f"recorded replay checkpoint has {len(expected)} bytes; "
+            f"adapter limit is {_MAX_CHECKPOINT_BYTES}"
+        )
     return [[address, value] for address, value in sorted(expected.items())]
 
 
@@ -271,9 +328,7 @@ def replay_coordinates(
             enemy_size=int(detail["pair_enemy_party_size"]),
             level100=detail["level_profile"] == "level100",
             swapped=bool(detail["teams_swapped"]),
-            balanced_final_species=bool(
-                config.get("balanced_final_species", False)
-            ),
+            balanced_final_species=bool(config.get("balanced_final_species", False)),
         )
     if kind == "promotion":
         arena_seed = seed + 70_000_000 + iteration * 10_007
@@ -289,9 +344,7 @@ def replay_coordinates(
             enemy_size=int(detail["enemy_party_size"]),
             level100=detail["level_profile"] == "level100",
             swapped=False,
-            balanced_final_species=bool(
-                config.get("balanced_final_species", False)
-            ),
+            balanced_final_species=bool(config.get("balanced_final_species", False)),
         )
     raise ValueError("recorded replay kind must be selfplay or promotion")
 
