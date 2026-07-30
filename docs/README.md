@@ -58,6 +58,7 @@ These documents record twelve codebase, processor, and proof-architecture review
 - [Full-party training precision benchmark](research/full6v6-precision-benchmark.md) — FP32/BF16 throughput, memory, inference, numerical drift, and the BF16 production decision.
 - [Battle-horizon truncation audit](research/battle-horizon-truncation-audit.md) — historical tail distribution, party-size evidence, horizon semantics, and the 512-decision production boundary.
 - [Episode 606 Fly audit](research/episode-606-fly-audit.md) — trace divergence, canonical charge-control bytes, automatic retained-move repair, proofs, and deterministic replay.
+- [Game 2047 Swift/Dig audit](research/episode-2047-swift-dig-audit.md) — English Red's Swift-through-Dig behavior, decoded byte proofs, the corrected Dig flag, and deterministic regression.
 - [ROM-to-model equivalence audit](research/rom-model-equivalence-audit.md) — exact theorem boundary, active-struct projection, missing simulations, and shortest honest closure path.
 
 ## Documentation modes

@@ -693,7 +693,10 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
               .continue, events ++ [.statusApplied turns]⟩
   | .ohko => if hit && context.attacker.active.speed ≥ context.defender.active.speed then
       ⟨context, .oneHitKo, [.signal .oneHitKo]⟩ else ⟨context, .failed, []⟩
-  | .charge invulnerable =>
+  | .charge effectInvulnerable =>
+      -- Dig shares the ordinary charge effect (`$27`) with visible moves, so
+      -- its invulnerability is selected by move ID rather than effect ID.
+      let invulnerable := effectInvulnerable || context.move == 91
       let bitStatus := setBit context.attacker.volatile.status1 Wram.BattleStatus1.chargingUp
       let bitStatus := if invulnerable then setBit bitStatus Wram.BattleStatus1.invulnerable else bitStatus
       let volatile := { context.attacker.volatile with status1 := bitStatus }
@@ -976,14 +979,19 @@ theorem bide_thrash_lock_witnesses (context : Context) :
     startLock, setAttackerVolatile, withAttacker, storing_set_bit, thrashing_set_bit,
     Wram.rnsConsumed]
 
-/-- Fly/Dig charge setup sets both charging and invulnerability; ordinary charge
-sets only charging. -/
+/-- Fly and Dig set both charging and invulnerability. Other moves sharing
+`CHARGE_EFFECT` set only charging. Dig is distinguished by canonical move ID
+`$5b`, exactly as the ROM does after its effect comparison. -/
 theorem charge_invulnerability_witnesses (context : Context) :
     let fly := applyBefore Data.Effect.fly true context
-    let charge := applyBefore Data.Effect.charge true context
+    let dig := applyBefore Data.Effect.charge true { context with move := 91 }
+    let charge := applyBefore Data.Effect.charge true { context with move := 76 }
     fly.signal = .charging true ∧
     bitSet fly.context.attacker.volatile.status1 Wram.BattleStatus1.chargingUp = true ∧
     bitSet fly.context.attacker.volatile.status1 Wram.BattleStatus1.invulnerable = true ∧
+    dig.signal = .charging true ∧
+    bitSet dig.context.attacker.volatile.status1 Wram.BattleStatus1.chargingUp = true ∧
+    bitSet dig.context.attacker.volatile.status1 Wram.BattleStatus1.invulnerable = true ∧
     charge.signal = .charging false ∧
     bitSet charge.context.attacker.volatile.status1 Wram.BattleStatus1.invulnerable =
       bitSet context.attacker.volatile.status1 Wram.BattleStatus1.invulnerable := by

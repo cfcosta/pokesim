@@ -284,7 +284,7 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [x] stage intermediate flooring/truncation (`Battle.Accuracy.applyRatio`, `equal_stage_profile_exact`)
 - [x] Mist, Substitute, and Dream Eater pre-accuracy checks (`Battle.Full.Engine.substitute_mist_dream_gates`)
 - [x] X Accuracy bypasses stage/final accuracy only after Fly/Dig invulnerability (`Battle.Full.Engine.invulnerability_precedes_x_accuracy`, `x_accuracy_bypasses_stages_and_random`); handler-specific Dream Eater/Substitute/Mist gates precede this call
-- [x] Swift returns before Substitute/Fly-Dig/Mist/X Accuracy behavior (`Battle.Full.Engine.swift_precedes_accuracy_gates`)
+- [x] Swift returns before Substitute/Fly-Dig/Mist/X Accuracy behavior (`Battle.Full.Engine.swift_precedes_accuracy_gates` and decoded `Battle.Rom.SwiftRoutine.swift_invulnerability_exact`)
 - [x] Fly/Dig invulnerability ordering (`Battle.Full.Engine.invulnerability_precedes_x_accuracy`, `Battle.Full.Status.interrupted_charge_leaves_invulnerability`)
 - [x] Dream Eater sleep check (`Battle.Full.Engine.substitute_mist_dream_gates`)
 - [x] Substitute interaction before status/stat-down accuracy (`Battle.Full.Engine.substitute_mist_dream_gates`)
@@ -437,6 +437,7 @@ Exceptional move-ID checks include at least Quick Attack, Counter, Metronome, Mi
 - [x] charge continuation bypasses policy selection, executes the retained move, and decrements PP only on the attack turn (`Battle.Full.charging_forces_no_action`, `Battle.Full.Engine.charge_continuation_protocol`, `charge_pp_is_deferred`, `player_pp_decrements`)
 - [x] canonical Red windows and decoded SM83 execution for Fly setup, menu bypass, and both charge-bit clears (`Battle.Rom.FlyRoutine.RequiredFlyBytes`, `decoded_charge_control`, `player_continuation_exact`, `player_continuation_result`)
 - [x] episode-606 deterministic regression: Pidgeot's Fly setup exposes only action 10; continuation executes Fly, clears `$50`, and changes PP 15→14 (`tools/check-episode-606-fly.py`)
+- [x] game-2047 deterministic regression: Dig sets `$50`, ordinary Confusion misses, English Red Swift still deals damage without accuracy RNG, and continuation clears both bits with one PP decrement (`tools/check-episode-2047-swift-dig.py`)
 - [x] charge state is unbound: Mirror Move/Metronome-generated charge continues with retained wrapper, generated loaded move, and original selected slot (`Battle.Full.Engine.generated_move_retains_wrapper`, `installGeneratedLoadedMove`)
 - [x] nested wrapper PP versus disobedient replacement PP ordering (`Battle.Full.Engine.incrementNestedPp`, `transformed_nested_party_pp_increment`, `disobedience_charges_original_slot`)
 - [x] full-paralysis/self-confusion/selected-disabled charge cleanup clears charging but leaves Fly/Dig invulnerability until volatile reset (`Battle.Full.Status.interrupted_charge_leaves_invulnerability`)
@@ -716,7 +717,8 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] Substitute can leave user at zero HP (`Battle.BugWitnesses.decoded_substitute_zero_user_hp_occurs`)
 - [x] a Substitute survives incoming damage exactly equal to its remaining HP (`Battle.BugWitnesses.substitute_exact_damage_survival_occurs`)
 - [x] Transform invulnerability-check bugs (`Battle.Rom.TransformRoutine.transform_invulnerability_exact`)
-- [x] Swift before invulnerability check (`Battle.Full.Engine.swift_precedes_accuracy_gates`)
+- [x] Swift before invulnerability check (`Battle.Full.Engine.swift_precedes_accuracy_gates`, `Battle.Rom.SwiftRoutine.swift_invulnerability_exact`, and `model_swift_hits_dig`)
+- [x] Dig move-ID branch sets invulnerability for all incoming status bytes and blocks ordinary moves (`Battle.Rom.SwiftRoutine.dig_invulnerability_exact` and `model_ordinary_misses_dig`)
 - [x] drain-on-Substitute broken check (`Battle.Full.Effects.drain_ignores_substitute_gate`)
 - [x] extra enemy stat-down failure gate also reducing damaging side effects through a second independent draw
 - [x] AI effectiveness neutral constant mismatch (`Battle.Full.TrainerController.ai_neutral_constant_mismatch`)

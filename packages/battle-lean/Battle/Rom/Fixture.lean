@@ -6,6 +6,7 @@ import Battle.Rom.HazeDispatchRoutine
 import Battle.Rom.FlyRoutine
 import Battle.Rom.StruggleRoutine
 import Battle.Rom.DamageApplyRoutine
+import Battle.Rom.SwiftRoutine
 import Battle.Full.OldMan
 import Battle.Full.Recall
 
@@ -59,6 +60,7 @@ def retainedLayoutMatches (rom : CanonicalRom) : Bool :=
     FlyRoutine.windowAgrees rom.bytes &&
     StruggleRoutine.windowAgrees rom.bytes &&
     DamageApplyRoutine.windowAgrees rom.bytes &&
+    SwiftRoutine.windowAgrees rom.bytes &&
     Battle.Full.OldMan.windowAgrees rom.bytes &&
     Battle.Full.Recall.windowAgrees rom.bytes
 

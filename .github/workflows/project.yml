@@ -76,6 +76,7 @@ jobs:
               assert len(server.inspect(campaign.handle)["enemy"]["party"]) == 2
           PY
           nix develop -c python tools/check-episode-606-fly.py
+          nix develop -c python tools/check-episode-2047-swift-dig.py
       - name: Check canonical address/range closure
         run: python3 tools/check-pokered-closure.py
       - name: Check full training-state field audit

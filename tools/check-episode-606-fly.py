@@ -46,7 +46,7 @@ def main() -> int:
         assert move_pp(continued, "player", "Fly") == 14
         assert continued["player"]["party"][5]["hp"] == 88
         assert continued["enemy"]["party"][0]["hp"] == 68
-        assert continued["events"][:3] == [
+        assert continued["events"][:4] == [
             {"kind": "action", "side": 0, "action": 10},
             {
                 "kind": "move-executed",
@@ -54,6 +54,7 @@ def main() -> int:
                 "move_id": 19,
                 "move": "Fly",
             },
+            {"kind": "super-effective", "side": 0},
             {"kind": "damage", "side": 1, "amount": 125, "hp": 94},
         ]
 
