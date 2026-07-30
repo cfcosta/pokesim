@@ -488,7 +488,7 @@ private def moveJson (move : MoveId) (packedPp : UInt8) (target : MonState) : St
 private def monJson (mon target : MonState) : String :=
   let moves := (Array.range mon.moves.size).toList.map fun slot =>
     moveJson (mon.moves.getD slot 0) (mon.pp.getD slot 0) target
-  jsonObject s!"\"species\":{mon.species},\"dex\":{Data.internalToDex mon.species},\"name\":\"{Showdown.speciesName mon.species}\",\"level\":{mon.level},\"hp\":{mon.hp},\"max_hp\":{mon.maxHp},\"status\":{mon.status},\"type1\":{mon.type1},\"type2\":{mon.type2},\"moves\":[{String.intercalate "," moves}]"
+  jsonObject s!"\"species\":{mon.species},\"dex\":{Data.internalToDex mon.species},\"name\":\"{Showdown.speciesName mon.species}\",\"level\":{mon.level},\"box_level\":{mon.boxLevel},\"hp\":{mon.hp},\"max_hp\":{mon.maxHp},\"attack\":{mon.attack},\"defense\":{mon.defense},\"speed\":{mon.speed},\"special\":{mon.special},\"status\":{mon.status},\"type1\":{mon.type1},\"type2\":{mon.type2},\"catch_rate\":{mon.catchRate},\"dvs\":{mon.dvs},\"moves\":[{String.intercalate "," moves}]"
 
 private def sideInspection (state : Full.Environment.State) (side : Side) : String :=
   let full := state.engine.battle.side side
@@ -504,7 +504,9 @@ private def sideInspection (state : Full.Environment.State) (side : Side) : Stri
 private def inspectionFields (search : SearchState) : String :=
   let state := search.base
   let events := search.events.filterMap eventJson
-  s!",\"request\":\"{search.requestName}\",\"player\":{sideInspection state .player},\"enemy\":{sideInspection state .enemy},\"events\":[{String.intercalate "," events}]"
+  let rng := state.engine.battle.rng
+  let rngList := rng.list.toList.map toString
+  s!",\"request\":\"{search.requestName}\",\"player\":{sideInspection state .player},\"enemy\":{sideInspection state .enemy},\"rng\":{jsonObject s!"\"list\":[{String.intercalate "," rngList}],\"index\":{rng.index}"},\"events\":[{String.intercalate "," events}]"
 
 private def emit (output : IO.FS.Stream) (line : String) : IO Unit := do
   output.putStr (line ++ "\n")

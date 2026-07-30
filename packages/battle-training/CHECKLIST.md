@@ -143,6 +143,9 @@ profile in M6.
       `FullTraining.featureVector` fixtures.
 - [x] Build the pinned SameBoy browser/WASM wrapper, local canonical-ROM hash
       gate, worker framebuffer, joypad controls, and save-state/memory bridge.
+- [x] Reconstruct selected recorded battles through Lean, stage their complete
+      parties/link RNG in Red, inject both action streams, and synchronize/report
+      WRAM checkpoints throughout browser playback.
 - [ ] Add the versioned WebSocket inference service and patched battle request
       protocol.
 - [ ] Replay patched-ROM turns through the synchronized Lean model and retain

@@ -942,7 +942,7 @@ function renderMatchDetail(detail) {
   }
   const emulatorActions = element("div", "emulator-launch-row");
   const emulatorCopy = element("div");
-  emulatorCopy.append(element("strong", "", "Open the original game emulator"), element("span", "", "Local SameBoy integration preview · canonical ROM required"));
+  emulatorCopy.append(element("strong", "", "Replay through the original game"), element("span", "", "Exact parties, choices, link RNG, and WRAM checkpoints · canonical ROM required"));
   const emulatorButton = element("button", "emulator-launch-button", "Open emulator");
   emulatorButton.type = "button";
   const emulatorHost = element("section", "emulator-host");

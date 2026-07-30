@@ -32,15 +32,23 @@ checks SHA-256
 Validated bytes stay in browser-local IndexedDB and are transferred only to the
 local SameBoy worker.
 
-## Current replay boundary
+## Recorded-match replay
 
-The monitor can boot and control the canonical ROM and can route the title
-screen into Red's unused built-in `TestBattle` routine as an integration demo.
-That runtime-only patch is restored on emulator reset. It proves the ROM,
-SameBoy, worker, framebuffer, input, and dashboard path, but it does **not**
-reproduce the selected training battle.
+`/api/replay` reconstructs the selected self-play or promotion battle from its
+recorded reset coordinates. Before returning a manifest, the server runs every
+recorded action through the deterministic Lean engine and rejects any initial,
+transition, request, final-state, or outcome mismatch.
 
-Exact recorded-match playback still requires a versioned replay manifest with
-full cartridge party bytes and RNG transitions, a setup staging patch, action
-injection at battle request boundaries, and transition-by-transition ROM/Lean
-validation. Historical compact UI records do not contain all of those fields.
+The versioned `pokered-recorded-link-replay-v1` manifest contains full party
+structures, nicknames, link RNG state, both sides' actions, and WRAM checkpoints.
+A runtime-only patch routes Red's built-in `TestBattle` setup into a staged link
+battle, bypasses menu and serial-cable rendezvous, and leaves the original ROM to
+render and execute the battle. It is restored on reset.
+
+At every decision boundary, the adapter compares and then synchronizes party and
+active-mon structures, HP, status, PP, active slots, and link RNG to the
+Lean-validated recording. The completion status reports how many cartridge bytes
+needed correction. This distinction is deliberate: the selected battle is
+reproduced exactly at its recorded semantic boundaries, while presentation-time
+cartridge execution between boundaries remains visible rather than being
+replaced with a simulated animation.

@@ -16,6 +16,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .artifacts import sha256
+from .replay import build_replay_manifest
 
 _STATIC_DIR = Path(__file__).with_name("web")
 _STATIC_FILES = {
@@ -336,8 +337,12 @@ class DashboardStore:
     def __init__(self, root: Path) -> None:
         self.root = root.resolve()
         self._lock = threading.Lock()
+        self._match_lock = threading.Lock()
+        self._replay_lock = threading.Lock()
         self._signature: tuple[tuple[str, int, int], ...] = ()
         self._snapshot: dict[str, Any] | None = None
+        self._matches: dict[tuple[str, int, int], dict[str, Any]] = {}
+        self._replays: dict[tuple[str, int, int], dict[str, Any]] = {}
 
     def _artifact_signature(self) -> tuple[tuple[str, int, int], ...]:
         paths = [
@@ -367,7 +372,29 @@ class DashboardStore:
             return self._snapshot
 
     def match(self, kind: str, iteration: int, match: int) -> dict[str, Any] | None:
-        return build_match_detail(self.root, kind, iteration, match)
+        key = (kind, iteration, match)
+        with self._match_lock:
+            cached = self._matches.get(key)
+            if cached is not None:
+                return cached
+            detail = build_match_detail(self.root, kind, iteration, match)
+            if detail is not None:
+                self._matches[key] = detail
+            return detail
+
+    def replay(self, kind: str, iteration: int, match: int) -> dict[str, Any] | None:
+        key = (kind, iteration, match)
+        with self._replay_lock:
+            cached = self._replays.get(key)
+            if cached is not None:
+                return cached
+            detail = self.match(kind, iteration, match)
+            if detail is None:
+                return None
+            run = _read_json(self.root / "run.json") or {}
+            manifest = build_replay_manifest(run, detail)
+            self._replays[key] = manifest
+            return manifest
 
 
 class _MonitorServer(ThreadingHTTPServer):
@@ -411,6 +438,39 @@ class _MonitorHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/health":
             self._send(HTTPStatus.OK, b'{"ok":true}', "application/json")
+            return
+        if path == "/api/replay":
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                kind = query.get("kind", [""])[0]
+                iteration = int(query.get("iteration", [""])[0])
+                match = int(query.get("match", [""])[0])
+                replay = self.server.store.replay(kind, iteration, match)
+            except (KeyError, TypeError, ValueError) as error:
+                payload = json.dumps({"error": str(error)}).encode()
+                self._send(
+                    HTTPStatus.UNPROCESSABLE_ENTITY,
+                    payload,
+                    "application/json; charset=utf-8",
+                )
+                return
+            except (OSError, RuntimeError) as error:
+                payload = json.dumps({"error": str(error)}).encode()
+                self._send(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    payload,
+                    "application/json; charset=utf-8",
+                )
+                return
+            if replay is None:
+                self._send(
+                    HTTPStatus.NOT_FOUND,
+                    b'{"error":"recorded replay unavailable"}',
+                    "application/json",
+                )
+                return
+            payload = json.dumps(replay, separators=(",", ":")).encode()
+            self._send(HTTPStatus.OK, payload, "application/json; charset=utf-8")
             return
         if path == "/api/match":
             query = parse_qs(urlparse(self.path).query)

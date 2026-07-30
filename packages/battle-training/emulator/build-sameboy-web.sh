@@ -67,7 +67,7 @@ emcc \
   -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createSameBoy \
   -sENVIRONMENT=worker -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=33554432 \
   -sFILESYSTEM=0 -sASSERTIONS=0 -sEXPORTED_RUNTIME_METHODS='["HEAPU8"]' \
-  -sEXPORTED_FUNCTIONS='["_malloc","_free","_sb_create","_sb_load_rom","_sb_reset","_sb_run_frame","_sb_framebuffer","_sb_framebuffer_size","_sb_set_key","_sb_read_memory","_sb_write_memory","_sb_program_counter","_sb_start_test_battle","_sb_test_battle_state","_sb_state_size","_sb_save_state","_sb_load_state"]' \
+  -sEXPORTED_FUNCTIONS='["_malloc","_free","_sb_create","_sb_load_rom","_sb_reset","_sb_run_frame","_sb_framebuffer","_sb_framebuffer_size","_sb_set_key","_sb_read_memory","_sb_write_memory","_sb_program_counter","_sb_start_test_battle","_sb_test_battle_state","_sb_replay_configure","_sb_replay_set_byte","_sb_replay_set_rng","_sb_replay_set_rng_index","_sb_replay_set_action","_sb_replay_expect","_sb_start_recorded_battle","_sb_replay_state","_sb_replay_action_index","_sb_replay_mismatch_count","_sb_replay_first_mismatch","_sb_replay_last_hook","_sb_replay_first_expected","_sb_replay_first_actual","_sb_state_size","_sb_save_state","_sb_load_state"]' \
   -o "${output_dir}/sameboy-core.js"
 
 cp "${sameboy_root}/LICENSE" "${output_dir}/sameboy-LICENSE.txt"

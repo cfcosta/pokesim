@@ -142,6 +142,10 @@
       this.detail = detail;
       this.worker = null;
       this.playing = false;
+      this.romReady = false;
+      this.manifest = null;
+      this.manifestError = null;
+      this.abortController = new AbortController();
       this.pressed = new Set();
       this.build();
     }
@@ -151,8 +155,8 @@
       this.root.className = "emulator-replay";
       const header = node("div", "emulator-header");
       const heading = node("div");
-      heading.append(node("span", "label", "SameBoy · DMG-B"), node("h3", "", "Emulator replay preview"));
-      this.status = node("span", "emulator-status", "Waiting for the canonical ROM");
+      heading.append(node("span", "label", "SameBoy · DMG-B"), node("h3", "", "Recorded battle replay"));
+      this.status = node("span", "emulator-status", "Reconstructing the exact battle manifest…");
       header.append(heading, this.status);
 
       const screenShell = node("div", "emulator-screen-shell");
@@ -172,14 +176,10 @@
       const reset = node("button", "secondary-button", "Restart ROM");
       reset.type = "button";
       reset.addEventListener("click", () => this.worker?.postMessage({ type: "reset" }));
-      this.demoButton = node("button", "secondary-button", "Start demo battle");
-      this.demoButton.type = "button";
-      this.demoButton.disabled = true;
-      this.demoButton.addEventListener("click", () => {
-        this.worker?.postMessage({ type: "demo-battle" });
-        this.demoButton.disabled = true;
-        this.setStatus("Waiting for the title screen…", "loading");
-      });
+      this.replayButton = node("button", "secondary-button", "Start recorded battle");
+      this.replayButton.type = "button";
+      this.replayButton.disabled = true;
+      this.replayButton.addEventListener("click", () => this.startRecordedBattle());
       this.speed = node("select", "emulator-speed");
       this.speed.setAttribute("aria-label", "Playback speed");
       for (const value of [0.5, 1, 2, 4, 8]) {
@@ -189,7 +189,7 @@
         this.speed.append(option);
       }
       this.speed.addEventListener("change", () => this.worker?.postMessage({ type: "speed", value: Number(this.speed.value) }));
-      controls.append(this.playButton, reset, this.demoButton, this.speed);
+      controls.append(this.playButton, reset, this.replayButton, this.speed);
 
       const pad = node("div", "emulator-pad");
       const directional = node("div", "emulator-dpad");
@@ -223,7 +223,7 @@
       picker.append(pickerCopy, pickerActions);
 
       const decisions = (this.detail.timeline || []).length;
-      const note = node("p", "emulator-note", `This first slice runs the verified original ROM in SameBoy. The selected trace has ${decisions} recorded decisions; deterministic party and action injection is the next replay-adapter gate.`);
+      const note = node("p", "emulator-note", `The server replays all ${decisions} recorded decisions through the deterministic Lean engine before playback. SameBoy stages both parties and the link RNG in the canonical ROM, injects every recorded choice, and synchronizes HP, status, PP, active slots, and RNG to the validated trace at each decision boundary. Any corrected cartridge bytes are reported at completion.`);
       const attribution = node("p", "emulator-attribution");
       attribution.append("SameBoy core pinned at 213a12ce · ", Object.assign(node("a", "", "license"), { href: "/sameboy-LICENSE.txt", target: "_blank", rel: "noreferrer" }), ". No ROM is included with this application.");
       this.root.append(header, screenShell, controls, pad, picker, note, attribution);
@@ -231,6 +231,7 @@
       this.canvas.addEventListener("keydown", (event) => this.keyboard(event, true));
       this.canvas.addEventListener("keyup", (event) => this.keyboard(event, false));
       this.canvas.addEventListener("blur", () => this.releaseAll());
+      this.loadReplayManifest();
       this.tryCachedRom();
     }
 
@@ -283,6 +284,45 @@
       this.status.className = `emulator-status${state ? ` ${state}` : ""}`;
     }
 
+    async loadReplayManifest() {
+      const match = this.detail.episode ?? this.detail.game;
+      const query = new URLSearchParams({
+        kind: this.detail.kind,
+        iteration: String(this.detail.iteration),
+        match: String(match),
+      });
+      try {
+        const response = await fetch(`/api/replay?${query}`, { signal: this.abortController.signal });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Exact replay manifest is unavailable");
+        this.manifest = payload;
+        this.replayButton.disabled = !this.romReady;
+        this.updateReadyStatus();
+      } catch (error) {
+        if (error?.name === "AbortError") return;
+        this.manifestError = error instanceof Error ? error.message : String(error);
+        this.setStatus(this.manifestError, "error");
+      }
+    }
+
+    updateReadyStatus() {
+      if (this.manifestError) return;
+      if (this.romReady && this.manifest) {
+        this.setStatus(`Exact ${this.manifest.decision_count}-decision replay ready`, "ready");
+      } else if (this.romReady) {
+        this.setStatus("Canonical ROM verified · reconstructing battle…", "loading");
+      } else if (this.manifest) {
+        this.setStatus("Exact replay reconstructed · choose the canonical ROM", "waiting");
+      }
+    }
+
+    startRecordedBattle() {
+      if (!this.worker || !this.manifest || !this.romReady) return;
+      this.replayButton.disabled = true;
+      this.worker.postMessage({ type: "recorded-battle", manifest: this.manifest });
+      this.setStatus("Launching the selected battle through Pokémon Red…", "loading");
+    }
+
     async tryCachedRom() {
       const rom = await cachedRom();
       if (rom && activePlayer === this) {
@@ -312,8 +352,9 @@
 
     start(rom) {
       this.disposeWorker();
+      this.romReady = false;
       this.setStatus("Starting SameBoy…", "loading");
-      this.worker = new Worker("/sameboy-worker.js?v=12", { type: "module" });
+      this.worker = new Worker("/sameboy-worker.js?v=25", { type: "module" });
       this.worker.addEventListener("message", (event) => this.onMessage(event.data));
       this.worker.addEventListener("error", (event) => this.setStatus(event.message || "SameBoy worker failed", "error"));
       const payload = rom.slice().buffer;
@@ -323,24 +364,53 @@
     onMessage(message) {
       if (message.type === "ready") {
         this.playing = true;
+        this.romReady = true;
         this.playButton.disabled = false;
-        this.demoButton.disabled = false;
+        this.replayButton.disabled = !this.manifest;
         this.playButton.textContent = "Pause";
-        this.setStatus("Canonical ROM verified · running locally", "ready");
+        this.updateReadyStatus();
         this.canvas.focus({ preventScroll: true });
       } else if (message.type === "frame") {
         const pixels = new Uint8ClampedArray(message.frame);
         this.context.putImageData(new ImageData(pixels, 160, 144), 0, 0);
         this.canvas.dataset.programCounter = Number(message.programCounter).toString(16).padStart(4, "0");
-      } else if (message.type === "demo-state" && message.state === 2) {
-        this.setStatus("Canonical test battle running · use the controls below", "ready");
-      } else if (message.type === "demo-state" && message.state === 0) {
-        this.demoButton.disabled = false;
-        this.setStatus("Canonical ROM verified · running locally", "ready");
+        this.canvas.dataset.replayState = String(message.replayState);
+        this.canvas.dataset.replayAction = String(message.replayActionIndex);
+        this.canvas.dataset.replayHook = String(message.replayLastHook);
+        this.canvas.dataset.replayMismatches = String(message.replayMismatchCount);
+        this.canvas.dataset.replayFirstMismatch = String(message.replayFirstMismatch);
+        this.canvas.dataset.replayFirstExpected = String(message.replayFirstExpected);
+        this.canvas.dataset.replayFirstActual = String(message.replayFirstActual);
+      } else if (message.type === "replay-state") {
+        const total = this.manifest?.decision_count ?? 0;
+        if (message.state === 0) {
+          this.playing = true;
+          this.playButton.textContent = "Pause";
+          this.replayButton.disabled = !this.manifest || !this.romReady;
+          this.updateReadyStatus();
+        } else if (message.state === 1 || message.state === 2) {
+          this.playing = true;
+          this.playButton.textContent = "Pause";
+          this.setStatus("Entering the recorded battle…", "loading");
+        } else if (message.state === 3) {
+          this.playing = true;
+          this.playButton.textContent = "Pause";
+          this.setStatus(`Replaying decision ${Math.min(message.actionIndex + 1, total)} of ${total}`, "loading");
+        } else if (message.state === 4 && message.mismatchCount === 0) {
+          this.playing = false;
+          this.playButton.textContent = "Play";
+          this.setStatus(`Replay complete · ${total} cartridge checkpoints matched`, "ready");
+        } else if (message.state === 4) {
+          this.playing = false;
+          this.playButton.textContent = "Play";
+          this.setStatus(`Replay complete · ${total} decisions reproduced · ${message.mismatchCount} boundary bytes resynchronized`, "ready");
+        } else if (message.state < 0) {
+          this.setStatus(`Replay adapter stopped with code ${message.state}`, "error");
+        }
       } else if (message.type === "error") {
         this.setStatus(message.message, "error");
         this.playButton.disabled = true;
-        this.demoButton.disabled = true;
+        this.replayButton.disabled = true;
       }
     }
 
@@ -358,10 +428,12 @@
       this.worker = null;
       this.playing = false;
       this.playButton.disabled = true;
-      this.demoButton.disabled = true;
+      this.replayButton.disabled = true;
+      this.romReady = false;
     }
 
     dispose() {
+      this.abortController.abort();
       this.disposeWorker();
       this.root.replaceChildren();
     }
