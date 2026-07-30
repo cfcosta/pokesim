@@ -2172,11 +2172,17 @@ def run_transformer_pipeline(
             warm_sha = sha256(warm_source)
             warm_copy = root / "warm-start" / "source.pt"
             write_new(warm_copy, warm_source.read_bytes())
+            warm_payload = load_checkpoint(warm_copy, device)
+            source_feature_count = int(warm_payload["config"]["feature_count"])
             network = warm_start_network(warm_copy, model_config, device)
             warm_start_metadata = {
                 "checkpoint": warm_copy.relative_to(root).as_posix(),
                 "sha256": warm_sha,
-                "method": "extend-position-table-v1",
+                "method": (
+                    "same-schema-copy-v1"
+                    if source_feature_count == model_config.feature_count
+                    else "extend-position-table-v1"
+                ),
             }
         else:
             network = BattleTransformer(model_config).to(device)

@@ -132,9 +132,10 @@ inference through static batches up to 256 while CPU uses eager execution.
 historical artifact verification. Production collection defaults to two spawned
 actor processes; `--actor-processes 1..4` controls the versioned choice, while
 smoke runs stay single-process to avoid startup overhead.
-The v4 observation is structurally incompatible with 478-field v3 checkpoints,
-but `--warm-start-checkpoint PATH` copies every compatible parameter and the
-existing positional rows into the extended 492-field model. The uv2nix development
+`--warm-start-checkpoint PATH` copies same-schema checkpoints exactly. For the
+older 478-field v3 schema it copies every compatible parameter and the existing
+positional rows into the extended 492-field v4 model. Warm starts establish a
+new optimizer and artifact lineage rather than importing AdamW state. The uv2nix development
 environment is generated from `uv.lock`; on supported Linux hosts it includes
 the CUDA PyTorch wheel and the NixOS runtime-library fixes required to use the
 GPU.

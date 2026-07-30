@@ -905,6 +905,24 @@ class TransformerTests(unittest.TestCase):
                 else:
                     self.assertTrue(torch.equal(target_value, source_value), name)
 
+    def test_same_schema_checkpoint_warm_starts_exactly(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config = TransformerConfig(
+                feature_count=492,
+                action_count=13,
+                d_model=16,
+                heads=4,
+                layers=1,
+                feedforward=32,
+                precision="bf16",
+            )
+            source = BattleTransformer(config)
+            source_path = Path(temporary) / "same-schema.pt"
+            save_network(source_path, source, None, {"iteration": 4})
+            target = warm_start_network(source_path, config, torch.device("cpu"))
+            for name, source_value in source.state_dict().items():
+                self.assertTrue(torch.equal(target.state_dict()[name], source_value), name)
+
     def test_gradient_diagnostics_report_norm_conflict(self) -> None:
         report = _gradient_report([(0.1, 2.4, -0.2), (0.2, 2.4, 0.1), (0.0, 1.0, None)])
         self.assertEqual(report["samples"], 3)

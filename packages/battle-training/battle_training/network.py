@@ -341,7 +341,7 @@ def load_network(path: Path, device: torch.device) -> BattleTransformer:
 def warm_start_network(
     path: Path, target_config: TransformerConfig, device: torch.device
 ) -> BattleTransformer:
-    """Extend only the positional table while preserving every old parameter."""
+    """Copy a compatible checkpoint, extending only the positional table if needed."""
     source = load_network(path, device)
     source_config = source.config
     comparable_source = asdict(source_config)
@@ -354,8 +354,8 @@ def warm_start_network(
     comparable_target.pop("precision")
     if comparable_source != comparable_target:
         raise ValueError("warm-start checkpoint architecture is incompatible")
-    if source_features >= target_features:
-        raise ValueError("warm-start requires a smaller source observation schema")
+    if source_features > target_features:
+        raise ValueError("warm-start cannot shrink the source observation schema")
 
     target = BattleTransformer(target_config).to(device)
     source_state = source.state_dict()
