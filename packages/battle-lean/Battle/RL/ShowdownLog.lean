@@ -227,6 +227,12 @@ private def renderEvent (context : TeamContext) (observation after : Environment
   | .ineffective side =>
       let state := flushAction observation state
       addLine state s!"|-immune|{identAt observation side.other (renderActive state side.other)}"
+  | .criticalHit side =>
+      let state := flushAction observation state
+      addLine state s!"|-crit|{identAt observation side.other (renderActive state side.other)}"
+  | .superEffective side =>
+      let state := flushAction observation state
+      addLine state s!"|-supereffective|{identAt observation side.other (renderActive state side.other)}"
   | .rng _ _ => flushAction observation state
   | .effect event => renderEffect context observation (flushAction observation state) event
   | .statusBlocked side reason =>
