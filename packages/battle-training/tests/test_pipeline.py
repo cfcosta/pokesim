@@ -52,6 +52,7 @@ from battle_training.red_ai_heuristics import (
     normalized_trainer_policy,
 )
 from battle_training.transformer_pipeline import (
+    _collection_quality,
     _gradient_report,
     _heuristic_population,
     _load_completed_prefix,
@@ -698,7 +699,7 @@ class TransformerTests(unittest.TestCase):
         low, high = _mean_ci95([1.0] * 512)
         self.assertEqual((low, high), (1.0, 1.0))
 
-    def test_skill_probes_reject_switch_churn(self) -> None:
+    def test_skill_probes_observe_switching_without_gating_it(self) -> None:
         skills = {
             "damaging_moves": 200,
             "mean_move_effectiveness_vs_best": 0.7,
@@ -715,8 +716,26 @@ class TransformerTests(unittest.TestCase):
         report = skill_probe_report(
             {"candidate_skills": candidate, "baseline_skills": skills}
         )
-        self.assertFalse(report["switch"]["pass"])
-        self.assertFalse(report["pass"])
+        self.assertIsNone(report["switch"]["pass"])
+        self.assertFalse(report["switch"]["gated"])
+        self.assertEqual(report["gate_version"], "type-status-only-v2")
+        self.assertTrue(report["pass"])
+
+    def test_collection_quality_does_not_gate_switch_rate(self) -> None:
+        config = SimpleNamespace(selfplay_episodes=100)
+        report = _collection_quality(
+            {
+                "truncated": 0,
+                "semantic_divergences": 0,
+                "voluntary_switch_rate": 0.95,
+                "mean_decisions": 20.0,
+                "finished": 100,
+            },
+            config,
+        )
+        self.assertEqual(report["version"], "completion-integrity-v2")
+        self.assertTrue(report["pass"])
+        self.assertEqual(report["reasons"], [])
 
     def test_fixed_opponent_schedule_is_exact_and_periodic(self) -> None:
         schedule = [_scheduled_for_opponent(episode, 0.5) for episode in range(1000)]

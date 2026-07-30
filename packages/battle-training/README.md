@@ -188,7 +188,8 @@ production horizon is 512 real decisions; reaching it remains an unlabeled
 truncation rather than a fabricated
 terminal result. Truncations and semantic cycles score zero. Promotion requires a point score of at least 50%,
 a paired 95% confidence lower bound of at least 50%, and passing separate
-held-out type, status, and switch probes. It also reports and gates 1–2, 3–4,
+held-out type and status probes. Switching rate, completion, and matchup-change
+remain reported diagnostics but do not gate promotion. It also reports and gates 1–2, 3–4,
 5–6, and unequal-party strata, plus a nine-team fixed campaign suite covering
 Brock through Giovanni and Lance. The campaign teams use canonical natural
 moves and fixed DVs inside the link quotient; they do not claim trainer AI or
@@ -267,11 +268,12 @@ Showdown-style `.log` replays plus aggregate metrics
 for damage-move effectiveness relative to the best legal damaging move, status
 success/block/waste counts, and voluntary-switch rate/completion/matchup
 improvement. Production promotion rejects statistically inconclusive updates and
-probe regressions. The expanded gate also rejects collection with more than 1%
-horizon truncation or semantic divergence, below 98% completion, above 20%
-voluntary switching, or mean length above 96 decisions; evaluation nonfinishes
-are capped at 2%. These remain versioned diagnostics, not claims of strategic
-optimality.
+gated type/status probe regressions. Switch diagnostics are observational: neither
+switch frequency nor measured matchup change can reject a candidate or collection.
+The expanded data gate rejects collection with more than 1% horizon truncation or
+semantic divergence, below 98% completion, or mean length above 96 decisions;
+evaluation nonfinishes are capped at 2%. These remain versioned diagnostics, not
+claims of strategic optimality.
 
 The earlier terminal-return move table remains available as `tabular-smoke` and
 `tabular-train`. It is a restricted protocol baseline, not the intended learner.

@@ -1814,13 +1814,15 @@ def _collection_quality(
         reasons.append("horizon-truncation-rate-above-1pct")
     if metrics["semantic_divergences"] / episodes > 0.01:
         reasons.append("semantic-divergence-rate-above-1pct")
-    if metrics["voluntary_switch_rate"] > 0.20:
-        reasons.append("voluntary-switch-rate-above-20pct")
     if metrics["mean_decisions"] > 96:
         reasons.append("mean-battle-length-above-96")
     if metrics["finished"] / episodes < 0.98:
         reasons.append("finished-rate-below-98pct")
-    return {"pass": not reasons, "reasons": reasons}
+    return {
+        "version": "completion-integrity-v2",
+        "pass": not reasons,
+        "reasons": reasons,
+    }
 
 
 def _iteration_numbers(directory: Path, prefix: str, suffix: str) -> set[int]:

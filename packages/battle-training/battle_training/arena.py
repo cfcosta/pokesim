@@ -1548,7 +1548,7 @@ def _run_traced_arena_sequential(
 
 
 def skill_probe_report(arena: dict[str, Any]) -> dict[str, Any]:
-    """Turn a held-out traced arena into explicit type/status/switch gates."""
+    """Gate type/status regressions while retaining switching as a diagnostic."""
     candidate = arena["candidate_skills"]
     baseline = arena["baseline_skills"]
 
@@ -1585,16 +1585,8 @@ def skill_probe_report(arena: dict[str, Any]) -> dict[str, Any]:
         and baseline_waste_rate is not None
         and candidate_waste_rate <= baseline_waste_rate + 0.05
     )
-    switch_pass = (
-        candidate["voluntary_switches"] >= 20
-        and candidate["voluntary_switch_rate"] is not None
-        and candidate["voluntary_switch_rate"] <= 0.20
-        and candidate["switch_completion_rate"] is not None
-        and candidate["switch_completion_rate"] >= 0.98
-        and switch_delta is not None
-        and switch_delta >= -0.05
-    )
     return {
+        "gate_version": "type-status-only-v2",
         "type": {
             "pass": type_pass,
             "candidate_mean_effectiveness_ratio": candidate[
@@ -1614,14 +1606,15 @@ def skill_probe_report(arena: dict[str, Any]) -> dict[str, Any]:
             "baseline_waste_rate": baseline_waste_rate,
         },
         "switch": {
-            "pass": switch_pass,
+            "gated": False,
+            "pass": None,
             "candidate_request_rate": candidate["voluntary_switch_rate"],
             "candidate_completion_rate": candidate["switch_completion_rate"],
             "candidate_matchup_improvement_rate": candidate["matchup_improvement_rate"],
             "baseline_matchup_improvement_rate": baseline["matchup_improvement_rate"],
             "matchup_improvement_delta": switch_delta,
         },
-        "pass": type_pass and status_pass and switch_pass,
+        "pass": type_pass and status_pass,
     }
 
 

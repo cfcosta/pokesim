@@ -1016,7 +1016,9 @@ function renderProbes(data) {
   ];
   for (const [name, passed, delta] of rows) {
     const row = element("div", "probe");
-    row.append(element("span", "", name), element("span", passed ? "pass" : "fail", `${passed ? "Pass" : "Fail"}${delta == null ? "" : ` · ${delta >= 0 ? "+" : ""}${pct(delta)}`}`));
+    const observed = passed == null;
+    const status = observed ? "Observed" : passed ? "Pass" : "Fail";
+    row.append(element("span", "", name), element("span", observed ? "pending" : passed ? "pass" : "fail", `${status}${delta == null ? "" : ` · ${delta >= 0 ? "+" : ""}${pct(delta)}`}`));
     root.append(row);
   }
 }
