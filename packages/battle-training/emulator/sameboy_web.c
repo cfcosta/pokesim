@@ -4,6 +4,7 @@
  * The ROM is supplied by the browser at runtime and is never embedded in this
  * module. The replay adapter stages deterministic link-battle state in WRAM and
  * bypasses only cable/menu rendezvous; Red still renders and executes the battle.
+ * Replay music is suppressed before mixing while cartridge sound effects remain.
  */
 #include <stdbool.h>
 #include <stddef.h>
@@ -28,8 +29,11 @@
 #define PARTY_BYTES (6 * PARTY_MON_SIZE)
 #define PARTY_NAMES (6 * 11)
 
+#define BANK_HOME 0
 #define BANK_TEST_BATTLE 1
 #define BANK_BATTLE_CORE 15
+#define ADDR_PLAY_SOUND 0x23b1
+#define ADDR_AUDIO_TRAMPOLINE 0x3fa6
 #define ADDR_TITLE_JOYPAD 0x443b
 #define ADDR_TEST_BATTLE 0x4da6
 #define ADDR_TEST_BATTLE_INIT_OPPONENT 0x4dd3
@@ -137,10 +141,10 @@ static uint16_t replay_expected_counts[MAX_REPLAY_ACTIONS];
 typedef struct {
     size_t offset;
     size_t size;
-    uint8_t original[16];
+    uint8_t original[32];
 } replay_patch_t;
 
-static replay_patch_t replay_patches[8];
+static replay_patch_t replay_patches[12];
 static unsigned replay_patch_count;
 
 static void load_boot_rom(GB_gameboy_t *gb, GB_boot_rom_t type)
@@ -218,13 +222,29 @@ static void restore_runtime_patch(void)
     runtime_patched = false;
 }
 
+static bool rom_offset(uint16_t bank, uint16_t address, size_t *offset)
+{
+    if (bank == BANK_HOME) {
+        if (address >= 0x4000) {
+            return false;
+        }
+        *offset = address;
+        return true;
+    }
+    if (address < 0x4000 || address >= 0x8000) {
+        return false;
+    }
+    *offset = bank * 0x4000u + address - 0x4000u;
+    return true;
+}
+
 static uint8_t *rom_address(uint16_t bank, uint16_t address)
 {
     size_t size = 0;
+    size_t offset = 0;
     uint16_t mapped_bank = 0;
     uint8_t *rom = rom_bytes(&size, &mapped_bank);
-    size_t offset = bank * 0x4000u + address - 0x4000u;
-    return rom && offset < size ? rom + offset : NULL;
+    return rom_offset(bank, address, &offset) && rom && offset < size ? rom + offset : NULL;
 }
 
 static bool apply_replay_patch(uint16_t bank, uint16_t address,
@@ -235,10 +255,10 @@ static bool apply_replay_patch(uint16_t bank, uint16_t address,
         return false;
     }
     size_t size = 0;
+    size_t offset = 0;
     uint16_t mapped_bank = 0;
     uint8_t *rom = rom_bytes(&size, &mapped_bank);
-    size_t offset = bank * 0x4000u + address - 0x4000u;
-    if (!rom || offset + replacement_size > size) {
+    if (!rom_offset(bank, address, &offset) || !rom || offset + replacement_size > size) {
         return false;
     }
     replay_patch_t *patch = &replay_patches[replay_patch_count++];
@@ -262,7 +282,30 @@ static bool install_runtime_patch(void)
         0xcd, 0xed, 0x3d, /* call RunDefaultPaletteCommand */
         0xc3, 0xa6, 0x4d, /* jp TestBattle */
     };
-    if (!rom || size <= 0x7c49 + sizeof(trampoline)) {
+    static const uint8_t jump_audio_trampoline[] = {
+        0xc3, ADDR_AUDIO_TRAMPOLINE & 0xff, ADDR_AUDIO_TRAMPOLINE >> 8,
+    };
+    static const uint8_t suppress_music[] = {
+        0xe5, 0xd5, 0xc5,       /* preserve hl, de, bc exactly as PlaySound */
+        0x47,                   /* ld b, a: requested sound ID */
+        0xfe, 0xff,             /* stop-all is control, not music */
+        0x28, 0x11,             /* jr z, pass */
+        0xfa, 0xee, 0xc0,       /* ld a, [wNewSoundID] */
+        0xa7,                   /* and a: ordinary SFX leave this zero */
+        0x28, 0x0b,             /* jr z, pass */
+        0xb8,                   /* cp b: direct music requests mirror their ID */
+        0x20, 0x08,             /* jr nz, pass */
+        0xaf,                   /* xor a */
+        0xea, 0xee, 0xc0,       /* ld [wNewSoundID], a */
+        0xc1, 0xd1, 0xe1, 0xc9, /* restore and return without starting music */
+        0x78,                   /* pass: ld a, b */
+        0xc3, 0xb4, 0x23,       /* jp PlaySound after its three pushes */
+    };
+    if (!rom || size <= 0x7c49 + sizeof(trampoline) ||
+        !apply_replay_patch(BANK_HOME, ADDR_PLAY_SOUND,
+                            jump_audio_trampoline, sizeof(jump_audio_trampoline)) ||
+        !apply_replay_patch(BANK_HOME, ADDR_AUDIO_TRAMPOLINE,
+                            suppress_music, sizeof(suppress_music))) {
         return false;
     }
     memcpy(runtime_original, rom + 0x443b, sizeof(runtime_original));

@@ -22,7 +22,10 @@ writes `sameboy-core.js`, `sameboy-core.wasm`, and the upstream license into the
 monitor's package-data directory. The wrapper exposes video frames, 48 kHz
 stereo game audio, save states, memory access, and the program counter. The
 replay pane has no manual joypad: its worker injects only the recorded actions
-and the automatic input needed to advance cartridge text.
+and the automatic input needed to advance cartridge text. Its runtime-only
+`PlaySound` filter drops requests explicitly staged as music while passing
+stop-all control and ordinary SFX requests unchanged. This leaves cartridge
+cries and sound effects available in playback and exported video.
 
 ## ROM boundary
 
@@ -63,7 +66,7 @@ cartridge execution between boundaries remains visible rather than being
 replaced with a simulated animation.
 
 The browser can restart a replay at normal speed and record its 640×576 canvas
-plus SameBoy's stereo samples through `MediaRecorder`. It downloads WebM with
-Opus audio where supported, with MP4 as a browser-dependent fallback. Encoding
-and download stay entirely in the browser; neither ROM bytes nor rendered video
-are sent to the monitor server.
+plus SameBoy's music-free sound-effect samples through `MediaRecorder`. It
+downloads WebM with Opus audio where supported, with MP4 as a browser-dependent
+fallback. Encoding and download stay entirely in the browser; neither ROM bytes
+nor rendered video are sent to the monitor server.

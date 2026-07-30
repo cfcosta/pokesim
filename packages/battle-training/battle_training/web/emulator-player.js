@@ -241,7 +241,7 @@
       picker.append(pickerCopy, pickerActions);
 
       const decisions = (this.detail.timeline || []).length;
-      const note = node("p", "emulator-note", `The server replays all ${decisions} recorded decisions through the deterministic Lean engine before playback. SameBoy stages both parties and the link RNG in the canonical ROM, injects every recorded choice, and synchronizes active Pokémon, volatile multi-turn state, move scratch, and RNG to the validated trace at each decision boundary. Export video restarts the replay at normal speed and downloads a 640×576 browser-encoded video with the original game audio. Any corrected cartridge bytes are reported at completion.`);
+      const note = node("p", "emulator-note", `The server replays all ${decisions} recorded decisions through the deterministic Lean engine before playback. SameBoy stages both parties and the link RNG in the canonical ROM, injects every recorded choice, and synchronizes active Pokémon, volatile multi-turn state, move scratch, and RNG to the validated trace at each decision boundary. Background music is disabled while cartridge cries and sound effects remain. Export video restarts the replay at normal speed and downloads a 640×576 browser-encoded video with those original sound effects. Any corrected cartridge bytes are reported at completion.`);
       const attribution = node("p", "emulator-attribution");
       attribution.append("SameBoy core pinned at 213a12ce · ", Object.assign(node("a", "", "license"), { href: "/sameboy-LICENSE.txt", target: "_blank", rel: "noreferrer" }), ". No ROM is included with this application.");
       this.root.append(header, screenShell, controls, picker, note, attribution);
@@ -442,7 +442,7 @@
         this.worker.postMessage({ type: "speed", value: 1 });
         this.worker.postMessage({ type: "recorded-battle", manifest: this.manifest });
         this.replayStarted = true;
-        this.setStatus("Exporting video with game audio · entering battle…", "loading");
+        this.setStatus("Exporting video with cartridge sound effects · entering battle…", "loading");
       } catch (error) {
         this.failVideoExport(error);
       }
@@ -450,7 +450,7 @@
 
     finishVideoExport() {
       if (!this.exporting || !this.recorder || this.recorder.state === "inactive") return;
-      this.setStatus("Finalizing replay video and audio…", "loading");
+      this.setStatus("Finalizing replay video and sound effects…", "loading");
       window.setTimeout(() => {
         if (this.recorder?.state !== "inactive") this.recorder.stop();
       }, 350);
@@ -469,7 +469,7 @@
         anchor.download = filename;
         anchor.click();
         window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-        this.setStatus(`Video downloaded · ${(blob.size / 1_048_576).toFixed(1)} MiB · game audio included`, "ready");
+        this.setStatus(`Video downloaded · ${(blob.size / 1_048_576).toFixed(1)} MiB · sound effects included`, "ready");
       } else {
         this.setStatus("The browser produced an empty replay video", "error");
       }
@@ -537,7 +537,7 @@
       this.romReady = false;
       this.replayStarted = false;
       this.setStatus("Starting SameBoy…", "loading");
-      this.worker = new Worker("/sameboy-worker.js?v=28", { type: "module" });
+      this.worker = new Worker("/sameboy-worker.js?v=29", { type: "module" });
       this.worker.addEventListener("message", (event) => this.onMessage(event.data));
       this.worker.addEventListener("error", (event) => this.setStatus(event.message || "SameBoy worker failed", "error"));
       const payload = rom.slice().buffer;
@@ -577,7 +577,7 @@
         } else if (message.state === 1 || message.state === 2) {
           this.playing = true;
           this.playButton.textContent = "Pause";
-          this.setStatus(this.exporting ? "Exporting video with game audio · entering battle…" : "Entering the recorded battle…", "loading");
+          this.setStatus(this.exporting ? "Exporting video with cartridge sound effects · entering battle…" : "Entering the recorded battle…", "loading");
         } else if (message.state === 3) {
           this.playing = true;
           this.playButton.textContent = "Pause";
