@@ -7,6 +7,7 @@ from battle_training.replay import (
     _game_text,
     _party_mon_bytes,
     replay_coordinates,
+    replay_trainer_class,
 )
 
 
@@ -81,6 +82,23 @@ class ReplayManifestTests(unittest.TestCase):
         self.assertEqual(coordinates.root_seed, arena_seed + 90_000_000 + 1_000_003)
         self.assertEqual(coordinates.reset_episode, 1)
         self.assertTrue(coordinates.level100)
+
+    def test_trainer_picture_is_stable_and_skips_unused_classes(self) -> None:
+        coordinates = replay_coordinates(
+            {"config": {"seed": 20_260_726}},
+            {
+                "kind": "selfplay",
+                "iteration": 13,
+                "reset_episode": 8,
+                "pair_player_party_size": 6,
+                "pair_enemy_party_size": 6,
+                "level_profile": "distributed",
+                "teams_swapped": False,
+            },
+        )
+        trainer_class = replay_trainer_class(coordinates, 16)
+        self.assertEqual(trainer_class, 15)
+        self.assertNotIn(trainer_class, {0, 13, 27})
 
     def test_checkpoint_covers_party_active_mon_and_rng(self) -> None:
         member = mon()

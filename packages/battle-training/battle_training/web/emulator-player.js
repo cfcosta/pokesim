@@ -354,7 +354,7 @@
       this.disposeWorker();
       this.romReady = false;
       this.setStatus("Starting SameBoy…", "loading");
-      this.worker = new Worker("/sameboy-worker.js?v=25", { type: "module" });
+      this.worker = new Worker("/sameboy-worker.js?v=26", { type: "module" });
       this.worker.addEventListener("message", (event) => this.onMessage(event.data));
       this.worker.addEventListener("error", (event) => this.setStatus(event.message || "SameBoy worker failed", "error"));
       const payload = rom.slice().buffer;

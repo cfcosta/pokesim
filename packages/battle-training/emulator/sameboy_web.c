@@ -29,6 +29,7 @@
 #define BANK_BATTLE_CORE 15
 #define ADDR_TITLE_JOYPAD 0x443b
 #define ADDR_TEST_BATTLE 0x4da6
+#define ADDR_TEST_BATTLE_INIT_OPPONENT 0x4dd3
 #define ADDR_INIT_BATTLE_COMMON 0x6feb
 #define ADDR_MAIN_BATTLE_LOOP 0x4233
 #define ADDR_DISPLAY_BATTLE_MENU 0x4eb3
@@ -46,16 +47,21 @@
 #define ADDR_REPLACEMENT_TRAMPOLINE 0x7c08
 #define ADDR_TERMINAL_TRAMPOLINE 0x7c0c
 
+#define W_TEST_BATTLE_PLAYER_SELECTED_MOVE 0xccd9
 #define W_PLAYER_MOVE_LIST_INDEX 0xcc2e
 #define W_PLAYER_MON_NUMBER 0xcc2f
 #define W_SERIAL_RECEIVE 0xcc3e
 #define W_PLAYER_SELECTED_MOVE 0xccdc
 #define W_LINK_RNG_INDEX 0xccde
 #define W_ACTION_RESULT 0xcd6a
+#define W_CUR_PARTY_SPECIES 0xcf91
 #define W_ENEMY_MON_PARTY_POS 0xcfe8
+#define W_BATTLE_MON_SPECIES2 0xcfd9
 #define W_BATTLE_MON_MOVES 0xd01c
 #define W_IS_IN_BATTLE 0xd057
 #define W_BATTLE_TYPE 0xd05a
+#define W_CUR_OPPONENT 0xd059
+#define W_TRAINER_NO 0xd05d
 #define W_LINK_STATE 0xd12b
 #define W_LINK_RNG_LIST 0xd148
 #define W_PLAYER_NAME 0xd158
@@ -66,6 +72,7 @@
 #define W_PARTY_NICKNAMES 0xd2b5
 #define W_NUM_BAG_ITEMS 0xd31d
 #define W_PLAYER_ID 0xd359
+#define W_STATUS_FLAGS7 0xd733
 #define W_ENEMY_PARTY_COUNT 0xd89c
 #define W_ENEMY_PARTY_SPECIES 0xd89d
 #define W_ENEMY_MONS 0xd8a4
@@ -93,6 +100,7 @@ static int replay_state;
 static bool replay_started;
 static bool replay_initial_active_synced;
 static int replay_outcome;
+static uint8_t replay_trainer_class;
 static unsigned replay_action_count;
 static unsigned replay_action_index;
 static int replay_mismatch_count;
@@ -330,6 +338,11 @@ static void install_replay_state(void)
     GB_write_memory(&gameboy, W_PLAYER_ID + 1, 0);
     GB_write_memory(&gameboy, W_NUM_BAG_ITEMS, 0);
     GB_write_memory(&gameboy, W_NUM_BAG_ITEMS + 1, 0xff);
+    GB_write_memory(
+        &gameboy,
+        W_STATUS_FLAGS7,
+        GB_read_memory(&gameboy, W_STATUS_FLAGS7) & 0xfe
+    );
     write_name(W_PLAYER_NAME, "RED");
     write_name(0xd887, "MODEL");
 
@@ -384,6 +397,17 @@ static void install_initial_active_mons(void)
     replay_initial_active_synced = true;
 }
 
+static void select_player_party_slot(uint8_t slot)
+{
+    uint8_t species = GB_read_memory(
+        &gameboy,
+        (uint16_t) (W_PARTY_SPECIES + slot)
+    );
+    GB_write_memory(&gameboy, 0xcf92, slot); /* wWhichPokemon */
+    GB_write_memory(&gameboy, W_CUR_PARTY_SPECIES, species);
+    GB_write_memory(&gameboy, W_BATTLE_MON_SPECIES2, species);
+}
+
 static uint8_t link_packet(uint8_t action)
 {
     if (action <= 9) {
@@ -415,6 +439,7 @@ static void runtime_callback(GB_gameboy_t *gb, uint16_t address, uint8_t opcode)
 {
     (void) opcode;
     bool interesting = address == ADDR_TITLE_JOYPAD ||
+                       address == ADDR_TEST_BATTLE_INIT_OPPONENT ||
                        address == ADDR_INIT_BATTLE_COMMON ||
                        address == ADDR_MAIN_BATTLE_LOOP ||
                        address == ADDR_DISPLAY_BATTLE_MENU ||
@@ -439,6 +464,13 @@ static void runtime_callback(GB_gameboy_t *gb, uint16_t address, uint8_t opcode)
         return;
     }
     if (replay_state < 2 || replay_state > 3) {
+        return;
+    }
+    if (!replay_started && bank == BANK_TEST_BATTLE &&
+        address == ADDR_TEST_BATTLE_INIT_OPPONENT) {
+        replay_last_hook = 9;
+        GB_write_memory(gb, W_CUR_OPPONENT, 200 + replay_trainer_class);
+        GB_write_memory(gb, W_TRAINER_NO, 1);
         return;
     }
     if (!replay_started && bank == BANK_BATTLE_CORE &&
@@ -485,7 +517,7 @@ static void runtime_callback(GB_gameboy_t *gb, uint16_t address, uint8_t opcode)
             return;
         }
         if (player_action >= 4 && player_action <= 9) {
-            GB_write_memory(gb, 0xcf92, player_action - 4); /* wWhichPokemon */
+            select_player_party_slot(player_action - 4);
             GB_write_memory(gb, W_ACTION_RESULT, 1);
             uint8_t *trampoline = rom_address(BANK_BATTLE_CORE, ADDR_DISPLAY_TRAMPOLINE);
             if (!trampoline) {
@@ -515,15 +547,17 @@ static void runtime_callback(GB_gameboy_t *gb, uint16_t address, uint8_t opcode)
         replay_last_hook = 4;
         if (player_action <= 3) {
             GB_write_memory(gb, W_PLAYER_MOVE_LIST_INDEX, player_action);
-            GB_write_memory(
+            uint8_t move = GB_read_memory(
                 gb,
-                W_PLAYER_SELECTED_MOVE,
-                GB_read_memory(gb, (uint16_t) (W_BATTLE_MON_MOVES + player_action))
+                (uint16_t) (W_BATTLE_MON_MOVES + player_action)
             );
+            GB_write_memory(gb, W_PLAYER_SELECTED_MOVE, move);
+            GB_write_memory(gb, W_TEST_BATTLE_PLAYER_SELECTED_MOVE, move);
         }
         else if (player_action == 11) {
             GB_write_memory(gb, W_PLAYER_MOVE_LIST_INDEX, 0);
             GB_write_memory(gb, W_PLAYER_SELECTED_MOVE, MOVE_STRUGGLE);
+            GB_write_memory(gb, W_TEST_BATTLE_PLAYER_SELECTED_MOVE, MOVE_STRUGGLE);
         }
         else {
             replay_fail(4);
@@ -539,7 +573,7 @@ static void runtime_callback(GB_gameboy_t *gb, uint16_t address, uint8_t opcode)
             replay_fail(5);
             return;
         }
-        GB_write_memory(gb, 0xcf92, player_action - 4); /* wWhichPokemon */
+        select_player_party_slot(player_action - 4);
         return;
     }
     if (bank == BANK_BATTLE_CORE && address == ADDR_LINK_EXCHANGE) {
@@ -557,6 +591,7 @@ static void reset_replay_configuration(void)
     replay_started = false;
     replay_initial_active_synced = false;
     replay_outcome = 0;
+    replay_trainer_class = 0;
     replay_action_count = 0;
     replay_action_index = 0;
     replay_mismatch_count = 0;
@@ -675,19 +710,21 @@ int sb_test_battle_state(void)
 }
 
 int sb_replay_configure(unsigned player_count, unsigned enemy_count,
-                        unsigned action_count, int outcome)
+                        unsigned action_count, int outcome, unsigned trainer_class)
 {
     if (!initialized || !loaded || replay_state != 0 ||
         player_count < 1 || player_count > 6 ||
         enemy_count < 1 || enemy_count > 6 ||
         action_count < 1 || action_count > MAX_REPLAY_ACTIONS ||
-        (outcome != -1 && outcome != 1)) {
+        (outcome != -1 && outcome != 1) ||
+        trainer_class < 1 || trainer_class > 47) {
         return -1;
     }
     replay_player_count = (uint8_t) player_count;
     replay_enemy_count = (uint8_t) enemy_count;
     replay_action_count = action_count;
     replay_outcome = outcome;
+    replay_trainer_class = (uint8_t) trainer_class;
     replay_action_index = 0;
     replay_mismatch_count = 0;
     replay_first_mismatch = 0;

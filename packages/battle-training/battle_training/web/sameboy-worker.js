@@ -1,4 +1,4 @@
-import createSameBoy from "./sameboy-core.js?v=22";
+import createSameBoy from "./sameboy-core.js?v=23";
 
 let core = null;
 let loaded = false;
@@ -15,7 +15,7 @@ let autoAPressed = false;
 let autoStartPressed = false;
 
 const REQUEST_CODES = { battle: 0, "forced-player": 1, "forced-enemy": 2 };
-const REPLAY_VERSION = "pokered-recorded-link-replay-v1";
+const REPLAY_VERSION = "pokered-recorded-link-replay-v2";
 
 function sendError(error) {
   self.postMessage({ type: "error", message: error instanceof Error ? error.message : String(error) });
@@ -109,7 +109,7 @@ function startClock() {
 }
 
 async function initialize(rom) {
-  core ||= await createSameBoy({ locateFile: (path) => path.endsWith(".wasm") ? "/sameboy-core.wasm?v=22" : path });
+  core ||= await createSameBoy({ locateFile: (path) => path.endsWith(".wasm") ? "/sameboy-core.wasm?v=23" : path });
   core._sb_create();
   const bytes = new Uint8Array(rom);
   const pointer = core._malloc(bytes.byteLength);
@@ -150,7 +150,7 @@ function configureReplay(manifest) {
   const player = manifest.initial?.player;
   const enemy = manifest.initial?.enemy;
   const actions = manifest.actions || [];
-  checked(core._sb_replay_configure(player.count, enemy.count, actions.length, manifest.outcome), "header");
+  checked(core._sb_replay_configure(player.count, enemy.count, actions.length, manifest.outcome, manifest.presentation?.trainer_class), "header");
   [player, enemy].forEach((side, sideIndex) => {
     const base = sideIndex * 4;
     stageBytes(base, side.species, `${sideIndex ? "enemy" : "player"} species`);

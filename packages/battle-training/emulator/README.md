@@ -39,11 +39,15 @@ recorded reset coordinates. Before returning a manifest, the server runs every
 recorded action through the deterministic Lean engine and rejects any initial,
 transition, request, final-state, or outcome mismatch.
 
-The versioned `pokered-recorded-link-replay-v1` manifest contains full party
-structures, nicknames, link RNG state, both sides' actions, and WRAM checkpoints.
+The versioned `pokered-recorded-link-replay-v2` manifest contains full party
+structures, nicknames, link RNG state, both sides' actions, WRAM checkpoints,
+and a deterministic random trainer-picture class.
 A runtime-only patch routes Red's built-in `TestBattle` setup into a staged link
-battle, bypasses menu and serial-cable rendezvous, and leaves the original ROM to
-render and execute the battle. It is restored on reset.
+trainer battle, bypasses menu and serial-cable rendezvous, and leaves the
+original ROM to render and execute the battle. It also clears TestBattle's
+Pound-only move override and updates the species variables normally written by
+the party menu so move names and switched sprites follow the recording. The
+runtime patch is restored on reset.
 
 At every decision boundary, the adapter compares and then synchronizes party and
 active-mon structures, HP, status, PP, active slots, and link RNG to the

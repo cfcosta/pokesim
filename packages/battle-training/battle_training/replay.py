@@ -8,7 +8,7 @@ from typing import Any
 
 from .native import SearchServer, build_search_server
 
-REPLAY_PROFILE = "pokered-recorded-link-replay-v1"
+REPLAY_PROFILE = "pokered-recorded-link-replay-v2"
 
 _SEARCH_SERVER_LOCK = Lock()
 _SEARCH_SERVER_READY = False
@@ -27,6 +27,9 @@ _ACTIVE_PP = {"player": 0xD02D, "enemy": 0xCFFE}
 _PARTY_MON_SIZE = 0x2C
 _NAME_SIZE = 11
 _MAX_PARTY = 6
+_TRAINER_PICTURE_CLASSES = tuple(
+    trainer_class for trainer_class in range(1, 48) if trainer_class not in {13, 27}
+)
 
 
 @dataclass(frozen=True)
@@ -213,6 +216,14 @@ def _expected_memory(inspection: dict[str, Any]) -> list[list[int]]:
     return [[address, value] for address, value in sorted(expected.items())]
 
 
+def replay_trainer_class(coordinates: ReplayCoordinates, source_match: int) -> int:
+    """Choose a stable valid trainer picture for one recorded battle."""
+    return _TRAINER_PICTURE_CLASSES[
+        (coordinates.root_seed + coordinates.reset_episode * 17 + source_match * 31)
+        % len(_TRAINER_PICTURE_CLASSES)
+    ]
+
+
 def replay_coordinates(
     run: dict[str, Any], detail: dict[str, Any]
 ) -> ReplayCoordinates:
@@ -302,12 +313,18 @@ def build_replay_manifest(
         final = server.inspect(snapshot.handle)
         _assert_matches_recording(final, detail["final"], "final state")
 
+    source_match = int(detail.get("episode", detail.get("game", -1)))
+    trainer_class = replay_trainer_class(coordinates, source_match)
     return {
         "version": REPLAY_PROFILE,
         "source": {
             "kind": detail["kind"],
             "iteration": int(detail["iteration"]),
-            "match": int(detail.get("episode", detail.get("game", -1))),
+            "match": source_match,
+        },
+        "presentation": {
+            "trainer_class": trainer_class,
+            "trainer_party": 1,
         },
         "coordinates": {
             "root_seed": coordinates.root_seed,
