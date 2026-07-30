@@ -3,10 +3,6 @@
 (() => {
   const CANONICAL_ROM_SHA256 = "5ca7ba01642a3b27b0cc0b5349b52792795b62d3ed977e98a09390659af96b7b";
   const ROM_BYTES = 1024 * 1024;
-  const KEY_CODES = {
-    ArrowRight: 0, ArrowLeft: 1, ArrowUp: 2, ArrowDown: 3,
-    z: 4, x: 5, Shift: 6, Enter: 7,
-  };
   let activePlayer = null;
   let sessionRom = null;
 
@@ -146,7 +142,18 @@
       this.manifest = null;
       this.manifestError = null;
       this.abortController = new AbortController();
-      this.pressed = new Set();
+      this.replayStarted = false;
+      this.audioContext = null;
+      this.audioBus = null;
+      this.monitorGain = null;
+      this.recordingDestination = null;
+      this.audioSources = new Set();
+      this.audioNextTime = 0;
+      this.soundEnabled = false;
+      this.exporting = false;
+      this.discardVideo = false;
+      this.recorder = null;
+      this.recordedChunks = [];
       this.build();
     }
 
@@ -161,11 +168,14 @@
 
       const screenShell = node("div", "emulator-screen-shell");
       this.canvas = node("canvas", "emulator-screen");
-      this.canvas.width = 160;
-      this.canvas.height = 144;
-      this.canvas.tabIndex = 0;
+      this.canvas.width = 640;
+      this.canvas.height = 576;
       this.context = this.canvas.getContext("2d", { alpha: false });
       this.context.imageSmoothingEnabled = false;
+      this.frameCanvas = document.createElement("canvas");
+      this.frameCanvas.width = 160;
+      this.frameCanvas.height = 144;
+      this.frameContext = this.frameCanvas.getContext("2d", { alpha: false });
       screenShell.append(this.canvas);
 
       const controls = node("div", "emulator-toolbar");
@@ -173,13 +183,10 @@
       this.playButton.type = "button";
       this.playButton.disabled = true;
       this.playButton.addEventListener("click", () => this.togglePlayback());
-      const reset = node("button", "secondary-button", "Restart ROM");
-      reset.type = "button";
-      reset.addEventListener("click", () => this.worker?.postMessage({ type: "reset" }));
-      this.replayButton = node("button", "secondary-button", "Start recorded battle");
-      this.replayButton.type = "button";
-      this.replayButton.disabled = true;
-      this.replayButton.addEventListener("click", () => this.startRecordedBattle());
+      this.resetButton = node("button", "secondary-button", "Restart replay");
+      this.resetButton.type = "button";
+      this.resetButton.disabled = true;
+      this.resetButton.addEventListener("click", () => this.restartReplay());
       this.speed = node("select", "emulator-speed");
       this.speed.setAttribute("aria-label", "Playback speed");
       for (const value of [0.5, 1, 2, 4, 8]) {
@@ -188,17 +195,19 @@
         option.selected = value === 1;
         this.speed.append(option);
       }
-      this.speed.addEventListener("change", () => this.worker?.postMessage({ type: "speed", value: Number(this.speed.value) }));
-      controls.append(this.playButton, reset, this.replayButton, this.speed);
-
-      const pad = node("div", "emulator-pad");
-      const directional = node("div", "emulator-dpad");
-      directional.append(this.keyButton("↑", 2, "dpad-up"), this.keyButton("←", 1, "dpad-left"), this.keyButton("→", 0, "dpad-right"), this.keyButton("↓", 3, "dpad-down"));
-      const system = node("div", "emulator-system-buttons");
-      system.append(this.keyButton("Select", 6), this.keyButton("Start", 7));
-      const actions = node("div", "emulator-action-buttons");
-      actions.append(this.keyButton("B", 5, "button-b"), this.keyButton("A", 4, "button-a"));
-      pad.append(directional, system, actions);
+      this.speed.addEventListener("change", () => {
+        this.resetAudioTimeline();
+        this.worker?.postMessage({ type: "speed", value: Number(this.speed.value) });
+      });
+      this.soundButton = node("button", "secondary-button", "Sound off");
+      this.soundButton.type = "button";
+      this.soundButton.setAttribute("aria-pressed", "false");
+      this.soundButton.addEventListener("click", () => this.toggleSound());
+      this.exportButton = node("button", "primary-button", "Export video");
+      this.exportButton.type = "button";
+      this.exportButton.disabled = true;
+      this.exportButton.addEventListener("click", () => this.exportVideo());
+      controls.append(this.playButton, this.resetButton, this.speed, this.soundButton, this.exportButton);
 
       const picker = node("div", "rom-picker");
       const pickerCopy = node("div");
@@ -223,60 +232,13 @@
       picker.append(pickerCopy, pickerActions);
 
       const decisions = (this.detail.timeline || []).length;
-      const note = node("p", "emulator-note", `The server replays all ${decisions} recorded decisions through the deterministic Lean engine before playback. SameBoy stages both parties and the link RNG in the canonical ROM, injects every recorded choice, and synchronizes HP, status, PP, active slots, and RNG to the validated trace at each decision boundary. Any corrected cartridge bytes are reported at completion.`);
+      const note = node("p", "emulator-note", `The server replays all ${decisions} recorded decisions through the deterministic Lean engine before playback. SameBoy stages both parties and the link RNG in the canonical ROM, injects every recorded choice, and synchronizes HP, status, PP, active slots, and RNG to the validated trace at each decision boundary. Export video restarts the replay at normal speed and downloads a 640×576 browser-encoded video with the original game audio. Any corrected cartridge bytes are reported at completion.`);
       const attribution = node("p", "emulator-attribution");
       attribution.append("SameBoy core pinned at 213a12ce · ", Object.assign(node("a", "", "license"), { href: "/sameboy-LICENSE.txt", target: "_blank", rel: "noreferrer" }), ". No ROM is included with this application.");
-      this.root.append(header, screenShell, controls, pad, picker, note, attribution);
+      this.root.append(header, screenShell, controls, picker, note, attribution);
 
-      this.canvas.addEventListener("keydown", (event) => this.keyboard(event, true));
-      this.canvas.addEventListener("keyup", (event) => this.keyboard(event, false));
-      this.canvas.addEventListener("blur", () => this.releaseAll());
       this.loadReplayManifest();
       this.tryCachedRom();
-    }
-
-    keyButton(label, key, className = "") {
-      const button = node("button", `emulator-key ${className}`, label);
-      button.type = "button";
-      button.setAttribute("aria-label", `${label} button`);
-      const press = (event) => {
-        event.preventDefault();
-        this.canvas.focus({ preventScroll: true });
-        this.setKey(key, true);
-        button.classList.add("is-pressed");
-      };
-      const release = (event) => {
-        event.preventDefault();
-        this.setKey(key, false);
-        button.classList.remove("is-pressed");
-      };
-      button.addEventListener("pointerdown", press);
-      button.addEventListener("pointerup", release);
-      button.addEventListener("pointercancel", release);
-      button.addEventListener("pointerleave", (event) => {
-        if (event.buttons) release(event);
-      });
-      return button;
-    }
-
-    keyboard(event, pressed) {
-      const lookup = event.key.length === 1 ? event.key.toLowerCase() : event.key;
-      const key = KEY_CODES[lookup];
-      if (key === undefined) return;
-      event.preventDefault();
-      if (!event.repeat || !pressed) this.setKey(key, pressed);
-    }
-
-    setKey(key, pressed) {
-      if (!this.worker) return;
-      if (pressed) this.pressed.add(key);
-      else this.pressed.delete(key);
-      this.worker.postMessage({ type: "key", key, pressed });
-    }
-
-    releaseAll() {
-      for (const key of this.pressed) this.worker?.postMessage({ type: "key", key, pressed: false });
-      this.pressed.clear();
     }
 
     setStatus(message, state = "") {
@@ -296,8 +258,8 @@
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || "Exact replay manifest is unavailable");
         this.manifest = payload;
-        this.replayButton.disabled = !this.romReady;
         this.updateReadyStatus();
+        this.maybeStartReplay();
       } catch (error) {
         if (error?.name === "AbortError") return;
         this.manifestError = error instanceof Error ? error.message : String(error);
@@ -316,11 +278,222 @@
       }
     }
 
+    maybeStartReplay() {
+      if (this.replayStarted || !this.worker || !this.manifest || !this.romReady) return;
+      this.startRecordedBattle();
+    }
+
     startRecordedBattle() {
       if (!this.worker || !this.manifest || !this.romReady) return;
-      this.replayButton.disabled = true;
+      this.replayStarted = true;
+      this.resetButton.disabled = false;
+      this.exportButton.disabled = !this.canExportVideo();
       this.worker.postMessage({ type: "recorded-battle", manifest: this.manifest });
       this.setStatus("Launching the selected battle through Pokémon Red…", "loading");
+    }
+
+    restartReplay() {
+      if (!this.worker || !this.manifest || !this.romReady || this.exporting) return;
+      this.stopScheduledAudio();
+      this.worker.postMessage({ type: "reset" });
+      this.worker.postMessage({ type: "speed", value: Number(this.speed.value) });
+      this.worker.postMessage({ type: "recorded-battle", manifest: this.manifest });
+      this.replayStarted = true;
+      this.setStatus("Restarting the recorded battle…", "loading");
+    }
+
+    canExportVideo() {
+      return typeof MediaRecorder !== "undefined"
+        && typeof this.canvas.captureStream === "function"
+        && Boolean(window.AudioContext || window.webkitAudioContext);
+    }
+
+    videoMimeType() {
+      return [
+        "video/webm;codecs=vp9,opus",
+        "video/webm;codecs=vp8,opus",
+        "video/webm",
+        "video/mp4",
+      ].find((type) => MediaRecorder.isTypeSupported(type)) || "";
+    }
+
+    async ensureAudio() {
+      if (!this.audioContext) {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) throw new Error("This browser cannot play or record emulator audio");
+        this.audioContext = new AudioContextClass({ sampleRate: 48000 });
+        this.audioBus = this.audioContext.createGain();
+        this.monitorGain = this.audioContext.createGain();
+        this.recordingDestination = this.audioContext.createMediaStreamDestination();
+        this.audioBus.connect(this.monitorGain);
+        this.audioBus.connect(this.recordingDestination);
+        this.monitorGain.connect(this.audioContext.destination);
+        this.monitorGain.gain.value = this.soundEnabled ? 0.35 : 0;
+      }
+      if (this.audioContext.state === "suspended") await this.audioContext.resume();
+    }
+
+    async toggleSound() {
+      try {
+        await this.ensureAudio();
+        this.soundEnabled = !this.soundEnabled;
+        this.monitorGain.gain.setTargetAtTime(this.soundEnabled ? 0.35 : 0, this.audioContext.currentTime, 0.01);
+        this.soundButton.textContent = this.soundEnabled ? "Sound on" : "Sound off";
+        this.soundButton.setAttribute("aria-pressed", String(this.soundEnabled));
+        if (!this.soundEnabled && !this.exporting) this.stopScheduledAudio();
+      } catch (error) {
+        this.setStatus(error instanceof Error ? error.message : String(error), "error");
+      }
+    }
+
+    resetAudioTimeline() {
+      this.audioNextTime = 0;
+    }
+
+    stopScheduledAudio() {
+      for (const source of this.audioSources) {
+        try {
+          source.stop();
+        } catch {
+          // A source that has already ended needs no cleanup.
+        }
+      }
+      this.audioSources.clear();
+      this.resetAudioTimeline();
+    }
+
+    queueAudio(message) {
+      if (!this.audioContext || this.audioContext.state !== "running" || (!this.soundEnabled && !this.exporting)) return;
+      const frames = Number(message.frames) || 0;
+      if (!frames) return;
+      const pcm = new Int16Array(message.samples);
+      const buffer = this.audioContext.createBuffer(2, frames, Number(message.sampleRate) || 48000);
+      const left = buffer.getChannelData(0);
+      const right = buffer.getChannelData(1);
+      for (let index = 0; index < frames; index += 1) {
+        left[index] = pcm[index * 2] / 32768;
+        right[index] = pcm[index * 2 + 1] / 32768;
+      }
+      const source = this.audioContext.createBufferSource();
+      const playbackSpeed = Math.max(0.25, Number(message.speed) || 1);
+      source.buffer = buffer;
+      source.playbackRate.value = playbackSpeed;
+      source.connect(this.audioBus);
+      source.addEventListener("ended", () => {
+        source.disconnect();
+        this.audioSources.delete(source);
+      }, { once: true });
+      const now = this.audioContext.currentTime;
+      if (!this.audioNextTime || this.audioNextTime < now - 0.02 || this.audioNextTime > now + 0.25) {
+        this.audioNextTime = now + 0.04;
+      }
+      source.start(this.audioNextTime);
+      this.audioNextTime += frames / buffer.sampleRate / playbackSpeed;
+      this.audioSources.add(source);
+    }
+
+    async exportVideo() {
+      if (!this.canExportVideo() || !this.worker || !this.manifest || !this.romReady || this.exporting) return;
+      try {
+        await this.ensureAudio();
+        this.stopScheduledAudio();
+        this.exporting = true;
+        this.discardVideo = false;
+        this.recordedChunks = [];
+        this.speed.value = "1";
+        this.speed.disabled = true;
+        this.playButton.disabled = true;
+        this.resetButton.disabled = true;
+        this.exportButton.disabled = true;
+        this.exportButton.textContent = "Exporting…";
+
+        const canvasStream = this.canvas.captureStream(60);
+        this.recordingStream = new MediaStream([
+          ...canvasStream.getVideoTracks(),
+          ...this.recordingDestination.stream.getAudioTracks(),
+        ]);
+        const mimeType = this.videoMimeType();
+        this.recorder = new MediaRecorder(this.recordingStream, {
+          ...(mimeType ? { mimeType } : {}),
+          videoBitsPerSecond: 4_000_000,
+          audioBitsPerSecond: 128_000,
+        });
+        this.recorder.addEventListener("dataavailable", (event) => {
+          if (event.data.size) this.recordedChunks.push(event.data);
+        });
+        this.recorder.addEventListener("error", (event) => {
+          this.failVideoExport(event.error || new Error("The browser could not record this replay"));
+        });
+        this.recorder.addEventListener("stop", () => {
+          if (this.discardVideo) this.resetVideoExport();
+          else this.downloadVideo();
+        }, { once: true });
+        this.recorder.start(1000);
+        this.worker.postMessage({ type: "reset" });
+        this.worker.postMessage({ type: "speed", value: 1 });
+        this.worker.postMessage({ type: "recorded-battle", manifest: this.manifest });
+        this.replayStarted = true;
+        this.setStatus("Exporting video with game audio · entering battle…", "loading");
+      } catch (error) {
+        this.failVideoExport(error);
+      }
+    }
+
+    finishVideoExport() {
+      if (!this.exporting || !this.recorder || this.recorder.state === "inactive") return;
+      this.setStatus("Finalizing replay video and audio…", "loading");
+      window.setTimeout(() => {
+        if (this.recorder?.state !== "inactive") this.recorder.stop();
+      }, 350);
+    }
+
+    downloadVideo() {
+      const mimeType = this.recorder?.mimeType || this.videoMimeType() || "video/webm";
+      const blob = new Blob(this.recordedChunks, { type: mimeType });
+      if (blob.size) {
+        const extension = mimeType.includes("mp4") ? "mp4" : "webm";
+        const match = this.detail.episode ?? this.detail.game;
+        const filename = `pokemon-red-${this.detail.kind}-${this.detail.iteration}-${match}.${extension}`;
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        anchor.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        this.setStatus(`Video downloaded · ${(blob.size / 1_048_576).toFixed(1)} MiB · game audio included`, "ready");
+      } else {
+        this.setStatus("The browser produced an empty replay video", "error");
+      }
+      this.resetVideoExport();
+    }
+
+    failVideoExport(error) {
+      this.discardVideo = true;
+      this.setStatus(error instanceof Error ? error.message : String(error), "error");
+      if (this.recorder?.state && this.recorder.state !== "inactive") {
+        try {
+          this.recorder.stop();
+          return;
+        } catch {
+          // The recorder may already be stopping after an encoder error.
+        }
+      }
+      this.resetVideoExport();
+    }
+
+    resetVideoExport() {
+      this.recordingStream?.getVideoTracks().forEach((track) => track.stop());
+      this.recordingStream = null;
+      this.recorder = null;
+      this.recordedChunks = [];
+      this.exporting = false;
+      this.discardVideo = false;
+      this.speed.disabled = false;
+      this.playButton.disabled = !this.romReady;
+      this.resetButton.disabled = !this.romReady || !this.manifest;
+      this.exportButton.disabled = !this.romReady || !this.manifest || !this.canExportVideo();
+      this.exportButton.textContent = "Export video";
+      if (!this.soundEnabled) this.stopScheduledAudio();
     }
 
     async tryCachedRom() {
@@ -353,8 +526,9 @@
     start(rom) {
       this.disposeWorker();
       this.romReady = false;
+      this.replayStarted = false;
       this.setStatus("Starting SameBoy…", "loading");
-      this.worker = new Worker("/sameboy-worker.js?v=26", { type: "module" });
+      this.worker = new Worker("/sameboy-worker.js?v=27", { type: "module" });
       this.worker.addEventListener("message", (event) => this.onMessage(event.data));
       this.worker.addEventListener("error", (event) => this.setStatus(event.message || "SameBoy worker failed", "error"));
       const payload = rom.slice().buffer;
@@ -366,13 +540,15 @@
         this.playing = true;
         this.romReady = true;
         this.playButton.disabled = false;
-        this.replayButton.disabled = !this.manifest;
+        this.resetButton.disabled = !this.manifest;
+        this.exportButton.disabled = !this.manifest || !this.canExportVideo();
         this.playButton.textContent = "Pause";
         this.updateReadyStatus();
-        this.canvas.focus({ preventScroll: true });
+        this.maybeStartReplay();
       } else if (message.type === "frame") {
         const pixels = new Uint8ClampedArray(message.frame);
-        this.context.putImageData(new ImageData(pixels, 160, 144), 0, 0);
+        this.frameContext.putImageData(new ImageData(pixels, 160, 144), 0, 0);
+        this.context.drawImage(this.frameCanvas, 0, 0, this.canvas.width, this.canvas.height);
         this.canvas.dataset.programCounter = Number(message.programCounter).toString(16).padStart(4, "0");
         this.canvas.dataset.replayState = String(message.replayState);
         this.canvas.dataset.replayAction = String(message.replayActionIndex);
@@ -381,41 +557,49 @@
         this.canvas.dataset.replayFirstMismatch = String(message.replayFirstMismatch);
         this.canvas.dataset.replayFirstExpected = String(message.replayFirstExpected);
         this.canvas.dataset.replayFirstActual = String(message.replayFirstActual);
+      } else if (message.type === "audio") {
+        this.queueAudio(message);
       } else if (message.type === "replay-state") {
         const total = this.manifest?.decision_count ?? 0;
         if (message.state === 0) {
           this.playing = true;
           this.playButton.textContent = "Pause";
-          this.replayButton.disabled = !this.manifest || !this.romReady;
-          this.updateReadyStatus();
+          if (!this.exporting) this.updateReadyStatus();
         } else if (message.state === 1 || message.state === 2) {
           this.playing = true;
           this.playButton.textContent = "Pause";
-          this.setStatus("Entering the recorded battle…", "loading");
+          this.setStatus(this.exporting ? "Exporting video with game audio · entering battle…" : "Entering the recorded battle…", "loading");
         } else if (message.state === 3) {
           this.playing = true;
           this.playButton.textContent = "Pause";
-          this.setStatus(`Replaying decision ${Math.min(message.actionIndex + 1, total)} of ${total}`, "loading");
-        } else if (message.state === 4 && message.mismatchCount === 0) {
-          this.playing = false;
-          this.playButton.textContent = "Play";
-          this.setStatus(`Replay complete · ${total} cartridge checkpoints matched`, "ready");
+          const prefix = this.exporting ? "Exporting video" : "Replaying";
+          this.setStatus(`${prefix} · decision ${Math.min(message.actionIndex + 1, total)} of ${total}`, "loading");
         } else if (message.state === 4) {
           this.playing = false;
           this.playButton.textContent = "Play";
-          this.setStatus(`Replay complete · ${total} decisions reproduced · ${message.mismatchCount} boundary bytes resynchronized`, "ready");
+          if (this.exporting) {
+            this.finishVideoExport();
+          } else if (message.mismatchCount === 0) {
+            this.setStatus(`Replay complete · ${total} cartridge checkpoints matched`, "ready");
+          } else {
+            this.setStatus(`Replay complete · ${total} decisions reproduced · ${message.mismatchCount} boundary bytes resynchronized`, "ready");
+          }
         } else if (message.state < 0) {
-          this.setStatus(`Replay adapter stopped with code ${message.state}`, "error");
+          const error = new Error(`Replay adapter stopped with code ${message.state}`);
+          if (this.exporting) this.failVideoExport(error);
+          else this.setStatus(error.message, "error");
         }
       } else if (message.type === "error") {
-        this.setStatus(message.message, "error");
+        if (this.exporting) this.failVideoExport(new Error(message.message));
+        else this.setStatus(message.message, "error");
         this.playButton.disabled = true;
-        this.replayButton.disabled = true;
+        this.resetButton.disabled = true;
+        this.exportButton.disabled = true;
       }
     }
 
     togglePlayback() {
-      if (!this.worker) return;
+      if (!this.worker || this.exporting) return;
       this.playing = !this.playing;
       this.worker.postMessage({ type: this.playing ? "play" : "pause" });
       this.playButton.textContent = this.playing ? "Pause" : "Play";
@@ -423,18 +607,23 @@
     }
 
     disposeWorker() {
-      this.releaseAll();
+      this.stopScheduledAudio();
       this.worker?.terminate();
       this.worker = null;
       this.playing = false;
       this.playButton.disabled = true;
-      this.replayButton.disabled = true;
+      this.resetButton.disabled = true;
+      this.exportButton.disabled = true;
       this.romReady = false;
+      this.replayStarted = false;
     }
 
     dispose() {
       this.abortController.abort();
+      if (this.exporting) this.failVideoExport(new Error("Video export canceled"));
       this.disposeWorker();
+      this.audioContext?.close();
+      this.audioContext = null;
       this.root.replaceChildren();
     }
   }

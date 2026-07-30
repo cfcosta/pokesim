@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "Core/gb.h"
+#include "Core/apu.h"
 #include "Core/display.h"
 #include "Core/joypad.h"
 #include "Core/memory.h"
@@ -19,6 +20,8 @@
 #include "dmg_boot.h"
 
 #define FRAME_PIXELS (160 * 144)
+#define AUDIO_SAMPLE_RATE 48000
+#define AUDIO_FRAMES_PER_VIDEO_FRAME 2048
 #define MAX_REPLAY_ACTIONS 512
 #define MAX_EXPECTATIONS 640
 #define PARTY_MON_SIZE 0x2c
@@ -89,6 +92,8 @@
 
 static GB_gameboy_t gameboy;
 static uint32_t framebuffer[FRAME_PIXELS];
+static int16_t audio_samples[AUDIO_FRAMES_PER_VIDEO_FRAME * 2];
+static size_t audio_frame_count;
 static bool initialized;
 static bool loaded;
 
@@ -152,6 +157,17 @@ static uint32_t encode_rgba(GB_gameboy_t *gb, uint8_t red, uint8_t green, uint8_
            ((uint32_t) green << 8) |
            ((uint32_t) blue << 16) |
            UINT32_C(0xff000000);
+}
+
+static void receive_audio_sample(GB_gameboy_t *gb, GB_sample_t *sample)
+{
+    (void) gb;
+    if (audio_frame_count >= AUDIO_FRAMES_PER_VIDEO_FRAME) {
+        return;
+    }
+    audio_samples[audio_frame_count * 2] = sample->left;
+    audio_samples[audio_frame_count * 2 + 1] = sample->right;
+    audio_frame_count++;
 }
 
 static void write_name(uint16_t address, const char *name)
@@ -613,6 +629,9 @@ int sb_create(void)
     GB_set_boot_rom_load_callback(&gameboy, load_boot_rom);
     GB_set_pixels_output(&gameboy, framebuffer);
     GB_set_rgb_encode_callback(&gameboy, encode_rgba);
+    GB_set_sample_rate(&gameboy, AUDIO_SAMPLE_RATE);
+    GB_apu_set_sample_callback(&gameboy, receive_audio_sample);
+    audio_frame_count = 0;
     initialized = true;
     loaded = false;
     demo_state = 0;
@@ -644,6 +663,7 @@ void sb_reset(void)
         GB_reset(&gameboy);
         GB_set_execution_callback(&gameboy, NULL);
         demo_state = 0;
+        audio_frame_count = 0;
         reset_replay_configuration();
     }
 }
@@ -653,8 +673,24 @@ int sb_run_frame(void)
     if (!initialized || !loaded) {
         return -1;
     }
+    audio_frame_count = 0;
     GB_run_frame(&gameboy);
     return 0;
+}
+
+uintptr_t sb_audio_buffer(void)
+{
+    return (uintptr_t) audio_samples;
+}
+
+size_t sb_audio_frames(void)
+{
+    return audio_frame_count;
+}
+
+unsigned sb_audio_sample_rate(void)
+{
+    return AUDIO_SAMPLE_RATE;
 }
 
 uintptr_t sb_framebuffer(void)

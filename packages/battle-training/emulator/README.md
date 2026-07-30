@@ -19,9 +19,10 @@ nix shell nixpkgs#emscripten nixpkgs#rgbds nixpkgs#gnumake \
 
 Without `SAMEBOY_ROOT`, the script clones and checks out the pinned revision. It
 writes `sameboy-core.js`, `sameboy-core.wasm`, and the upstream license into the
-monitor's package-data directory. The wrapper exposes video frames, joypad
-input, save states, memory access, and the program counter. Audio is not wired in
-this first slice.
+monitor's package-data directory. The wrapper exposes video frames, 48 kHz
+stereo game audio, save states, memory access, and the program counter. The
+replay pane has no manual joypad: its worker injects only the recorded actions
+and the automatic input needed to advance cartridge text.
 
 ## ROM boundary
 
@@ -56,3 +57,9 @@ needed correction. This distinction is deliberate: the selected battle is
 reproduced exactly at its recorded semantic boundaries, while presentation-time
 cartridge execution between boundaries remains visible rather than being
 replaced with a simulated animation.
+
+The browser can restart a replay at normal speed and record its 640×576 canvas
+plus SameBoy's stereo samples through `MediaRecorder`. It downloads WebM with
+Opus audio where supported, with MP4 as a browser-dependent fallback. Encoding
+and download stay entirely in the browser; neither ROM bytes nor rendered video
+are sent to the monitor server.

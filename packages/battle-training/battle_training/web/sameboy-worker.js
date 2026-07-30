@@ -1,4 +1,4 @@
-import createSameBoy from "./sameboy-core.js?v=23";
+import createSameBoy from "./sameboy-core.js?v=24";
 
 let core = null;
 let loaded = false;
@@ -39,6 +39,31 @@ function publishFrame() {
     replayFirstExpected: core._sb_replay_first_expected(),
     replayFirstActual: core._sb_replay_first_actual(),
   }, [frame]);
+}
+
+function collectAudio(chunks) {
+  const frames = core._sb_audio_frames();
+  if (!frames) return;
+  const pointer = core._sb_audio_buffer();
+  chunks.push(core.HEAPU8.slice(pointer, pointer + frames * 4));
+}
+
+function publishAudio(chunks) {
+  if (!chunks.length) return;
+  const byteLength = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+  const samples = new Uint8Array(byteLength);
+  let offset = 0;
+  chunks.forEach((chunk) => {
+    samples.set(chunk, offset);
+    offset += chunk.byteLength;
+  });
+  self.postMessage({
+    type: "audio",
+    samples: samples.buffer,
+    frames: byteLength / 4,
+    sampleRate: core._sb_audio_sample_rate(),
+    speed,
+  }, [samples.buffer]);
 }
 
 function setAutomaticInput(enabled) {
@@ -84,8 +109,10 @@ function tick() {
   if (!core || !loaded || !playing) return;
   frameCredit += speed;
   let ran = false;
+  const audioChunks = [];
   while (frameCredit >= 1) {
     if (core._sb_run_frame() !== 0) throw new Error("SameBoy could not advance the loaded ROM");
+    collectAudio(audioChunks);
     emulatedFrames += 1;
     setAutomaticInput(demoState === 2 || replayState === 1 || replayState === 2 || replayState === 3);
     publishRuntimeState();
@@ -93,6 +120,7 @@ function tick() {
     ran = true;
     if (!playing) break;
   }
+  publishAudio(audioChunks);
   if (ran) publishFrame();
 }
 
@@ -109,7 +137,7 @@ function startClock() {
 }
 
 async function initialize(rom) {
-  core ||= await createSameBoy({ locateFile: (path) => path.endsWith(".wasm") ? "/sameboy-core.wasm?v=23" : path });
+  core ||= await createSameBoy({ locateFile: (path) => path.endsWith(".wasm") ? "/sameboy-core.wasm?v=24" : path });
   core._sb_create();
   const bytes = new Uint8Array(rom);
   const pointer = core._malloc(bytes.byteLength);
@@ -233,8 +261,6 @@ self.addEventListener("message", async (event) => {
       core._sb_start_test_battle();
     } else if (message.type === "recorded-battle") {
       configureReplay(message.manifest);
-    } else if (message.type === "key") {
-      core._sb_set_key(Number(message.key), message.pressed ? 1 : 0);
     } else if (message.type === "save-state") {
       await saveState(message.request);
     } else if (message.type === "load-state") {
