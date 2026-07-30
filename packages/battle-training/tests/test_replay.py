@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import call, patch
 
 from battle_training.replay import (
     ReplayCoordinates,
@@ -10,6 +11,7 @@ from battle_training.replay import (
     _party_mon_bytes,
     _recorded_state_for_replay,
     _swap_request,
+    build_replay_manifest,
     replay_coordinates,
     replay_trainer_class,
 )
@@ -133,6 +135,59 @@ class ReplayManifestTests(unittest.TestCase):
         self.assertTrue(replay.swapped)
         self.assertEqual((replay.player_size, replay.enemy_size), (3, 6))
         self.assertFalse(_coordinates_for_replay(replay, True).swapped)
+
+    def test_enemy_candidate_uses_recorded_orientation_when_swap_diverges(self) -> None:
+        coordinates = ReplayCoordinates(
+            root_seed=20_270_726,
+            reset_episode=79,
+            player_size=1,
+            enemy_size=1,
+            level100=False,
+            swapped=False,
+            balanced_final_species=True,
+        )
+        initial = {
+            "player": {"party": [mon()]},
+            "enemy": {"party": [mon()]},
+            "rng": {"list": list(range(10)), "index": 0},
+        }
+        reconstructed = (coordinates, initial, [], [], -1)
+        detail = {
+            "kind": "selfplay",
+            "iteration": 1,
+            "episode": 158,
+            "reset_episode": 79,
+            "pair_player_party_size": 1,
+            "pair_enemy_party_size": 1,
+            "level_profile": "distributed",
+            "teams_swapped": False,
+            "candidate_side": "enemy",
+        }
+        with (
+            patch("battle_training.replay.build_search_server"),
+            patch(
+                "battle_training.replay._reconstruct_replay",
+                side_effect=[
+                    ValueError("deterministic replay reconstruction diverged"),
+                    reconstructed,
+                ],
+            ) as reconstruct,
+        ):
+            manifest = build_replay_manifest(
+                {"config": {"seed": 20_260_726, "balanced_final_species": True}},
+                detail,
+            )
+        self.assertEqual(
+            reconstruct.call_args_list,
+            [call(detail, coordinates, True), call(detail, coordinates, False)],
+        )
+        self.assertEqual(manifest["presentation"]["candidate_side"], "enemy")
+        self.assertTrue(manifest["presentation"]["perspective_swap_requested"])
+        self.assertFalse(manifest["presentation"]["perspective_swapped"])
+        self.assertIn(
+            "reconstruction diverged",
+            manifest["presentation"]["perspective_swap_fallback"],
+        )
 
     def test_checkpoint_covers_party_active_volatile_and_rng(self) -> None:
         member = mon()

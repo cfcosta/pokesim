@@ -349,17 +349,18 @@ def replay_coordinates(
     raise ValueError("recorded replay kind must be selfplay or promotion")
 
 
-def build_replay_manifest(
-    run: dict[str, Any], detail: dict[str, Any]
-) -> dict[str, Any]:
-    """Recreate and validate one battle before handing it to the ROM adapter."""
-    global _SEARCH_SERVER_READY
-    with _SEARCH_SERVER_LOCK:
-        if not _SEARCH_SERVER_READY:
-            build_search_server()
-            _SEARCH_SERVER_READY = True
-    recorded_coordinates = replay_coordinates(run, detail)
-    swap_sides = detail.get("candidate_side") == "enemy"
+def _reconstruct_replay(
+    detail: dict[str, Any],
+    recorded_coordinates: ReplayCoordinates,
+    swap_sides: bool,
+) -> tuple[
+    ReplayCoordinates,
+    dict[str, Any],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    int,
+]:
+    """Replay one orientation and fail unless every recorded boundary agrees."""
     coordinates = _coordinates_for_replay(recorded_coordinates, swap_sides)
     with SearchServer(request_timeout=30.0) as server:
         snapshot = server.reset(
@@ -420,21 +421,52 @@ def build_replay_manifest(
             raise ValueError(
                 "recorded replay action transcript did not finish decisively"
             )
-        outcome = snapshot.terminal_return
+        outcome = int(snapshot.terminal_return)
         final = server.inspect(snapshot.handle)
         _assert_matches_recording(
             final,
             _recorded_state_for_replay(detail["final"], swap_sides),
             "final state",
         )
+    return coordinates, initial, actions, checkpoints, outcome
+
+
+def build_replay_manifest(
+    run: dict[str, Any], detail: dict[str, Any]
+) -> dict[str, Any]:
+    """Recreate and validate one battle before handing it to the ROM adapter."""
+    global _SEARCH_SERVER_READY
+    with _SEARCH_SERVER_LOCK:
+        if not _SEARCH_SERVER_READY:
+            build_search_server()
+            _SEARCH_SERVER_READY = True
+    recorded_coordinates = replay_coordinates(run, detail)
+    swap_requested = detail.get("candidate_side") == "enemy"
+    swap_sides = swap_requested
+    swap_fallback: str | None = None
+    try:
+        coordinates, initial, actions, checkpoints, outcome = _reconstruct_replay(
+            detail, recorded_coordinates, swap_sides
+        )
+    except ValueError as error:
+        if not swap_requested:
+            raise
+        # Red's simultaneous double-faint replacement order is physically
+        # player-first. Transposing both sides can therefore change the first
+        # forced request even though the generated teams and actions transpose.
+        # Preserve the exact recorded orientation rather than fabricating an
+        # intermediate boundary or rejecting an otherwise replayable battle.
+        swap_fallback = str(error)
+        swap_sides = False
+        coordinates, initial, actions, checkpoints, outcome = _reconstruct_replay(
+            detail, recorded_coordinates, swap_sides
+        )
 
     source_match = int(detail.get("episode", detail.get("game", -1)))
     trainer_class = replay_trainer_class(coordinates, source_match)
     source_candidate_side = detail.get("candidate_side")
     replay_candidate_side = (
-        "player"
-        if source_candidate_side in {"player", "enemy"}
-        else source_candidate_side
+        "player" if swap_sides else source_candidate_side
     )
     return {
         "version": REPLAY_PROFILE,
@@ -448,7 +480,9 @@ def build_replay_manifest(
             "trainer_party": 1,
             "candidate_side": replay_candidate_side,
             "source_candidate_side": source_candidate_side,
+            "perspective_swap_requested": swap_requested,
             "perspective_swapped": swap_sides,
+            "perspective_swap_fallback": swap_fallback,
         },
         "coordinates": {
             "root_seed": coordinates.root_seed,
