@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from threading import Lock
 from typing import Any
 
@@ -224,6 +224,37 @@ def replay_trainer_class(coordinates: ReplayCoordinates, source_match: int) -> i
     ]
 
 
+def _swap_request(request: str) -> str:
+    return {
+        "battle": "battle",
+        "forced-player": "forced-enemy",
+        "forced-enemy": "forced-player",
+    }[request]
+
+
+def _recorded_state_for_replay(
+    value: dict[str, Any], swap_sides: bool
+) -> dict[str, Any]:
+    if not swap_sides:
+        return value
+    return {
+        **value,
+        "request": _swap_request(str(value["request"])),
+        "player": value["enemy"],
+        "enemy": value["player"],
+    }
+
+
+def _coordinates_for_replay(
+    coordinates: ReplayCoordinates, swap_sides: bool
+) -> ReplayCoordinates:
+    return (
+        replace(coordinates, swapped=not coordinates.swapped)
+        if swap_sides
+        else coordinates
+    )
+
+
 def replay_coordinates(
     run: dict[str, Any], detail: dict[str, Any]
 ) -> ReplayCoordinates:
@@ -267,7 +298,9 @@ def build_replay_manifest(
         if not _SEARCH_SERVER_READY:
             build_search_server()
             _SEARCH_SERVER_READY = True
-    coordinates = replay_coordinates(run, detail)
+    recorded_coordinates = replay_coordinates(run, detail)
+    swap_sides = detail.get("candidate_side") == "enemy"
+    coordinates = _coordinates_for_replay(recorded_coordinates, swap_sides)
     with SearchServer(request_timeout=30.0) as server:
         snapshot = server.reset(
             coordinates.root_seed,
@@ -278,22 +311,39 @@ def build_replay_manifest(
             swapped=coordinates.swapped,
         )
         initial = server.inspect(snapshot.handle)
-        _assert_matches_recording(initial, detail["initial"], "initial state")
+        _assert_matches_recording(
+            initial,
+            _recorded_state_for_replay(detail["initial"], swap_sides),
+            "initial state",
+        )
         checkpoints: list[dict[str, Any]] = []
         actions: list[dict[str, Any]] = []
         for decision, turn in enumerate(detail["timeline"]):
-            if snapshot.request != turn["request"]:
+            request = (
+                _swap_request(str(turn["request"]))
+                if swap_sides
+                else str(turn["request"])
+            )
+            if snapshot.request != request:
                 raise ValueError(
                     f"deterministic replay request diverged at decision {decision}"
                 )
-            player_action = int(turn["player_action"])
-            enemy_action = int(turn["enemy_action"])
+            player_action = int(
+                turn["enemy_action"] if swap_sides else turn["player_action"]
+            )
+            enemy_action = int(
+                turn["player_action"] if swap_sides else turn["enemy_action"]
+            )
             snapshot = server.episode_step(snapshot.handle, player_action, enemy_action)
             after = server.inspect(snapshot.handle)
-            _assert_matches_recording(after, turn["after"], f"decision {decision + 1}")
+            _assert_matches_recording(
+                after,
+                _recorded_state_for_replay(turn["after"], swap_sides),
+                f"decision {decision + 1}",
+            )
             actions.append(
                 {
-                    "request": str(turn["request"]),
+                    "request": request,
                     "player": player_action,
                     "enemy": enemy_action,
                 }
@@ -311,10 +361,20 @@ def build_replay_manifest(
             )
         outcome = snapshot.terminal_return
         final = server.inspect(snapshot.handle)
-        _assert_matches_recording(final, detail["final"], "final state")
+        _assert_matches_recording(
+            final,
+            _recorded_state_for_replay(detail["final"], swap_sides),
+            "final state",
+        )
 
     source_match = int(detail.get("episode", detail.get("game", -1)))
     trainer_class = replay_trainer_class(coordinates, source_match)
+    source_candidate_side = detail.get("candidate_side")
+    replay_candidate_side = (
+        "player"
+        if source_candidate_side in {"player", "enemy"}
+        else source_candidate_side
+    )
     return {
         "version": REPLAY_PROFILE,
         "source": {
@@ -325,12 +385,16 @@ def build_replay_manifest(
         "presentation": {
             "trainer_class": trainer_class,
             "trainer_party": 1,
+            "candidate_side": replay_candidate_side,
+            "source_candidate_side": source_candidate_side,
+            "perspective_swapped": swap_sides,
         },
         "coordinates": {
             "root_seed": coordinates.root_seed,
             "reset_episode": coordinates.reset_episode,
             "level100": coordinates.level100,
             "swapped": coordinates.swapped,
+            "recorded_swapped": recorded_coordinates.swapped,
         },
         "initial": {
             "player": _party_payload(initial["player"], "RED"),

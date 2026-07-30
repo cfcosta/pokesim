@@ -42,7 +42,10 @@ transition, request, final-state, or outcome mismatch.
 
 The versioned `pokered-recorded-link-replay-v2` manifest contains full party
 structures, nicknames, link RNG state, both sides' actions, WRAM checkpoints,
-and a deterministic random trainer-picture class.
+and a deterministic random trainer-picture class. When a recorded evaluation
+put the candidate model on the enemy side, replay reconstruction swaps the exact
+generated parties, actions, forced-replacement requests, checkpoints, and
+outcome so the candidate is always presented as RED on the player side.
 A runtime-only patch routes Red's built-in `TestBattle` setup into a staged link
 trainer battle, bypasses menu and serial-cable rendezvous, and leaves the
 original ROM to render and execute the battle. It also clears TestBattle's

@@ -3,9 +3,13 @@ from __future__ import annotations
 import unittest
 
 from battle_training.replay import (
+    ReplayCoordinates,
+    _coordinates_for_replay,
     _expected_memory,
     _game_text,
     _party_mon_bytes,
+    _recorded_state_for_replay,
+    _swap_request,
     replay_coordinates,
     replay_trainer_class,
 )
@@ -99,6 +103,34 @@ class ReplayManifestTests(unittest.TestCase):
         trainer_class = replay_trainer_class(coordinates, 16)
         self.assertEqual(trainer_class, 15)
         self.assertNotIn(trainer_class, {0, 13, 27})
+
+    def test_enemy_candidate_replay_swaps_parties_and_forced_request(self) -> None:
+        recorded = {
+            "request": "forced-enemy",
+            "player": {"active": 0, "party": [{"name": "baseline"}]},
+            "enemy": {"active": 1, "party": [{"name": "candidate"}]},
+            "rng": {"list": list(range(10)), "index": 2},
+        }
+        replay = _recorded_state_for_replay(recorded, True)
+        self.assertEqual(replay["request"], "forced-player")
+        self.assertEqual(replay["player"]["party"][0]["name"], "candidate")
+        self.assertEqual(replay["enemy"]["party"][0]["name"], "baseline")
+        self.assertIs(replay["rng"], recorded["rng"])
+        self.assertEqual(_swap_request("battle"), "battle")
+
+    def test_enemy_candidate_replay_inverts_generator_side_swap(self) -> None:
+        coordinates = ReplayCoordinates(
+            root_seed=10,
+            reset_episode=20,
+            player_size=3,
+            enemy_size=6,
+            level100=False,
+            swapped=False,
+        )
+        replay = _coordinates_for_replay(coordinates, True)
+        self.assertTrue(replay.swapped)
+        self.assertEqual((replay.player_size, replay.enemy_size), (3, 6))
+        self.assertFalse(_coordinates_for_replay(replay, True).swapped)
 
     def test_checkpoint_covers_party_active_mon_and_rng(self) -> None:
         member = mon()
