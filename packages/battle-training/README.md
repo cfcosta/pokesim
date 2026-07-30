@@ -266,8 +266,10 @@ batches and carry each post-step inspection into the next decision. A timed-out
 batch is discarded and the server is respawned. Arena directories contain
 Showdown-style `.log` replays plus aggregate metrics
 for damage-move effectiveness relative to the best legal damaging move, status
-success/block/waste counts, and voluntary-switch rate/completion/matchup
-improvement. Production promotion rejects statistically inconclusive updates and
+success/block/waste counts, voluntary-switch rate/completion/matchup improvement,
+and setup-move counts/rates by move. Setup means self stat boosts, Mist, screens,
+Focus Energy, Conversion, and Substitute; charge turns, healing, opponent status,
+Haze, Mimic, Metronome, and Transform are excluded. Production promotion rejects statistically inconclusive updates and
 gated type/status probe regressions. Switch diagnostics are observational: neither
 switch frequency nor measured matchup change can reject a candidate or collection.
 The expanded data gate rejects collection with more than 1% horizon truncation or

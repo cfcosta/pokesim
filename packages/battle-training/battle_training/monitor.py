@@ -142,6 +142,7 @@ def _aggregate_actor_progress(actors: list[dict[str, Any]]) -> dict[str, Any] | 
         "candidate_losses",
         "candidate_draws",
         "voluntary_switches",
+        "setup_uses",
         "ordinary_actions",
         "deep_search_decisions",
         "root_only_decisions",
@@ -167,7 +168,10 @@ def _aggregate_actor_progress(actors: list[dict[str, Any]]) -> dict[str, Any] | 
     result["voluntary_switch_rate"] = result["voluntary_switches"] / max(
         1, result["ordinary_actions"]
     )
-    for field in ("party_size_counts", "opponent_counts"):
+    result["setup_use_rate"] = result["setup_uses"] / max(
+        1, result["ordinary_actions"]
+    )
+    for field in ("party_size_counts", "opponent_counts", "setup_move_counts"):
         counts: dict[str, int] = {}
         for actor in actors:
             for name, value in actor.get(field, {}).items():

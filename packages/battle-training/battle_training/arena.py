@@ -23,6 +23,29 @@ from .native import NativeRequestTimeout, SearchServer
 from .network import BattleTransformer
 
 _FIXED_DAMAGE_MOVES = {68, 69, 82, 101, 149, 162}
+# Self-buffs, screens, and persistent defensive/utility setup. Charge turns,
+# healing, opponent status, Haze, Mimic, Metronome, and Transform are excluded.
+_SETUP_MOVE_IDS = {
+    14,  # Swords Dance
+    54,  # Mist
+    74,  # Growth
+    96,  # Meditate
+    97,  # Agility
+    104,  # Double Team
+    106,  # Harden
+    107,  # Minimize
+    110,  # Withdraw
+    111,  # Defense Curl
+    112,  # Barrier
+    113,  # Light Screen
+    115,  # Reflect
+    116,  # Focus Energy
+    133,  # Amnesia
+    151,  # Acid Armor
+    159,  # Sharpen
+    160,  # Conversion
+    164,  # Substitute
+}
 _CAMPAIGN_NAMES = (
     "Brock",
     "Misty",
@@ -75,6 +98,8 @@ class SkillMetrics:
     voluntary_switches: int = 0
     completed_voluntary_switches: int = 0
     matchup_improving_switches: int = 0
+    setup_uses: int = 0
+    setup_move_counts: dict[str, int] = field(default_factory=dict)
     effectiveness_ratios: list[float] = field(default_factory=list)
 
     def merge(self, other: SkillMetrics) -> None:
@@ -90,8 +115,11 @@ class SkillMetrics:
             "voluntary_switches",
             "completed_voluntary_switches",
             "matchup_improving_switches",
+            "setup_uses",
         ):
             setattr(self, name, getattr(self, name) + getattr(other, name))
+        for name, count in other.setup_move_counts.items():
+            self.setup_move_counts[name] = self.setup_move_counts.get(name, 0) + count
         for ratio in other.effectiveness_ratios:
             self.effectiveness_ratio_sum += ratio
             self.effectiveness_ratios.append(ratio)
@@ -116,6 +144,9 @@ class SkillMetrics:
             self.voluntary_switches / self.ordinary_actions
             if self.ordinary_actions
             else None
+        )
+        result["setup_use_rate"] = (
+            self.setup_uses / self.ordinary_actions if self.ordinary_actions else None
         )
         result["switch_completion_rate"] = (
             self.completed_voluntary_switches / self.voluntary_switches
@@ -351,6 +382,13 @@ def _is_status(move: dict[str, Any]) -> bool:
     return int(move["power"]) == 0 and int(move["id"]) not in _FIXED_DAMAGE_MOVES
 
 
+def _setup_move_name(move: dict[str, Any]) -> str | None:
+    move_id = int(move["id"])
+    if move_id not in _SETUP_MOVE_IDS:
+        return None
+    return str(move.get("name") or f"move-{move_id}")
+
+
 def _active(side: dict[str, Any]) -> dict[str, Any]:
     return side["party"][side["active"]]
 
@@ -404,6 +442,12 @@ def _update_side_metrics(
         metrics.ordinary_actions += 1
     if request == "battle" and 0 <= action < 4:
         move = before[side_name]["moves"][action]
+        setup_name = _setup_move_name(move)
+        if setup_name is not None:
+            metrics.setup_uses += 1
+            metrics.setup_move_counts[setup_name] = (
+                metrics.setup_move_counts.get(setup_name, 0) + 1
+            )
         if int(move["power"]) > 0:
             chosen = _move_score(move)
             best = _best_damage_score(before[side_name], mask)
@@ -1559,6 +1603,7 @@ def skill_probe_report(arena: dict[str, Any]) -> dict[str, Any]:
 
     type_delta = difference("mean_move_effectiveness_vs_best")
     status_delta = difference("status_success_rate")
+    setup_delta = difference("setup_use_rate")
     switch_delta = difference("matchup_improvement_rate")
     candidate_waste_rate = (
         candidate["status_wasted"] / candidate["status_uses"]
@@ -1604,6 +1649,17 @@ def skill_probe_report(arena: dict[str, Any]) -> dict[str, Any]:
             "success_rate_delta": status_delta,
             "candidate_waste_rate": candidate_waste_rate,
             "baseline_waste_rate": baseline_waste_rate,
+        },
+        "setup": {
+            "gated": False,
+            "pass": None,
+            "candidate_uses": candidate["setup_uses"],
+            "baseline_uses": baseline["setup_uses"],
+            "candidate_use_rate": candidate["setup_use_rate"],
+            "baseline_use_rate": baseline["setup_use_rate"],
+            "use_rate_delta": setup_delta,
+            "candidate_move_counts": candidate["setup_move_counts"],
+            "baseline_move_counts": baseline["setup_move_counts"],
         },
         "switch": {
             "gated": False,

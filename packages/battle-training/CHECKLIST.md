@@ -32,7 +32,7 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Evaluate the policy from both player and enemy perspectives.
 - [x] Retain nonterminal stop counts instead of fabricating labels.
 - [x] Verify generated artifacts and deterministic shard replay.
-- [x] Add held-out generated-team type/status probes and switch diagnostics.
+- [x] Add held-out generated-team type/status probes plus switch and setup diagnostics.
 - [x] Add 1,024-game paired-seed complete side-swapped confidence intervals.
 - [x] Reserve at least 25% of generated collection and arena games for 6v6.
 - [x] Report trunk-gradient conflict and whole-battle held-out diagnostics.

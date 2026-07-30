@@ -12,10 +12,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
 from battle_training.arena import (
+    SkillMetrics,
     _evaluation_level100,
     _evaluation_party_sizes,
     _mean_ci95,
     _paired_coordinates,
+    _setup_move_name,
     skill_probe_report,
 )
 from battle_training.artifacts import (
@@ -321,6 +323,8 @@ class MonitorTests(unittest.TestCase):
                             "transitions": 20,
                             "ordinary_actions": 16,
                             "voluntary_switches": 2,
+                            "setup_uses": 3,
+                            "setup_move_counts": {"Reflect": 2, "Agility": 1},
                             "party_size_counts": {"1v1": 4},
                             "recent_battles": [
                                 {
@@ -340,6 +344,9 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(collection["player_wins"], 5)
             self.assertEqual(collection["party_size_counts"]["1v1"], 8)
             self.assertEqual(collection["voluntary_switch_rate"], 0.125)
+            self.assertEqual(collection["setup_uses"], 6)
+            self.assertEqual(collection["setup_use_rate"], 0.1875)
+            self.assertEqual(collection["setup_move_counts"]["Reflect"], 4)
             self.assertEqual(len(collection["recent_battles"]), 2)
             self.assertNotIn("timeline", collection["recent_battles"][0])
             self.assertNotIn("recent_battles", dashboard["actors"][0])
@@ -710,6 +717,9 @@ class TransformerTests(unittest.TestCase):
             "voluntary_switch_rate": 0.1,
             "switch_completion_rate": 1.0,
             "matchup_improvement_rate": 0.55,
+            "setup_uses": 12,
+            "setup_use_rate": 0.03,
+            "setup_move_counts": {"Swords Dance": 7, "Reflect": 5},
         }
         candidate = dict(skills)
         candidate["voluntary_switch_rate"] = 0.47
@@ -719,7 +729,24 @@ class TransformerTests(unittest.TestCase):
         self.assertIsNone(report["switch"]["pass"])
         self.assertFalse(report["switch"]["gated"])
         self.assertEqual(report["gate_version"], "type-status-only-v2")
+        self.assertIsNone(report["setup"]["pass"])
+        self.assertEqual(report["setup"]["candidate_uses"], 12)
+        self.assertEqual(report["setup"]["candidate_move_counts"]["Swords Dance"], 7)
         self.assertTrue(report["pass"])
+
+    def test_setup_move_observation_is_explicit_and_ungated(self) -> None:
+        self.assertEqual(
+            _setup_move_name({"id": 14, "name": "Swords Dance"}), "Swords Dance"
+        )
+        for move_id in (92, 105, 130, 144):
+            self.assertIsNone(_setup_move_name({"id": move_id, "name": "other"}))
+        metrics = SkillMetrics(
+            ordinary_actions=40,
+            setup_uses=6,
+            setup_move_counts={"Swords Dance": 4, "Reflect": 2},
+        ).report()
+        self.assertEqual(metrics["setup_use_rate"], 0.15)
+        self.assertEqual(metrics["setup_move_counts"]["Reflect"], 2)
 
     def test_collection_quality_does_not_gate_switch_rate(self) -> None:
         config = SimpleNamespace(selfplay_episodes=100)

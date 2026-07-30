@@ -32,6 +32,7 @@ from .arena import (
     _choice_detail,
     _compact_inspection,
     _compact_turn_inspection,
+    _setup_move_name,
     run_campaign_arena,
     run_paired_arena,
     run_traced_arena,
@@ -570,7 +571,8 @@ def _collect_rows_single(
     player_wins = enemy_wins = draws = 0
     candidate_wins = candidate_losses = candidate_draws = 0
     scheduled_level100_six_vs_six = 0
-    total_decisions = ordinary_actions = voluntary_switches = 0
+    total_decisions = ordinary_actions = voluntary_switches = setup_uses = 0
+    setup_move_counts: dict[str, int] = {}
     recent_battles: list[dict[str, Any]] = []
 
     def append_episode(
@@ -816,6 +818,24 @@ def _collect_rows_single(
                     else:
                         target_kind = "policy-rollout"
                     search_diagnostics = result.diagnostics or {}
+                    player_choice = _choice_detail(
+                        actor.inspection, "player", result.player_action
+                    )
+                    enemy_choice = _choice_detail(
+                        actor.inspection, "enemy", result.enemy_action
+                    )
+                    player_setup = (
+                        _setup_move_name(player_choice["move"])
+                        if snapshot.request == "battle"
+                        and isinstance(player_choice.get("move"), dict)
+                        else None
+                    )
+                    enemy_setup = (
+                        _setup_move_name(enemy_choice["move"])
+                        if snapshot.request == "battle"
+                        and isinstance(enemy_choice.get("move"), dict)
+                        else None
+                    )
                     actor.timeline.append(
                         {
                             "turn": decision + 1,
@@ -827,12 +847,8 @@ def _collect_rows_single(
                             "payoff_spread": result.payoff_spread,
                             "player_action": result.player_action,
                             "enemy_action": result.enemy_action,
-                            "player_choice": _choice_detail(
-                                actor.inspection, "player", result.player_action
-                            ),
-                            "enemy_choice": _choice_detail(
-                                actor.inspection, "enemy", result.enemy_action
-                            ),
+                            "player_choice": player_choice,
+                            "enemy_choice": enemy_choice,
                             "player_legal_mask": snapshot.player_mask,
                             "enemy_legal_mask": snapshot.enemy_mask,
                             "player_state_hash": snapshot.player_hash,
@@ -878,6 +894,8 @@ def _collect_rows_single(
                         "player_party_size": actor.player_size,
                         "enemy_party_size": actor.enemy_size,
                     }
+                    if player_setup is not None:
+                        player_row["setup_move"] = player_setup
                     enemy_row = {
                         "type": "example",
                         "episode": actor.episode,
@@ -896,6 +914,8 @@ def _collect_rows_single(
                         "player_party_size": actor.player_size,
                         "enemy_party_size": actor.enemy_size,
                     }
+                    if enemy_setup is not None:
+                        enemy_row["setup_move"] = enemy_setup
                     if result.exploitability is not None:
                         player_row["search_exploitability"] = result.exploitability
                         enemy_row["search_exploitability"] = result.exploitability
@@ -952,6 +972,12 @@ def _collect_rows_single(
                             if row["request"] == "battle":
                                 ordinary_actions += 1
                                 voluntary_switches += row["action"] in range(4, 10)
+                                setup_move = row.get("setup_move")
+                                if setup_move is not None:
+                                    setup_uses += 1
+                                    setup_move_counts[setup_move] = (
+                                        setup_move_counts.get(setup_move, 0) + 1
+                                    )
                         rows.extend(actor.pending)
                         examples += len(actor.pending)
                         append_episode(actor, "finished", decision + 1, reward)
@@ -997,6 +1023,9 @@ def _collect_rows_single(
                     voluntary_switches=voluntary_switches,
                     ordinary_actions=ordinary_actions,
                     voluntary_switch_rate=voluntary_switches / max(1, ordinary_actions),
+                    setup_uses=setup_uses,
+                    setup_use_rate=setup_uses / max(1, ordinary_actions),
+                    setup_move_counts=setup_move_counts,
                     deep_search_decisions=deep_search_decisions,
                     root_only_decisions=root_only_decisions,
                     mirror_episodes=mirror_episodes,
@@ -1060,6 +1089,8 @@ def _collect_rows_single(
         "six_vs_six_battles": six_vs_six_battles,
         "level100_six_vs_six_battles": level100_six_vs_six_battles,
         "voluntary_switches": voluntary_switches,
+        "setup_uses": setup_uses,
+        "setup_move_counts": setup_move_counts,
         "ordinary_actions": ordinary_actions,
         "examples": examples,
         "transitions": transitions,
@@ -1127,6 +1158,8 @@ def _collect_rows_single(
             for row in example_rows
             if row["request"] == "battle"
         )
+        / max(1, sum(row["request"] == "battle" for row in example_rows)),
+        "setup_use_rate": sum("setup_move" in row for row in example_rows)
         / max(1, sum(row["request"] == "battle" for row in example_rows)),
         "sha256": sha256(path),
         "bytes": path.stat().st_size,
@@ -1263,11 +1296,14 @@ def _merge_collection_rows(
 
     opponent_counts: dict[str, int] = {}
     party_size_counts: dict[str, int] = {}
+    setup_move_counts: dict[str, int] = {}
     for metrics in worker_metrics:
         for name, count in metrics["opponent_counts"].items():
             opponent_counts[name] = opponent_counts.get(name, 0) + count
         for name, count in metrics["party_size_counts"].items():
             party_size_counts[name] = party_size_counts.get(name, 0) + count
+        for name, count in metrics["setup_move_counts"].items():
+            setup_move_counts[name] = setup_move_counts.get(name, 0) + count
     transitions = total("transitions")
     six_vs_six_battles = party_size_counts.get("6v6", 0)
     level100_six_vs_six_battles = total("level100_six_vs_six_battles")
@@ -1311,6 +1347,8 @@ def _merge_collection_rows(
         "level100_6v6_fraction": 0.25,
         "six_vs_six_battles": six_vs_six_battles,
         "level100_six_vs_six_battles": level100_six_vs_six_battles,
+        "setup_uses": total("setup_uses"),
+        "setup_move_counts": setup_move_counts,
         "mean_target_entropy": sum(
             _policy_entropy(row["policy"]) for row in example_rows
         )
@@ -1335,6 +1373,8 @@ def _merge_collection_rows(
             for row in example_rows
             if row["request"] == "battle"
         )
+        / max(1, sum(row["request"] == "battle" for row in example_rows)),
+        "setup_use_rate": sum("setup_move" in row for row in example_rows)
         / max(1, sum(row["request"] == "battle" for row in example_rows)),
         "actor_shards": actor_shards,
         "sha256": sha256(path),
