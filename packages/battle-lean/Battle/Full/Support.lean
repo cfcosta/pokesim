@@ -24,8 +24,10 @@ namespace Battle.Full.Support
 
 structure ModelCoverage : Prop where
   canonicalMoves :
-    Data.moves.all (fun move =>
-      (EffectPlan.plan move.effect).mechanic != .malformed) = true
+    Data.moves.size = 165 ∧
+      Data.moves.all (fun move =>
+        let mechanic := (EffectPlan.plan move.effect).mechanic
+        mechanic != .malformed && mechanic != .unused) = true
   ordinaryItems : ∀ item : UInt8, 1 ≤ item.toNat → item.toNat ≤ 0x53 →
     Items.disposition item ≠ .outOfRange
   trainerClasses : ∀ classId : UInt8, 1 ≤ classId.toNat → classId.toNat ≤ 47 →
@@ -45,7 +47,7 @@ structure ModelCoverage : Prop where
 
 /-- Dispatch, generator, and externally audited bug closure for the full model. -/
 theorem model_coverage : ModelCoverage :=
-  { canonicalMoves := EffectPlan.canonical_moves_supported
+  { canonicalMoves := EffectPlan.canonical_moves_implemented
     ordinaryItems := Items.ordinary_table_total
     trainerClasses := TrainerController.class_table_total
     externalBugs := BugCompatibility.all_external_bugs_supported

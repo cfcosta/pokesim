@@ -411,7 +411,7 @@ Every effect ID, including unused slots, needs a table/data theorem. Every used 
 ### Per-move requirement
 
 - [x] all move IDs 1 through 165 decode from ROM (`Battle.Rom.Mechanics.data_exact`, `move_effects_indexed`, `move_routes_exact`)
-- [x] each move's effect ID maps to covered high-level behavior (`Battle.Full.EffectPlan.canonical_moves_supported`, `Battle.Full.Effects.applyBefore_total`)
+- [x] exactly 165 move rows each map to a non-malformed, non-unused high-level mechanic (`Battle.Full.EffectPlan.canonical_moves_implemented`); exhaustive decoded-ROM refinement of every handler body remains separate
 - [x] each listed exceptional move ID routes to a non-malformed dedicated mechanic (`Battle.Full.EffectPlan.exceptional_move_ids_supported`)
 - [x] all Metronome eligibility/rejections are covered (`Battle.Full.Effects.metronomeAccepts`, `metronome_eligibility_boundaries`)
 - [x] Mirror Move/Metronome move-record reloads and PP compensation are explicit (`Battle.Full.Engine.installGeneratedLoadedMove`, `incrementNestedPp`, `generated_move_retains_wrapper`)

@@ -178,6 +178,17 @@ theorem canonical_moves_supported :
     Data.moves.all (fun move => (plan move.effect).mechanic != .malformed) = true := by
   native_decide
 
+/-- The complete Red move table has 165 rows, and every row selects an
+implemented mechanic rather than either the malformed or unused disposition.
+This is high-level execution coverage; per-handler decoded-ROM refinement remains
+an independent obligation. -/
+theorem canonical_moves_implemented :
+    Data.moves.size = 165 ∧
+      Data.moves.all (fun move =>
+        let mechanic := (plan move.effect).mechanic
+        mechanic != .malformed && mechanic != .unused) = true := by
+  native_decide
+
 #guard (plan Data.Effect.swift).mechanic == .swift
 #guard (plan Data.Effect.superFang).phases == [.setDamage, .specialSkip]
 #guard (plan Data.Effect.rage).phases == [.always, .remaining]

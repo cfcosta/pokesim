@@ -10,7 +10,7 @@
 | Menu selection scratch | `Battle.Full.Selection` | Fight reset, disabled/stale highlights, cancel retention, move/PP/Disable and ordered-bag swaps |
 | Status and residuals | `Battle.Full.Status` | Status-gate order, pre-accuracy effect eligibility, direct-paralysis Substitute bypass, conditional RNG, poison/burn/seed residuals, Toxic counter interaction |
 | Item dispatch | `Battle.Full.Items` | Explicit disposition for IDs `$01..$53`; executable battle-use handlers; Max Ether packed-byte bug |
-| Effect dispatch | `Battle.Full.EffectPlan` | Typed plans for all effect IDs `$00..$56`; all 165 canonical move rows covered |
+| Effect dispatch | `Battle.Full.EffectPlan` | Typed plans for all effect IDs `$00..$56`; exactly 165 canonical move rows, each selecting a non-malformed, non-unused high-level mechanic |
 | Effect execution | `Battle.Full.Effects` | State transformers and explicit control signals for every effect family; exact stat-stage arithmetic; self-stat-up accuracy bypass; Haze/Transform stat rows and Transform's player-only self-invulnerability bug; cartridge-ordered Mimic and Disable rejection loops; Haze cancellation; status-stat mutation, recharge bypass, side-effect draw ordering, asymmetric freeze cleanup, and fire defrost |
 | Trainer controller | `Battle.Full.TrainerController`, `Battle.Full.Environment` | All 47 class rows, scoring layers, action counts/routines, direct-Random actions, minimum-score slot rejection, executable plans |
 | Capture | `Battle.Full.Capture`, `Battle.Full.CaptureProtocol` | Ball arithmetic, shake counts, rebuilt stored rows, nested naming/defaults, party append, box slot-one parallel shifts, malformed no-storage paths |
