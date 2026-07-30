@@ -154,6 +154,8 @@ def _aggregate_actor_progress(actors: list[dict[str, Any]]) -> dict[str, Any] | 
         "root_only_decisions",
         "mirror_episodes",
         "opponent_episodes",
+        "model_opponent_episodes",
+        "heuristic_opponent_episodes",
         "six_vs_six_battles",
         "level100_six_vs_six_battles",
     )

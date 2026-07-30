@@ -355,6 +355,7 @@ function renderBattlePopulation(data) {
     ["Setup use", collection ? `${number(collection.setup_uses)} · ${pct(collection.setup_use_rate)}` : "—"],
     ["Exploitability", collection ? number(collection.mean_search_exploitability, 3) : "—"],
     ["Deep / root", collection ? `${number(collection.deep_search_decisions)} / ${number(collection.root_only_decisions)}` : "—"],
+    ["Mirror / model / AI", collection ? `${number(collection.mirror_episodes)} / ${number(collection.model_opponent_episodes)} / ${number(collection.heuristic_opponent_episodes)}` : "—"],
     ["Lv. 100 6v6", collection ? `${number(collection.level100_six_vs_six_battles)} / ${number(collection.six_vs_six_battles)}` : "—"],
   ];
   for (const [name, value] of stats) {

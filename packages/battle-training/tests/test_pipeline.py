@@ -326,6 +326,10 @@ class MonitorTests(unittest.TestCase):
                             "voluntary_switches": 2,
                             "setup_uses": 3,
                             "setup_move_counts": {"Reflect": 2, "Agility": 1},
+                            "mirror_episodes": 2,
+                            "opponent_episodes": 2,
+                            "model_opponent_episodes": 1,
+                            "heuristic_opponent_episodes": 1,
                             "party_size_counts": {"1v1": 4},
                             "recent_battles": [
                                 {
@@ -348,6 +352,9 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(collection["setup_uses"], 6)
             self.assertEqual(collection["setup_use_rate"], 0.1875)
             self.assertEqual(collection["setup_move_counts"]["Reflect"], 4)
+            self.assertEqual(collection["mirror_episodes"], 4)
+            self.assertEqual(collection["model_opponent_episodes"], 2)
+            self.assertEqual(collection["heuristic_opponent_episodes"], 2)
             self.assertEqual(len(collection["recent_battles"]), 2)
             self.assertNotIn("timeline", collection["recent_battles"][0])
             self.assertNotIn("recent_battles", dashboard["actors"][0])
