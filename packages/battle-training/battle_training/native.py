@@ -205,6 +205,7 @@ class SearchServer:
         *,
         level100: bool = False,
         swapped: bool = False,
+        balanced_final_species: bool = False,
     ) -> Snapshot:
         if level100:
             operation = "reset-level100-swapped" if swapped else "reset-level100"
@@ -212,7 +213,7 @@ class SearchServer:
             operation = "reset-swapped" if swapped else "reset"
         return self._snapshot(
             self._request(
-                f"{operation}|{root_seed}|{episode}|{player_size}|{enemy_size}"
+                f"{operation}|{root_seed}|{episode}|{player_size}|{enemy_size}|{int(balanced_final_species)}"
             )
         )
 
@@ -225,6 +226,7 @@ class SearchServer:
         *,
         level100: bool = False,
         swapped: bool = False,
+        balanced_final_species: bool = False,
     ) -> Snapshot:
         if level100:
             operation = (
@@ -236,29 +238,52 @@ class SearchServer:
             operation = "reset-swapped-append" if swapped else "reset-append"
         return self._snapshot(
             self._request(
-                f"{operation}|{root_seed}|{episode}|{player_size}|{enemy_size}"
+                f"{operation}|{root_seed}|{episode}|{player_size}|{enemy_size}|{int(balanced_final_species)}"
             )
         )
 
     def reset_campaign(
-        self, root_seed: int, episode: int, campaign: int
-    ) -> Snapshot:
-        return self._reset_campaign("reset-campaign", root_seed, episode, campaign)
-
-    def reset_campaign_append(
-        self, root_seed: int, episode: int, campaign: int
+        self,
+        root_seed: int,
+        episode: int,
+        campaign: int,
+        *,
+        balanced_final_species: bool = False,
     ) -> Snapshot:
         return self._reset_campaign(
-            "reset-campaign-append", root_seed, episode, campaign
+            "reset-campaign", root_seed, episode, campaign, balanced_final_species
+        )
+
+    def reset_campaign_append(
+        self,
+        root_seed: int,
+        episode: int,
+        campaign: int,
+        *,
+        balanced_final_species: bool = False,
+    ) -> Snapshot:
+        return self._reset_campaign(
+            "reset-campaign-append",
+            root_seed,
+            episode,
+            campaign,
+            balanced_final_species,
         )
 
     def _reset_campaign(
-        self, operation: str, root_seed: int, episode: int, campaign: int
+        self,
+        operation: str,
+        root_seed: int,
+        episode: int,
+        campaign: int,
+        balanced_final_species: bool,
     ) -> Snapshot:
         if not 0 <= campaign < self.campaign_count:
             raise ValueError("campaign team index is out of range")
         return self._snapshot(
-            self._request(f"{operation}|{root_seed}|{episode}|{campaign}")
+            self._request(
+                f"{operation}|{root_seed}|{episode}|{campaign}|{int(balanced_final_species)}"
+            )
         )
 
     def search_step(

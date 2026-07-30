@@ -350,6 +350,11 @@ function renderBattlePopulation(data) {
   const root = $("battle-stats");
   clear(root);
   const qualityAvailable = Boolean(collection?.decision_quality_version);
+  const speciesCounts = collection?.species_counts || {};
+  const speciesValues = Object.values(speciesCounts).map(Number);
+  const speciesRange = speciesValues.length
+    ? `${Math.min(...speciesValues)}–${Math.max(...speciesValues)} each`
+    : "—";
   const stats = [
     ["Mean turns", collection ? number(collection.mean_decisions, 1) : "—"],
     ["Switch rate", collection ? pct(collection.voluntary_switch_rate) : "—"],
@@ -357,6 +362,7 @@ function renderBattlePopulation(data) {
     ["Exploitability", collection ? number(collection.mean_search_exploitability, 3) : "—"],
     ["Deep / root", collection ? `${number(collection.deep_search_decisions)} / ${number(collection.root_only_decisions)}` : "—"],
     ["Mirror / model / AI", collection ? `${number(collection.mirror_episodes)} / ${number(collection.model_opponent_episodes)} / ${number(collection.heuristic_opponent_episodes)}` : "—"],
+    ["Species coverage", collection?.species_schedule ? `${number(speciesValues.length)} / 151 · ${speciesRange}` : "—"],
     ["Status overlap", qualityAvailable ? `${number((collection.redundant_status_same || 0) + (collection.redundant_status_other || 0))} / ${number(collection.major_status_attempts)} · ${pct(collection.redundant_status_rate)}` : "—"],
     ["Setup at +6", qualityAvailable ? `${number(collection.capped_stat_setup)} / ${number(collection.stat_setup_attempts)} · ${pct(collection.capped_stat_setup_rate)}` : "—"],
     ["OHKO vs faster", qualityAvailable ? `${number(collection.ohko_into_faster)} / ${number(collection.ohko_attempts)} · ${pct(collection.ohko_into_faster_rate)}` : "—"],

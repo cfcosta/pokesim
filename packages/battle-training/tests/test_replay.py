@@ -55,7 +55,7 @@ class ReplayManifestTests(unittest.TestCase):
 
     def test_selfplay_coordinates_recover_training_reset(self) -> None:
         coordinates = replay_coordinates(
-            {"config": {"seed": 20_260_726}},
+            {"config": {"seed": 20_260_726, "balanced_final_species": True}},
             {
                 "kind": "selfplay",
                 "iteration": 3,
@@ -69,6 +69,7 @@ class ReplayManifestTests(unittest.TestCase):
         self.assertEqual(coordinates.root_seed, 20_290_726)
         self.assertEqual(coordinates.reset_episode, 1023)
         self.assertEqual((coordinates.player_size, coordinates.enemy_size), (3, 5))
+        self.assertTrue(coordinates.balanced_final_species)
 
     def test_promotion_coordinates_recover_paired_arena_reset(self) -> None:
         coordinates = replay_coordinates(
@@ -126,6 +127,7 @@ class ReplayManifestTests(unittest.TestCase):
             enemy_size=6,
             level100=False,
             swapped=False,
+            balanced_final_species=True,
         )
         replay = _coordinates_for_replay(coordinates, True)
         self.assertTrue(replay.swapped)

@@ -5,6 +5,7 @@ import random
 import sys
 import tempfile
 import unittest
+from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -60,12 +61,14 @@ from battle_training.red_ai_heuristics import (
     normalized_trainer_policy,
 )
 from battle_training.transformer_pipeline import (
+    TransformerPipelineConfig,
     _collection_quality,
     _gradient_report,
     _heuristic_population,
     _load_completed_prefix,
     _load_examples,
     _pipeline_id,
+    _resume_config,
     _scheduled_for_opponent,
     _select_training_opponent,
     _training_level100,
@@ -323,6 +326,8 @@ class MonitorTests(unittest.TestCase):
                         {
                             "process": process,
                             "decision_quality_version": "static-active-context-v1",
+                            "species_schedule": "near-uniform-final-species-u16-v1",
+                            "species_counts": {"001:Bulbasaur": 2, "151:Mew": 1},
                             "completed": 4,
                             "total": 10,
                             "finished": 4,
@@ -375,6 +380,9 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(
                 collection["decision_quality_version"], "static-active-context-v1"
             )
+            self.assertEqual(collection["distinct_species"], 2)
+            self.assertEqual(collection["minimum_species_appearances"], 2)
+            self.assertEqual(collection["maximum_species_appearances"], 4)
             self.assertEqual(len(collection["recent_battles"]), 2)
             self.assertNotIn("timeline", collection["recent_battles"][0])
             self.assertNotIn("recent_battles", dashboard["actors"][0])
@@ -639,6 +647,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.learning_rate, 2e-4)
         self.assertEqual(arguments.value_loss_weight, 0.25)
         self.assertEqual(arguments.redundant_action_prior_scale, 0.25)
+        self.assertTrue(arguments.balanced_final_species)
         self.assertEqual(arguments.model_opponent_share, 0.5)
         self.assertEqual(arguments.promotion_games, 2048)
         self.assertEqual(arguments.probe_games, 256)
@@ -657,10 +666,56 @@ class TransformerTests(unittest.TestCase):
         self.assertTrue(arguments.heuristic_opponents)
         self.assertIsNone(arguments.warm_start_checkpoint)
         self.assertIsNone(arguments.warm_start_incumbent_checkpoint)
+        weighted = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/weighted",
+                "--weighted-final-species",
+            ]
+        )
+        self.assertFalse(weighted.balanced_final_species)
         resume = training_parser().parse_args(
             ["transformer-resume", "--output", "/tmp/overnight"]
         )
         self.assertEqual(resume.command, "transformer-resume")
+
+    def test_v16_resume_restores_legacy_species_and_party_schedules(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = asdict(
+                TransformerPipelineConfig(
+                    iterations=1,
+                    selfplay_episodes=8,
+                    arena_episodes=8,
+                    episode_budget=64,
+                    search_depth=1,
+                    epochs=1,
+                    batch_size=8,
+                    learning_rate=1e-3,
+                    weight_decay=0.0,
+                    seed=1,
+                    device="cpu",
+                    d_model=8,
+                    heads=2,
+                    layers=1,
+                    feedforward=16,
+                )
+            )
+            config.pop("balanced_final_species")
+            config.pop("generated_schedule_version")
+            write_json(
+                root / "run.json",
+                {
+                    "pipeline": "transformer-variable-party-bf16-tree-v16",
+                    "profile": "full-link-party-1to6-perfect-v2",
+                    "schema": "full-link-party-state-v4",
+                    "config": config,
+                },
+            )
+            resumed = _resume_config(root)
+            self.assertFalse(resumed.balanced_final_species)
+            self.assertEqual(resumed.generated_schedule_version, 2)
 
     def test_resume_loads_complete_prefix_and_archives_partial_iteration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -726,9 +781,15 @@ class TransformerTests(unittest.TestCase):
             _paired_coordinates(100, 8, 0), _paired_coordinates(100, 8, 2)
         )
         schedule = [_evaluation_party_sizes(pair) for pair in range(512)]
-        self.assertEqual(schedule.count((6, 6)), 128)
+        self.assertEqual(schedule.count((6, 6)), 171)
         level100 = [_evaluation_level100(pair) for pair in range(512)]
-        self.assertEqual(sum(level100), 32)
+        self.assertEqual(sum(level100), 57)
+        legacy_schedule = [
+            _evaluation_party_sizes(pair, 2) for pair in range(512)
+        ]
+        legacy_level100 = [_evaluation_level100(pair, 2) for pair in range(512)]
+        self.assertEqual(legacy_schedule.count((6, 6)), 128)
+        self.assertEqual(sum(legacy_level100), 32)
         self.assertTrue(
             all(
                 not selected or schedule[index] == (6, 6)
@@ -911,7 +972,10 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual([ordinal for _, _, ordinal in selected[:6]], [0, 0, 1, 1, 2, 2])
 
     def test_training_schedule_pairs_every_reset_and_side_assignment(self) -> None:
-        self.assertEqual(_pipeline_id(), "transformer-variable-party-bf16-tree-v16")
+        self.assertEqual(_pipeline_id(), "transformer-variable-party-bf16-tree-v17")
+        self.assertEqual(
+            _pipeline_id(False, 2), "transformer-variable-party-bf16-tree-v16"
+        )
         for episode in range(0, 128, 2):
             self.assertEqual(_training_pair(episode), _training_pair(episode + 1))
             self.assertEqual(
@@ -997,18 +1061,19 @@ class TransformerTests(unittest.TestCase):
         ]
         _validate_collection_pairs(rows, 2)
 
-    def test_training_schedule_covers_all_sizes_with_at_least_quarter_6v6(self) -> None:
+    def test_training_schedule_covers_all_sizes_with_one_third_6v6(self) -> None:
         expected = {(player, enemy) for player in range(1, 7) for enemy in range(1, 7)}
         for iteration in (1, 2):
             schedule = [
                 _training_party_sizes(iteration, episode) for episode in range(2048)
             ]
             self.assertEqual(set(schedule), expected)
-            self.assertGreaterEqual(schedule.count((6, 6)), 512)
+            six_vs_six = schedule.count((6, 6))
+            self.assertLessEqual(abs(six_vs_six * 3 - len(schedule)), 4)
             level100 = [
                 _training_level100(iteration, episode) for episode in range(2048)
             ]
-            self.assertEqual(sum(level100), 128)
+            self.assertLessEqual(abs(sum(level100) * 3 - six_vs_six), 4)
             self.assertTrue(
                 all(
                     not selected or schedule[index] == (6, 6)

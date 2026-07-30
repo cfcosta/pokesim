@@ -203,12 +203,29 @@ def _aggregate_actor_progress(actors: list[dict[str, Any]]) -> dict[str, Any] | 
     result["decision_quality_version"] = (
         next(iter(versions)) if len(versions) == 1 else None
     )
-    for field in ("party_size_counts", "opponent_counts", "setup_move_counts"):
+    species_schedules = {
+        str(actor["species_schedule"])
+        for actor in actors
+        if actor.get("species_schedule")
+    }
+    result["species_schedule"] = (
+        next(iter(species_schedules)) if len(species_schedules) == 1 else None
+    )
+    for field in (
+        "party_size_counts",
+        "opponent_counts",
+        "setup_move_counts",
+        "species_counts",
+    ):
         counts: dict[str, int] = {}
         for actor in actors:
             for name, value in actor.get(field, {}).items():
                 counts[name] = counts.get(name, 0) + int(value)
         result[field] = counts
+    species_values = list(result["species_counts"].values())
+    result["distinct_species"] = len(species_values)
+    result["minimum_species_appearances"] = min(species_values, default=0)
+    result["maximum_species_appearances"] = max(species_values, default=0)
     recent = [battle for actor in actors for battle in actor.get("recent_battles", [])]
     result["recent_battles"] = [
         {

@@ -13,8 +13,18 @@ FULL_ACTION_COUNT = 13
 FULL_FEATURE_COUNT = 492
 FULL_CAMPAIGN_COUNT = 9
 
-GENERATED_PARTY_SCHEDULE = "minimum-25pct-6v6-all-others-v2"
-GENERATED_LEVEL_SCHEDULE = "quarter-of-6v6-pairs-both-level100-v1"
+GENERATED_PARTY_SCHEDULE = "one-third-6v6-all-others-v3"
+GENERATED_LEVEL_SCHEDULE = "one-third-of-6v6-pairs-both-level100-v2"
+LEGACY_GENERATED_PARTY_SCHEDULE = "minimum-25pct-6v6-all-others-v2"
+LEGACY_GENERATED_LEVEL_SCHEDULE = "quarter-of-6v6-pairs-both-level100-v1"
+
+
+def generated_schedule_names(schedule_version: int = 3) -> tuple[str, str]:
+    if schedule_version == 2:
+        return LEGACY_GENERATED_PARTY_SCHEDULE, LEGACY_GENERATED_LEVEL_SCHEDULE
+    if schedule_version == 3:
+        return GENERATED_PARTY_SCHEDULE, GENERATED_LEVEL_SCHEDULE
+    raise ValueError("generated party schedule version must be 2 or 3")
 _NON_6V6_MATCHUPS = tuple(
     (player, enemy)
     for player in range(1, FULL_PARTY_SIZE + 1)
@@ -23,20 +33,30 @@ _NON_6V6_MATCHUPS = tuple(
 )
 
 
-def generated_party_sizes(index: int) -> tuple[int, int]:
-    """Reserve every fourth generated match for 6v6 and cycle all others."""
+def generated_party_sizes(index: int, schedule_version: int = 3) -> tuple[int, int]:
+    """Schedule generated party sizes while preserving legacy replay profiles."""
     if index < 0:
         raise ValueError("generated match index must be nonnegative")
-    block, offset = divmod(index, 4)
+    if schedule_version == 2:
+        block, offset = divmod(index, 4)
+        if offset == 0:
+            return FULL_PARTY_SIZE, FULL_PARTY_SIZE
+        return _NON_6V6_MATCHUPS[
+            (block * 3 + offset - 1) % len(_NON_6V6_MATCHUPS)
+        ]
+    if schedule_version != 3:
+        raise ValueError("generated party schedule version must be 2 or 3")
+    block, offset = divmod(index, 3)
     if offset == 0:
         return FULL_PARTY_SIZE, FULL_PARTY_SIZE
-    return _NON_6V6_MATCHUPS[(block * 3 + offset - 1) % len(_NON_6V6_MATCHUPS)]
+    return _NON_6V6_MATCHUPS[(block * 2 + offset - 1) % len(_NON_6V6_MATCHUPS)]
 
 
-def generated_level100(index: int) -> bool:
-    """Make exactly one quarter of scheduled 6v6 pairs fully level 100."""
-    player_size, enemy_size = generated_party_sizes(index)
+def generated_level100(index: int, schedule_version: int = 3) -> bool:
+    """Schedule level-100 6v6 pairs while preserving the legacy quarter mix."""
+    player_size, enemy_size = generated_party_sizes(index, schedule_version)
     if (player_size, enemy_size) != (FULL_PARTY_SIZE, FULL_PARTY_SIZE):
         return False
-    six_vs_six_index = index // 4
-    return six_vs_six_index % 4 == 0
+    if schedule_version == 2:
+        return (index // 4) % 4 == 0
+    return (index // 3) % 3 == 0

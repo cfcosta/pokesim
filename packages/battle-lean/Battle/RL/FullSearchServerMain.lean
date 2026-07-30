@@ -528,7 +528,9 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
         | some root, some episode, some campaign =>
             let generator := Training.linkRng root.toUInt64 episode.toUInt64
               Training.generatorStream
-            let player := RL.DynamicGenerator.sampleSized Wram.partyLength generator
+            let player := if tokenNat tokens 5 == some 1 then
+                RL.DynamicGenerator.sampleSizedBalanced Wram.partyLength generator
+              else RL.DynamicGenerator.sampleSized Wram.partyLength generator
             let enemy := CampaignTeams.sample campaign player.rng
             let battleRng := Training.linkRng root.toUInt64 episode.toUInt64
               Training.battleStream
@@ -553,18 +555,33 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
               Training.linkRng root.toUInt64 episode.toUInt64 Training.generatorStream
             let battleRng :=
               Training.linkRng root.toUInt64 episode.toUInt64 Training.battleStream
-            let state := match token tokens 0 with
-              | some "reset-level100" =>
-                  Full.Environment.resetSizedPairLevel100 playerSize enemySize
-                    generatorRng battleRng
-              | some "reset-swapped" =>
-                  Full.Environment.resetSizedPairSwapped playerSize enemySize
-                    generatorRng battleRng
-              | some "reset-level100-swapped" =>
-                  Full.Environment.resetSizedPairLevel100Swapped playerSize enemySize
-                    generatorRng battleRng
-              | _ =>
-                  Full.Environment.resetSizedPair playerSize enemySize generatorRng battleRng
+            let balanced := tokenNat tokens 6 == some 1
+            let state := if balanced then
+                match token tokens 0 with
+                | some "reset-level100" =>
+                    Full.Environment.resetSizedPairBalancedLevel100 playerSize enemySize
+                      generatorRng battleRng
+                | some "reset-swapped" =>
+                    Full.Environment.resetSizedPairBalancedSwapped playerSize enemySize
+                      generatorRng battleRng
+                | some "reset-level100-swapped" =>
+                    Full.Environment.resetSizedPairBalancedLevel100Swapped playerSize enemySize
+                      generatorRng battleRng
+                | _ =>
+                    Full.Environment.resetSizedPairBalanced playerSize enemySize
+                      generatorRng battleRng
+              else match token tokens 0 with
+                | some "reset-level100" =>
+                    Full.Environment.resetSizedPairLevel100 playerSize enemySize
+                      generatorRng battleRng
+                | some "reset-swapped" =>
+                    Full.Environment.resetSizedPairSwapped playerSize enemySize
+                      generatorRng battleRng
+                | some "reset-level100-swapped" =>
+                    Full.Environment.resetSizedPairLevel100Swapped playerSize enemySize
+                      generatorRng battleRng
+                | _ =>
+                    Full.Environment.resetSizedPair playerSize enemySize generatorRng battleRng
             let state := SearchState.battle state []
             emit output (success request 0 state)
             serve input output #[state]
@@ -580,18 +597,33 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
               Training.linkRng root.toUInt64 episode.toUInt64 Training.generatorStream
             let battleRng :=
               Training.linkRng root.toUInt64 episode.toUInt64 Training.battleStream
-            let state := match token tokens 0 with
-              | some "reset-level100-append" =>
-                  Full.Environment.resetSizedPairLevel100 playerSize enemySize
-                    generatorRng battleRng
-              | some "reset-swapped-append" =>
-                  Full.Environment.resetSizedPairSwapped playerSize enemySize
-                    generatorRng battleRng
-              | some "reset-level100-swapped-append" =>
-                  Full.Environment.resetSizedPairLevel100Swapped playerSize enemySize
-                    generatorRng battleRng
-              | _ =>
-                  Full.Environment.resetSizedPair playerSize enemySize generatorRng battleRng
+            let balanced := tokenNat tokens 6 == some 1
+            let state := if balanced then
+                match token tokens 0 with
+                | some "reset-level100-append" =>
+                    Full.Environment.resetSizedPairBalancedLevel100 playerSize enemySize
+                      generatorRng battleRng
+                | some "reset-swapped-append" =>
+                    Full.Environment.resetSizedPairBalancedSwapped playerSize enemySize
+                      generatorRng battleRng
+                | some "reset-level100-swapped-append" =>
+                    Full.Environment.resetSizedPairBalancedLevel100Swapped playerSize enemySize
+                      generatorRng battleRng
+                | _ =>
+                    Full.Environment.resetSizedPairBalanced playerSize enemySize
+                      generatorRng battleRng
+              else match token tokens 0 with
+                | some "reset-level100-append" =>
+                    Full.Environment.resetSizedPairLevel100 playerSize enemySize
+                      generatorRng battleRng
+                | some "reset-swapped-append" =>
+                    Full.Environment.resetSizedPairSwapped playerSize enemySize
+                      generatorRng battleRng
+                | some "reset-level100-swapped-append" =>
+                    Full.Environment.resetSizedPairLevel100Swapped playerSize enemySize
+                      generatorRng battleRng
+                | _ =>
+                    Full.Environment.resetSizedPair playerSize enemySize generatorRng battleRng
             let state := SearchState.battle state []
             let handle := states.size
             emit output (success request handle state)

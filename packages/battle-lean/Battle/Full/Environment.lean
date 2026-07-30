@@ -153,6 +153,16 @@ def resetSizedPair (playerRequested enemyRequested : Nat)
   let enemy := RL.DynamicGenerator.sampleSized enemyRequested player.rng
   resetFromSamples player enemy battleRng mode playerBag enemyBag trainerClass
 
+/-- Reset with independently sized parties whose displayed final species use
+the bounded near-uniform 151-species profile. -/
+def resetSizedPairBalanced (playerRequested enemyRequested : Nat)
+    (generatorRng battleRng : Rng.LinkRng)
+    (mode : BattleMode := .link) (playerBag enemyBag : Items.Bag := [])
+    (trainerClass : UInt8 := 1) : State :=
+  let player := RL.DynamicGenerator.sampleSizedBalanced playerRequested generatorRng
+  let enemy := RL.DynamicGenerator.sampleSizedBalanced enemyRequested player.rng
+  resetFromSamples player enemy battleRng mode playerBag enemyBag trainerClass
+
 /-- Reset a generated battle whose independently sampled parties are both
 fully level 100. This is a distribution profile for competitive 6v6 strata;
 the teams retain the ordinary ordered progression/resource witnesses. -/
@@ -162,6 +172,15 @@ def resetSizedPairLevel100 (playerRequested enemyRequested : Nat)
     (trainerClass : UInt8 := 1) : State :=
   let player := RL.DynamicGenerator.sampleSizedLevel100 playerRequested generatorRng
   let enemy := RL.DynamicGenerator.sampleSizedLevel100 enemyRequested player.rng
+  resetFromSamples player enemy battleRng mode playerBag enemyBag trainerClass
+
+/-- Balanced-final-species level-100 reset. -/
+def resetSizedPairBalancedLevel100 (playerRequested enemyRequested : Nat)
+    (generatorRng battleRng : Rng.LinkRng)
+    (mode : BattleMode := .link) (playerBag enemyBag : Items.Bag := [])
+    (trainerClass : UInt8 := 1) : State :=
+  let player := RL.DynamicGenerator.sampleSizedBalancedLevel100 playerRequested generatorRng
+  let enemy := RL.DynamicGenerator.sampleSizedBalancedLevel100 enemyRequested player.rng
   resetFromSamples player enemy battleRng mode playerBag enemyBag trainerClass
 
 /-- Generate the same ordered pair as `resetSizedPair`, then install the second
@@ -174,11 +193,25 @@ def resetSizedPairSwapped (playerRequested enemyRequested : Nat)
   let enemy := RL.DynamicGenerator.sampleSized enemyRequested player.rng
   resetFromSamples enemy player battleRng .link [] [] 1
 
+/-- Swapped counterpart of `resetSizedPairBalanced`. -/
+def resetSizedPairBalancedSwapped (playerRequested enemyRequested : Nat)
+    (generatorRng battleRng : Rng.LinkRng) : State :=
+  let player := RL.DynamicGenerator.sampleSizedBalanced playerRequested generatorRng
+  let enemy := RL.DynamicGenerator.sampleSizedBalanced enemyRequested player.rng
+  resetFromSamples enemy player battleRng .link [] [] 1
+
 /-- Level-100 counterpart of `resetSizedPairSwapped`. -/
 def resetSizedPairLevel100Swapped (playerRequested enemyRequested : Nat)
     (generatorRng battleRng : Rng.LinkRng) : State :=
   let player := RL.DynamicGenerator.sampleSizedLevel100 playerRequested generatorRng
   let enemy := RL.DynamicGenerator.sampleSizedLevel100 enemyRequested player.rng
+  resetFromSamples enemy player battleRng .link [] [] 1
+
+/-- Swapped counterpart of the balanced level-100 reset. -/
+def resetSizedPairBalancedLevel100Swapped (playerRequested enemyRequested : Nat)
+    (generatorRng battleRng : Rng.LinkRng) : State :=
+  let player := RL.DynamicGenerator.sampleSizedBalancedLevel100 playerRequested generatorRng
+  let enemy := RL.DynamicGenerator.sampleSizedBalancedLevel100 enemyRequested player.rng
   resetFromSamples enemy player battleRng .link [] [] 1
 
 /-- Swapped and ordinary constructors use the same two generated samples in
@@ -200,6 +233,27 @@ theorem resetSizedPair_swaps_exact_samples (playerRequested enemyRequested : Nat
     swapped.playerReset = ordinary.enemyReset ∧
       swapped.enemyReset = ordinary.playerReset := by
   simp [resetSizedPairLevel100, resetSizedPairLevel100Swapped, resetFromSamples]
+
+@[simp] theorem resetSizedPairBalanced_swaps_exact_samples
+    (playerRequested enemyRequested : Nat) (generatorRng battleRng : Rng.LinkRng) :
+    let ordinary := resetSizedPairBalanced playerRequested enemyRequested
+      generatorRng battleRng
+    let swapped := resetSizedPairBalancedSwapped playerRequested enemyRequested
+      generatorRng battleRng
+    swapped.playerReset = ordinary.enemyReset ∧
+      swapped.enemyReset = ordinary.playerReset := by
+  simp [resetSizedPairBalanced, resetSizedPairBalancedSwapped, resetFromSamples]
+
+@[simp] theorem resetSizedPairBalancedLevel100_swaps_exact_samples
+    (playerRequested enemyRequested : Nat) (generatorRng battleRng : Rng.LinkRng) :
+    let ordinary := resetSizedPairBalancedLevel100 playerRequested enemyRequested
+      generatorRng battleRng
+    let swapped := resetSizedPairBalancedLevel100Swapped playerRequested enemyRequested
+      generatorRng battleRng
+    swapped.playerReset = ordinary.enemyReset ∧
+      swapped.enemyReset = ordinary.playerReset := by
+  simp [resetSizedPairBalancedLevel100, resetSizedPairBalancedLevel100Swapped,
+    resetFromSamples]
 
 /-- Equal-size compatibility wrapper around `resetSizedPair`. -/
 def resetSized (requested : Nat) (generatorRng battleRng : Rng.LinkRng)

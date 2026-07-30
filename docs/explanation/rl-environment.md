@@ -292,18 +292,22 @@ Generator.generate :
 
 The theorem states generated teams are legal. It does not claim uniformity unless a separate probability proof is supplied.
 
-The default sampler is `Battle.RL.DynamicGenerator.sample`. It consumes the
-deterministic link RNG and samples party size, species, DVs, ordered machine
-teachings, replacement slots, and PP Up counts. Each level-100 origin starts with
-the exact ordered result of `WriteMonMoves`; later moves can arise only from a
-compatible TM/HM event. One caller-supplied party-wide ledger consumes TMs once,
-requires but does not consume HMs, and bounds PP Ups. `sampleSizedWithLedger`
-returns both `{team // teamLegal Dex.gen1 .canonical team = true}` and a
-`historyReplays` proof that the complete history reconstructs exactly that team
-and its remaining ledger. Level 100 ensures every ordered level-up offer has
-occurred; it no longer licenses arbitrary subsets of an unordered move pool. A
-fail-closed, explicitly flagged recovery history prevents malformed entropy or a
-future generator regression from emitting an unwitnessed episode reset.
+The generator consumes the deterministic link RNG and samples party size,
+species, DVs, ordered machine teachings, replacement slots, and PP Up counts.
+The legacy `sample`/`sampleSized` profile applies weighted evolution outcomes.
+Production v17 instead uses `sampleSizedBalanced`: two fixed entropy bytes form
+a bounded final-species index whose 151 fibers have cardinality 434 or 435, and
+no evolutionary-family funnel changes that selected final species. Both modes
+consume the same fourteen bytes per member. Each origin starts with the exact
+ordered result of `WriteMonMoves`; later moves can arise only from a compatible
+TM/HM event. One caller-supplied party-wide ledger consumes TMs once, requires
+but does not consume HMs, and bounds PP Ups. Every returned sample carries both
+`{team // teamLegal Dex.gen1 .canonical team = true}` and a `historyReplays`
+proof that the complete history reconstructs exactly that team and its remaining
+ledger. Level 100 ensures every ordered level-up offer has occurred; it no
+longer licenses arbitrary subsets of an unordered move pool. A fail-closed,
+explicitly flagged recovery history prevents malformed entropy or a future
+generator regression from emitting an unwitnessed episode reset.
 
 Useful distributions include:
 

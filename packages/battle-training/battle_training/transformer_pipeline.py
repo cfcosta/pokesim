@@ -22,10 +22,9 @@ from . import (
     FULL_PARTY_SIZE,
     FULL_PROFILE,
     FULL_SCHEMA,
-    GENERATED_LEVEL_SCHEDULE,
-    GENERATED_PARTY_SCHEDULE,
     generated_level100,
     generated_party_sizes,
+    generated_schedule_names,
 )
 from .arena import (
     ArenaConfig,
@@ -118,6 +117,8 @@ class TransformerPipelineConfig:
     heuristic_opponents: bool = True
     value_loss_weight: float = 0.25
     redundant_action_prior_scale: float = 0.25
+    balanced_final_species: bool = True
+    generated_schedule_version: int = 3
 
 
 class _HeuristicNetwork:
@@ -203,8 +204,14 @@ class _ActorEpisode:
     timeline: list[dict[str, Any]] = field(default_factory=list)
 
 
-def _pipeline_id() -> str:
-    return "transformer-variable-party-bf16-tree-v16"
+def _pipeline_id(
+    balanced_final_species: bool = True, generated_schedule_version: int = 3
+) -> str:
+    return (
+        "transformer-variable-party-bf16-tree-v16"
+        if not balanced_final_species and generated_schedule_version == 2
+        else "transformer-variable-party-bf16-tree-v17"
+    )
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
@@ -254,13 +261,21 @@ def _training_party_index(iteration: int, episode: int) -> int:
     return _training_pair(episode) + (iteration - 1) * 13
 
 
-def _training_party_sizes(iteration: int, episode: int) -> tuple[int, int]:
+def _training_party_sizes(
+    iteration: int, episode: int, schedule_version: int = 3
+) -> tuple[int, int]:
     """Give both legs the same teams while retaining the full size schedule."""
-    return generated_party_sizes(_training_party_index(iteration, episode))
+    return generated_party_sizes(
+        _training_party_index(iteration, episode), schedule_version
+    )
 
 
-def _training_level100(iteration: int, episode: int) -> bool:
-    return generated_level100(_training_party_index(iteration, episode))
+def _training_level100(
+    iteration: int, episode: int, schedule_version: int = 3
+) -> bool:
+    return generated_level100(
+        _training_party_index(iteration, episode), schedule_version
+    )
 
 
 def _validate_collection_pairs(
@@ -560,8 +575,15 @@ def _collect_rows_single(
         "depth": config.search_depth,
         "seed": config.seed,
         "max_party_size": FULL_PARTY_SIZE,
-        "party_size_schedule": GENERATED_PARTY_SCHEDULE,
-        "level_schedule": GENERATED_LEVEL_SCHEDULE,
+        "party_size_schedule": generated_schedule_names(
+            config.generated_schedule_version
+        )[0],
+        "level_schedule": generated_schedule_names(config.generated_schedule_version)[1],
+        "species_schedule": (
+            "near-uniform-final-species-u16-v1"
+            if config.balanced_final_species
+            else "progression-weighted-final-species-v1"
+        ),
         "chance_samples_per_joint": config.chance_samples_per_joint,
         "regret_iterations": config.regret_iterations,
         "inference_batch_size": config.inference_batch_size,
@@ -611,6 +633,7 @@ def _collect_rows_single(
     scheduled_level100_six_vs_six = 0
     total_decisions = ordinary_actions = voluntary_switches = setup_uses = 0
     setup_move_counts: dict[str, int] = {}
+    species_counts: dict[str, int] = {}
     decision_quality = DecisionQualityMetrics()
     recent_battles: list[dict[str, Any]] = []
 
@@ -644,6 +667,11 @@ def _collect_rows_single(
             "player_party_size": actor.player_size,
             "enemy_party_size": actor.enemy_size,
             "level_profile": "level100" if actor.level100 else "distributed",
+            "species_profile": (
+                "balanced-final-u16-v1"
+                if config.balanced_final_species
+                else "progression-weighted-v1"
+            ),
             "episode_kind": actor.episode_kind,
             "opponent": actor.opponent_identity or "self-play",
             "candidate_side": (
@@ -734,9 +762,11 @@ def _collect_rows_single(
                     mirror_episodes += 1
                 reset_seed = config.seed + iteration * 10_000
                 pair_player_size, pair_enemy_size = _training_party_sizes(
-                    iteration, episode
+                    iteration, episode, config.generated_schedule_version
                 )
-                level100 = _training_level100(iteration, episode)
+                level100 = _training_level100(
+                    iteration, episode, config.generated_schedule_version
+                )
                 teams_swapped = episode_kind == "mirror" and pair_leg == 1
                 player_size, enemy_size = (
                     (pair_enemy_size, pair_player_size)
@@ -753,6 +783,7 @@ def _collect_rows_single(
                         pair_enemy_size,
                         level100=level100,
                         swapped=teams_swapped,
+                        balanced_final_species=config.balanced_final_species,
                     )
                     if offset == 0
                     else server.reset_append(
@@ -762,6 +793,7 @@ def _collect_rows_single(
                         pair_enemy_size,
                         level100=level100,
                         swapped=teams_swapped,
+                        balanced_final_species=config.balanced_final_species,
                     )
                 )
                 active.append(
@@ -803,6 +835,11 @@ def _collect_rows_single(
             for actor, inspection in zip(active, inspections, strict=True):
                 actor.inspection = inspection
                 actor.initial = _compact_inspection(inspection)
+                if actor.pair_leg == 0:
+                    for side in ("player", "enemy"):
+                        for mon in inspection[side]["party"]:
+                            key = f"{int(mon['dex']):03d}:{mon['name']}"
+                            species_counts[key] = species_counts.get(key, 0) + 1
             for decision in range(config.episode_budget):
                 searched = decision % config.search_every == 0
                 results: dict[int, SearchResult] = {}
@@ -1084,6 +1121,8 @@ def _collect_rows_single(
                     setup_uses=setup_uses,
                     setup_use_rate=setup_uses / max(1, ordinary_actions),
                     setup_move_counts=setup_move_counts,
+                    species_counts=species_counts,
+                    species_schedule=meta["species_schedule"],
                     decision_quality_version="static-active-context-v1",
                     **decision_quality.report(),
                     deep_search_decisions=deep_search_decisions,
@@ -1121,16 +1160,25 @@ def _collect_rows_single(
         and row["level_profile"] == "level100"
         for row in episode_rows
     )
-    if len(
-        episode_indices
-    ) == config.selfplay_episodes and six_vs_six_battles * 4 < len(episode_indices):
-        raise RuntimeError("collection schedule fell below 25% 6v6")
+    schedule_denominator = 4 if config.generated_schedule_version == 2 else 3
+    schedule_tolerance = 2 * (schedule_denominator - 1)
     if (
         len(episode_indices) == config.selfplay_episodes
-        and six_vs_six_battles >= 4
-        and level100_six_vs_six_battles * 4 != six_vs_six_battles
+        and abs(
+            six_vs_six_battles * schedule_denominator - len(episode_indices)
+        )
+        > schedule_tolerance
     ):
-        raise RuntimeError("collection schedule is not exactly 25% level-100 6v6")
+        raise RuntimeError("collection 6v6 schedule differs from its target")
+    if (
+        len(episode_indices) == config.selfplay_episodes
+        and abs(
+            level100_six_vs_six_battles * schedule_denominator
+            - six_vs_six_battles
+        )
+        > schedule_tolerance
+    ):
+        raise RuntimeError("collection level-100 6v6 schedule differs from its target")
     return {
         "finished": finished,
         "truncated": truncated,
@@ -1144,15 +1192,23 @@ def _collect_rows_single(
         "recent_battles": recent_battles,
         "pairing": "same-reset-opposite-controller-sides-v1",
         "pairs": len(episode_indices) // 2,
-        "party_size_schedule": GENERATED_PARTY_SCHEDULE,
-        "level_schedule": GENERATED_LEVEL_SCHEDULE,
-        "minimum_6v6_fraction": 0.25,
-        "level100_6v6_fraction": 0.25,
+        "party_size_schedule": generated_schedule_names(
+            config.generated_schedule_version
+        )[0],
+        "level_schedule": generated_schedule_names(config.generated_schedule_version)[1],
+        "species_schedule": (
+            "near-uniform-final-species-u16-v1"
+            if config.balanced_final_species
+            else "progression-weighted-final-species-v1"
+        ),
+        "target_6v6_fraction": 1 / schedule_denominator,
+        "level100_6v6_fraction": 1 / schedule_denominator,
         "six_vs_six_battles": six_vs_six_battles,
         "level100_six_vs_six_battles": level100_six_vs_six_battles,
         "voluntary_switches": voluntary_switches,
         "setup_uses": setup_uses,
         "setup_move_counts": setup_move_counts,
+        "species_counts": species_counts,
         "decision_quality_version": "static-active-context-v1",
         **decision_quality.report(),
         "ordinary_actions": ordinary_actions,
@@ -1363,6 +1419,7 @@ def _merge_collection_rows(
     opponent_counts: dict[str, int] = {}
     party_size_counts: dict[str, int] = {}
     setup_move_counts: dict[str, int] = {}
+    species_counts: dict[str, int] = {}
     for metrics in worker_metrics:
         for name, count in metrics["opponent_counts"].items():
             opponent_counts[name] = opponent_counts.get(name, 0) + count
@@ -1370,6 +1427,8 @@ def _merge_collection_rows(
             party_size_counts[name] = party_size_counts.get(name, 0) + count
         for name, count in metrics["setup_move_counts"].items():
             setup_move_counts[name] = setup_move_counts.get(name, 0) + count
+        for name, count in metrics.get("species_counts", {}).items():
+            species_counts[name] = species_counts.get(name, 0) + count
     transitions = total("transitions")
     decision_quality = DecisionQualityMetrics(
         major_status_attempts=total("major_status_attempts"),
@@ -1382,13 +1441,21 @@ def _merge_collection_rows(
     )
     six_vs_six_battles = party_size_counts.get("6v6", 0)
     level100_six_vs_six_battles = total("level100_six_vs_six_battles")
-    if six_vs_six_battles * 4 < config.selfplay_episodes:
-        raise RuntimeError("collection schedule fell below 25% 6v6")
+    schedule_denominator = 4 if config.generated_schedule_version == 2 else 3
+    schedule_tolerance = 2 * (schedule_denominator - 1)
     if (
-        six_vs_six_battles >= 4
-        and level100_six_vs_six_battles * 4 != six_vs_six_battles
+        abs(six_vs_six_battles * schedule_denominator - config.selfplay_episodes)
+        > schedule_tolerance
     ):
-        raise RuntimeError("collection schedule is not exactly 25% level-100 6v6")
+        raise RuntimeError("collection 6v6 schedule differs from its target")
+    if (
+        abs(
+            level100_six_vs_six_battles * schedule_denominator
+            - six_vs_six_battles
+        )
+        > schedule_tolerance
+    ):
+        raise RuntimeError("collection level-100 6v6 schedule differs from its target")
     return {
         "finished": total("finished"),
         "truncated": total("truncated"),
@@ -1418,14 +1485,22 @@ def _merge_collection_rows(
         "candidate_enemy_episodes": total("candidate_enemy_episodes"),
         "opponent_counts": opponent_counts,
         "party_size_counts": party_size_counts,
-        "party_size_schedule": GENERATED_PARTY_SCHEDULE,
-        "level_schedule": GENERATED_LEVEL_SCHEDULE,
-        "minimum_6v6_fraction": 0.25,
-        "level100_6v6_fraction": 0.25,
+        "party_size_schedule": generated_schedule_names(
+            config.generated_schedule_version
+        )[0],
+        "level_schedule": generated_schedule_names(config.generated_schedule_version)[1],
+        "species_schedule": (
+            "near-uniform-final-species-u16-v1"
+            if config.balanced_final_species
+            else "progression-weighted-final-species-v1"
+        ),
+        "target_6v6_fraction": 1 / schedule_denominator,
+        "level100_6v6_fraction": 1 / schedule_denominator,
         "six_vs_six_battles": six_vs_six_battles,
         "level100_six_vs_six_battles": level100_six_vs_six_battles,
         "setup_uses": total("setup_uses"),
         "setup_move_counts": setup_move_counts,
+        "species_counts": species_counts,
         "decision_quality_version": "static-active-context-v1",
         **decision_quality.report(),
         "mean_target_entropy": sum(
@@ -1861,13 +1936,16 @@ def _play_game(
     chance_rng: random.Random,
 ) -> int | None:
     pair = episode // 2
-    player_size, enemy_size = generated_party_sizes(pair)
+    player_size, enemy_size = generated_party_sizes(
+        pair, config.generated_schedule_version
+    )
     snapshot = server.reset(
         config.seed + 90_000_000,
         episode,
         player_size,
         enemy_size,
-        level100=generated_level100(pair),
+        level100=generated_level100(pair, config.generated_schedule_version),
+        balanced_final_species=config.balanced_final_species,
     )
     for _ in range(config.episode_budget):
         search = _new_search(server, player, enemy, config, selection_rng, chance_rng)
@@ -2092,14 +2170,18 @@ def _resume_config(root: Path) -> TransformerPipelineConfig:
     if not run_path.is_file():
         raise FileNotFoundError(f"resume metadata is missing: {run_path}")
     run = json.loads(run_path.read_text())
-    if run.get("pipeline") != _pipeline_id():
-        raise ValueError(
-            "resume pipeline version differs from the current implementation"
-        )
     if run.get("profile") != FULL_PROFILE or run.get("schema") != FULL_SCHEMA:
         raise ValueError("resume mechanics profile or tensor schema differs")
     raw_config = dict(run["config"])
     raw_config.setdefault("precision", "fp32")
+    raw_config.setdefault("balanced_final_species", False)
+    raw_config.setdefault("generated_schedule_version", 2)
+    if run.get("pipeline") != _pipeline_id(
+        raw_config["balanced_final_species"], raw_config["generated_schedule_version"]
+    ):
+        raise ValueError(
+            "resume pipeline version differs from the current implementation"
+        )
     # V16 runs created before observational decision-quality probes used raw
     # network priors. Preserve that exact resume behavior.
     raw_config.setdefault("redundant_action_prior_scale", 1.0)
@@ -2147,6 +2229,10 @@ def run_transformer_pipeline(
         raise ValueError("tree_convergence_patience must be positive")
     if not 0.0 <= config.deep_search_fraction <= 1.0:
         raise ValueError("deep_search_fraction must be in [0, 1]")
+    if config.generated_schedule_version not in {2, 3}:
+        raise ValueError("generated_schedule_version must be 2 or 3")
+    if config.balanced_final_species and config.generated_schedule_version != 3:
+        raise ValueError("balanced final species requires generated schedule v3")
     if config.actor_batch_size < 1:
         raise ValueError("actor_batch_size must be positive")
     if not 1 <= config.actor_processes <= min(4, config.selfplay_episodes):
@@ -2240,6 +2326,8 @@ def run_transformer_pipeline(
         run_metadata = json.loads((root / "run.json").read_text())
         saved_config = dict(run_metadata.get("config", {}))
         saved_config.setdefault("redundant_action_prior_scale", 1.0)
+        saved_config.setdefault("balanced_final_species", False)
+        saved_config.setdefault("generated_schedule_version", 2)
         if saved_config != asdict(config):
             raise ValueError("resume configuration differs from immutable run metadata")
         if run_metadata.get("network") != asdict(model_config):
@@ -2367,12 +2455,23 @@ def run_transformer_pipeline(
         write_json(
             root / "run.json",
             {
-                "pipeline": _pipeline_id(),
+                "pipeline": _pipeline_id(
+                    config.balanced_final_species, config.generated_schedule_version
+                ),
                 "profile": FULL_PROFILE,
                 "schema": FULL_SCHEMA,
                 "max_party_size": FULL_PARTY_SIZE,
-                "party_size_schedule": GENERATED_PARTY_SCHEDULE,
-                "level_schedule": GENERATED_LEVEL_SCHEDULE,
+                "party_size_schedule": generated_schedule_names(
+                    config.generated_schedule_version
+                )[0],
+                "level_schedule": generated_schedule_names(
+                    config.generated_schedule_version
+                )[1],
+                "species_schedule": (
+                    "near-uniform-final-species-u16-v1"
+                    if config.balanced_final_species
+                    else "progression-weighted-final-species-v1"
+                ),
                 "chance": "fresh-root-v1",
                 "search_solver": "simultaneous-matrix-tree-rmplus-v1",
                 "collection_pairing": "same-reset-opposite-controller-sides-v1",
@@ -2520,6 +2619,8 @@ def run_transformer_pipeline(
             config.seed + 70_000_000 + iteration * 10_007,
             config.promotion_seed_count,
             capture_details=True,
+            balanced_final_species=config.balanced_final_species,
+            generated_schedule_version=config.generated_schedule_version,
         )
         promotion_detail_dir = root / "matches" / f"promotion-{iteration:03d}"
         for battle in promotion["battles"]:
@@ -2578,6 +2679,8 @@ def run_transformer_pipeline(
                 seed=config.seed + 80_000_000 + iteration * 10_009,
                 replay_games=0,
                 seed_count=config.probe_seed_count,
+                balanced_final_species=config.balanced_final_species,
+                generated_schedule_version=config.generated_schedule_version,
             ),
         )
         probes = skill_probe_report(probe_arena)
@@ -2598,6 +2701,8 @@ def run_transformer_pipeline(
             config.episode_budget,
             config.seed + 85_000_000 + iteration * 10_019,
             config.campaign_seed_count,
+            balanced_final_species=config.balanced_final_species,
+            generated_schedule_version=config.generated_schedule_version,
         )
         promotion_score = promotion["score_with_nonfinishes_as_losses"]
         confidence_low = promotion["paired_score_ci95"][0]
@@ -2720,6 +2825,8 @@ def run_transformer_pipeline(
         seed=config.seed,
         replay_games=min(3, config.arena_episodes),
         seed_count=min(8, config.arena_episodes // 2),
+        balanced_final_species=config.balanced_final_species,
+        generated_schedule_version=config.generated_schedule_version,
     )
     arena = write_arena_report(
         root / "arena" / "final-vs-initial", incumbent_network, initial, arena_config
@@ -2799,7 +2906,9 @@ def run_transformer_pipeline(
         and (model_quality_pass or not config.enforce_quality_gate)
     )
     summary = {
-        "pipeline": _pipeline_id(),
+        "pipeline": _pipeline_id(
+            config.balanced_final_species, config.generated_schedule_version
+        ),
         "device": str(device),
         "iterations": config.iterations,
         "selfplay_battles": config.iterations * config.selfplay_episodes,

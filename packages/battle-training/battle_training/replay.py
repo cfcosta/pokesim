@@ -40,6 +40,7 @@ class ReplayCoordinates:
     enemy_size: int
     level100: bool
     swapped: bool
+    balanced_final_species: bool
 
 
 def _u16(value: object) -> tuple[int, int]:
@@ -270,6 +271,9 @@ def replay_coordinates(
             enemy_size=int(detail["pair_enemy_party_size"]),
             level100=detail["level_profile"] == "level100",
             swapped=bool(detail["teams_swapped"]),
+            balanced_final_species=bool(
+                config.get("balanced_final_species", False)
+            ),
         )
     if kind == "promotion":
         arena_seed = seed + 70_000_000 + iteration * 10_007
@@ -285,6 +289,9 @@ def replay_coordinates(
             enemy_size=int(detail["enemy_party_size"]),
             level100=detail["level_profile"] == "level100",
             swapped=False,
+            balanced_final_species=bool(
+                config.get("balanced_final_species", False)
+            ),
         )
     raise ValueError("recorded replay kind must be selfplay or promotion")
 
@@ -309,6 +316,7 @@ def build_replay_manifest(
             coordinates.enemy_size,
             level100=coordinates.level100,
             swapped=coordinates.swapped,
+            balanced_final_species=coordinates.balanced_final_species,
         )
         initial = server.inspect(snapshot.handle)
         _assert_matches_recording(
@@ -395,6 +403,7 @@ def build_replay_manifest(
             "level100": coordinates.level100,
             "swapped": coordinates.swapped,
             "recorded_swapped": recorded_coordinates.swapped,
+            "balanced_final_species": coordinates.balanced_final_species,
         },
         "initial": {
             "player": _party_payload(initial["player"], "RED"),

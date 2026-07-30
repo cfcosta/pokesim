@@ -12,10 +12,9 @@ from . import (
     FULL_CAMPAIGN_COUNT,
     FULL_PARTY_SIZE,
     FULL_PROFILE,
-    GENERATED_LEVEL_SCHEDULE,
-    GENERATED_PARTY_SCHEDULE,
     generated_level100,
     generated_party_sizes,
+    generated_schedule_names,
 )
 from .artifacts import write_json
 from .decision_quality import (
@@ -86,6 +85,8 @@ class ArenaConfig:
     replay_games: int = 3
     search_every: int = 0
     seed_count: int = 8
+    balanced_final_species: bool = True
+    generated_schedule_version: int = 3
 
 
 @dataclass
@@ -611,34 +612,42 @@ def _mean_ci95(values: list[float]) -> tuple[float, float]:
     return max(0.0, mean - radius), min(1.0, mean + radius)
 
 
-def _evaluation_party_sizes(pair: int) -> tuple[int, int]:
-    return generated_party_sizes(pair)
+def _evaluation_party_sizes(
+    pair: int, schedule_version: int = 3
+) -> tuple[int, int]:
+    return generated_party_sizes(pair, schedule_version)
 
 
-def _evaluation_level100(pair: int) -> bool:
-    return generated_level100(pair)
+def _evaluation_level100(pair: int, schedule_version: int = 3) -> bool:
+    return generated_level100(pair, schedule_version)
 
 
-def _generated_party_report(games: int) -> dict[str, Any]:
+def _generated_party_report(
+    games: int, schedule_version: int = 3
+) -> dict[str, Any]:
     six_vs_six_games = 2 * sum(
-        _evaluation_party_sizes(pair) == (FULL_PARTY_SIZE, FULL_PARTY_SIZE)
+        _evaluation_party_sizes(pair, schedule_version)
+        == (FULL_PARTY_SIZE, FULL_PARTY_SIZE)
         for pair in range(games // 2)
     )
     level100_six_vs_six_games = 2 * sum(
-        _evaluation_level100(pair) for pair in range(games // 2)
+        _evaluation_level100(pair, schedule_version) for pair in range(games // 2)
     )
-    if six_vs_six_games * 4 < games:
-        raise RuntimeError("generated arena schedule fell below 25% 6v6")
+    denominator = 4 if schedule_version == 2 else 3
+    if abs(six_vs_six_games * denominator - games) > 2 * (denominator - 1):
+        raise RuntimeError("generated arena 6v6 schedule differs from its target")
     if (
-        six_vs_six_games >= 8
-        and level100_six_vs_six_games * 4 != six_vs_six_games
+        abs(level100_six_vs_six_games * denominator - six_vs_six_games)
+        > 2 * (denominator - 1)
     ):
-        raise RuntimeError("generated arena schedule is not exactly 25% level-100 6v6")
+        raise RuntimeError(
+            "generated arena level-100 6v6 schedule differs from its target"
+        )
     return {
-        "party_size_schedule": GENERATED_PARTY_SCHEDULE,
-        "level_schedule": GENERATED_LEVEL_SCHEDULE,
-        "minimum_6v6_fraction": 0.25,
-        "level100_6v6_fraction": 0.25,
+        "party_size_schedule": generated_schedule_names(schedule_version)[0],
+        "level_schedule": generated_schedule_names(schedule_version)[1],
+        "target_6v6_fraction": 1 / denominator,
+        "level100_6v6_fraction": 1 / denominator,
         "six_vs_six_games": six_vs_six_games,
         "level100_six_vs_six_games": level100_six_vs_six_games,
         "side_swap_complete": True,
@@ -692,6 +701,8 @@ def _run_fast_arena_games(
     campaign: bool,
     batch_size: int = 256,
     capture_details: bool = False,
+    balanced_final_species: bool = True,
+    generated_schedule_version: int = 3,
 ) -> list[_FastArenaEpisode]:
     completed: list[_FastArenaEpisode] = []
     server = SearchServer()
@@ -704,7 +715,9 @@ def _run_fast_arena_games(
                 candidate_player = game % 2 == 0
                 candidate_rng = random.Random(seed + 30_000_019 + pair * 2_000_003)
                 baseline_rng = random.Random(seed + 40_000_033 + pair * 2_000_003)
-                player_size, enemy_size = _evaluation_party_sizes(pair)
+                player_size, enemy_size = _evaluation_party_sizes(
+                    pair, generated_schedule_version
+                )
                 episodes.append(
                     _FastArenaEpisode(
                         game=game,
@@ -719,7 +732,8 @@ def _run_fast_arena_games(
                         ),
                         player_size=player_size,
                         enemy_size=enemy_size,
-                        level100=not campaign and _evaluation_level100(pair),
+                        level100=not campaign
+                        and _evaluation_level100(pair, generated_schedule_version),
                         campaign_index=pair % len(_CAMPAIGN_NAMES),
                         snapshot=None,
                     )
@@ -736,7 +750,10 @@ def _run_fast_arena_games(
                             else server.reset_campaign_append
                         )
                         episode.snapshot = reset(
-                            root_seed, reset_episode, episode.campaign_index
+                            root_seed,
+                            reset_episode,
+                            episode.campaign_index,
+                            balanced_final_species=balanced_final_species,
                         )
                     else:
                         reset = server.reset if offset == 0 else server.reset_append
@@ -746,6 +763,7 @@ def _run_fast_arena_games(
                             episode.player_size,
                             episode.enemy_size,
                             level100=episode.level100,
+                            balanced_final_species=balanced_final_species,
                         )
                 if capture_details:
                     inspections = server.inspect_many(
@@ -856,6 +874,8 @@ def run_paired_arena(
     *,
     campaign: bool = False,
     capture_details: bool = False,
+    balanced_final_species: bool = True,
+    generated_schedule_version: int = 3,
 ) -> dict[str, Any]:
     """Fast paired, side-swapped evaluation with nonfinishes scored as losses."""
     if games < 2 or games % 2:
@@ -887,6 +907,8 @@ def run_paired_arena(
         seed_count,
         campaign,
         capture_details=capture_details,
+        balanced_final_species=balanced_final_species,
+        generated_schedule_version=generated_schedule_version,
     )
     for pair in range(games // 2):
         first, second = episodes[2 * pair : 2 * pair + 2]
@@ -1004,7 +1026,7 @@ def run_paired_arena(
                 "six_vs_six_games": None,
             }
             if campaign
-            else _generated_party_report(games)
+            else _generated_party_report(games, generated_schedule_version)
         ),
         "strata": None if campaign else _stratified_report(stratum_scores),
         "campaign": campaign_report if campaign else None,
@@ -1034,6 +1056,9 @@ def run_campaign_arena(
     budget: int,
     seed: int,
     seed_count: int = 8,
+    *,
+    balanced_final_species: bool = True,
+    generated_schedule_version: int = 3,
 ) -> dict[str, Any]:
     """Evaluate both model sides across the fixed patched campaign suite."""
     if games < 2 * len(_CAMPAIGN_NAMES):
@@ -1046,6 +1071,8 @@ def run_campaign_arena(
         seed,
         seed_count,
         campaign=True,
+        balanced_final_species=balanced_final_species,
+        generated_schedule_version=generated_schedule_version,
     )
 
 
@@ -1074,13 +1101,15 @@ def _traced_summary(
         "unequal-party": [],
     }
     for pair, score in enumerate(pair_scores):
-        player_size, enemy_size = _evaluation_party_sizes(pair)
+        player_size, enemy_size = _evaluation_party_sizes(
+            pair, config.generated_schedule_version
+        )
         for stratum in _party_strata(player_size, enemy_size):
             stratum_scores[stratum].append(score)
     return {
         "profile": FULL_PROFILE,
         "max_party_size": FULL_PARTY_SIZE,
-        **_generated_party_report(config.games),
+        **_generated_party_report(config.games, config.generated_schedule_version),
         "strata": _stratified_report(stratum_scores),
         "games": config.games,
         "wins": wins,
@@ -1130,7 +1159,9 @@ def _run_traced_arena_batched(
                 baseline_rng = random.Random(
                     config.seed + 40_000_033 + pair * 2_000_003
                 )
-                player_size, enemy_size = _evaluation_party_sizes(pair)
+                player_size, enemy_size = _evaluation_party_sizes(
+                    pair, config.generated_schedule_version
+                )
                 replay = Replay() if game < config.replay_games else None
                 episodes.append(
                     _TracedArenaEpisode(
@@ -1146,7 +1177,9 @@ def _run_traced_arena_batched(
                         ),
                         player_size=player_size,
                         enemy_size=enemy_size,
-                        level100=_evaluation_level100(pair),
+                        level100=_evaluation_level100(
+                            pair, config.generated_schedule_version
+                        ),
                         campaign_index=0,
                         snapshot=None,
                         replay=replay,
@@ -1170,6 +1203,7 @@ def _run_traced_arena_batched(
                         episode.player_size,
                         episode.enemy_size,
                         level100=episode.level100,
+                        balanced_final_species=config.balanced_final_species,
                     )
                 inspections = server.inspect_many(
                     [episode.snapshot.handle for episode in active]
@@ -1420,7 +1454,9 @@ def _run_traced_arena_sequential(
         player = candidate if candidate_player else baseline
         enemy = baseline if candidate_player else candidate
         pair = episode // 2
-        player_size, enemy_size = _evaluation_party_sizes(pair)
+        player_size, enemy_size = _evaluation_party_sizes(
+            pair, config.generated_schedule_version
+        )
         candidate_rng = random.Random(config.seed + 30_000_019 + pair * 2_000_003)
         baseline_rng = random.Random(config.seed + 40_000_033 + pair * 2_000_003)
         player_rng = candidate_rng if candidate_player else baseline_rng
@@ -1446,7 +1482,10 @@ def _run_traced_arena_sequential(
                     reset_episode,
                     player_size,
                     enemy_size,
-                    level100=_evaluation_level100(pair),
+                    level100=_evaluation_level100(
+                        pair, config.generated_schedule_version
+                    ),
+                    balanced_final_species=config.balanced_final_species,
                 )
                 initial = server.inspect(snapshot.handle)
                 initial["player_mask"] = snapshot.player_mask
@@ -1584,13 +1623,15 @@ def _run_traced_arena_sequential(
         "unequal-party": [],
     }
     for pair, score in enumerate(pair_scores):
-        player_size, enemy_size = _evaluation_party_sizes(pair)
+        player_size, enemy_size = _evaluation_party_sizes(
+            pair, config.generated_schedule_version
+        )
         for stratum in _party_strata(player_size, enemy_size):
             stratum_scores[stratum].append(score)
     return {
         "profile": FULL_PROFILE,
         "max_party_size": FULL_PARTY_SIZE,
-        **_generated_party_report(config.games),
+        **_generated_party_report(config.games, config.generated_schedule_version),
         "strata": _stratified_report(stratum_scores),
         "games": config.games,
         "wins": wins,

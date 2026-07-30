@@ -51,8 +51,14 @@ for explicit sparse-search experiments, but it is not the production default.
 This preserves complete action consideration without top-k pruning.
 `transformer-train` is the production profile:
 30 iterations of 2,048 training battles, or 61,440 independently reset random
-variable-party battles. Exactly one quarter of generated battles are 6v6; the
-remaining schedule cycles through every other ordered party-size matchup. It uses
+variable-party battles. One third of generated battles are 6v6; the remaining
+schedule cycles through every other ordered party-size matchup. V17 selects the
+displayed final species with a bounded two-byte map whose 151 fibers contain
+434 or 435 words each. This removes the prior 2:1 byte-modulo bias and the
+funneling of several evolutionary-family entries into one final form while
+retaining all 151 species, fixed entropy consumption, legal move histories, and
+resource witnesses. `--weighted-final-species` retains the legacy distribution
+for differential runs. It uses
 depth-four simultaneous trees, the
 940,430-parameter four-layer, 128-wide model, BF16 autocast, one epoch per iteration, a
 CUDA-safe batch size of 128, and a 2,048-game final arena. The policy objective
@@ -178,10 +184,12 @@ relabeling importer in
 [the trace contract](../../docs/explanation/human-battle-trace-training.md) is
 implemented. Each production update receives 2,048 held-out games against its
 incumbent, grouped into 1,024 same-reset pairs with a complete model-side swap
-across eight root seeds. Every generated arena and collection schedule reserves
-at least 25% of games for 6v6. Exactly 25% of the scheduled generated 6v6
-pairs use two fully level-100 teams; the remaining generated teams retain the
-ROM-floor-to-100 level distribution. Production collection groups every two
+across eight root seeds. Every generated arena and collection schedule assigns
+one third of pairs to 6v6. One third of those 6v6 pairs use two fully level-100
+teams; the remaining generated teams retain the ROM-floor-to-100 level
+distribution. Collection artifacts and the dashboard report all 151 species
+counts from one canonical leg per pair so paired replays do not inflate coverage.
+Production collection groups every two
 games into one same-reset pair. Fixed/checkpoint/heuristic opponents exchange
 candidate controller sides on the second leg while retaining physical team
 placement, so each controller uses both teams. In mirror self-play, where the
@@ -202,7 +210,7 @@ collection or promotion. It also reports and gates 1–2, 3–4,
 5–6, and unequal-party strata, plus a nine-team fixed campaign suite covering
 Brock through Giovanni and Lance. The campaign teams use canonical natural
 moves and fixed DVs inside the link quotient; they do not claim trainer AI or
-item equivalence. The v16 pipeline separates a persistent shadow learner from the
+item equivalence. The v16/v17 pipelines separate a persistent shadow learner from the
 quality-gated deployed incumbent. Inconclusive evaluations retain the incumbent
 but carry the learner parameters and AdamW state into the next collection
 iteration, allowing small updates to compound without weakening deployment. Each

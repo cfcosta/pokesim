@@ -34,7 +34,7 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Verify generated artifacts and deterministic shard replay.
 - [x] Add held-out generated-team type/status probes plus switch and setup diagnostics.
 - [x] Add 1,024-game paired-seed complete side-swapped confidence intervals.
-- [x] Reserve at least 25% of generated collection and arena games for 6v6.
+- [x] Reserve one third of generated collection and arena pairs for 6v6.
 - [x] Report trunk-gradient conflict and whole-battle held-out diagnostics.
 - [x] Separate the persistent shadow learner from quality-gated deployment.
 - [x] Add multi-checkpoint fixed baselines and pairwise arena reports.
@@ -73,7 +73,7 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Serve a read-only live dashboard for model, battle, actor, and promotion state.
 - [x] Open self-play and promotion rows into on-demand recorded match panes.
 - [x] Show complete move slots, PP/status, sprites, named choices, switches, and events.
-- [x] Make exactly 25% of scheduled generated 6v6 pairs fully level 100.
+- [x] Make one third of scheduled generated 6v6 pairs fully level 100.
 - [x] Audit horizon stops and raise production/arena decision limits to 512.
 - [x] Add quality-gated grouped-token and tiered-deep-search profiles.
 - [x] Preserve pre-v5 checkpoint execution as FP32.

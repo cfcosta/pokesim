@@ -16,9 +16,12 @@ finite PP Up budget.
 
 Species are sampled across all 151 real entries. Each level is sampled from the
 ROM-derived minimum obtainable level through 100. Species unavailable through
-normal Red acquisition use the explicit policy fallback level 5. Eligible
-level/item stages usually evolve (8/10 roll residues); trade stages usually
-retain the pre-trade species (6/10), preserving Kadabra over Alakazam more often.
+normal Red acquisition use the explicit policy fallback level 5. The legacy
+profile applies weighted evolution promotion: eligible level/item stages usually
+evolve (8/10 roll residues), while trade stages usually retain the pre-trade
+species (6/10). The balanced-final profile instead maps two fixed bytes directly
+onto all 151 displayed species with 434-or-435-word fibers and skips that family
+funnel. Both profiles consume the same entropy shape.
 
 Every `Sample` carries two independent proofs:
 
@@ -243,11 +246,34 @@ trade evolution, or reach Alakazam. Below level 16 it cannot become Kadabra. -/
     evolveOnce 0x94 15 0 0 = none := by
   native_decide
 
+/-- Map two entropy bytes onto the 151 final species. Of the 65,536 input
+words, every species receives either 434 or 435 preimages. This removes the
+2:1 byte-modulo bias without introducing an unbounded rejection loop. -/
+def balancedSpeciesIndex (high low : UInt8) : Nat :=
+  (high.toNat * 256 + low.toNat) % pokedex.size
+
+def balancedSpeciesCounts : Array Nat :=
+  (Array.range 65536).foldl (fun counts word =>
+    counts.modify (word % pokedex.size) (· + 1)) (Array.replicate pokedex.size 0)
+
+def balancedSpeciesDistribution : Bool :=
+  balancedSpeciesCounts.size == 151 &&
+    balancedSpeciesCounts.all (fun count => count == 434 || count == 435) &&
+    balancedSpeciesCounts.foldl (· + ·) 0 == 65536
+
+/-- The bounded two-byte map has full, near-uniform support over all 151 final
+species: its largest and smallest fibers differ by one. -/
+@[simp] theorem balanced_species_distribution : balancedSpeciesDistribution = true := by
+  native_decide
+
 /-- Fourteen fixed draws select species, level, two evolution decisions/branches,
 four DVs, machine count/order/replacement slots, and per-slot PP Up counts.
-Acquisition replays exact `WriteMonMoves` for the promoted species at the sampled
-level before machine teachings and PP Ups. -/
-private def sampleMonWithLevel (forcedLevel : Option UInt8)
+The balanced profile uses the first species/evolution-decision bytes as one
+16-bit final-species draw and deliberately skips evolutionary promotion. Both
+profiles consume the same fourteen bytes. Acquisition replays exact
+`WriteMonMoves` for the selected final species at the sampled level before
+machine teachings and PP Ups. -/
+private def sampleMonWithLevel (forcedLevel : Option UInt8) (balancedFinal : Bool)
     (ledger : ResourceLedger) (rng : Rng.LinkRng) :
     MonPlan × MonState × ResourceLedger × Rng.LinkRng :=
   let (speciesByte, rng) := draw rng
@@ -264,10 +290,13 @@ private def sampleMonWithLevel (forcedLevel : Option UInt8)
   let (machineStartByte, rng) := draw rng
   let (replacementBits, rng) := draw rng
   let (ppPattern, rng) := draw rng
-  let entry := entryOf speciesByte.toNat
+  let entry := if balancedFinal then
+      entryOf (balancedSpeciesIndex speciesByte firstEvolutionDecision)
+    else entryOf speciesByte.toNat
   let level := forcedLevel.getD (sampledLevel entry.speciesId levelByte)
-  let species := promoteSpecies entry.speciesId level
-    firstEvolutionDecision firstEvolutionBranch secondEvolutionDecision secondEvolutionBranch
+  let species := if balancedFinal then entry.speciesId else
+    promoteSpecies entry.speciesId level firstEvolutionDecision firstEvolutionBranch
+      secondEvolutionDecision secondEvolutionBranch
   let origin : Origin :=
     { species, level
       atkDv := atkByte, defDv := defByte, spdDv := spdByte, spcDv := spcByte }
@@ -282,21 +311,21 @@ private def sampleMonWithLevel (forcedLevel : Option UInt8)
 /-- Ordinary level-distributed mon generation. -/
 def sampleMon (ledger : ResourceLedger) (rng : Rng.LinkRng) :
     MonPlan × MonState × ResourceLedger × Rng.LinkRng :=
-  sampleMonWithLevel none ledger rng
+  sampleMonWithLevel none false ledger rng
 
-private def sampleMonsWithLevel (forcedLevel : Option UInt8) :
+private def sampleMonsWithLevel (forcedLevel : Option UInt8) (balancedFinal : Bool) :
     Nat → ResourceLedger → Rng.LinkRng →
       Array MonPlan × Team × ResourceLedger × Rng.LinkRng
   | 0, ledger, rng => (#[], #[], ledger, rng)
   | count + 1, ledger, rng =>
-      let (plan, mon, ledger, rng) := sampleMonWithLevel forcedLevel ledger rng
+      let (plan, mon, ledger, rng) := sampleMonWithLevel forcedLevel balancedFinal ledger rng
       let (plans, mons, ledger, rng) :=
-        sampleMonsWithLevel forcedLevel count ledger rng
+        sampleMonsWithLevel forcedLevel balancedFinal count ledger rng
       (#[plan] ++ plans, #[mon] ++ mons, ledger, rng)
 
 private def sampleMons : Nat → ResourceLedger → Rng.LinkRng →
     Array MonPlan × Team × ResourceLedger × Rng.LinkRng :=
-  sampleMonsWithLevel none
+  sampleMonsWithLevel none false
 
 private def fallbackOrigin : Origin :=
   { species := (entryOf 0).speciesId, level := 100
@@ -343,13 +372,14 @@ def defaultLedger : ResourceLedger := ResourceLedger.oneEach 18
 def sampleSized (requested : Nat) (rng : Rng.LinkRng) : Sample :=
   sampleSizedWithLedger requested defaultLedger rng
 
-/-- Generate a requested-size progression-witnessed party whose members are all
-level 100. The ordinary level byte is still consumed, preserving stream shape;
-only the level-selection policy changes. -/
-def sampleSizedLevel100 (requested : Nat) (rng : Rng.LinkRng) : Sample :=
+/-- Shared fixed-size constructor for the weighted and balanced-final-species
+profiles. The balance choice changes only final-species selection; resource,
+move-history, PP-Up, level, and entropy-consumption contracts remain shared. -/
+private def sampleSizedProfile (requested : Nat) (forcedLevel : Option UInt8)
+    (balancedFinal : Bool) (rng : Rng.LinkRng) : Sample :=
   let count := max 1 (min maxPartySize requested)
   let (plans, candidate, remaining, rng) :=
-    sampleMonsWithLevel (some 100) count defaultLedger rng
+    sampleMonsWithLevel forcedLevel balancedFinal count defaultLedger rng
   let history : TeamHistory := { initialLedger := defaultLedger, plans }
   if replayed : replayTeam history = some (candidate, remaining) then
     if legal : teamLegal genDex .canonical candidate = true then
@@ -358,10 +388,36 @@ def sampleSizedLevel100 (requested : Nat) (rng : Rng.LinkRng) : Sample :=
     else fallbackSample defaultLedger rng
   else fallbackSample defaultLedger rng
 
+/-- Generate a requested-size progression-witnessed party whose members are all
+level 100. The ordinary level byte is still consumed, preserving stream shape;
+only the level-selection policy changes. -/
+def sampleSizedLevel100 (requested : Nat) (rng : Rng.LinkRng) : Sample :=
+  sampleSizedProfile requested (some 100) false rng
+
+/-- Generate a requested-size party with near-uniform final-species support.
+Unlike the weighted profile, evolutionary families do not funnel several source
+rows into the same final form. -/
+def sampleSizedBalanced (requested : Nat) (rng : Rng.LinkRng) : Sample :=
+  sampleSizedProfile requested none true rng
+
+/-- Level-100 counterpart of `sampleSizedBalanced`. -/
+def sampleSizedBalancedLevel100 (requested : Nat) (rng : Rng.LinkRng) : Sample :=
+  sampleSizedProfile requested (some 100) true rng
+
 /-- Level-100 generation retains canonical learnset legality for every seed. -/
 theorem sampleSizedLevel100_sound (requested : Nat) (rng : Rng.LinkRng) :
     teamLegal genDex .canonical (sampleSizedLevel100 requested rng).team.1 = true :=
   (sampleSizedLevel100 requested rng).team.2
+
+/-- Balanced-final-species generation remains legal for every seed. -/
+theorem sampleSizedBalanced_sound (requested : Nat) (rng : Rng.LinkRng) :
+    teamLegal genDex .canonical (sampleSizedBalanced requested rng).team.1 = true :=
+  (sampleSizedBalanced requested rng).team.2
+
+/-- Balanced level-100 generation remains legal for every seed. -/
+theorem sampleSizedBalancedLevel100_sound (requested : Nat) (rng : Rng.LinkRng) :
+    teamLegal genDex .canonical (sampleSizedBalancedLevel100 requested rng).team.1 = true :=
+  (sampleSizedBalancedLevel100 requested rng).team.2
 
 /-- Level-100 generation retains the stronger ordered resource replay witness. -/
 theorem sampleSizedLevel100_progression_witnessed (requested : Nat)
@@ -370,6 +426,22 @@ theorem sampleSizedLevel100_progression_witnessed (requested : Nat)
       some ((sampleSizedLevel100 requested rng).team.1,
         (sampleSizedLevel100 requested rng).remainingLedger) :=
   (sampleSizedLevel100 requested rng).historyReplays
+
+/-- Balanced-final-species generation retains the ordered resource witness. -/
+theorem sampleSizedBalanced_progression_witnessed (requested : Nat)
+    (rng : Rng.LinkRng) :
+    replayTeam (sampleSizedBalanced requested rng).history =
+      some ((sampleSizedBalanced requested rng).team.1,
+        (sampleSizedBalanced requested rng).remainingLedger) :=
+  (sampleSizedBalanced requested rng).historyReplays
+
+/-- Balanced level-100 generation retains the ordered resource witness. -/
+theorem sampleSizedBalancedLevel100_progression_witnessed (requested : Nat)
+    (rng : Rng.LinkRng) :
+    replayTeam (sampleSizedBalancedLevel100 requested rng).history =
+      some ((sampleSizedBalancedLevel100 requested rng).team.1,
+        (sampleSizedBalancedLevel100 requested rng).remainingLedger) :=
+  (sampleSizedBalancedLevel100 requested rng).historyReplays
 
 /-- Fully dynamic party generation: the first byte chooses size 1–6 and the
 remaining cursor chooses the progression-witnessed team. -/
@@ -411,5 +483,10 @@ private def sample0 : Sample := sample Rng.seed0
 #guard (sampleSizedLevel100 6 Rng.seed0).team.1.size == 6
 #guard (sampleSizedLevel100 6 Rng.seed0).team.1.all (fun mon => mon.level == 100)
 #guard !(sampleSizedLevel100 6 Rng.seed0).repaired
+#guard (sampleSizedBalanced 6 Rng.seed0).team.1.size == 6
+#guard (sampleSizedBalanced 6 Rng.seed0).team.1.all (monLegal genDex .canonical)
+#guard !(sampleSizedBalanced 6 Rng.seed0).repaired
+#guard (sampleSizedBalancedLevel100 6 Rng.seed0).team.1.all (fun mon => mon.level == 100)
+#guard !(sampleSizedBalancedLevel100 6 Rng.seed0).repaired
 
 end Battle.RL.DynamicGenerator
