@@ -182,14 +182,31 @@ private def replayPlans : List MonPlan → ResourceLedger →
       let (mons, ledger) ← replayPlans plans ledger
       pure (mon :: mons, ledger)
 
+/-- A team can be reconstructed from ordered cartridge progression events or
+from an explicitly marked, canonical competitive preset. Presets cover public
+battle teams whose exact moves are legal but whose evolution/retention history
+is not recoverable from the replay log. -/
 structure TeamHistory where
   initialLedger : ResourceLedger
   plans : Array MonPlan
+  competitivePreset : Option Team := none
   deriving Repr, DecidableEq
 
-def replayTeam (history : TeamHistory) : Option (Team × ResourceLedger) := do
-  let (mons, ledger) ← replayPlans history.plans.toList history.initialLedger
-  pure (mons.toArray, ledger)
+/-- Reconstruct the exact team represented by a history. Competitive presets
+are already-complete snapshots, while ordinary histories replay acquisition and
+resource-consuming events. -/
+def replayTeam (history : TeamHistory) : Option (Team × ResourceLedger) :=
+  match history.competitivePreset with
+  | some team => some (team, history.initialLedger)
+  | none => do
+      let (mons, ledger) ← replayPlans history.plans.toList history.initialLedger
+      pure (mons.toArray, ledger)
+
+@[simp] theorem competitive_preset_replays_exactly
+    (team : Team) (ledger : ResourceLedger) (plans : Array MonPlan) :
+    replayTeam { initialLedger := ledger, plans, competitivePreset := some team } =
+      some (team, ledger) := by
+  rfl
 
 /-- Teaching has no deletion branch: every success writes the nonzero machine
 move into exactly one slot and leaves all other move slots intact. -/

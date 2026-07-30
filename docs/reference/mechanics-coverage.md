@@ -777,6 +777,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] separate team-generation and battle RNG (`Battle.RL.Environment.installReset_uses_supplied_battle_rng`)
 - [x] battle-valid generator theorem (`Battle.RL.DynamicGenerator.sample_sound`)
 - [x] canonical-species generator theorems (`Battle.RL.DynamicGenerator.sample_sound`, `sampleSizedBalanced_sound`, and `balanced_species_distribution` via canonical `teamLegal`)
+- [x] top-200 public Gen-I competitive presets with inferred canonical moves (`Battle.RL.PopularTeams.teams_complete_and_legal`, `Battle.RL.DynamicGenerator.popular_gate_count`, and `popular_team_index_distribution`)
 - [x] learnset-legal generator theorem (`Battle.RL.DynamicGenerator.sample_sound` via canonical `teamLegal`)
 - [x] progression-witnessed history relative to supplied roster/resource ledger (`Battle.RL.DynamicGenerator.sampleSized_progression_witnessed`)
 - [x] no unconditional new-save reachability claim without overworld proof (`Battle.RL.Adapter.no_unconditional_new_save_claim`)

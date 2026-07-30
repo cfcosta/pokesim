@@ -3,6 +3,7 @@ Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.RL.MoveHistory
+import Battle.RL.PopularTeams
 import Battle.Data.MinimumLevels
 
 /-!
@@ -26,8 +27,8 @@ funnel. Both profiles consume the same entropy shape.
 Every `Sample` carries two independent proofs:
 
 * `team` proves the resulting battle rows satisfy canonical learnset legality;
-* `historyReplays` proves the ordered origins/events reconstruct exactly that
-  team and final resource ledger.
+* `historyReplays` proves ordered origins/events or an explicitly marked
+  competitive preset reconstruct exactly that team and final resource ledger.
 
 The defensive repair branch remains fail-closed. It now returns a replayable
 natural Rhydon rather than an arbitrary learn-pool prefix.
@@ -46,6 +47,7 @@ structure Sample where
   team : CanonicalTeam
   rng : Rng.LinkRng
   repaired : Bool
+  popular : Bool := false
   history : TeamHistory
   remainingLedger : ResourceLedger
   historyReplays : replayTeam history = some (team.1, remainingLedger)
@@ -400,9 +402,65 @@ rows into the same final form. -/
 def sampleSizedBalanced (requested : Nat) (rng : Rng.LinkRng) : Sample :=
   sampleSizedProfile requested none true rng
 
-/-- Level-100 counterpart of `sampleSizedBalanced`. -/
+def popularTeamIndex (high low : UInt8) : Nat :=
+  (high.toNat * 256 + low.toNat) % 200
+
+def popularTeamIndexCounts : Array Nat :=
+  (Array.range 65536).foldl (fun counts word =>
+    counts.modify (word % 200) (· + 1)) (Array.replicate 200 0)
+
+def popularTeamIndexDistribution : Bool :=
+  popularTeamIndexCounts.size == 200 &&
+    popularTeamIndexCounts.all (fun count => count == 327 || count == 328) &&
+    popularTeamIndexCounts.foldl (· + ·) 0 == 65536
+
+@[simp] theorem popular_team_index_distribution :
+    popularTeamIndexDistribution = true := by
+  native_decide
+
+private def popularPp (move : MoveId) : UInt8 :=
+  ((3 : UInt8) <<< 6) ||| (movePP move + 3 * ppUpBonus move)
+
+private def popularMon (set : PopularTeams.Set) : MonState :=
+  let generated := genMon (speciesEntry set.species) 100 15 15 15 15 4
+  { generated with moves := set.moves, pp := set.moves.map popularPp }
+
+set_option maxRecDepth 4096 in
+/-- Uniformly select one top-200 composition, rotate its otherwise-unrecoverable
+party order, and install the inferred level-100 competitive movesets. -/
+def samplePopularLevel100 (rng : Rng.LinkRng) : Sample :=
+  let (high, rng) := draw rng
+  let (low, rng) := draw rng
+  let (rotation, rng) := draw rng
+  let index := popularTeamIndex high low
+  let fallback : PopularTeams.Entry := { usage := 0, sets := #[] }
+  let entry := PopularTeams.teams.getD index fallback
+  let candidate := (rotatePool entry.sets rotation.toNat).map popularMon
+  let history : TeamHistory :=
+    { initialLedger := defaultLedger, plans := #[], competitivePreset := some candidate }
+  if replayed : replayTeam history = some (candidate, defaultLedger) then
+    if legal : teamLegal genDex .canonical candidate = true then
+      { team := ⟨candidate, legal⟩, rng, repaired := false, popular := true, history
+        remainingLedger := defaultLedger, historyReplays := replayed }
+    else fallbackSample defaultLedger rng
+  else fallbackSample defaultLedger rng
+
+def popularGateCount : Nat :=
+  (List.range 256).countP fun value => value < 26
+
+@[simp] theorem popular_gate_count : popularGateCount = 26 := by
+  native_decide
+
+/-- A byte gate uses residues `0..25`, yielding 26/256 = 10.15625%. Only full
+level-100 balanced parties enter this branch; all other sizes retain the
+near-uniform generated-species profile. -/
 def sampleSizedBalancedLevel100 (requested : Nat) (rng : Rng.LinkRng) : Sample :=
-  sampleSizedProfile requested (some 100) true rng
+  let count := max 1 (min maxPartySize requested)
+  if count == maxPartySize then
+    let (popularGate, rng) := draw rng
+    if popularGate.toNat < 26 then samplePopularLevel100 rng
+    else sampleSizedProfile requested (some 100) true rng
+  else sampleSizedProfile requested (some 100) true rng
 
 /-- Level-100 generation retains canonical learnset legality for every seed. -/
 theorem sampleSizedLevel100_sound (requested : Nat) (rng : Rng.LinkRng) :
@@ -435,7 +493,8 @@ theorem sampleSizedBalanced_progression_witnessed (requested : Nat)
         (sampleSizedBalanced requested rng).remainingLedger) :=
   (sampleSizedBalanced requested rng).historyReplays
 
-/-- Balanced level-100 generation retains the ordered resource witness. -/
+/-- Balanced level-100 generation retains an exact reconstruction witness,
+including when it selects a canonical competitive preset. -/
 theorem sampleSizedBalancedLevel100_progression_witnessed (requested : Nat)
     (rng : Rng.LinkRng) :
     replayTeam (sampleSizedBalancedLevel100 requested rng).history =
@@ -488,5 +547,9 @@ private def sample0 : Sample := sample Rng.seed0
 #guard !(sampleSizedBalanced 6 Rng.seed0).repaired
 #guard (sampleSizedBalancedLevel100 6 Rng.seed0).team.1.all (fun mon => mon.level == 100)
 #guard !(sampleSizedBalancedLevel100 6 Rng.seed0).repaired
+#guard (samplePopularLevel100 Rng.seed0).popular
+#guard (samplePopularLevel100 Rng.seed0).team.1.size == 6
+#guard (samplePopularLevel100 Rng.seed0).team.1.all (fun mon => mon.level == 100)
+#guard !(sampleSizedBalancedLevel100 5 Rng.seed0).popular
 
 end Battle.RL.DynamicGenerator

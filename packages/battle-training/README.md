@@ -56,9 +56,14 @@ schedule cycles through every other ordered party-size matchup. V17 selects the
 displayed final species with a bounded two-byte map whose 151 fibers contain
 434 or 435 words each. This removes the prior 2:1 byte-modulo bias and the
 funneling of several evolutionary-family entries into one final form while
-retaining all 151 species, fixed entropy consumption, legal move histories, and
-resource witnesses. `--weighted-final-species` retains the legacy distribution
-for differential runs. It uses
+retaining all 151 species and fixed entropy consumption. For 6v6 level-100
+party draws, 26 of 256 gate values (10.15625%) instead select one of the top 200
+exact Generation-I teams reconstructed from public Showdown replays. Repeated
+matches with the same composition supply four canonical moves per species; the
+result is an explicitly marked competitive preset with maximum DVs and PP. Generated
+parties retain ordered legal move histories and resource witnesses.
+`--weighted-final-species` retains the legacy distribution for differential
+runs. It uses
 depth-four simultaneous trees, the
 940,430-parameter four-layer, 128-wide model, BF16 autocast, one epoch per iteration, a
 CUDA-safe batch size of 128, and a 2,048-game final arena. The policy objective

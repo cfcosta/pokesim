@@ -303,11 +303,21 @@ ordered result of `WriteMonMoves`; later moves can arise only from a compatible
 TM/HM event. One caller-supplied party-wide ledger consumes TMs once, requires
 but does not consume HMs, and bounds PP Ups. Every returned sample carries both
 `{team // teamLegal Dex.gen1 .canonical team = true}` and a `historyReplays`
-proof that the complete history reconstructs exactly that team and its remaining
-ledger. Level 100 ensures every ordered level-up offer has occurred; it no
-longer licenses arbitrary subsets of an unordered move pool. A fail-closed,
-explicitly flagged recovery history prevents malformed entropy or a future
-generator regression from emitting an unwitnessed episode reset.
+proof that its event history or explicitly marked competitive preset reconstructs
+exactly that team and remaining ledger. Level 100 ensures every ordered level-up
+offer has occurred for generated histories; it no longer licenses arbitrary
+subsets of an unordered move pool. A fail-closed, explicitly flagged recovery
+history prevents malformed entropy or a future generator regression from
+emitting an unwitnessed episode reset.
+
+Full level-100 balanced parties use a 26-of-256 gate (10.15625%) to select one of
+the 200 most observed exact Generation-I teams from the public
+`HolidayOugi/pokemon-showdown-replays` corpus. The roster is selected with a
+near-uniform two-byte index and rotated to avoid inventing an unavailable party
+order. Moves are inferred across repeated matches with the same six-species
+composition, filtered through the canonical Red learnset, and installed with
+maximum DVs and PP Ups. These imported presets are exact canonical snapshots, not claims
+that the public logs reveal a unique cartridge acquisition history.
 
 Useful distributions include:
 
