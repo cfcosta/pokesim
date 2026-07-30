@@ -54,9 +54,11 @@ This preserves complete action consideration without top-k pruning.
 variable-party battles. Exactly one quarter of generated battles are 6v6; the
 remaining schedule cycles through every other ordered party-size matchup. It uses
 depth-four simultaneous trees, the
-940,430-parameter four-layer, 128-wide model, BF16 autocast, two epochs per iteration, a
-CUDA-safe batch size of 128, and a 1,024-game final arena. Parameters, gradients,
-AdamW state, policy normalization, losses, and reductions remain FP32. The tree
+940,430-parameter four-layer, 128-wide model, BF16 autocast, one epoch per iteration, a
+CUDA-safe batch size of 128, and a 2,048-game final arena. The policy objective
+adds value MSE at weight 0.25, reducing the effective value-trunk gradient
+imbalance observed in v15. Parameters, gradients, AdamW state, policy
+normalization, losses, and reductions remain FP32. The tree
 uses up to 320 native transitions per searched root and was 1.31× slower than
 disposable depth-four rollouts in a 24-root benchmark. The former every-tenth
 profile had an approximately nine-hour strict-FP32 estimate and completed a
@@ -126,7 +128,7 @@ batch 128, so 128 remains the production default.
 Use `--device cpu`, `--device cuda`, or `--device auto`. BF16 is the default;
 `--precision fp32` remains available for differential checks and older
 checkpoints without precision metadata retain their original FP32 contract.
-The v15 pipeline defaults `--inference-engine auto`: CUDA uses bucketed compiled
+The v16 pipeline defaults `--inference-engine auto`: CUDA uses bucketed compiled
 inference through static batches up to 256 while CPU uses eager execution.
 `--inference-engine eager` remains available for differential checks and
 historical artifact verification. Production collection defaults to two spawned
@@ -167,12 +169,15 @@ receives an all-action RM+ policy target, but the opposing real action is sample
 from the named heuristic rather than the tree's opponent strategy.
 `--no-heuristic-opponents` disables all deterministic heuristics for ablations.
 Shards record every opponent identity and deterministic regeneration
-reconstructs the same population order.
+reconstructs the same population order. In v16, half of all pairs remain mirror
+self-play. Of the other half, exactly half are reserved for deployed/historical
+model opponents and half cycle over the 49 heuristics. This gives direct model
+comparisons 25% of collection without dropping broad trainer-class coverage.
 Human traces remain external until the server-authoritative replay and search-
 relabeling importer in
 [the trace contract](../../docs/explanation/human-battle-trace-training.md) is
-implemented. Each production update receives 1,024 held-out games against its
-incumbent, grouped into 512 same-reset pairs with a complete model-side swap
+implemented. Each production update receives 2,048 held-out games against its
+incumbent, grouped into 1,024 same-reset pairs with a complete model-side swap
 across eight root seeds. Every generated arena and collection schedule reserves
 at least 25% of games for 6v6. Exactly 25% of the scheduled generated 6v6
 pairs use two fully level-100 teams; the remaining generated teams retain the
@@ -193,12 +198,16 @@ remain reported diagnostics but do not gate promotion. It also reports and gates
 5–6, and unequal-party strata, plus a nine-team fixed campaign suite covering
 Brock through Giovanni and Lance. The campaign teams use canonical natural
 moves and fixed DVs inside the link quotient; they do not claim trainer AI or
-item equivalence. The v15 pipeline separates a persistent shadow learner from the
+item equivalence. The v16 pipeline separates a persistent shadow learner from the
 quality-gated deployed incumbent. Inconclusive evaluations retain the incumbent
 but carry the learner parameters and AdamW state into the next collection
 iteration, allowing small updates to compound without weakening deployment. Each
 checkpoint stores both lineages; ordinary checkpoint loading returns the deployed
 model, while resume restores the shadow learner and its optimizer explicitly.
+A new same-schema lineage can pass the exported shadow to
+`--warm-start-checkpoint` and the prior quality-gated checkpoint to
+`--warm-start-incumbent-checkpoint`. This preserves the accumulated learner
+without silently deploying it; the new optimizer lineage starts fresh.
 
 ## Model
 

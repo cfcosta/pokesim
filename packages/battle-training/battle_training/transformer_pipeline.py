@@ -80,8 +80,9 @@ class TransformerPipelineConfig:
     token_group_size: int = 1
     opponent_checkpoints: tuple[str, ...] = ()
     opponent_fraction: float = 0.5
+    model_opponent_share: float = 0.5
     historical_window: int = 4
-    promotion_games: int = 1024
+    promotion_games: int = 2048
     promotion_seed_count: int = 8
     probe_games: int = 256
     probe_seed_count: int = 8
@@ -109,7 +110,9 @@ class TransformerPipelineConfig:
     precision: str = "bf16"
     inference_engine: str = "auto"
     warm_start_checkpoint: str | None = None
+    warm_start_incumbent_checkpoint: str | None = None
     heuristic_opponents: bool = True
+    value_loss_weight: float = 0.25
 
 
 class _HeuristicNetwork:
@@ -196,7 +199,7 @@ class _ActorEpisode:
 
 
 def _pipeline_id() -> str:
-    return "transformer-variable-party-bf16-tree-v15"
+    return "transformer-variable-party-bf16-tree-v16"
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
@@ -208,6 +211,30 @@ def _configure_inference(models: Iterable[Any], engine: str) -> None:
 def _scheduled_for_opponent(episode: int, fraction: float) -> bool:
     """Periodic deterministic mixture with an exact count for rational fractions."""
     return math.floor((episode + 1) * fraction) > math.floor(episode * fraction)
+
+
+def _select_training_opponent(
+    opponents: list[tuple[Any, str]], ordinal: int, model_share: float
+) -> tuple[Any, str, int]:
+    """Choose a model or heuristic opponent with an exact deterministic share.
+
+    The returned ordinal is local to the selected population and drives the
+    first-leg controller-side alternation independently for each population.
+    """
+    models = [row for row in opponents if not isinstance(row[0], _HeuristicNetwork)]
+    heuristics = [row for row in opponents if isinstance(row[0], _HeuristicNetwork)]
+    if not models or not heuristics:
+        group = models or heuristics
+        local_ordinal = ordinal
+    elif _scheduled_for_opponent(ordinal, model_share):
+        group = models
+        local_ordinal = math.floor((ordinal + 1) * model_share) - 1
+    else:
+        group = heuristics
+        selected_models = math.floor((ordinal + 1) * model_share)
+        local_ordinal = ordinal - selected_models
+    model, identity = group[local_ordinal % len(group)]
+    return model, identity, local_ordinal
 
 
 def _training_pair(episode: int) -> int:
@@ -552,15 +579,17 @@ def _collect_rows_single(
     opponents = opponents or []
     if opponents:
         meta["opponents"] = {
-            "kind": "checkpoint-and-heuristic-round-robin",
+            "kind": "checkpoint-and-heuristic-stratified-round-robin",
             "identities": [identity for _, identity in opponents],
             "fraction": config.opponent_fraction,
-            "schedule": "balanced-periodic-round-robin-v1",
+            "model_share_within_opponent_pairs": config.model_opponent_share,
+            "schedule": "balanced-model-heuristic-round-robin-v2",
         }
     rows: list[dict[str, Any]] = [meta]
     finished = truncated = semantic_divergences = examples = transitions = 0
     deep_search_decisions = root_only_decisions = 0
     mirror_episodes = opponent_episodes = 0
+    model_opponent_episodes = heuristic_opponent_episodes = 0
     candidate_player_episodes = candidate_enemy_episodes = 0
     opponent_counts = {identity: 0 for _, identity in opponents}
     party_size_counts = {
@@ -653,9 +682,17 @@ def _collect_rows_single(
                 opponent_identity: str | None = None
                 if versus_opponent:
                     opponent_ordinal = math.floor(pair * config.opponent_fraction)
-                    opponent_index = opponent_ordinal % len(opponents)
-                    opponent_round = opponent_ordinal // len(opponents)
-                    opponent, opponent_identity = opponents[opponent_index]
+                    opponent, opponent_identity, local_ordinal = (
+                        _select_training_opponent(
+                            opponents, opponent_ordinal, config.model_opponent_share
+                        )
+                    )
+                    population_size = sum(
+                        isinstance(candidate, _HeuristicNetwork)
+                        == isinstance(opponent, _HeuristicNetwork)
+                        for candidate, _ in opponents
+                    )
+                    opponent_round = local_ordinal // population_size
                     first_candidate_player = opponent_round % 2 == 0
                     candidate_player = (
                         first_candidate_player
@@ -670,6 +707,10 @@ def _collect_rows_single(
                         else "checkpoint-opponent"
                     )
                     opponent_episodes += 1
+                    if isinstance(opponent, _HeuristicNetwork):
+                        heuristic_opponent_episodes += 1
+                    else:
+                        model_opponent_episodes += 1
                     opponent_counts[opponent_identity] += 1
                     if candidate_player:
                         candidate_player_episodes += 1
@@ -1030,6 +1071,8 @@ def _collect_rows_single(
                     root_only_decisions=root_only_decisions,
                     mirror_episodes=mirror_episodes,
                     opponent_episodes=opponent_episodes,
+                    model_opponent_episodes=model_opponent_episodes,
+                    heuristic_opponent_episodes=heuristic_opponent_episodes,
                     opponent_counts=opponent_counts,
                     party_size_counts=party_size_counts,
                     six_vs_six_battles=party_size_counts.get("6v6", 0),
@@ -1098,6 +1141,8 @@ def _collect_rows_single(
         "root_only_decisions": root_only_decisions,
         "mirror_episodes": mirror_episodes,
         "opponent_episodes": opponent_episodes,
+        "model_opponent_episodes": model_opponent_episodes,
+        "heuristic_opponent_episodes": heuristic_opponent_episodes,
         "candidate_player_episodes": candidate_player_episodes,
         "candidate_enemy_episodes": candidate_enemy_episodes,
         "opponent_counts": opponent_counts,
@@ -1337,6 +1382,8 @@ def _merge_collection_rows(
         "root_only_decisions": total("root_only_decisions"),
         "mirror_episodes": total("mirror_episodes"),
         "opponent_episodes": total("opponent_episodes"),
+        "model_opponent_episodes": total("model_opponent_episodes"),
+        "heuristic_opponent_episodes": total("heuristic_opponent_episodes"),
         "candidate_player_episodes": total("candidate_player_episodes"),
         "candidate_enemy_episodes": total("candidate_enemy_episodes"),
         "opponent_counts": opponent_counts,
@@ -1586,7 +1633,7 @@ def _heldout_diagnostics(
 
 
 def _gradient_report(
-    samples: list[tuple[float, float, float | None]],
+    samples: list[tuple[float, float, float | None]], value_loss_weight: float = 1.0
 ) -> dict[str, Any]:
     if not samples:
         return {
@@ -1595,6 +1642,9 @@ def _gradient_report(
             "policy_trunk_norm": None,
             "value_trunk_norm": None,
             "value_policy_norm_ratio": None,
+            "weighted_value_trunk_norm": None,
+            "weighted_value_policy_norm_ratio": None,
+            "value_loss_weight": value_loss_weight,
             "mean_cosine": None,
             "negative_cosine_fraction": None,
         }
@@ -1607,6 +1657,11 @@ def _gradient_report(
         "policy_trunk_norm": policy_norm,
         "value_trunk_norm": value_norm,
         "value_policy_norm_ratio": value_norm / max(policy_norm, 1e-12),
+        "weighted_value_trunk_norm": value_norm * value_loss_weight,
+        "weighted_value_policy_norm_ratio": (
+            value_norm * value_loss_weight / max(policy_norm, 1e-12)
+        ),
+        "value_loss_weight": value_loss_weight,
         "mean_cosine": sum(cosines) / len(cosines) if cosines else None,
         "negative_cosine_fraction": (
             sum(cosine < 0.0 for cosine in cosines) / len(cosines) if cosines else None
@@ -1661,7 +1716,7 @@ def _train_network(
                 policy_rows * batch_policy_weight
             ).sum() / batch_policy_weight.sum().clamp_min(1.0)
             value_loss = torch.nn.functional.mse_loss(values, batch_value)
-            loss = policy_loss + value_loss
+            loss = policy_loss + config.value_loss_weight * value_loss
             if len(gradient_samples) < 8:
                 policy_gradients = torch.autograd.grad(
                     policy_loss,
@@ -1718,13 +1773,16 @@ def _train_network(
                 "epoch": epoch,
                 "policy_loss": policy_total / batches,
                 "value_loss": value_total / batches,
+                "weighted_value_loss": config.value_loss_weight
+                * value_total
+                / batches,
                 "total_loss": total_total / batches,
             }
         )
         heldout = _heldout_diagnostics(
             network, heldout_examples, heldout_battles, config.inference_batch_size
         )
-        gradient = _gradient_report(gradient_samples)
+        gradient = _gradient_report(gradient_samples, config.value_loss_weight)
         epoch_diagnostics = {
             "epoch": epoch,
             "gradient": gradient,
@@ -1749,6 +1807,8 @@ def _train_network(
         "heldout_examples": len(heldout_examples[0]),
         "heldout_battles": len(set(heldout_battles)),
         "epochs": config.epochs,
+        "value_loss_weight": config.value_loss_weight,
+        "objective": "policy-ce-plus-weighted-value-mse-v2",
         "batches_per_epoch": math.ceil(len(features) / config.batch_size),
         "history": history,
         "diagnostics": {
@@ -2064,6 +2124,10 @@ def run_transformer_pipeline(
         )
     if config.replay_window < 1:
         raise ValueError("replay_window must be positive")
+    if config.epochs < 1:
+        raise ValueError("epochs must be positive")
+    if not 0.0 < config.value_loss_weight <= 1.0:
+        raise ValueError("value_loss_weight must be in (0, 1]")
     if config.historical_window < 0:
         raise ValueError("historical_window must be nonnegative")
     if config.promotion_games < 2 or config.promotion_games % 2:
@@ -2101,6 +2165,8 @@ def run_transformer_pipeline(
             )
     if not 0.0 <= config.opponent_fraction <= 1.0:
         raise ValueError("opponent_fraction must be in [0, 1]")
+    if not 0.0 <= config.model_opponent_share <= 1.0:
+        raise ValueError("model_opponent_share must be in [0, 1]")
     build_search_server()
     with SearchServer() as protocol:
         feature_count = protocol.feature_count
@@ -2229,7 +2295,36 @@ def run_transformer_pipeline(
         else:
             network = BattleTransformer(model_config).to(device)
             network.eval()
-        incumbent_network = network.detached_copy(device)
+        incumbent_warm_start_metadata: dict[str, Any] | None = None
+        if config.warm_start_incumbent_checkpoint is not None:
+            if config.warm_start_checkpoint is None:
+                raise ValueError(
+                    "an incumbent warm start requires a learner warm start"
+                )
+            incumbent_source = Path(
+                config.warm_start_incumbent_checkpoint
+            ).resolve()
+            incumbent_sha = sha256(incumbent_source)
+            incumbent_copy = root / "warm-start" / "incumbent.pt"
+            write_new(incumbent_copy, incumbent_source.read_bytes())
+            incumbent_payload = load_checkpoint(incumbent_copy, device)
+            incumbent_feature_count = int(
+                incumbent_payload["config"]["feature_count"]
+            )
+            incumbent_network = warm_start_network(
+                incumbent_copy, model_config, device
+            )
+            incumbent_warm_start_metadata = {
+                "checkpoint": incumbent_copy.relative_to(root).as_posix(),
+                "sha256": incumbent_sha,
+                "method": (
+                    "same-schema-deployed-copy-v1"
+                    if incumbent_feature_count == model_config.feature_count
+                    else "extend-deployed-position-table-v1"
+                ),
+            }
+        else:
+            incumbent_network = network.detached_copy(device)
         write_json(
             root / "run.json",
             {
@@ -2251,6 +2346,7 @@ def run_transformer_pipeline(
                 ),
                 "opponents": opponent_metadata,
                 "warm_start": warm_start_metadata,
+                "incumbent_warm_start": incumbent_warm_start_metadata,
                 "torch": torch.__version__,
                 "device": str(device),
                 "device_name": torch.cuda.get_device_name(device)
@@ -2266,6 +2362,7 @@ def run_transformer_pipeline(
                 "iteration": 0,
                 "kind": "initial",
                 "warm_start": warm_start_metadata,
+                "incumbent_warm_start": incumbent_warm_start_metadata,
                 "learning_lineage": "persistent-shadow-v1",
             },
             {"learner_model": network.state_dict()},
@@ -2601,7 +2698,13 @@ def run_transformer_pipeline(
 
     with tempfile.TemporaryDirectory(prefix="battle-transformer-replay-") as temporary:
         replay_path = Path(temporary) / "replay.jsonl"
-        replay_network = load_network(initial_checkpoint, device)
+        replay_payload = load_checkpoint(initial_checkpoint, device)
+        replay_learner = replay_payload.get("learner_model")
+        if not isinstance(replay_learner, dict):
+            raise TypeError("initial checkpoint lacks replay learner state")
+        replay_network = BattleTransformer(model_config).to(device)
+        replay_network.load_state_dict(replay_learner)
+        replay_network.eval()
         replay_network.configure_inference(config.inference_engine)
         replay_opponents = opponents + [(initial_anchor, initial_identity)]
         replay_opponents = list(

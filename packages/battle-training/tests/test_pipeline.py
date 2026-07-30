@@ -61,6 +61,7 @@ from battle_training.transformer_pipeline import (
     _load_examples,
     _pipeline_id,
     _scheduled_for_opponent,
+    _select_training_opponent,
     _training_level100,
     _training_pair,
     _training_pair_leg,
@@ -606,10 +607,12 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.search_depth, 4)
         self.assertEqual(arguments.budget, 512)
         self.assertEqual(arguments.search_every, 1)
-        self.assertEqual(arguments.epochs, 2)
+        self.assertEqual(arguments.epochs, 1)
         self.assertEqual(arguments.batch_size, 128)
         self.assertEqual(arguments.learning_rate, 2e-4)
-        self.assertEqual(arguments.promotion_games, 1024)
+        self.assertEqual(arguments.value_loss_weight, 0.25)
+        self.assertEqual(arguments.model_opponent_share, 0.5)
+        self.assertEqual(arguments.promotion_games, 2048)
         self.assertEqual(arguments.probe_games, 256)
         self.assertEqual(arguments.campaign_games, 288)
         self.assertEqual(arguments.tree_expansion_budget, 320)
@@ -625,6 +628,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.inference_engine, "auto")
         self.assertTrue(arguments.heuristic_opponents)
         self.assertIsNone(arguments.warm_start_checkpoint)
+        self.assertIsNone(arguments.warm_start_incumbent_checkpoint)
         resume = training_parser().parse_args(
             ["transformer-resume", "--output", "/tmp/overnight"]
         )
@@ -769,8 +773,26 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(sum(schedule), 500)
         self.assertEqual(schedule[:6], [False, True, False, True, False, True])
 
+    def test_model_and_heuristic_opponents_receive_exact_balanced_shares(self) -> None:
+        heuristics = _heuristic_population()[:3]
+        models = [(_ToyNetwork(), "model-a"), (_ToyNetwork(), "model-b")]
+        opponents = [*heuristics, *models]
+        selected = [
+            _select_training_opponent(opponents, ordinal, 0.5)
+            for ordinal in range(20)
+        ]
+        identities = [identity for _, identity, _ in selected]
+        self.assertEqual(sum(identity.startswith("model-") for identity in identities), 10)
+        self.assertEqual(identities[1::2], ["model-a", "model-b"] * 5)
+        self.assertEqual(
+            identities[0::2],
+            [identity for _, identity in heuristics] * 3
+            + [heuristics[0][1]],
+        )
+        self.assertEqual([ordinal for _, _, ordinal in selected[:6]], [0, 0, 1, 1, 2, 2])
+
     def test_training_schedule_pairs_every_reset_and_side_assignment(self) -> None:
-        self.assertEqual(_pipeline_id(), "transformer-variable-party-bf16-tree-v15")
+        self.assertEqual(_pipeline_id(), "transformer-variable-party-bf16-tree-v16")
         for episode in range(0, 128, 2):
             self.assertEqual(_training_pair(episode), _training_pair(episode + 1))
             self.assertEqual(
@@ -970,10 +992,14 @@ class TransformerTests(unittest.TestCase):
                 self.assertTrue(torch.equal(target.state_dict()[name], source_value), name)
 
     def test_gradient_diagnostics_report_norm_conflict(self) -> None:
-        report = _gradient_report([(0.1, 2.4, -0.2), (0.2, 2.4, 0.1), (0.0, 1.0, None)])
+        report = _gradient_report(
+            [(0.1, 2.4, -0.2), (0.2, 2.4, 0.1), (0.0, 1.0, None)], 0.25
+        )
         self.assertEqual(report["samples"], 3)
         self.assertEqual(report["cosine_samples"], 2)
         self.assertAlmostEqual(report["value_policy_norm_ratio"], 19.3333333333)
+        self.assertAlmostEqual(report["weighted_value_policy_norm_ratio"], 4.8333333333)
+        self.assertEqual(report["value_loss_weight"], 0.25)
         self.assertAlmostEqual(report["mean_cosine"], -0.05)
         self.assertEqual(report["negative_cosine_fraction"], 0.5)
 

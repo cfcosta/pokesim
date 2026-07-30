@@ -46,10 +46,11 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--arena-episodes", type=int, default=4 if smoke else 1024)
     parser.add_argument("--budget", type=int, default=64 if smoke else 512)
     parser.add_argument("--search-depth", type=int, default=1 if smoke else 4)
-    parser.add_argument("--epochs", type=int, default=3 if smoke else 2)
+    parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=32 if smoke else 128)
     parser.add_argument("--learning-rate", type=float, default=3e-4 if smoke else 2e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--value-loss-weight", type=float, default=0.25)
     parser.add_argument("--seed", type=int, default=20260726)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--precision", choices=("bf16", "fp32"), default="bf16")
@@ -59,6 +60,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
         default="auto",
     )
     parser.add_argument("--warm-start-checkpoint", type=Path)
+    parser.add_argument("--warm-start-incumbent-checkpoint", type=Path)
     parser.add_argument(
         "--no-heuristic-opponents", dest="heuristic_opponents", action="store_false"
     )
@@ -86,8 +88,9 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--actor-processes", type=int, default=1 if smoke else 2)
     parser.add_argument("--opponent-checkpoint", type=Path, action="append", default=[])
     parser.add_argument("--opponent-fraction", type=float, default=0.5)
+    parser.add_argument("--model-opponent-share", type=float, default=0.5)
     parser.add_argument("--historical-window", type=int, default=4)
-    parser.add_argument("--promotion-games", type=int, default=16 if smoke else 1024)
+    parser.add_argument("--promotion-games", type=int, default=16 if smoke else 2048)
     parser.add_argument("--promotion-seed-count", type=int, default=2 if smoke else 8)
     parser.add_argument("--probe-games", type=int, default=16 if smoke else 256)
     parser.add_argument("--probe-seed-count", type=int, default=2 if smoke else 8)
@@ -215,6 +218,7 @@ def main(argv: list[str] | None = None) -> int:
                 str(path.resolve()) for path in arguments.opponent_checkpoint
             ),
             opponent_fraction=arguments.opponent_fraction,
+            model_opponent_share=arguments.model_opponent_share,
             historical_window=arguments.historical_window,
             promotion_games=arguments.promotion_games,
             promotion_seed_count=arguments.promotion_seed_count,
@@ -243,9 +247,15 @@ def main(argv: list[str] | None = None) -> int:
             actor_processes=arguments.actor_processes,
             precision=arguments.precision,
             inference_engine=arguments.inference_engine,
+            value_loss_weight=arguments.value_loss_weight,
             warm_start_checkpoint=(
                 str(arguments.warm_start_checkpoint.resolve())
                 if arguments.warm_start_checkpoint is not None
+                else None
+            ),
+            warm_start_incumbent_checkpoint=(
+                str(arguments.warm_start_incumbent_checkpoint.resolve())
+                if arguments.warm_start_incumbent_checkpoint is not None
                 else None
             ),
             heuristic_opponents=arguments.heuristic_opponents,
