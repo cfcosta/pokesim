@@ -2,6 +2,7 @@
 Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0.
 -/
+import Battle.Rom.LinkActionProtocol
 import Battle.Rom.LinkStateProjection
 import Sm83.Simulation
 
@@ -72,6 +73,9 @@ theorem highPair_starts_synchronized (domain : EntryDomain) :
     Full.Link.mirroredActive (highPair domain) = true ∧
       Full.Link.mirroredParties (highPair domain) = true ∧
       Full.Link.mirroredActiveIndexes (highPair domain) = true ∧
+      Full.Link.mirroredSelections (highPair domain) = true ∧
+      Full.Link.mirroredLastMoves (highPair domain) = true ∧
+      Full.Link.mirroredSharedDamage (highPair domain) = true ∧
       Full.Link.mirroredRng (highPair domain) = true ∧
       Full.Link.phasesAgree (highPair domain) = true := by
   have synchronized := Full.Environment.linkResetFromSamples_swapped_synchronized
@@ -79,7 +83,7 @@ theorem highPair_starts_synchronized (domain : EntryDomain) :
   have parties := highPair_parties domain
   have indexes := Full.Environment.linkResetFromSamples_swapped_indexes
     domain.left domain.right domain.battleRng
-  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · simp only [Full.Link.mirroredActive, highPair, leftEnvironment,
       rightEnvironment, Bool.and_eq_true]
     exact ⟨beq_iff_eq.mpr synchronized.1,
@@ -93,10 +97,23 @@ theorem highPair_starts_synchronized (domain : EntryDomain) :
   · simp only [Full.Link.mirroredActiveIndexes, highPair, leftEnvironment,
       rightEnvironment, Bool.and_eq_true]
     exact ⟨beq_iff_eq.mpr indexes.1, beq_iff_eq.mpr indexes.2⟩
+  · simp [Full.Link.mirroredSelections, highPair, leftEnvironment,
+      rightEnvironment]
+  · simp [Full.Link.mirroredLastMoves, highPair, leftEnvironment,
+      rightEnvironment]
+  · simp [Full.Link.mirroredSharedDamage, highPair, leftEnvironment,
+      rightEnvironment]
   · simp only [Full.Link.mirroredRng, highPair, leftEnvironment, rightEnvironment]
     exact beq_iff_eq.mpr synchronized.2.2.1
   · simp only [Full.Link.phasesAgree, highPair, leftEnvironment, rightEnvironment]
     rw [synchronized.2.2.2.1, synchronized.2.2.2.2]
+
+/-- The generated entry inhabits the complete current synchronized quotient,
+including mechanics-visible selected/loaded and damage scratch. -/
+@[simp] theorem highPair_synchronizedState (domain : EntryDomain) :
+    Full.Link.synchronizedState (highPair domain) = true := by
+  simp only [Full.Link.synchronizedState, Bool.and_eq_true]
+  exact highPair_starts_synchronized domain
 
 /-- Semantic inputs admitted by the action-commit training adapter.  Items are
 absent because no link wire value encodes them. -/
@@ -116,6 +133,27 @@ def AdmissibleResponse : Response → Prop
   | .generatedMove _ move => move != 0
   | .mimicTarget _ _ _ => True
   | .settle => True
+
+/-- The ordinary joint-action subset of the response language already has a
+universal physical byte realization. This discharges the codec-and-cable part
+of reverse realizability; decoded menu commit and battle-driver execution remain
+separate obligations. -/
+theorem admissible_actions_have_physical_exchange
+    {left right : Full.Action}
+    (admissible : AdmissibleResponse (.actions left right)) :
+    ∃ commit : LinkActionProtocol.Committed,
+      commit.leftAction = left ∧ commit.rightAction = right ∧
+        let result := GameBoy.LinkAdapter.exchangeByte
+          (Byte.ofNat (LinkActionProtocol.frame commit.leftWire).toNat)
+          (Byte.ofNat (LinkActionProtocol.frame commit.rightWire).toNat)
+        (LinkActionProtocol.unframe
+            (LinkActionProtocol.asUInt8 result.1.serial.data)).bind
+              Full.Link.decodeAction = some right ∧
+          (LinkActionProtocol.unframe
+            (LinkActionProtocol.asUInt8 result.2.serial.data)).bind
+              Full.Link.decodeAction = some left := by
+  exact LinkActionProtocol.realize_encodable_pair left right
+    admissible.1 admissible.2
 
 /-- Observable semantic events. Presentation bus traffic remains in the low
 trace and is hidden only by proved frame summaries. -/

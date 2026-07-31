@@ -135,6 +135,34 @@ theorem linkResetFromSamples_profile_fields
   have linkNotSafari : (BattleMode.link == BattleMode.safari) = false := by decide
   simp [linkResetFromSamples, resetFromSamples, linkNotSafari]
 
+/-- Link reset begins with zeroed selected/loaded records and turn scratch on
+both physical perspectives. These are cartridge-visible stale fields after the
+first menu/turn and therefore are stated explicitly at entry. -/
+@[simp] theorem linkResetFromSamples_playerSelection
+    (player enemy : RL.DynamicGenerator.Sample) (battleRng : Rng.LinkRng) :
+    (linkResetFromSamples player enemy battleRng).engine.playerSelection = {} := by
+  rfl
+
+@[simp] theorem linkResetFromSamples_enemySelection
+    (player enemy : RL.DynamicGenerator.Sample) (battleRng : Rng.LinkRng) :
+    (linkResetFromSamples player enemy battleRng).engine.enemySelection = {} := by
+  rfl
+
+@[simp] theorem linkResetFromSamples_playerLastMove
+    (player enemy : RL.DynamicGenerator.Sample) (battleRng : Rng.LinkRng) :
+    (linkResetFromSamples player enemy battleRng).engine.playerLastMove = 0 := by
+  rfl
+
+@[simp] theorem linkResetFromSamples_enemyLastMove
+    (player enemy : RL.DynamicGenerator.Sample) (battleRng : Rng.LinkRng) :
+    (linkResetFromSamples player enemy battleRng).engine.enemyLastMove = 0 := by
+  rfl
+
+@[simp] theorem linkResetFromSamples_sharedDamage
+    (player enemy : RL.DynamicGenerator.Sample) (battleRng : Rng.LinkRng) :
+    (linkResetFromSamples player enemy battleRng).engine.sharedDamage = 0 := by
+  rfl
+
 /-- A proof-carrying link reset installs the supplied parties exactly; it never
 resamples or reconstructs either team. -/
 @[simp] theorem linkResetFromSamples_parties

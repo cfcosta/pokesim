@@ -229,8 +229,7 @@ inductive MachineCycles : Machine → List Input → Machine → Prop where
   cases input with
   | mk endpoint joypad haltWake audioProgress =>
       cases endpoint <;>
-        simpa [stepMachineCycle, applyExternal, activeMachine, setActiveMachine] using
-          runEdges_preserves_rom _ _ _ _ [] []
+        simp [stepMachineCycle, applyExternal, activeMachine, setActiveMachine]
 
 /-- Every finite interleaving preserves both immutable ROM images. -/
 theorem MachineCycles.preserves_rom {first final : Machine} {inputs : List Input}
@@ -348,6 +347,25 @@ def exchangeEight : Nat → Devices.State → Devices.State → Devices.State ×
 
 private def serialFixture (data control : Byte) : Devices.State :=
   { serial := { data, control, bitsRemaining := 8, clockDivider := 0 } }
+
+/-- Complete one byte transfer with the left endpoint owning the clock. -/
+def exchangeByte (leftData rightData : Byte) : Devices.State × Devices.State :=
+  exchangeEight 8 (serialFixture leftData 0x81) (serialFixture rightData 0x80)
+
+/-- Every possible byte pair is exchanged exactly. Both transfer-start bits are
+cleared, clock ownership is retained, and both serial interrupts are raised. -/
+theorem full_duplex_byte_exact :
+    ∀ leftData rightData : Byte,
+      let result := exchangeByte leftData rightData
+      result.1.serial.data = rightData ∧
+        result.2.serial.data = leftData ∧
+        result.1.serial.bitsRemaining = 0 ∧
+        result.2.serial.bitsRemaining = 0 ∧
+        result.1.serial.control = 0x01 ∧
+        result.2.serial.control = 0x00 ∧
+        result.1.interruptFlags &&& 0x08 ≠ 0 ∧
+        result.2.interruptFlags &&& 0x08 ≠ 0 := by
+  native_decide
 
 @[simp] theorem full_duplex_byte_witness :
     let left := serialFixture 0xA5 0x81

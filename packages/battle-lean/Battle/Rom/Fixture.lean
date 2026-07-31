@@ -9,6 +9,7 @@ import Battle.Rom.DamageApplyRoutine
 import Battle.Rom.SwiftRoutine
 import Battle.Rom.ChargeRoutine
 import Battle.Rom.StatusGateRoutine
+import Battle.Rom.LinkNybbleRoutine
 import Battle.Full.OldMan
 import Battle.Full.Recall
 
@@ -65,6 +66,7 @@ def retainedLayoutMatches (rom : CanonicalRom) : Bool :=
     SwiftRoutine.windowAgrees rom.bytes &&
     ChargeRoutine.windowAgrees rom.bytes &&
     StatusGateRoutine.windowAgrees rom.bytes &&
+    LinkNybbleRoutine.windowAgrees rom.bytes &&
     Battle.Full.OldMan.windowAgrees rom.bytes &&
     Battle.Full.Recall.windowAgrees rom.bytes
 

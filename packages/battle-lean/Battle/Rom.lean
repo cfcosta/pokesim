@@ -30,5 +30,7 @@ import Battle.Rom.SwiftRoutine
 import Battle.Rom.ChargeRoutine
 import Battle.Rom.StatusGateRoutine
 import Battle.Rom.LinkStateProjection
+import Battle.Rom.LinkActionProtocol
+import Battle.Rom.LinkNybbleRoutine
 import Battle.Rom.LinkEquivalence
 import Battle.Rom.Fixture

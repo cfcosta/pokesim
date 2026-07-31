@@ -52,10 +52,10 @@ physical controller/cable schedule.
 `wholeBattle_equivalence` only composes proofs supplied by that bundle. It is
 not an axiom and does not assert that the bundle currently has an inhabitant.
 
-The high reset now proves that both active structs, persistent parties, active
-indexes, RNG state, and phases begin mirrored. `Full.Link.classifyPairedResult`
-checks persistent parties and indexes in addition to active structs, RNG, and
-terminal phase before returning `synchronized`.
+The high reset now proves that active structs, persistent parties, active
+indexes, selected/loaded move records, last moves, shared damage, RNG state,
+and phases begin mirrored. `Full.Link.classifyPairedResult` checks all of those
+fields before returning `synchronized`.
 
 ## Physical cable semantics
 
@@ -71,9 +71,20 @@ bit to its own internal serial clock. The link adapter instead:
 - keeps serial input unavailable as an independent external response;
 - proves each interleaved machine cycle preserves both immutable ROM images.
 
-A complete eight-edge witness exchanges `$A5` and `$3C` in opposite directions
-and leaves both transfer counters at zero. This is an executable cable
-foundation, not yet a proof of the ROM's complete serial protocol.
+A universal theorem covers all 65,536 byte pairs: eight edges exchange the
+bytes in opposite directions, leave both counters at zero, clear both SC
+transfer-start bits, retain clock ownership, and raise both serial interrupts.
+The device model now clears SC bit 7 on the eighth edge, as DMG hardware does.
+
+`Battle.Rom.LinkActionProtocol` proves the next protocol layer. Every encodable
+joint action fits in a nybble, frames as `$60 + action`, crosses the physical
+cable, passes Red's `$6x` receive filter, strips back to the low nybble, and
+decodes as the peer's exact action. `Battle.Rom.LinkNybbleRoutine` additionally
+executes the canonical framing and receive-filter instruction windows: all 16
+action nybbles have functional and physical proofs, all 65,536 incoming/stale
+receive combinations preserve exact malformed behavior functionally, and all
+256 incoming bytes retain physical executions. The surrounding call, interrupt
+wait, repeated synchronization, and delay loops remain open.
 
 ## Paired machine/model checkpoint
 
@@ -89,10 +100,13 @@ foundation, not yet a proof of the ROM's complete serial protocol.
 - all three volatile status bytes and the attacks-left, confusion, Toxic,
   Disable, substitute, Bide, and minimized fields;
 - immutable loaded species identities;
+- selected/highlighted moves and all six bytes of each loaded move record;
+- both used-move bytes and shared `wDamage`;
 - `wLinkState = LINK_STATE_BATTLING`;
 - all ten link RNG bytes, including the vestigial byte, and the exact cursor;
-- complementary physical clock roles;
-- mirrored active structs, parties, indexes, RNG, and terminal phases;
+- complementary physical clock roles and an idle cable at semantic checkpoints;
+- mirrored active structs, parties, indexes, selections, used moves, shared
+  damage, RNG, and terminal phases;
 - fetched canonical `$FA` at `InitOpponent` on both processors.
 
 Every active and party witness re-encodes to the exact mapped WRAM bytes.
@@ -102,10 +116,12 @@ Malformed volatile combinations are retained as raw bytes.
 
 The current relation still needs:
 
-1. selected/highlighted/loaded move records, used moves, shared damage, locked
-   damage, replacement state, turn/order scratch, and terminal pre-cleanup bytes;
+1. locked damage, replacement state, remaining turn/order scratch, and terminal
+   pre-cleanup bytes;
 2. exact encoding of every generated reset into both post-handshake WRAM images;
-3. a concrete paired low block relation built from `LinkAdapter` cycles rather
+3. decoded execution around the proved framing/filter windows through the
+   repeated action-nybble synchronization loops, plus a concrete paired low
+   block relation built from `LinkAdapter` cycles rather
    than a certificate-selected relation;
 4. semantic request transitions for action exchange, Metronome/Mirror Move,
    Mimic, automatic turns, forced replacement, Run, settle, and waits;
@@ -116,7 +132,8 @@ The current relation still needs:
 8. presentation frames with timing, interrupts, controller consumption, bank,
    stack, MMIO, and divergence contracts;
 9. both `EndOfBattle` link epilogues and outer return frames;
-10. reverse realizability for every admitted action and RNG transcript;
+10. reverse realizability beyond the now-proved action framing/cable layer,
+    including controller menus and every RNG transcript;
 11. the synchronized quotient and RL feature/mask/handle/serialization/label
     preservation theorems;
 12. a theorem-disposition manifest for every range reachable in this link-only

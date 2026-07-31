@@ -11,13 +11,15 @@ import Battle.Rom.FullStateProjection
 # Paired link-state projection
 
 This module is the first two-cartridge checkpoint relation for the training
-profile.  It reads each endpoint through the mapped Game Boy memory interface
-and relates the live active structs, link-mode selector, and complete ten-byte
-`BattleRandom` state to that endpoint's independent `Full.Link.Perspective`.
+profile. It reads each endpoint through mapped Game Boy memory and relates live
+active structs, every persistent party row, active indexes, combat stages,
+volatile state, link mode, and the complete ten-byte `BattleRandom` image to
+that endpoint's independent `Full.Link.Perspective`.
 
-It deliberately does not yet relate persistent party rows, volatile scratch,
-serial transfer phase, or the fetched control location.  Those fields must be
-added before this checkpoint can support a whole-turn simulation.
+Synchronized semantic checkpoints also require an idle physical cable. Selected
+move/effect scratch, damage/order scratch, serial subroutine control locations,
+stacks, banks, and return frames remain to be added before this relation can
+support a complete whole-turn simulation.
 -/
 
 namespace Battle.Rom.LinkStateProjection
@@ -29,6 +31,27 @@ abbrev Machine := GameBoy.Adapter.Machine
 /-- Physical pair with cartridge clock ownership retained independently of the
 high-level pair.  The roles are not inferred from a transient `$FF02` value. -/
 abbrev MachinePair := GameBoy.LinkAdapter.Machine
+
+/-- At a semantic request/return checkpoint no byte is half-transferred. The
+hardware transfer-start bits have cleared, while the data and clock-select bits
+remain exact cartridge state rather than being normalized away. -/
+structure IdleCable (low : MachinePair) : Prop where
+  leftComplete : low.left.memory.devices.serial.bitsRemaining = 0
+  rightComplete : low.right.memory.devices.serial.bitsRemaining = 0
+  leftNotStarted : low.left.memory.devices.serial.control &&& 0x80 = 0
+  rightNotStarted : low.right.memory.devices.serial.control &&& 0x80 = 0
+
+/-- A completed universal exchange reaches the same idle-cable shape expected
+at the next semantic checkpoint. -/
+theorem exchanged_byte_is_idle (leftData rightData : Byte) :
+    let result := GameBoy.LinkAdapter.exchangeByte leftData rightData
+    result.1.serial.bitsRemaining = 0 ∧
+      result.2.serial.bitsRemaining = 0 ∧
+      result.1.serial.control &&& 0x80 = 0 ∧
+      result.2.serial.control &&& 0x80 = 0 := by
+  have exact := GameBoy.LinkAdapter.full_duplex_byte_exact leftData rightData
+  exact ⟨exact.2.2.1, exact.2.2.2.1, by rw [exact.2.2.2.2.1]; native_decide,
+    by rw [exact.2.2.2.2.2.1]; native_decide⟩
 
 def semanticRole : GameBoy.Devices.CableClockRole → Full.Link.ClockRole
   | .internal => .internal
@@ -45,6 +68,21 @@ def enemyPartyCount : Word := 0xD89C
 def enemyPartyMons : Word := 0xD8A4
 def playerActiveIndex : Word := 0xCC2F
 def enemyActiveIndex : Word := 0xCFE8
+
+def playerLastMove : Word := 0xCCF1
+def enemyLastMove : Word := 0xCCF2
+def sharedDamage : Word := 0xD0D7
+
+structure SelectionAddresses where
+  selected : Word
+  highlighted : Word
+  loaded : Word
+
+def playerSelection : SelectionAddresses :=
+  { selected := 0xCCDC, highlighted := 0xCC2E, loaded := 0xCFD2 }
+
+def enemySelection : SelectionAddresses :=
+  { selected := 0xCCDD, highlighted := 0xCCE2, loaded := 0xCFCC }
 
 structure RuntimeAddresses where
   unmodified : Word
@@ -82,6 +120,20 @@ def enemyRuntime : RuntimeAddresses :=
 
 @[inline] def readBeWord (machine : Machine) (base : Word) : UInt16 :=
   beWord (readOffset machine base 0) (readOffset machine base 1)
+
+/-- Decode the selected move plus the six-byte loaded move-data row. These bytes
+remain deliberately distinct because disabled browsing and generated moves can
+leave selected and loaded identities unequal. -/
+def decodeSelection (machine : Machine) (addresses : SelectionAddresses) :
+    Selection.MoveScratch :=
+  { selectedMove := readU8 machine addresses.selected
+    loadedMove := readOffset machine addresses.loaded 0
+    highlightedSlot := readU8 machine addresses.highlighted
+    effect := readOffset machine addresses.loaded 1
+    power := readOffset machine addresses.loaded 2
+    type := readOffset machine addresses.loaded 3
+    accuracy := readOffset machine addresses.loaded 4
+    pp := readOffset machine addresses.loaded 5 }
 
 /-- Decode the four dedicated unmodified stat words. -/
 def decodeUnmodified (machine : Machine) (addresses : RuntimeAddresses) : CombatStats :=
@@ -252,6 +304,16 @@ structure Endpoint (machine : Machine) (high : Full.Link.Perspective) where
   enemyOriginalSpecies :
     readU8 machine enemyRuntime.originalSpecies =
       high.engine.battle.enemy.active.originalSpecies
+  playerSelectionAgrees :
+    decodeSelection machine playerSelection = high.engine.playerSelection
+  enemySelectionAgrees :
+    decodeSelection machine enemySelection = high.engine.enemySelection
+  playerLastMoveAgrees :
+    readU8 machine playerLastMove = high.engine.playerLastMove
+  enemyLastMoveAgrees :
+    readU8 machine enemyLastMove = high.engine.enemyLastMove
+  sharedDamageAgrees :
+    readBeWord machine sharedDamage = high.engine.sharedDamage
   linkSelected :
     (GameBoy.Memory.read machine.memory linkState).toNat.toUInt8 = Rng.linkStateByte
   highMode : high.engine.battle.mode = .link
@@ -289,11 +351,15 @@ structure Synchronized (low : MachinePair) (high : Full.Link.Pair) where
   complementaryRoles :
     (low.leftRole = .internal ∧ low.rightRole = .external) ∨
       (low.leftRole = .external ∧ low.rightRole = .internal)
+  cableIdle : IdleCable low
   left : Endpoint low.left high.left
   right : Endpoint low.right high.right
   activeMirrored : Full.Link.mirroredActive high = true
   partiesMirrored : Full.Link.mirroredParties high = true
   indexesMirrored : Full.Link.mirroredActiveIndexes high = true
+  selectionsMirrored : Full.Link.mirroredSelections high = true
+  lastMovesMirrored : Full.Link.mirroredLastMoves high = true
+  sharedDamageMirrored : Full.Link.mirroredSharedDamage high = true
   rngMirrored : Full.Link.mirroredRng high = true
   phasesAgree : Full.Link.phasesAgree high = true
 
@@ -301,19 +367,24 @@ structure Synchronized (low : MachinePair) (high : Full.Link.Pair) where
 images, orientation, and all three semantic synchronization invariants. -/
 theorem Synchronized.exposes_pair {low : MachinePair} {high : Full.Link.Pair}
     (related : Synchronized low high) :
-    (GameBoy.Memory.read low.left.memory linkState).toNat.toUInt8 = Rng.linkStateByte ∧
+    IdleCable low ∧
+      (GameBoy.Memory.read low.left.memory linkState).toNat.toUInt8 = Rng.linkStateByte ∧
       (GameBoy.Memory.read low.right.memory linkState).toNat.toUInt8 = Rng.linkStateByte ∧
       decodeRng low.left = high.left.engine.battle.rng ∧
       decodeRng low.right = high.right.engine.battle.rng ∧
       Full.Link.mirroredActive high = true ∧
       Full.Link.mirroredParties high = true ∧
       Full.Link.mirroredActiveIndexes high = true ∧
+      Full.Link.mirroredSelections high = true ∧
+      Full.Link.mirroredLastMoves high = true ∧
+      Full.Link.mirroredSharedDamage high = true ∧
       Full.Link.mirroredRng high = true ∧
       Full.Link.phasesAgree high = true := by
-  exact ⟨related.left.linkSelected, related.right.linkSelected,
+  exact ⟨related.cableIdle, related.left.linkSelected, related.right.linkSelected,
     related.left.rngAgrees, related.right.rngAgrees,
     related.activeMirrored, related.partiesMirrored, related.indexesMirrored,
-    related.rngMirrored, related.phasesAgree⟩
+    related.selectionsMirrored, related.lastMovesMirrored,
+    related.sharedDamageMirrored, related.rngMirrored, related.phasesAgree⟩
 
 /-- Named post-handshake whole-battle entry: both processors have fetched the
 canonical `InitOpponent` instruction and the paired mechanics state is related.
@@ -347,6 +418,15 @@ theorem AtInitOpponent.canonical_opcodes
 #guard enemyPartyMons == 0xD8A4
 #guard playerActiveIndex == 0xCC2F
 #guard enemyActiveIndex == 0xCFE8
+#guard playerSelection.selected == 0xCCDC
+#guard playerSelection.highlighted == 0xCC2E
+#guard playerSelection.loaded == 0xCFD2
+#guard enemySelection.selected == 0xCCDD
+#guard enemySelection.highlighted == 0xCCE2
+#guard enemySelection.loaded == 0xCFCC
+#guard playerLastMove == 0xCCF1
+#guard enemyLastMove == 0xCCF2
+#guard sharedDamage == 0xD0D7
 #guard playerRuntime.unmodified == 0xCD12
 #guard playerRuntime.stages == 0xCD1A
 #guard playerRuntime.status == 0xD062

@@ -165,6 +165,15 @@ sysclk_en  gates the machine-cycle/oscillator-derived progression
 
 Both enables are active. CPU, divider/timer, serial, DMA, PPU, and APU advance according to their declared derived domains.
 
+### Link serial completion
+
+A paired transfer has one internal-clock owner. Each cable edge shifts both
+active endpoints from their pre-edge output bits. On the eighth edge, both
+transfer counters reach zero, SC bit 7 clears, SC bit 0 retains clock selection,
+and both serial interrupts are requested. `Battle.GameBoy.LinkAdapter` proves
+this for all 65,536 byte pairs; external serial input is never synthesized as an
+independent response while a peer is attached.
+
 ### HALT
 
 HALT disables most CPU execution/data/writeback clocks while the machine/system clock path continues. The interrupt latch/wake path remains live. Therefore:

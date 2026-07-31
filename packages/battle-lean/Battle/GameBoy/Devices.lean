@@ -79,6 +79,9 @@ def serialClockEdge (state : State) (incoming : Bool) : State :=
     let serial := { state.serial with data := data }
     let serial := { serial with bitsRemaining := remaining }
     let serial := { serial with clockDivider := 0 }
+    let serial := if remaining = 0 then
+      { serial with control := serial.control &&& 0x01 }
+    else serial
     let state := { state with serial := serial }
     if remaining = 0 then requestInterrupt state 3 else state
 
@@ -215,6 +218,21 @@ def write (state : State) (address : Word) (value : Byte) : State :=
     (active : state.serial.bitsRemaining = 8) (incoming : Bool) :
     (serialClockEdge state incoming).serial.bitsRemaining = 7 := by
   simp [serialClockEdge, active]
+
+@[simp] private theorem requested_serial_interrupt_is_set :
+    ∀ flags : Byte, (flags ||| Byte.ofNat 8) &&& 0x08 ≠ 0 := by
+  native_decide
+
+/-- Hardware clears SC's transfer-start bit on the eighth edge while retaining
+clock ownership and requesting the serial interrupt. -/
+@[simp] theorem serial_edge_completes_transfer (state : State)
+    (last : state.serial.bitsRemaining = 1) (incoming : Bool) :
+    let after := serialClockEdge state incoming
+    after.serial.bitsRemaining = 0 ∧
+      after.serial.control = (state.serial.control &&& 0x01) ∧
+      after.interruptFlags &&& 0x08 != 0 := by
+  simp [serialClockEdge, last, requestInterrupt]
+  exact requested_serial_interrupt_is_set state.interruptFlags
 
 inductive AudioWaitStep where
   | waiting

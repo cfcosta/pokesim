@@ -40,14 +40,16 @@ perspectives and additionally relates:
 - raw volatile status bytes and their counters;
 - loaded species identity;
 - link mode, all ten RNG bytes, and both cursors;
-- complementary clock orientation and synchronized pair predicates;
+- selected/highlighted/loaded move records, used moves, and shared damage;
+- complementary clock orientation, idle cable state, and synchronized pair
+  predicates that include mechanics-visible scratch;
 - fetched canonical `InitOpponent` on both processors.
 
 Every active and party witness re-encodes to the exact mapped WRAM bytes. The
 live struct's aliased byte three is related to `partyPosition`; persistent
 `boxLevel` is retained from the party row rather than conflated with that byte.
-The relation still omits selected/loaded move records, shared damage/order scratch,
-replacement and terminal bytes, serial transfer phase, and later control
+The relation still omits locked damage, remaining order/replacement and terminal
+bytes, in-flight serial subroutine locations, and later phase-indexed control
 locations. It therefore remains a checkpoint component rather than a whole-turn
 simulation.
 
@@ -79,13 +81,15 @@ must include:
 
 ## Shortest honest route
 
-1. Complete `LinkStateProjection` with move/order/damage/replacement/terminal
-   scratch, serial phase, and phase-indexed control locations.
+1. Complete `LinkStateProjection` with locked-damage, order/replacement/terminal
+   scratch, in-flight serial phase, and phase-indexed control locations.
 2. Prove every generated reset encodes to two related post-handshake machines.
 3. Replace the abstract transitions in `LinkEquivalence.Obligations` with the
    concrete interleaved `LinkAdapter` block relation and typed high requests.
-4. Prove one canonical action-selection trace reaches a `StartBattle` request
-   checkpoint related to one high-level action pair.
+4. Compose the proved decoded `$6x` framing/filter windows and cable exchange
+   with the surrounding `Serial_ExchangeNybble` interrupt/delay loops, then
+   prove one canonical action-selection trace
+   reaches the next `StartBattle` request checkpoint.
 5. Prove one complete ordinary damaging turn, including all link RNG reads and
    the no-faint path.
 6. Add miss, critical, status block, faint, forced replacement, and switch paths.
