@@ -135,6 +135,48 @@ theorem linkResetFromSamples_profile_fields
   have linkNotSafari : (BattleMode.link == BattleMode.safari) = false := by decide
   simp [linkResetFromSamples, resetFromSamples, linkNotSafari]
 
+/-- A proof-carrying link reset installs the supplied parties exactly; it never
+resamples or reconstructs either team. -/
+@[simp] theorem linkResetFromSamples_parties
+    (player enemy : RL.DynamicGenerator.Sample) (battleRng : Rng.LinkRng) :
+    let state := linkResetFromSamples player enemy battleRng
+    state.engine.battle.player.party.mons = player.team.1 ∧
+      state.engine.battle.enemy.party.mons = enemy.team.1 := by
+  simp [linkResetFromSamples, resetFromSamples, Full.SideState.fromParty]
+
+/-- The reset installs the supplied cartridge link-RNG image and starts in the
+battle phase without consuming a random byte. -/
+@[simp] theorem linkResetFromSamples_rng_phase
+    (player enemy : RL.DynamicGenerator.Sample) (battleRng : Rng.LinkRng) :
+    let state := linkResetFromSamples player enemy battleRng
+    state.engine.battle.rng = battleRng ∧
+      state.engine.battle.phase = .battling := by
+  simp [linkResetFromSamples, resetFromSamples, Full.SideState.fromParty]
+
+/-- Swapping supplied parties constructs the opposite cartridge perspective:
+both live active structs, RNG state, and phases are exact mirrors. -/
+@[simp] theorem linkResetFromSamples_swapped_synchronized
+    (player enemy : RL.DynamicGenerator.Sample) (battleRng : Rng.LinkRng) :
+    let left := linkResetFromSamples player enemy battleRng
+    let right := linkResetFromSamples enemy player battleRng
+    left.engine.battle.player.active.active =
+        right.engine.battle.enemy.active.active ∧
+      left.engine.battle.enemy.active.active =
+        right.engine.battle.player.active.active ∧
+      left.engine.battle.rng = right.engine.battle.rng ∧
+      left.engine.battle.phase = .battling ∧
+      right.engine.battle.phase = .battling := by
+  simp [linkResetFromSamples, resetFromSamples, Full.SideState.fromParty]
+
+/-- Opposite reset perspectives begin with the same two active indexes. -/
+@[simp] theorem linkResetFromSamples_swapped_indexes
+    (player enemy : RL.DynamicGenerator.Sample) (battleRng : Rng.LinkRng) :
+    let left := linkResetFromSamples player enemy battleRng
+    let right := linkResetFromSamples enemy player battleRng
+    left.engine.battle.player.activeIndex = right.engine.battle.enemy.activeIndex ∧
+      left.engine.battle.enemy.activeIndex = right.engine.battle.player.activeIndex := by
+  simp [linkResetFromSamples, resetFromSamples, Full.SideState.fromParty]
+
 /-- Reset from independent generator and battle streams. -/
 def reset (generatorRng battleRng : Rng.LinkRng)
     (mode : BattleMode := .link) (playerBag enemyBag : Items.Bag := [])

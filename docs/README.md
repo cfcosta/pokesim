@@ -61,6 +61,7 @@ These documents record twelve codebase, processor, and proof-architecture review
 - [Game 2047 Swift/Dig audit](research/episode-2047-swift-dig-audit.md) — English Red's Swift-through-Dig behavior, decoded byte proofs, the corrected Dig flag, and deterministic regression.
 - [Status-gate and two-turn equivalence audit](research/status-and-two-turn-equivalence-audit.md) — exhaustive raw-status proofs, decoded player/enemy gate kernels, all six charge moves, interruption masks, and claim boundaries.
 - [ROM-to-model equivalence audit](research/rom-model-equivalence-audit.md) — exact theorem boundary, active-struct projection, missing simulations, and shortest honest closure path.
+- [Link-only whole-battle equivalence contract](research/link-only-whole-battle-equivalence.md) — the training-domain theorem boundary, paired cable adapter, expanded two-cartridge relation, and remaining proof obligations.
 
 ## Documentation modes
 

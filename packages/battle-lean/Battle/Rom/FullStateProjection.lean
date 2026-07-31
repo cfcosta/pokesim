@@ -57,6 +57,17 @@ def toMonState (raw : BattleMon) : MonState :=
 @[simp] theorem toMonState_wf (raw : BattleMon) : (toMonState raw).wf = true := by
   simp [toMonState, MonState.wf, Wram.numMoves]
 
+/-- In a live `battle_struct`, byte three is controller-owned party position.
+The semantic active mon retains its party-row `boxLevel` separately, so the
+active projection restores that high field and relates the raw byte to
+`SideState.partyPosition` instead. -/
+def toActiveMonState (raw : BattleMon) (semanticBoxLevel : UInt8) : MonState :=
+  { toMonState raw with boxLevel := semanticBoxLevel }
+
+@[simp] theorem toActiveMonState_wf (raw : BattleMon) (semanticBoxLevel : UInt8) :
+    (toActiveMonState raw semanticBoxLevel).wf = true := by
+  simp [toActiveMonState, toMonState, MonState.wf, Wram.numMoves]
+
 /-- Decode one live battle struct directly from mapped WRAM. -/
 def decodeAt (machine : Machine) (base : Word) : Option BattleMon :=
   BattleMon.decode (readBlock machine.memory base Wram.battleStructLength)
@@ -68,8 +79,16 @@ structure ActiveStructs (machine : Machine) (state : Full.Environment.State) whe
   enemyRaw : BattleMon
   playerDecoded : decodeAt machine playerBattleMon = some playerRaw
   enemyDecoded : decodeAt machine enemyBattleMon = some enemyRaw
-  playerAgrees : toMonState playerRaw = state.engine.battle.player.active.active
-  enemyAgrees : toMonState enemyRaw = state.engine.battle.enemy.active.active
+  playerAgrees :
+    toActiveMonState playerRaw state.engine.battle.player.active.active.boxLevel =
+      state.engine.battle.player.active.active
+  enemyAgrees :
+    toActiveMonState enemyRaw state.engine.battle.enemy.active.active.boxLevel =
+      state.engine.battle.enemy.active.active
+  playerPartyPosition :
+    playerRaw.boxLevel = state.engine.battle.player.active.partyPosition
+  enemyPartyPosition :
+    enemyRaw.boxLevel = state.engine.battle.enemy.active.partyPosition
 
 /-- Proposition-valued relation used by later low-to-high simulations. The
 certificate form above retains the two decoded raw witnesses for local proofs. -/

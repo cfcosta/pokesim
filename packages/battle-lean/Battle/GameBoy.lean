@@ -7,4 +7,5 @@ import Battle.GameBoy.Mbc3
 import Battle.GameBoy.Devices
 import Battle.GameBoy.Memory
 import Battle.GameBoy.Adapter
+import Battle.GameBoy.LinkAdapter
 import Battle.GameBoy.Profile

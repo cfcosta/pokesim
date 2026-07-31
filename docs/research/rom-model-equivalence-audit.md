@@ -27,23 +27,29 @@ a terminal model trace can drive `Battle.Episode` to `returned`; it does not
 prove that the ROM produced the same attacks, damage, RNG calls, state updates,
 or terminal result.
 
-## New concrete relation
+## Concrete link relation
 
-`Battle.Rom.FullStateProjection` now reads both live 29-byte battle structs
-through `GameBoy.Memory.read` at `$D014` and `$CFE5`, decodes them with the
-lossless `BattleMon` codec, and relates every field to the corresponding active
-`MonState` in `Full.Environment.State`.
+`Battle.Rom.FullStateProjection` reads both live 29-byte battle structs through
+`GameBoy.Memory.read` and retains lossless `BattleMon` witnesses.
+`Battle.Rom.LinkStateProjection` now lifts that boundary to two cartridge
+perspectives and additionally relates:
 
-The module proves:
+- both persistent party counts and every admitted 44-byte party row;
+- local and remote active indexes;
+- unmodified combat stats and all eight stage bytes;
+- raw volatile status bytes and their counters;
+- loaded species identity;
+- link mode, all ten RNG bytes, and both cursors;
+- complementary clock orientation and synchronized pair predicates;
+- fetched canonical `InitOpponent` on both processors.
 
-- any successful mapped decode re-encodes to the exact 29 bytes read from WRAM;
-- both active structs expose those exact byte equalities through the relation;
-- the semantic projection is unique;
-- player and enemy HP use the exact big-endian byte interpretation;
-- every projected active mon has exactly four move and PP entries.
-
-This closes only the active-struct codec boundary. It deliberately does not
-claim party, volatile, scratch, RNG, control-location, or transition agreement.
+Every active and party witness re-encodes to the exact mapped WRAM bytes. The
+live struct's aliased byte three is related to `partyPosition`; persistent
+`boxLevel` is retained from the party row rather than conflated with that byte.
+The relation still omits selected/loaded move records, shared damage/order scratch,
+replacement and terminal bytes, serial transfer phase, and later control
+locations. It therefore remains a checkpoint component rather than a whole-turn
+simulation.
 
 ## Minimum theorem that would justify the training engine
 
@@ -73,18 +79,20 @@ must include:
 
 ## Shortest honest route
 
-1. Extend `FullStateProjection` to volatile, stages, move scratch, shared damage,
-   parties, and link RNG.
-2. Prove one canonical action-selection trace reaches a `StartBattle` request
+1. Complete `LinkStateProjection` with move/order/damage/replacement/terminal
+   scratch, serial phase, and phase-indexed control locations.
+2. Prove every generated reset encodes to two related post-handshake machines.
+3. Replace the abstract transitions in `LinkEquivalence.Obligations` with the
+   concrete interleaved `LinkAdapter` block relation and typed high requests.
+4. Prove one canonical action-selection trace reaches a `StartBattle` request
    checkpoint related to one high-level action pair.
-3. Prove one complete ordinary damaging turn, including all random reads and the
-   no-faint path.
-4. Add miss, critical, status block, faint, forced replacement, and switch paths.
-5. Compose selected leaf-handler refinements into effect dispatch.
-6. Inhabit `OneMemberWildFixture` with caller-supplied canonical ROM witnesses
-   and actual adapter cycles.
-7. Generalize the one-member episode to six-member paired link behavior and
-   classify known desynchronizations.
+5. Prove one complete ordinary damaging turn, including all link RNG reads and
+   the no-faint path.
+6. Add miss, critical, status block, faint, forced replacement, and switch paths.
+7. Compose selected leaf-handler refinements into effect dispatch.
+8. Prove both link epilogues and outer returns.
+9. Prove reverse realizability, synchronized-quotient preservation, and the RL
+   feature/mask/serialization boundary.
 
 Whole-ROM equivalence cannot be obtained by adding a theorem whose premises
 simply assume the high-level replay result. Each transition needs a low-to-high

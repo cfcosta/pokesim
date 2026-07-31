@@ -99,8 +99,10 @@ def externalSerialEdge (state : State) (incoming : Bool) : State :=
   | none => simp [advanceReload, reload]
   | some delay => cases delay <;> simp [advanceReload, reload, requestInterrupt]
 
-/-- Advance timer, divider, PPU, and serial by one system T-cycle. -/
-def tickT (state : State) : State :=
+/-- Advance every oscillator-owned device except serial by one system T-cycle.
+The ordinary single-console adapter applies `tickSerialInternal` afterwards;
+the paired link adapter instead clocks both serial endpoints from one cable edge. -/
+def tickTBase (state : State) : State :=
   let state := advanceReload state
   let oldSignal := timerSignal state
   let divider := (state.divider + 1) % 0x10000
@@ -110,8 +112,52 @@ def tickT (state : State) : State :=
   let ppuDot := (oldDot + 1) % 70224
   let next := { next with ppuDot }
   let next := if oldDot = 144 * 456 - 1 then requestInterrupt next 0 else next
-  let next := tickSerialInternal next
   { next with divider }
+
+/-- Advance timer, divider, PPU, and internally clocked serial by one standalone
+system T-cycle. -/
+def tickT (state : State) : State :=
+  tickSerialInternal (tickTBase state)
+
+/-- Clock ownership retained by the physical paired adapter. -/
+inductive CableClockRole where
+  | internal | external
+  deriving Repr, DecidableEq, BEq
+
+def serialOutputBit (state : State) : Bool := state.serial.data &&& 0x80 != 0
+
+/-- One cable edge shifts both cartridge perspectives from the pre-edge output
+bits. Clock-role policy decides when this function is called. -/
+def exchangeSerialEdge (left right : State) : State × State :=
+  let leftBit := serialOutputBit left
+  let rightBit := serialOutputBit right
+  (serialClockEdge left rightBit, serialClockEdge right leftBit)
+
+private def tickLeftCableOwner (left right : State) : State × State :=
+  if left.serial.bitsRemaining = 0 || left.serial.control &&& 1 = 0 then (left, right)
+  else if left.serial.clockDivider = 511 then exchangeSerialEdge left right
+  else ({ left with serial := { left.serial with
+    clockDivider := left.serial.clockDivider + 1 } }, right)
+
+private def tickRightCableOwner (left right : State) : State × State :=
+  if right.serial.bitsRemaining = 0 || right.serial.control &&& 1 = 0 then (left, right)
+  else if right.serial.clockDivider = 511 then exchangeSerialEdge left right
+  else (left, { right with serial := { right.serial with
+    clockDivider := right.serial.clockDivider + 1 } })
+
+/-- Advance selected console oscillators at one interleaved physical T-cycle,
+then drive one shared cable edge if the selected internal-clock endpoint reaches
+its 512-T divider boundary. The external endpoint shifts from that edge even
+when its own oscillator is not selected. Equal roles are an inadmissible link
+entry and intentionally produce no invented clock owner. -/
+def tickCableT (leftRole rightRole : CableClockRole)
+    (tickLeft tickRight : Bool) (left right : State) : State × State :=
+  let left := if tickLeft then tickTBase left else left
+  let right := if tickRight then tickTBase right else right
+  match leftRole, rightRole with
+  | .internal, .external => if tickLeft then tickLeftCableOwner left right else (left, right)
+  | .external, .internal => if tickRight then tickRightCableOwner left right else (left, right)
+  | _, _ => (left, right)
 
 @[inline] def ly (state : State) : Byte := Byte.ofNat (state.ppuDot / 456)
 
@@ -165,15 +211,6 @@ def write (state : State) (address : Word) (value : Byte) : State :=
   | 0xFFFF => { state with interruptEnable := value }
   | _ => state
 
-def serialOutputBit (state : State) : Bool := state.serial.data &&& 0x80 != 0
-
-/-- One cable edge shifts both cartridge perspectives from the pre-edge output
-bits. Clock-role policy decides when this function is called. -/
-def exchangeSerialEdge (left right : State) : State × State :=
-  let leftBit := serialOutputBit left
-  let rightBit := serialOutputBit right
-  (serialClockEdge left rightBit, serialClockEdge right leftBit)
-
 @[simp] theorem serial_edge_decrements_eight_bit_transfer (state : State)
     (active : state.serial.bitsRemaining = 8) (incoming : Bool) :
     (serialClockEdge state incoming).serial.bitsRemaining = 7 := by
@@ -224,9 +261,25 @@ def applyExternal (state : State) (response : ExternalResponses) : State :=
     (ly state).toNat = (state.ppuDot / 456) % 256 := by
   simp [ly, Byte.ofNat]
 
+@[simp] theorem tickSerialInternal_divider (state : State) :
+    (tickSerialInternal state).divider = state.divider := by
+  unfold tickSerialInternal
+  split
+  · rfl
+  · split
+    · simp only [serialClockEdge]
+      split
+      · rfl
+      · split <;> rfl
+    · rfl
+
+@[simp] theorem tickTBase_divider (state : State) :
+    (tickTBase state).divider = (state.divider + 1) % 0x10000 := by
+  simp [tickTBase, advanceReload_divider]
+
 @[simp] theorem tickT_divider (state : State) :
     (tickT state).divider = (state.divider + 1) % 0x10000 := by
-  simp only [tickT, advanceReload_divider]
+  simp [tickT]
 
 private theorem lowFive_lt : ∀ value : Byte, (value &&& 0x1F).toNat < 32 := by
   native_decide

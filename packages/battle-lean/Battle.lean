@@ -83,7 +83,10 @@ import Battle.Rom.DamageApplyRoutine
 import Battle.Diff
 import Battle.Driver
 import Battle.DriverInvariant
+import Battle.GameBoy.LinkAdapter
 import Battle.Rom.FullStateProjection
+import Battle.Rom.LinkStateProjection
+import Battle.Rom.LinkEquivalence
 import Battle.Fixtures
 import Battle.RL.LegalTeam
 import Battle.RL.Generator

@@ -19,7 +19,7 @@ namespace Battle.Full
 
 structure Party where
   mons : Array MonState
-  deriving Repr, DecidableEq, BEq
+  deriving Repr, DecidableEq, BEq, ReflBEq, LawfulBEq
 
 /-- Canonical party shape. Glitch/raw profiles may deliberately violate it. -/
 def Party.wf (party : Party) : Bool :=

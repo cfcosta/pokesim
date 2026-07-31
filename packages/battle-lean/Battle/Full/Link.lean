@@ -94,6 +94,18 @@ def mirroredActive (pair : Pair) : Bool :=
   pair.left.engine.battle.player.active.active == pair.right.engine.battle.enemy.active.active &&
   pair.left.engine.battle.enemy.active.active == pair.right.engine.battle.player.active.active
 
+/-- Persistent parties are mirrored without collapsing cartridge ownership. -/
+def mirroredParties (pair : Pair) : Bool :=
+  pair.left.engine.battle.player.party == pair.right.engine.battle.enemy.party &&
+  pair.left.engine.battle.enemy.party == pair.right.engine.battle.player.party
+
+/-- Active indexes are perspective-swapped with their persistent parties. -/
+def mirroredActiveIndexes (pair : Pair) : Bool :=
+  pair.left.engine.battle.player.activeIndex ==
+      pair.right.engine.battle.enemy.activeIndex &&
+    pair.left.engine.battle.enemy.activeIndex ==
+      pair.right.engine.battle.player.activeIndex
+
 /-- Internal-clock cartridge keeps its locally generated ten bytes. -/
 def internalSetupList (generated : Array UInt8) : Array UInt8 := generated.extract 0 10
 
@@ -135,6 +147,13 @@ def phasesAgree (pair : Pair) : Bool :=
 def mirroredRng (pair : Pair) : Bool :=
   pair.left.engine.battle.rng == pair.right.engine.battle.rng
 
+/-- Minimum synchronized quotient invariant currently checked after each joint
+transition. Volatile and scratch correspondence remains in the ROM relation and
+will be added here before quotient closure. -/
+def synchronizedState (pair : Pair) : Bool :=
+  mirroredActive pair && mirroredParties pair && mirroredActiveIndexes pair &&
+    mirroredRng pair && phasesAgree pair
+
 inductive DesyncCause where
   | psywaveZero
   | bideFaintClear
@@ -168,7 +187,7 @@ private def knownCause (pair : Pair) (leftAction rightAction : Full.Action) : De
 
 def classifyPairedResult (pair : Pair) (cause : DesyncCause)
     (leftEvents rightEvents : List Engine.Event) : StepResult :=
-  if mirroredActive pair && mirroredRng pair && phasesAgree pair then
+  if synchronizedState pair then
     .synchronized pair leftEvents rightEvents
   else .desynchronized pair cause leftEvents rightEvents
 
@@ -188,21 +207,35 @@ def step (pair : Pair) (leftWire rightWire : UInt8) : StepResult :=
       | _, _ => .pending pair leftResult rightResult
   | _, _ => .invalidWire
 
-/-- A synchronized classification carries active-state, RNG, and terminal
-agreement; known divergences use the explicit desynchronized constructor. -/
-theorem synchronized_preserves_relations {pair output : Pair} {cause : DesyncCause}
+/-- A synchronized classification carries active-state, parties, indexes,
+RNG, and terminal agreement; known divergences use the explicit desynchronized
+constructor. -/
+theorem synchronized_preserves_full_relations {pair output : Pair} {cause : DesyncCause}
     {leftEvents rightEvents : List Engine.Event}
     (result : classifyPairedResult pair cause leftEvents rightEvents =
       .synchronized output leftEvents rightEvents) :
-    mirroredActive output = true ∧ mirroredRng output = true ∧ phasesAgree output = true := by
+    mirroredActive output = true ∧ mirroredParties output = true ∧
+      mirroredActiveIndexes output = true ∧ mirroredRng output = true ∧
+      phasesAgree output = true := by
   unfold classifyPairedResult at result
   split at result
   · rename_i condition
     injection result with pairEquality
     subst output
-    simp only [Bool.and_eq_true] at condition
-    exact ⟨condition.1.1, condition.1.2, condition.2⟩
+    simp only [synchronizedState, Bool.and_eq_true] at condition
+    exact ⟨condition.1.1.1.1, condition.1.1.1.2, condition.1.1.2,
+      condition.1.2, condition.2⟩
   · contradiction
+
+/-- Compatibility projection used by callers that only need the older active,
+RNG, and terminal subset. -/
+theorem synchronized_preserves_relations {pair output : Pair} {cause : DesyncCause}
+    {leftEvents rightEvents : List Engine.Event}
+    (result : classifyPairedResult pair cause leftEvents rightEvents =
+      .synchronized output leftEvents rightEvents) :
+    mirroredActive output = true ∧ mirroredRng output = true ∧ phasesAgree output = true := by
+  have full := synchronized_preserves_full_relations result
+  exact ⟨full.1, full.2.2.2.1, full.2.2.2.2⟩
 
 /-- Link `EndOfBattle` writes the mirrored active enemy status into its disposable
 party row but deliberately leaves that row's HP untouched. -/

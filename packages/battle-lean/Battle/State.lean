@@ -92,7 +92,7 @@ structure MonState where
   special : UInt16
   /-- `PP` — current PP for the four slots (bits 0-5; PP Ups in bits 6-7). -/
   pp : Array UInt8
-  deriving Repr, DecidableEq, BEq
+  deriving Repr, DecidableEq, BEq, ReflBEq, LawfulBEq
 
 /-- Well-formed: the move and PP arrays each hold exactly `NUM_MOVES` entries. -/
 def MonState.wf (m : MonState) : Bool :=

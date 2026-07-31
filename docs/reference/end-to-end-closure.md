@@ -225,7 +225,7 @@ Every decoder theorem proves original-byte equality against the embedded canonic
 
 ## Machine/hardware closure
 
-The low runner composes the pinned standalone processor package with a Game Boy adapter and must support all behavior reached before return:
+The low runner composes the pinned standalone processor package with a Game Boy adapter and must support all behavior reached before return. Link mode now has a separate interleaved adapter so an internal serial clock shifts both endpoints rather than receiving a fabricated standalone high bit:
 
 - complete encoding-derived x/y/z classification/semantics for all 256 base slots and 256 CB slots, not merely the currently reachable subset;
 - typed flags, exact PC/SP/IR and ordered stack/data/IDU cycles, DAA/signed-SP rules, staged EI/DI/RETI, prefetch-aware interrupt entry with mid-dispatch IE-write cancellation/retargeting, HALT wake/bug/following-byte behavior, seven STOP outcomes, and invalid no-fetch lockup;
@@ -243,7 +243,7 @@ The low runner composes the pinned standalone processor package with a Game Boy 
 
 Battle transition code uses VRAM/OAM and also enables/banks external SRAM as sprite scratch. A WRAM-only machine cannot execute the driver end-to-end. The first system theorem names `DmgCpuBCommonBoot` and proves that its T1F–T4R bus/read-fold plus `IE`/`IF` adapter satisfies the processor package contract; flat-memory opcode conformance alone is insufficient.
 
-The package split is in [Standalone SM83 semantics package](sm83-semantics-package.md); decoder/equation/logical schedule gates are in [SM83 implementation specification](sm83-implementation-spec.md), physical pipeline/IDU/clock obligations are in [SM83 microarchitecture and system-boundary contract](sm83-microarchitecture-contract.md), and the selected profile/evidence boundary is in [DMG-CPU B console profile](dmg-cpu-b-profile.md).
+The interleaved cable adapter proves peer-CPU stationarity, two-ROM immutability, and a concrete full-duplex byte exchange, but it is not yet composed through the ROM's complete serial protocol. The package split is in [Standalone SM83 semantics package](sm83-semantics-package.md); decoder/equation/logical schedule gates are in [SM83 implementation specification](sm83-implementation-spec.md), physical pipeline/IDU/clock obligations are in [SM83 microarchitecture and system-boundary contract](sm83-microarchitecture-contract.md), and the selected profile/evidence boundary is in [DMG-CPU B console profile](dmg-cpu-b-profile.md).
 
 ## Presentation-summary contract
 

@@ -90,7 +90,7 @@ structure LinkRng where
   list : Array UInt8
   /-- `wLinkBattleRandomNumberListIndex`. -/
   index : Nat
-deriving Repr, DecidableEq, BEq
+deriving Repr, DecidableEq, BEq, ReflBEq, LawfulBEq
 
 /-- Well-formed state: the list is exactly `serialRnsLength` bytes and the cursor
     is in range. Fixtures always seed a well-formed state; `next` preserves it. -/
