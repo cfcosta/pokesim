@@ -162,6 +162,8 @@ def commitSelection (state : State) (who : Side) (action : Full.Action) : State 
       let scratch := { scratch with effect := data.effect }
       let scratch := { scratch with power := data.power }
       let scratch := { scratch with type := data.type }
+      let scratch := { scratch with accuracy := data.accuracy }
+      let scratch := { scratch with pp := data.pp }
       setSelection state who scratch
   | _ => state
 
@@ -1733,15 +1735,43 @@ theorem transformed_nested_party_pp_increment (packed : UInt8) :
     nestedPartyPp packed = packed + 1 := rfl
 
 def installGeneratedLoadedMove (state : State) (who : Side) (move : MoveId) : State :=
+  let data := Data.moveData move
   let scratch := { selection state who with loadedMove := move }
+  let scratch := { scratch with effect := data.effect }
+  let scratch := { scratch with power := data.power }
+  let scratch := { scratch with type := data.type }
+  let scratch := { scratch with accuracy := data.accuracy }
+  let scratch := { scratch with pp := data.pp }
   setSelection state who scratch
 
-@[simp] theorem generated_move_retains_wrapper (state : State) (who : Side)
+@[simp] theorem generated_move_reloads_record (state : State) (who : Side)
     (move : MoveId) :
-    (selection (installGeneratedLoadedMove state who move) who).selectedMove =
-        (selection state who).selectedMove ∧
-      (selection (installGeneratedLoadedMove state who move) who).loadedMove = move := by
+    let after := selection (installGeneratedLoadedMove state who move) who
+    after.selectedMove = (selection state who).selectedMove ∧
+      after.loadedMove = move ∧
+      after.effect = (Data.moveData move).effect ∧
+      after.power = (Data.moveData move).power ∧
+      after.type = (Data.moveData move).type ∧
+      after.accuracy = (Data.moveData move).accuracy ∧
+      after.pp = (Data.moveData move).pp := by
   cases who <;> simp [installGeneratedLoadedMove, selection, setSelection]
+
+/-- Counter observes the generated move's reloaded power/type row rather than
+the zero-power Metronome or Mirror Move wrapper. -/
+theorem generated_tackle_counter_eligible (state : State) (who : Side)
+    (wrapper : (selection state who).selectedMove != 68)
+    (sharedDamage : UInt16) (damaged : sharedDamage != 0) :
+    counterEligible
+      (selection (installGeneratedLoadedMove state who 33) who) sharedDamage = true := by
+  have wrapperNe : (selection state who).selectedMove ≠ 68 :=
+    bne_iff_ne.mp wrapper
+  have damageNe : sharedDamage ≠ 0 := bne_iff_ne.mp damaged
+  have tacklePower : (Data.moveData 33).power ≠ 0 := by native_decide
+  have tackleType : (Data.moveData 33).type = TypeChart.normal := by native_decide
+  cases who <;>
+    simp [installGeneratedLoadedMove, selection, setSelection, counterEligible,
+      damageNe, tacklePower, tackleType] <;>
+    simpa [selection] using wrapperNe
 
 /-- Continue a Mirror Move or Metronome request in the same action. Status gating
 is not repeated. The wrapper increment and generated decrement remain separate;

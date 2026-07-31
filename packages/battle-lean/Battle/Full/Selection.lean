@@ -26,7 +26,7 @@ structure MoveScratch where
   type : UInt8 := 0
   accuracy : UInt8 := 0
   pp : UInt8 := 0
-  deriving Repr, DecidableEq, BEq
+  deriving Repr, DecidableEq, BEq, ReflBEq, LawfulBEq
 
 structure State where
   side : Full.SideState
@@ -67,7 +67,7 @@ def highlight (state : State) (slot : Fin 4) : State × Event :=
     let scratch := { scratch with power := data.power }
     let scratch := { scratch with type := data.type }
     let scratch := { scratch with accuracy := data.accuracy }
-    let scratch := { scratch with pp := state.side.active.active.pp.getD slot.val 0 }
+    let scratch := { scratch with pp := data.pp }
     ({ state with scratch }, .highlighted slot true)
 
 /-- Cancel has no scratch rollback. -/
@@ -200,7 +200,7 @@ theorem enabled_highlight_loads (state : State) (slot : Fin 4)
     after.scratch.power = (Data.moveData move).power ∧
     after.scratch.type = (Data.moveData move).type ∧
     after.scratch.accuracy = (Data.moveData move).accuracy ∧
-    after.scratch.pp = state.side.active.active.pp.getD slot.val 0 := by
+    after.scratch.pp = (Data.moveData move).pp := by
   have ne : disabledSlot state.side ≠ some slot.val := by
     intro equal
     simp [equal] at enabled
