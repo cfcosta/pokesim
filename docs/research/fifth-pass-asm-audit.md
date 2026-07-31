@@ -13,7 +13,7 @@ This pass reread capture construction/naming, level-up move learning, charge/PP 
 | Capture includes a nested persistent naming decision | Both `_AddPartyMon` and `SendNewMonToBox` call `AskName` before the ball action returns | Added capture-nickname requests/traces and nickname bytes to the episode contract. Capture is not terminal immediately when the catch formula succeeds. |
 | Current-box capture inserts rather than appends | `SendNewMonToBox` increments count and shifts species, OT names, nicknames, and 33-byte records down before writing slot 1 | Replaced generic “box mutation” wording with exact ordered slot-1 insertion and parallel-array shifts. |
 | Capacity checks use equality, not bounded comparison | `ItemUseBall` branches on party count exactly 6 and rejects box count exactly 20; `_AddPartyMon` and box loops have separate malformed-count behavior | Split legal capture from raw count states: party count 7–254 can report capture without storage/naming, while oversized/wrapped box counts can shift out of bounds. |
-| Fly/Dig can retain invulnerability after charge cancellation | A directly selected first-turn `ChargeEffect` precedes `DecrementPP`; self-confusion/full paralysis mask out `CHARGING_UP` but not `INVULNERABLE`; selected-disabled handling does the same | Added interrupted attack turns, direct-versus-nested PP distinctions, and stranded invulnerability until a volatile reset such as switching. |
+| Fly/Dig can retain invulnerability after some charge cancellations | A directly selected first-turn `ChargeEffect` precedes `DecrementPP`; full paralysis applies `$cc`, and selected-disabled handling clears only `CHARGING_UP`, so both preserve `INVULNERABLE`. Self-confusion is different: its preceding `$80` mask keeps only `CONFUSED` and therefore clears invulnerability. | Added interruption-specific state transformers, direct-versus-nested PP distinctions, and stranded invulnerability only on the full-paralysis/Disable paths. |
 | Charge state is not bound to the generating move | Continuation calls `GetCurrentMove`, then branches on the charge bit without confirming the loaded effect | Added Mirror Move/Metronome/disobedience-generated charge continuing as the retained wrapper/original selected slot rather than the generated move. |
 | Two-stage stat failure can still mutate the stage | Up/down handlers write the stage, detect current stat exactly 999/1, then rollback with only one `dec`/`inc` | Added silent one-stage residue despite “nothing happened,” separately from ordinary stage caps. |
 | Stat changes mutate unrelated stats/sides | Outside link, player stat-up and enemy-on-player stat-down reapply all badge boosts; common burn/paralysis helpers target the opponent for self-up and target for down | Added the exact side matrix, including accuracy/evasion, X items, badge stacking, and repeated unrelated status penalties. |
@@ -61,10 +61,11 @@ The volatile charge state does not retain a generated move identity. A continuat
 
 On the attack turn:
 
-- self-confusion damage and full paralysis clear Bide/Thrash/charge/trapping flags but leave `INVULNERABLE` untouched;
-- `PrintMoveIsDisabledText` clears charging but also leaves invulnerability untouched;
-- execution returns before the continuation's `DecrementPP`;
-- Fly/Dig therefore becomes selectable again while the active volatile state remains invulnerable;
+- full paralysis applies `$cc`, clearing Bide/Thrash/charge/trapping while leaving `INVULNERABLE` untouched;
+- self-confusion first applies `$80`, keeping only `CONFUSED`, and therefore clears `INVULNERABLE` before entering the common `$cc` tail;
+- `PrintMoveIsDisabledText` applies `$ef`, clearing charging only and preserving every other raw status-1 bit;
+- all three interruption paths return before the continuation's `DecrementPP`;
+- full paralysis or selected Disable can therefore make Fly/Dig selectable again while the member remains invulnerable, whereas self-confusion does not strand invulnerability;
 - a directly selected charge spent no PP, whereas a nested Mirror Move/Metronome wrapper already spent its own PP on the generation turn.
 
 Sleep, freeze, trapping, flinch, and recharge return earlier without clearing charge, so they delay rather than strand the charge state. Switching or another exact volatile reset removes the retained invulnerability.

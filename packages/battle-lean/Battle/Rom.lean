@@ -27,4 +27,6 @@ import Battle.Rom.TransformRoutine
 import Battle.Rom.HazeRoutine
 import Battle.Rom.DamageApplyRoutine
 import Battle.Rom.SwiftRoutine
+import Battle.Rom.ChargeRoutine
+import Battle.Rom.StatusGateRoutine
 import Battle.Rom.Fixture

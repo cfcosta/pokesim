@@ -168,6 +168,42 @@ theorem exceptional_move_ids_supported :
       (fun move => (plan (Data.moveData move).effect).mechanic != .malformed) = true := by
   native_decide
 
+/-- The complete canonical set of ordinary two-turn charge moves. Bide,
+Thrash/Petal Dance, trapping moves, and Hyper Beam use different cartridge
+state machines and are deliberately not classified as charge moves. -/
+def canonicalTwoTurnMove (move : MoveId) : Bool :=
+  [13, 19, 76, 91, 130, 143].contains move
+
+def Mechanic.isCharge : Mechanic → Bool
+  | .charge _ => true
+  | _ => false
+
+private theorem canonical_two_turn_matrix :
+    (List.range 165).all (fun index =>
+      let move := (index + 1).toUInt8
+      (plan (Data.moveData move).effect).mechanic.isCharge ==
+        canonicalTwoTurnMove move) = true := by
+  native_decide
+
+/-- No canonical Red move is omitted from or spuriously added to the two-turn
+charge family: the shared handler is used exactly by Razor Wind, Fly,
+SolarBeam, Dig, Skull Bash, and Sky Attack. -/
+theorem canonical_two_turn_moves_complete (move : MoveId)
+    (positive : 0 < move.toNat) (bounded : move.toNat ≤ 165) :
+    (plan (Data.moveData move).effect).mechanic.isCharge =
+      canonicalTwoTurnMove move := by
+  let index := move.toNat - 1
+  have indexBound : index < 165 := by omega
+  have row := List.all_eq_true.mp canonical_two_turn_matrix index
+    (List.mem_range.mpr indexBound)
+  have succ : index + 1 = move.toNat := by omega
+  simp only [succ] at row
+  have round : move.toNat.toUInt8 = move := by
+    apply UInt8.toNat.inj
+    simp
+  rw [round] at row
+  exact beq_iff_eq.mp row
+
 /-- Animation IDs/tile timing are deliberately outside the high-level effect
 projection; the machine layer must frame or execute them separately. -/
 def animationProjectedInMechanics : Bool := false

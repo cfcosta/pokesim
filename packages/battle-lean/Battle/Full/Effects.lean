@@ -1001,6 +1001,45 @@ theorem charge_invulnerability_witnesses (context : Context) :
     charging_set_bit, invulnerable_set_bit, invulnerable_preserves_charging,
     charging_preserves_invulnerable]
 
+/-- All six and only six canonical charge moves install the exact first-turn
+status byte. Visible charge moves preserve the incoming invulnerability bit;
+Fly and Dig force it on. Every move preserves all unrelated raw bits. -/
+theorem all_two_turn_setups_exact (context : Context) :
+    let setup := fun (move : MoveId) =>
+      applyBefore (Data.moveData move).effect true { context with move }
+    (setup 13).signal = .charging false ∧
+    (setup 13).context.attacker.volatile.status1 =
+      context.attacker.volatile.status1 ||| 0x10 ∧
+    (setup 19).signal = .charging true ∧
+    (setup 19).context.attacker.volatile.status1 =
+      context.attacker.volatile.status1 ||| 0x10 ||| 0x40 ∧
+    (setup 76).signal = .charging false ∧
+    (setup 76).context.attacker.volatile.status1 =
+      context.attacker.volatile.status1 ||| 0x10 ∧
+    (setup 91).signal = .charging true ∧
+    (setup 91).context.attacker.volatile.status1 =
+      context.attacker.volatile.status1 ||| 0x10 ||| 0x40 ∧
+    (setup 130).signal = .charging false ∧
+    (setup 130).context.attacker.volatile.status1 =
+      context.attacker.volatile.status1 ||| 0x10 ∧
+    (setup 143).signal = .charging false ∧
+    (setup 143).context.attacker.volatile.status1 =
+      context.attacker.volatile.status1 ||| 0x10 := by
+  have e13 : (Data.moveData 13).effect = Data.Effect.charge := by native_decide
+  have e19 : (Data.moveData 19).effect = Data.Effect.fly := by native_decide
+  have e76 : (Data.moveData 76).effect = Data.Effect.charge := by native_decide
+  have e91 : (Data.moveData 91).effect = Data.Effect.charge := by native_decide
+  have e130 : (Data.moveData 130).effect = Data.Effect.charge := by native_decide
+  have e143 : (Data.moveData 143).effect = Data.Effect.charge := by native_decide
+  dsimp
+  rw [e13, e19, e76, e91, e130, e143]
+  have chargeDispatch : (plan Data.Effect.charge).mechanic = .charge false := by
+    native_decide
+  have flyDispatch : (plan Data.Effect.fly).mechanic = .charge true := by
+    native_decide
+  simp [applyBefore, chargeDispatch, flyDispatch, setAttackerVolatile, withAttacker,
+    setBit, mask, Wram.BattleStatus1.chargingUp, Wram.BattleStatus1.invulnerable]
+
 theorem transform_copy_boundaries (context : Context) :
     let prepared := { context with attackerSide := Side.enemy }
     let outcome := applyBefore Data.Effect.transform true prepared

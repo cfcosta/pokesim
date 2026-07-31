@@ -57,8 +57,8 @@ def clearInterruptedLocks (volatile : Volatile) : Volatile :=
     bitMask Wram.BattleStatus1.usingTrappingMove
   { volatile with status1 := volatile.status1 &&& ~~~mask }
 
-/-- Every possible status-1 byte loses charging when an interrupted move is
-cleared, while its Fly/Dig invulnerability bit is preserved exactly. -/
+/-- Every possible status-1 byte passed through the full-paralysis cleanup
+loses charging while preserving its Fly/Dig invulnerability bit exactly. -/
 def interruptedChargeExhaustive : Bool :=
   (List.range 256).all fun value =>
     let volatile := { Volatile.clear with status1 := value.toUInt8 }
@@ -66,13 +66,13 @@ def interruptedChargeExhaustive : Bool :=
       (bitSet (clearInterruptedLocks volatile).status1 Wram.BattleStatus1.invulnerable ==
         bitSet volatile.status1 Wram.BattleStatus1.invulnerable)
 
-theorem interrupted_charge_leaves_invulnerability :
+theorem full_paralysis_leaves_invulnerability :
     interruptedChargeExhaustive = true := by
   native_decide
 
 /-- A successful second charge turn clears both charging and invulnerability.
-Interrupted charge turns use `clearInterruptedLocks` and deliberately leave the
-invulnerability bit behind. -/
+Full paralysis uses `clearInterruptedLocks`; selected Disable and self-confusion
+have distinct cartridge masks proved below. -/
 def clearSuccessfulCharge (side : Battle.SideState) : Battle.SideState :=
   if side.volatile.chargingUp then
     let mask := bitMask Wram.BattleStatus1.chargingUp |||
@@ -129,6 +129,17 @@ def tickDisable (volatile : Volatile) : Volatile :=
     intro equal
     simp [equal] at active
   simp [tickDisable, ne, last]
+
+/-- `PrintMoveIsDisabledText` clears only `CHARGING_UP`. Unlike full
+paralysis, it must preserve Bide, Thrash, trapping, and every unrelated raw bit;
+unlike successful charge continuation, it also preserves `INVULNERABLE`. -/
+def clearDisabledCharge (volatile : Battle.Volatile) : Battle.Volatile :=
+  { volatile with status1 := clearBit volatile.status1 Wram.BattleStatus1.chargingUp }
+
+@[simp] theorem disabled_move_clears_only_charging (volatile : Battle.Volatile) :
+    (clearDisabledCharge volatile).status1 =
+      volatile.status1 &&& ~~~(bitMask Wram.BattleStatus1.chargingUp) := by
+  rfl
 
 def prepareConfusionSelfHit (volatile : Battle.Volatile) : Battle.Volatile :=
   let onlyConfused := volatile.status1 &&& bitMask Wram.BattleStatus1.confused
@@ -191,7 +202,7 @@ where
     if side.volatile.disabledMoveNumber != 0 &&
         side.volatile.disabledMoveNumber == selectedMove then
       .cannotAct .selectedMoveDisabled
-        (replaceVolatile side (clearInterruptedLocks side.volatile)) rng
+        (replaceVolatile side (clearDisabledCharge side.volatile)) rng
     else if side.active.paralyzed then
       let (raw, rng) := rng.next
       if raw < (63 : UInt8) then
@@ -266,17 +277,58 @@ def CheckResult.reason? : CheckResult → Option CannotActReason
 def CheckResult.side : CheckResult → Battle.SideState
   | .canAct side _ | .cannotAct _ side _ | .confusionHit side _ _ => side
 
-private def statusTestMon (status : UInt8 := 0) : MonState :=
+def statusTestMon (status : UInt8 := 0) : MonState :=
   { species := 1, hp := 100, boxLevel := 50, status,
     type1 := 0, type2 := 0, catchRate := 45, moves := #[1, 2, 3, 4], dvs := 0,
     level := 50, maxHp := 100, attack := 100, defense := 100, speed := 100,
     special := 100, pp := #[1, 1, 1, 1] }
 
-private def statusTestSide (status : UInt8 := 0) : Battle.SideState :=
+def statusTestSide (status : UInt8 := 0) : Battle.SideState :=
   Battle.SideState.fresh (statusTestMon status)
 
 private def highRng : Rng.LinkRng :=
   { list := #[255, 0, 0, 0, 0, 0, 0, 0, 0, 0], index := 0 }
+
+def statusRng (raw : UInt8) : Rng.LinkRng :=
+  { list := #[raw, 0, 0, 0, 0, 0, 0, 0, 0, 0], index := 0 }
+
+/-- Independent compact classification of every raw nonvolatile status byte at
+the pre-move gate. Burn and poison do not block action; sleep takes precedence
+over freeze, and freeze over paralysis. -/
+def expectedMajorStatusReason (status raw : UInt8) : Option CannotActReason :=
+  let sleep := status &&& Wram.Status.slpMask
+  if sleep != 0 then
+    if sleep - 1 == 0 then some .wokeUp else some .fastAsleep
+  else if bitSet status Wram.Status.frz then some .frozen
+  else if bitSet status Wram.Status.par && raw < 63 then some .fullyParalyzed
+  else none
+
+private theorem major_status_matrix :
+    (List.range 256).all (fun status =>
+      (List.range 256).all (fun raw =>
+        decide ((checkCanAct (statusTestSide status.toUInt8) false 1
+          (statusRng raw.toUInt8)).reason? =
+            expectedMajorStatusReason status.toUInt8 raw.toUInt8))) = true := by
+  native_decide
+
+/-- Exhaustive theorem over all 65,536 raw status/RNG combinations. This covers
+healthy, every 1–7 sleep counter, poison, burn, freeze, paralysis, and malformed
+multi-bit status bytes with the cartridge's exact priority. -/
+theorem all_nonvolatile_status_bytes_exact (status raw : UInt8) :
+    (checkCanAct (statusTestSide status) false 1 (statusRng raw)).reason? =
+      expectedMajorStatusReason status raw := by
+  have statusRows := List.all_eq_true.mp major_status_matrix status.toNat
+    (List.mem_range.mpr status.toNat_lt)
+  have row := List.all_eq_true.mp statusRows raw.toNat
+    (List.mem_range.mpr raw.toNat_lt)
+  have statusRound : status.toNat.toUInt8 = status := by
+    apply UInt8.toNat.inj
+    simp
+  have rawRound : raw.toNat.toUInt8 = raw := by
+    apply UInt8.toNat.inj
+    simp
+  rw [statusRound, rawRound] at row
+  exact of_decide_eq_true row
 
 /-- Exact witnesses expose the post-sleep status order, destructive flag resets,
 confusion comparison, selected Disable check, and the 63/256 paralysis gate. -/
@@ -302,6 +354,29 @@ theorem ordered_status_gate_witnesses :
     (checkCanAct confusedSide false 1 highRng).side.volatile.confusedCounter = 1 ∧
     (checkCanAct disabledSide false 2 Rng.seed0).reason? = some .selectedMoveDisabled ∧
     (checkCanAct (statusTestSide 0x40) false 1 Rng.seed0).reason? = some .fullyParalyzed := by
+  native_decide
+
+/-- Integrated interruption witnesses distinguish the three cartridge masks.
+The selected-disabled case deliberately begins with simultaneous Bide, Thrash,
+charge, trapping, and invulnerability bits to detect over-broad cleanup. -/
+theorem charge_interruption_masks_witness :
+    let base := statusTestSide
+    let disabledVolatile := { base.volatile with
+      status1 := 0x73, disabledMove := 0x22, disabledMoveNumber := 2 }
+    let disabledSide := { base with volatile := disabledVolatile }
+    let paralyzedSide := { disabledSide with
+      active := { disabledSide.active with status := 0x40 }
+      volatile := { disabledVolatile with disabledMove := 0, disabledMoveNumber := 0 } }
+    let confusedVolatile := { base.volatile with
+      status1 := 0xF3, confusedCounter := 2 }
+    let confusedSide := { base with volatile := confusedVolatile }
+    (checkCanAct disabledSide false 2 Rng.seed0).reason? =
+        some .selectedMoveDisabled ∧
+    (checkCanAct disabledSide false 2 Rng.seed0).side.volatile.status1 = 0x63 ∧
+    (checkCanAct paralyzedSide false 2 Rng.seed0).reason? = some .fullyParalyzed ∧
+    (checkCanAct paralyzedSide false 2 Rng.seed0).side.volatile.status1 = 0x40 ∧
+    (checkCanAct confusedSide false 2 highRng).reason? = some .confusionSelfHit ∧
+    (checkCanAct confusedSide false 2 highRng).side.volatile.status1 = 0x80 := by
   native_decide
 
 /-! ## Status compatibility theorems -/
@@ -331,6 +406,38 @@ theorem waking_consumes_turn (side : Battle.SideState) (selected : MoveId) (rng 
 theorem paralysis_threshold_exact (raw : UInt8) :
     (raw < (63 : UInt8)) ↔ raw.toNat < 63 := by
   simpa using (UInt8.lt_ofNat_iff (n := raw) (m := 63) (by native_decide))
+
+/-- Full paralysis uses the cartridge's `$cc` mask: Bide, Thrash, charging, and
+trapping are cleared, while Fly/Dig invulnerability and every other bit survive. -/
+theorem full_paralysis_status1_exact (volatile : Battle.Volatile) :
+    (clearInterruptedLocks volatile).status1 = volatile.status1 &&& 0xCC := by
+  have selectedMask :
+      bitMask Wram.BattleStatus1.storingEnergy |||
+        bitMask Wram.BattleStatus1.thrashingAbout |||
+        bitMask Wram.BattleStatus1.chargingUp |||
+        bitMask Wram.BattleStatus1.usingTrappingMove = 0x33 := by
+    native_decide
+  have complement : ~~~(0x33 : UInt8) = 0xCC := by native_decide
+  simp only [clearInterruptedLocks, selectedMask, complement]
+
+/-- Self-confusion is intentionally different from full paralysis: the ROM
+first keeps only bit 7, so Fly/Dig invulnerability is cleared as well. -/
+theorem self_confusion_status1_exact (volatile : Battle.Volatile) :
+    (prepareConfusionSelfHit volatile).status1 = volatile.status1 &&& 0x80 := by
+  rw [confusion_self_hit_keeps_only_confused_status1]
+  have confusedMask : bitMask Wram.BattleStatus1.confused = 0x80 := by
+    native_decide
+  rw [confusedMask]
+
+/-- A selected move becoming disabled calls `PrintMoveIsDisabledText`, whose
+only battle-status mutation is `RES 4`; malformed combinations of Bide, Thrash,
+trapping, or raw high bits must therefore be preserved. -/
+theorem selected_disabled_status1_exact (volatile : Battle.Volatile) :
+    (clearDisabledCharge volatile).status1 = volatile.status1 &&& 0xEF := by
+  have chargingMask : bitMask Wram.BattleStatus1.chargingUp = 0x10 := by
+    native_decide
+  have complement : ~~~(0x10 : UInt8) = 0xEF := by native_decide
+  simp only [clearDisabledCharge, clearBit, chargingMask, complement]
 
 /-- Two calls to the shared residual routine increment the Toxic counter twice.
 The second call is exactly what seeded residual processing performs. -/

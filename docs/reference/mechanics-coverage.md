@@ -285,7 +285,7 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [x] Mist, Substitute, and Dream Eater pre-accuracy checks (`Battle.Full.Engine.substitute_mist_dream_gates`)
 - [x] X Accuracy bypasses stage/final accuracy only after Fly/Dig invulnerability (`Battle.Full.Engine.invulnerability_precedes_x_accuracy`, `x_accuracy_bypasses_stages_and_random`); handler-specific Dream Eater/Substitute/Mist gates precede this call
 - [x] Swift returns before Substitute/Fly-Dig/Mist/X Accuracy behavior (`Battle.Full.Engine.swift_precedes_accuracy_gates` and decoded `Battle.Rom.SwiftRoutine.swift_invulnerability_exact`)
-- [x] Fly/Dig invulnerability ordering (`Battle.Full.Engine.invulnerability_precedes_x_accuracy`, `Battle.Full.Status.interrupted_charge_leaves_invulnerability`)
+- [x] Fly/Dig invulnerability ordering (`Battle.Full.Engine.invulnerability_precedes_x_accuracy`, `Battle.Full.Status.full_paralysis_leaves_invulnerability`)
 - [x] Dream Eater sleep check (`Battle.Full.Engine.substitute_mist_dream_gates`)
 - [x] Substitute interaction before status/stat-down accuracy (`Battle.Full.Engine.substitute_mist_dream_gates`)
 - [x] final `random < accuracy` comparison (`Battle.Accuracy.strict_boundary_iff`)
@@ -440,7 +440,7 @@ Exceptional move-ID checks include at least Quick Attack, Counter, Metronome, Mi
 - [x] game-2047 deterministic regression: Dig sets `$50`, ordinary Confusion misses, English Red Swift still deals damage without accuracy RNG, and continuation clears both bits with one PP decrement (`tools/check-episode-2047-swift-dig.py`)
 - [x] charge state is unbound: Mirror Move/Metronome-generated charge continues with retained wrapper, generated loaded move, and original selected slot (`Battle.Full.Engine.generated_move_retains_wrapper`, `installGeneratedLoadedMove`)
 - [x] nested wrapper PP versus disobedient replacement PP ordering (`Battle.Full.Engine.incrementNestedPp`, `transformed_nested_party_pp_increment`, `disobedience_charges_original_slot`)
-- [x] full-paralysis/self-confusion/selected-disabled charge cleanup clears charging but leaves Fly/Dig invulnerability until volatile reset (`Battle.Full.Status.interrupted_charge_leaves_invulnerability`)
+- [x] interruption-specific charge cleanup: full paralysis applies `$cc`, selected Disable applies `$ef`, and self-confusion applies `$80`; only the first two can strand Fly/Dig invulnerability (`Battle.Full.Status.full_paralysis_status1_exact`, `selected_disabled_status1_exact`, `self_confusion_status1_exact`; decoded by `Battle.Rom.StatusGateRoutine.interrupted_status_cleanup_exact`)
 - [x] trapping continuation count chosen before accuracy, target recharge cleared before hit, and total-hit interpretation (`Battle.Full.Effects.multiHitCount`, `clear_target_recharge_exact`, `Battle.Full.Engine.advanceMoveLock`)
 - [x] trapping hit reuse without new damage/accuracy roll (`Battle.Full.Engine.executeMove` continued-trap branch and locked damage)
 - [x] trapping miss cleanup (`Battle.Full.Engine.clearTrappingLock`)
@@ -708,7 +708,7 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 
 - [x] Focus Energy right shift (`Battle.BugWitnesses.focus_energy_occurs`)
 - [x] [exact percent-macro thresholds](probability-thresholds.md), comparison polarities, and boundary bytes
-- [x] Fly/Dig attack-turn self-confusion/full paralysis/Disable clears charging but leaves invulnerability (`Battle.Full.Status.interrupted_charge_leaves_invulnerability`)
+- [x] Fly/Dig attack-turn interruption asymmetry: full paralysis and selected Disable clear charge while preserving invulnerability; self-confusion keeps only `CONFUSED` and clears invulnerability (`Battle.Full.Status.full_paralysis_status1_exact`, `selected_disabled_status1_exact`, `self_confusion_status1_exact`)
 - [x] generated charge reloads selected wrapper/original move rather than retaining generated move identity (`Battle.Full.Engine.generated_charge_reloads_wrapper`)
 - [x] threshold equality failure in accuracy/critical checks (`accuracy_boundary_occurs`, `critical_boundary_occurs`)
 - [x] Toxic + Leech Seed counter interaction (`Battle.Full.Status.toxic_leech_seed_ticks_twice`)
@@ -719,6 +719,8 @@ Each item needs at least one source-linked test; mechanics-affecting items need 
 - [x] Transform invulnerability-check bugs (`Battle.Rom.TransformRoutine.transform_invulnerability_exact`)
 - [x] Swift before invulnerability check (`Battle.Full.Engine.swift_precedes_accuracy_gates`, `Battle.Rom.SwiftRoutine.swift_invulnerability_exact`, and `model_swift_hits_dig`)
 - [x] Dig move-ID branch sets invulnerability for all incoming status bytes and blocks ordinary moves (`Battle.Rom.SwiftRoutine.dig_invulnerability_exact` and `model_ordinary_misses_dig`)
+- [x] complete six-move charge family and both side-specific continuations execute decoded setup/clear windows for every incoming status-1 byte (`Battle.Rom.ChargeRoutine.all_charge_setups_exact`, `all_charge_continuations_exact`; high-level completeness in `Battle.Full.EffectPlan.canonical_two_turn_moves_complete`)
+- [x] pre-move nonvolatile status classification is exhaustive over all 65,536 status/RNG pairs, with decoded player/enemy kernels for sleep, flinch, recharge, Disable, confusion counters, paralysis cleanup, and selected-disabled cleanup (`Battle.Full.Status.all_nonvolatile_status_bytes_exact`, `Battle.Rom.StatusGateRoutine`)
 - [x] drain-on-Substitute broken check (`Battle.Full.Effects.drain_ignores_substitute_gate`)
 - [x] extra enemy stat-down failure gate also reducing damaging side effects through a second independent draw
 - [x] AI effectiveness neutral constant mismatch (`Battle.Full.TrainerController.ai_neutral_constant_mismatch`)
