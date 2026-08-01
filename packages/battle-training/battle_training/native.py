@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import selectors
+import struct
 import subprocess
 import threading
 from dataclasses import dataclass
@@ -35,6 +37,26 @@ class NativeRequestTimeout(RuntimeError):
 
     def __reduce__(self) -> tuple[type[NativeRequestTimeout], tuple[str, float]]:
         return type(self), (self.operation, self.seconds)
+
+
+def _lineage_digest(*parts: bytes) -> bytes:
+    digest = hashlib.blake2b(digest_size=16)
+    for part in parts:
+        digest.update(len(part).to_bytes(4, "little"))
+        digest.update(part)
+    return digest.digest()
+
+
+def _root_lineage(command: str) -> bytes:
+    return _lineage_digest(b"root", command.encode("ascii"))
+
+
+def _search_lineage(parent: bytes, player: int, enemy: int, seed: int) -> bytes:
+    return _lineage_digest(b"search", parent, struct.pack("<QQQ", player, enemy, seed))
+
+
+def _episode_lineage(parent: bytes, player: int, enemy: int) -> bytes:
+    return _lineage_digest(b"episode", parent, struct.pack("<QQ", player, enemy))
 
 
 def _decode_features(response: dict[str, Any], side: str) -> NDArray[np.integer[Any]]:
@@ -130,6 +152,13 @@ class SearchServer:
         if request_timeout <= 0:
             raise ValueError("request_timeout must be positive")
         self.request_timeout = request_timeout
+        # Deterministic engine: states with equal construction lineage are
+        # identical, so duplicate search rows inside one decision (mirrored
+        # evaluation legs) can share a single native transition.
+        self._lineage: dict[int, bytes] = {}
+        self._dedup_window: dict[bytes, Snapshot] = {}
+        self.search_rows_requested = 0
+        self.search_rows_deduplicated = 0
         self.process = subprocess.Popen(
             [str(SEARCH_SERVER)],
             cwd=REPO_ROOT,
@@ -210,14 +239,15 @@ class SearchServer:
         swapped: bool = False,
         balanced_final_species: bool = False,
     ) -> Snapshot:
-        if level100:
-            operation = "reset-level100-swapped" if swapped else "reset-level100"
-        else:
-            operation = "reset-swapped" if swapped else "reset"
-        return self._snapshot(
-            self._request(
-                f"{operation}|{root_seed}|{episode}|{player_size}|{enemy_size}|{int(balanced_final_species)}"
-            )
+        return self._reset_pair(
+            root_seed,
+            episode,
+            player_size,
+            enemy_size,
+            level100=level100,
+            swapped=swapped,
+            balanced_final_species=balanced_final_species,
+            append=False,
         )
 
     def reset_append(
@@ -231,16 +261,37 @@ class SearchServer:
         swapped: bool = False,
         balanced_final_species: bool = False,
     ) -> Snapshot:
+        return self._reset_pair(
+            root_seed,
+            episode,
+            player_size,
+            enemy_size,
+            level100=level100,
+            swapped=swapped,
+            balanced_final_species=balanced_final_species,
+            append=True,
+        )
+
+    def _reset_pair(
+        self,
+        root_seed: int,
+        episode: int,
+        player_size: int,
+        enemy_size: int,
+        *,
+        level100: bool,
+        swapped: bool,
+        balanced_final_species: bool,
+        append: bool,
+    ) -> Snapshot:
         if level100:
-            operation = (
-                "reset-level100-swapped-append" if swapped else "reset-level100-append"
-            )
+            operation = "reset-level100-swapped" if swapped else "reset-level100"
         else:
-            operation = "reset-swapped-append" if swapped else "reset-append"
-        return self._snapshot(
-            self._request(
-                f"{operation}|{root_seed}|{episode}|{player_size}|{enemy_size}|{int(balanced_final_species)}"
-            )
+            operation = "reset-swapped" if swapped else "reset"
+        return self._reset_snapshot(
+            operation,
+            f"{root_seed}|{episode}|{player_size}|{enemy_size}|{int(balanced_final_species)}",
+            append,
         )
 
     def reset_campaign(
@@ -252,7 +303,7 @@ class SearchServer:
         balanced_final_species: bool = False,
     ) -> Snapshot:
         return self._reset_campaign(
-            "reset-campaign", root_seed, episode, campaign, balanced_final_species
+            root_seed, episode, campaign, balanced_final_species, append=False
         )
 
     def reset_campaign_append(
@@ -264,28 +315,36 @@ class SearchServer:
         balanced_final_species: bool = False,
     ) -> Snapshot:
         return self._reset_campaign(
-            "reset-campaign-append",
-            root_seed,
-            episode,
-            campaign,
-            balanced_final_species,
+            root_seed, episode, campaign, balanced_final_species, append=True
         )
 
     def _reset_campaign(
         self,
-        operation: str,
         root_seed: int,
         episode: int,
         campaign: int,
         balanced_final_species: bool,
+        *,
+        append: bool,
     ) -> Snapshot:
         if not 0 <= campaign < self.campaign_count:
             raise ValueError("campaign team index is out of range")
-        return self._snapshot(
-            self._request(
-                f"{operation}|{root_seed}|{episode}|{campaign}|{int(balanced_final_species)}"
-            )
+        return self._reset_snapshot(
+            "reset-campaign",
+            f"{root_seed}|{episode}|{campaign}|{int(balanced_final_species)}",
+            append,
         )
+
+    def _reset_snapshot(self, operation: str, arguments: str, append: bool) -> Snapshot:
+        suffix = "-append" if append else ""
+        snapshot = self._snapshot(self._request(f"{operation}{suffix}|{arguments}"))
+        if not append:
+            self._lineage.clear()
+        self._dedup_window.clear()
+        # Lineage keys on the append-stripped command so the first game of a
+        # batch (plain reset) and its mirror leg (reset-append) share a root.
+        self._lineage[snapshot.handle] = _root_lineage(f"{operation}|{arguments}")
+        return snapshot
 
     def search_step(
         self, handle: int, player_action: int, enemy_action: int, chance_seed: int
@@ -295,6 +354,45 @@ class SearchServer:
         ]
 
     def search_steps(self, requests: list[tuple[int, int, int, int]]) -> list[Snapshot]:
+        if not requests:
+            return []
+        self.search_rows_requested += len(requests)
+        plan: list[int | Snapshot] = []
+        lineages: list[bytes | None] = []
+        pending: dict[bytes, int] = {}
+        unique: list[tuple[int, int, int, int]] = []
+        for handle, player, enemy, seed in requests:
+            parent = self._lineage.get(handle)
+            lineage = (
+                None if parent is None else _search_lineage(parent, player, enemy, seed)
+            )
+            lineages.append(lineage)
+            if lineage is not None:
+                cached = self._dedup_window.get(lineage)
+                if cached is not None:
+                    plan.append(cached)
+                    continue
+                repeated = pending.get(lineage)
+                if repeated is not None:
+                    plan.append(repeated)
+                    continue
+                pending[lineage] = len(unique)
+            plan.append(len(unique))
+            unique.append((handle, player, enemy, seed))
+        fresh = self._search_steps_native(unique)
+        self.search_rows_deduplicated += len(requests) - len(unique)
+        snapshots: list[Snapshot] = []
+        for entry, lineage in zip(plan, lineages, strict=True):
+            snapshot = entry if isinstance(entry, Snapshot) else fresh[entry]
+            if lineage is not None:
+                self._lineage[snapshot.handle] = lineage
+                self._dedup_window[lineage] = snapshot
+            snapshots.append(snapshot)
+        return snapshots
+
+    def _search_steps_native(
+        self, requests: list[tuple[int, int, int, int]]
+    ) -> list[Snapshot]:
         if not requests:
             return []
         payload = ";".join(
@@ -322,6 +420,11 @@ class SearchServer:
         snapshots = [self._snapshot(row) for row in response["snapshots"]]
         if len(snapshots) != len(requests):
             raise RuntimeError("native episode batch response length mismatch")
+        self._dedup_window.clear()
+        for (handle, player, enemy), snapshot in zip(requests, snapshots, strict=True):
+            parent = self._lineage.get(handle)
+            if parent is not None:
+                self._lineage[snapshot.handle] = _episode_lineage(parent, player, enemy)
         return snapshots
 
     def inspect(self, handle: int) -> dict[str, Any]:
@@ -351,10 +454,17 @@ class SearchServer:
         handles = response["handles"]
         if handles != list(range(len(snapshots))):
             raise RuntimeError("native compact-handles response mapping mismatch")
-        return [
+        compacted = [
             snapshot.with_handle(handle)
             for snapshot, handle in zip(snapshots, handles, strict=True)
         ]
+        self._lineage = {
+            renumbered.handle: self._lineage[original.handle]
+            for original, renumbered in zip(snapshots, compacted, strict=True)
+            if original.handle in self._lineage
+        }
+        self._dedup_window.clear()
+        return compacted
 
     def close(self) -> None:
         if self.process.poll() is None:

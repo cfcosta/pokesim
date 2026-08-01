@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import pickle
 import random
@@ -13,7 +14,6 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
-
 from battle_training.arena import (
     ArenaConfig,
     SkillMetrics,
@@ -56,7 +56,15 @@ from battle_training.monitor import (
     build_match_detail,
     write_monitor_state,
 )
-from battle_training.native import NativeRequestTimeout, Snapshot, _decode_features
+from battle_training.native import (
+    NativeRequestTimeout,
+    SearchServer,
+    Snapshot,
+    _decode_features,
+    _episode_lineage,
+    _root_lineage,
+    _search_lineage,
+)
 from battle_training.network import (
     BattleTransformer,
     TransformerConfig,
@@ -291,6 +299,226 @@ class _DivergentToyServer(_ToyServer):
             replace(snapshot, divergence="toy-search-divergence")
             for snapshot in super().search_steps(requests)
         ]
+
+
+class _FakeLeanServer(SearchServer):
+    """In-memory stand-in for the Lean process behind ``SearchServer``.
+
+    States are (content, rng, turn) tuples where children derive purely from
+    the parent state plus the request, mirroring the deterministic engine:
+    search steps consume the supplied chance seed, episode steps consume the
+    state-embedded rng stream.
+    """
+
+    def __init__(self) -> None:
+        self.request_timeout = 60.0
+        self.feature_count = 4
+        self.action_count = 13
+        self.campaign_count = 2
+        self._lineage = {}
+        self._dedup_window = {}
+        self.search_rows_requested = 0
+        self.search_rows_deduplicated = 0
+        self.native_search_rows = 0
+        self._states: list[tuple[bytes, bytes, int]] = []
+
+    @staticmethod
+    def _digest(*parts: bytes) -> bytes:
+        return hashlib.blake2b(b"|".join(parts), digest_size=16).digest()
+
+    def _row(self, handle: int) -> dict[str, object]:
+        content, _, turn = self._states[handle]
+        return {
+            "handle": handle,
+            "feature_encoding": "json-nat-array",
+            "player_features": [byte % 251 for byte in content[: self.feature_count]],
+            "enemy_features": [byte % 241 for byte in content[: self.feature_count]],
+            "player_mask": 0b11,
+            "enemy_mask": 0b11,
+            "player_hash": content.hex(),
+            "enemy_hash": content.hex(),
+            "turn": turn,
+            "request": "battle",
+            "divergence": None,
+            "terminal": False,
+            "done": False,
+            "return": None,
+        }
+
+    def _append_state(self, content: bytes, rng: bytes, turn: int) -> int:
+        self._states.append((content, rng, turn))
+        return len(self._states) - 1
+
+    def _request(self, command: str) -> dict[str, object]:
+        operation, _, payload = command.partition("|")
+        if operation.startswith("reset"):
+            if not operation.endswith("-append"):
+                self._states.clear()
+            content_key = f"{operation.removesuffix('-append')}|{payload}".encode()
+            handle = self._append_state(
+                self._digest(b"root", content_key),
+                self._digest(b"root-rng", content_key),
+                0,
+            )
+            return self._row(handle)
+        if operation in ("batch", "batch-episode"):
+            rows = []
+            for spec in payload.split(";"):
+                handle, player, enemy, seed = (int(part) for part in spec.split(","))
+                content, rng, turn = self._states[handle]
+                if operation == "batch":
+                    self.native_search_rows += 1
+                    chance = seed.to_bytes(8, "little")
+                    child_rng = self._digest(b"step-rng", rng, chance)
+                else:
+                    chance = rng
+                    child_rng = self._digest(b"episode-rng", rng)
+                child = self._digest(b"child", content, bytes((player, enemy)), chance)
+                rows.append(self._row(self._append_state(child, child_rng, turn + 1)))
+            return {"snapshots": rows}
+        if operation == "compact-handles":
+            keep = [int(part) for part in payload.split(",")]
+            self._states = [self._states[handle] for handle in keep]
+            return {"handles": list(range(len(keep)))}
+        raise AssertionError(f"unexpected native command: {command}")
+
+
+class NativeTransitionDedupTests(unittest.TestCase):
+    def _mirror_batch(
+        self, server: _FakeLeanServer
+    ) -> tuple[Snapshot, Snapshot, Snapshot]:
+        first = server.reset(11, 7, 3, 3)
+        second = server.reset_append(11, 7, 3, 3)
+        other = server.reset_append(11, 9, 3, 3)
+        return first, second, other
+
+    def test_lineage_digests_are_deterministic_and_domain_separated(self) -> None:
+        root = _root_lineage("reset|11|7|3|3|0")
+        self.assertEqual(root, _root_lineage("reset|11|7|3|3|0"))
+        self.assertNotEqual(root, _root_lineage("reset|11|8|3|3|0"))
+        search = _search_lineage(root, 1, 2, 55)
+        self.assertEqual(search, _search_lineage(root, 1, 2, 55))
+        self.assertNotEqual(search, _search_lineage(root, 1, 2, 56))
+        self.assertNotEqual(search, _search_lineage(root, 2, 1, 55))
+        self.assertNotEqual(search, _search_lineage(search, 1, 2, 55))
+        episode = _episode_lineage(root, 1, 2)
+        self.assertNotEqual(episode, _search_lineage(root, 1, 2, 0))
+        for digest in (root, search, episode):
+            self.assertEqual(len(digest), 16)
+
+    def test_mirror_search_requests_collapse_to_one_native_row(self) -> None:
+        server = _FakeLeanServer()
+        first, second, other = self._mirror_batch(server)
+        results = server.search_steps(
+            [
+                (first.handle, 1, 2, 55),
+                (second.handle, 1, 2, 55),
+                (other.handle, 1, 2, 55),
+            ]
+        )
+        self.assertEqual(server.native_search_rows, 2)
+        self.assertEqual(server.search_rows_requested, 3)
+        self.assertEqual(server.search_rows_deduplicated, 1)
+        self.assertIs(results[0], results[1])
+        self.assertEqual(results[0].player_hash, results[1].player_hash)
+        self.assertNotEqual(results[0].player_hash, results[2].player_hash)
+
+    def test_window_serves_identical_request_from_previous_call(self) -> None:
+        server = _FakeLeanServer()
+        first, second, _ = self._mirror_batch(server)
+        wave_one = server.search_steps([(first.handle, 1, 2, 55)])
+        rows_after_first = server.native_search_rows
+        wave_two = server.search_steps([(second.handle, 1, 2, 55)])
+        self.assertEqual(server.native_search_rows, rows_after_first)
+        self.assertEqual(server.search_rows_deduplicated, 1)
+        self.assertIs(wave_two[0], wave_one[0])
+
+    def test_distinct_seeds_and_actions_never_deduplicate(self) -> None:
+        server = _FakeLeanServer()
+        first, second, _ = self._mirror_batch(server)
+        server.search_steps(
+            [
+                (first.handle, 1, 2, 55),
+                (second.handle, 1, 2, 56),
+                (first.handle, 2, 1, 55),
+                (second.handle, 1, 1, 55),
+            ]
+        )
+        self.assertEqual(server.native_search_rows, 4)
+        self.assertEqual(server.search_rows_deduplicated, 0)
+
+    def test_episode_steps_extend_lineage_and_clear_window(self) -> None:
+        server = _FakeLeanServer()
+        first, second, _ = self._mirror_batch(server)
+        wave = server.search_steps(
+            [(first.handle, 1, 2, 55), (second.handle, 1, 2, 55)]
+        )
+        children = server.episode_steps([(first.handle, 4, 5), (second.handle, 4, 5)])
+        self.assertNotEqual(children[0].handle, children[1].handle)
+        self.assertEqual(children[0].player_hash, children[1].player_hash)
+        rows_before = server.native_search_rows
+        repeat = server.search_steps([(second.handle, 1, 2, 55)])
+        self.assertEqual(server.native_search_rows, rows_before + 1)
+        self.assertEqual(repeat[0].player_hash, wave[0].player_hash)
+        next_wave = server.search_steps(
+            [(children[0].handle, 3, 3, 77), (children[1].handle, 3, 3, 77)]
+        )
+        self.assertEqual(server.native_search_rows, rows_before + 2)
+        self.assertIs(next_wave[0], next_wave[1])
+
+    def test_compact_remaps_lineage_and_preserves_dedup(self) -> None:
+        server = _FakeLeanServer()
+        first, second, _ = self._mirror_batch(server)
+        children = server.episode_steps([(first.handle, 4, 5), (second.handle, 4, 5)])
+        compacted = server.compact_many(children)
+        self.assertEqual([snapshot.handle for snapshot in compacted], [0, 1])
+        wave = server.search_steps(
+            [(compacted[0].handle, 1, 2, 91), (compacted[1].handle, 1, 2, 91)]
+        )
+        self.assertEqual(server.native_search_rows, 1)
+        self.assertIs(wave[0], wave[1])
+
+    def test_unknown_lineage_rows_pass_through_untracked(self) -> None:
+        server = _FakeLeanServer()
+        first, second, _ = self._mirror_batch(server)
+        del server._lineage[first.handle]
+        results = server.search_steps(
+            [(first.handle, 1, 2, 55), (second.handle, 1, 2, 55)]
+        )
+        self.assertEqual(server.native_search_rows, 2)
+        self.assertEqual(server.search_rows_deduplicated, 0)
+        self.assertNotIn(results[0].handle, server._lineage)
+        self.assertIn(results[1].handle, server._lineage)
+
+    def test_reset_clears_lineage_so_recycled_handles_never_alias(self) -> None:
+        server = _FakeLeanServer()
+        first, second, _ = self._mirror_batch(server)
+        server.search_steps([(first.handle, 1, 2, 55), (second.handle, 1, 2, 55)])
+        fresh_first = server.reset(11, 7, 3, 3)
+        self.assertEqual(set(server._lineage), {fresh_first.handle})
+        fresh_second = server.reset_append(11, 7, 3, 3)
+        rows_before = server.native_search_rows
+        wave = server.search_steps(
+            [(fresh_first.handle, 1, 2, 55), (fresh_second.handle, 1, 2, 55)]
+        )
+        self.assertEqual(server.native_search_rows, rows_before + 1)
+        self.assertIs(wave[0], wave[1])
+
+    def test_campaign_reset_lineage_matches_across_append_variants(self) -> None:
+        server = _FakeLeanServer()
+        first = server.reset_campaign(11, 7, 1)
+        second = server.reset_campaign_append(11, 7, 1)
+        other = server.reset_campaign_append(11, 7, 0)
+        wave = server.search_steps(
+            [
+                (first.handle, 1, 2, 55),
+                (second.handle, 1, 2, 55),
+                (other.handle, 1, 2, 55),
+            ]
+        )
+        self.assertEqual(server.native_search_rows, 2)
+        self.assertIs(wave[0], wave[1])
+        self.assertNotEqual(wave[0].player_hash, wave[2].player_hash)
 
 
 class MoveValueModelTests(unittest.TestCase):
