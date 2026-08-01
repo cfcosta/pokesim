@@ -60,7 +60,10 @@ encoder, policy/value heads, leaf evaluator, and search-budget controller, so no
 earlier checkpoint can resume or warm-start into it. V23 keeps that model but
 changes the controller: the final current root matrix receives a fresh 2,048-step
 RM+ solve, chance resampling decays with evidence, and learned priors provide
-progressive deeper exploration. Each controller decision still ends in
+progressive deeper exploration. V24 pools the full policy/value evaluations
+needed when distilled successors become expanded nodes; mirror children now use
+the intended joint dual-policy head instead of two synchronous canonical rows.
+Each controller decision still ends in
 simultaneous RM+ over the complete root; adaptive routing changes only whether
 deeper refinements are requested.
 
@@ -288,7 +291,9 @@ keys suppress duplicate forwards without claiming mechanics-state equivalence.
 
 Search and policy loss mask illegal actions. Every expanded node retains an
 empirical joint payoff matrix, cumulative RM+ regrets, average strategies,
-explicit chance outcomes, and immutable child handles. The root matrix is
+explicit chance outcomes, and immutable child handles. Full expanded-node
+inference is a mandatory pooled frontier: a missing evaluation fails rather
+than falling back to synchronous batch-one inference. The root matrix is
 complete; progressive deeper matrices represent unvisited pairs with the neural
 leaf prior while mandatory exploration gives every legal action initial support.
 A dense,

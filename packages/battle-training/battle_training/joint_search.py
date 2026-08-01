@@ -556,8 +556,16 @@ class _InferenceFrontier:
     snapshots: list[Snapshot]
 
 
-_Frontier: TypeAlias = _NativeFrontier | _InferenceFrontier
-_FrontierResponse: TypeAlias = list[Snapshot] | list[tuple[float, float]]
+@dataclass(frozen=True)
+class _NodeInferenceFrontier:
+    snapshots: list[Snapshot]
+
+
+_NodeEvaluation: TypeAlias = tuple[list[float], list[float], float]
+_Frontier: TypeAlias = _NativeFrontier | _InferenceFrontier | _NodeInferenceFrontier
+_FrontierResponse: TypeAlias = (
+    list[Snapshot] | list[tuple[float, float]] | list[_NodeEvaluation]
+)
 
 
 class SimultaneousTreeSearch(BatchedJointRegretSearch):
@@ -628,6 +636,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._deep_inference_calls = 0
         self._deep_inference_rows = 0
         self._deep_inference_waves = 0
+        self._deep_full_inference_calls = 0
+        self._deep_full_inference_rows = 0
+        self._deep_full_inference_waves = 0
         self._deep_native_calls = 0
         self._deep_native_rows = 0
         self._deep_native_waves = 0
@@ -654,8 +665,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         if evaluation is None:
             evaluation = self._evaluation_cache.get(snapshot.handle)
         if evaluation is None:
-            players, enemies, values = self._evaluate_many([snapshot])
-            evaluation = (players[0], enemies[0], values[0])
+            raise RuntimeError("tree node construction requires pooled full evaluation")
         player_priors, enemy_priors, leaf_value = evaluation
         self._evaluation_cache[snapshot.handle] = evaluation
         player_legal = self._legal_from_priors(snapshot.player_mask, player_priors)
@@ -1425,7 +1435,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         else:
             child = node.children.get(successor.handle)
             if child is None:
-                child = self._make_node(successor)
+                response = yield _NodeInferenceFrontier([successor])
+                evaluation = cast(list[_NodeEvaluation], response)[0]
+                child = self._make_node(successor, evaluation)
                 node.children[successor.handle] = child
             if not child.expanded:
                 expansion_cost = self._joint_cost(child)
@@ -1583,6 +1595,12 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             "deep_inference_waves": self._deep_inference_waves,
             "mean_deep_inference_batch": (
                 self._deep_inference_rows / max(1, self._deep_inference_calls)
+            ),
+            "deep_full_inference_calls": self._deep_full_inference_calls,
+            "deep_full_inference_rows": self._deep_full_inference_rows,
+            "deep_full_inference_waves": self._deep_full_inference_waves,
+            "mean_deep_full_inference_batch": (
+                self._deep_full_inference_rows / max(1, self._deep_full_inference_calls)
             ),
             "deep_native_calls": self._deep_native_calls,
             "deep_native_rows": self._deep_native_rows,
@@ -1767,7 +1785,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             enemy_action,
             root_value,
             transitions,
-            "simultaneous-matrix-tree-rmplus-fresh-root-v2",
+            "simultaneous-matrix-tree-rmplus-pooled-node-v3",
             exploitability,
             max(legal_payoffs) - min(legal_payoffs),
             tuple(tuple(row) for row in root.payoff),
@@ -1804,13 +1822,17 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         }
         started: set[int] = set()
         responses: dict[int, _FrontierResponse] = {}
+        waiting_full: dict[int, tuple[SimultaneousTreeSearch, list[Snapshot]]] = {}
         completed: dict[int, SearchResult] = {}
         inference_calls = inference_rows = inference_waves = 0
+        full_inference_calls = full_inference_rows = full_inference_waves = 0
         native_calls = native_rows = native_waves = overlap_waves = 0
         native_executor = ThreadPoolExecutor(max_workers=1)
         while generators:
             frontiers: dict[int, _Frontier] = {}
             for index in sorted(generators):
+                if index in waiting_full:
+                    continue
                 generator = generators[index]
                 try:
                     if index in started:
@@ -1833,6 +1855,12 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 for index, frontier in frontiers.items()
                 if isinstance(frontier, _InferenceFrontier)
             ]
+            for index, frontier in frontiers.items():
+                if isinstance(frontier, _NodeInferenceFrontier):
+                    waiting_full[index] = (searches[index], frontier.snapshots)
+            full_inference: list[
+                tuple[int, SimultaneousTreeSearch, list[Snapshot]]
+            ] = []
             if native and not inference and len(native) > 1:
                 split = len(native) // 2
                 leading, native = native[:split], native[split:]
@@ -1858,15 +1886,35 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                             inference.append(
                                 (index, searches[index], next_frontier.snapshots)
                             )
+                        elif isinstance(next_frontier, _NodeInferenceFrontier):
+                            waiting_full[index] = (
+                                searches[index],
+                                next_frontier.snapshots,
+                            )
                         else:
                             native.append((index, next_frontier))
                     offset = stop
+            full_batch_limit = max(
+                (
+                    search.config.inference_batch_size
+                    for search, _ in waiting_full.values()
+                ),
+                default=0,
+            )
+            if waiting_full and (
+                len(waiting_full) >= full_batch_limit or (not native and not inference)
+            ):
+                full_inference = [
+                    (index, search, snapshots)
+                    for index, (search, snapshots) in sorted(waiting_full.items())
+                ]
+                waiting_full.clear()
             requests = [
                 request for _, frontier in native for request in frontier.requests
             ]
             pending_native: Future[list[Snapshot]] | None = None
             snapshots: list[Snapshot] | None = None
-            if requests and inference:
+            if requests and (inference or full_inference):
                 pending_native = native_executor.submit(
                     jobs[0][1].server.search_steps, requests
                 )
@@ -1879,6 +1927,13 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 inference_calls += calls
                 inference_rows += rows
                 inference_waves += 1
+            if full_inference:
+                evaluated, calls, rows = cls._pooled_evaluate(full_inference)
+                for index, (players, enemies, values) in evaluated.items():
+                    responses[index] = list(zip(players, enemies, values, strict=True))
+                full_inference_calls += calls
+                full_inference_rows += rows
+                full_inference_waves += 1
             if pending_native is not None:
                 snapshots = pending_native.result()
             if snapshots is not None:
@@ -1897,6 +1952,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             search._deep_inference_calls = inference_calls
             search._deep_inference_rows = inference_rows
             search._deep_inference_waves = inference_waves
+            search._deep_full_inference_calls = full_inference_calls
+            search._deep_full_inference_rows = full_inference_rows
+            search._deep_full_inference_waves = full_inference_waves
             search._deep_native_calls = native_calls
             search._deep_native_rows = native_rows
             search._deep_native_waves = native_waves
@@ -1913,6 +1971,11 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     "deep_inference_waves": inference_waves,
                     "mean_deep_inference_batch": inference_rows
                     / max(1, inference_calls),
+                    "deep_full_inference_calls": full_inference_calls,
+                    "deep_full_inference_rows": full_inference_rows,
+                    "deep_full_inference_waves": full_inference_waves,
+                    "mean_deep_full_inference_batch": full_inference_rows
+                    / max(1, full_inference_calls),
                     "deep_native_calls": native_calls,
                     "deep_native_rows": native_rows,
                     "deep_native_waves": native_waves,

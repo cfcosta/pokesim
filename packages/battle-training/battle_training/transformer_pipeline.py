@@ -239,7 +239,7 @@ def _pipeline_id(
     balanced_final_species: bool = True, generated_schedule_version: int = 3
 ) -> str:
     del balanced_final_species, generated_schedule_version
-    return "transformer-variable-party-bf16-rmplus-v23-quality-search"
+    return "transformer-variable-party-bf16-rmplus-v24-pooled-node"
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
@@ -526,8 +526,8 @@ def _collect_rows_single(
         "schema": FULL_SCHEMA,
         "entropy": ENTROPY,
         "chance": "fresh-root-v1",
-        "solver": "simultaneous-matrix-tree-rmplus-fresh-root-v2",
-        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v2",
+        "solver": "simultaneous-matrix-tree-rmplus-pooled-node-v3",
+        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v3",
         "iteration": iteration,
         "episodes": len(episode_indices),
         "depth": config.search_depth,
@@ -1275,6 +1275,12 @@ def _collect_rows_single(
             if tree_rows
             else None
         ),
+        "mean_deep_full_inference_batch": (
+            sum(row["mean_deep_full_inference_batch"] for row in tree_rows)
+            / len(tree_rows)
+            if tree_rows
+            else None
+        ),
         "mean_decisions": transitions / len(episode_indices),
         "voluntary_switch_rate": sum(
             row["action"] in range(4, 10)
@@ -1321,6 +1327,7 @@ def _collection_process_worker(
     progress_path: str,
     process: int,
 ) -> dict[str, Any]:
+    torch.set_num_threads(1)
     configure_determinism(config.seed + iteration)
     device = choose_device(config.device)
     payload = torch.load(model_payload, map_location="cpu", weights_only=False)
@@ -1527,6 +1534,7 @@ def _merge_collection_rows(
         "tree_convergence_rate": tree_mean("tree_converged"),
         "mean_cross_root_batch_size": tree_mean("cross_root_batch_size"),
         "mean_cross_root_root_leaves": tree_mean("cross_root_root_leaves"),
+        "mean_deep_full_inference_batch": tree_mean("mean_deep_full_inference_batch"),
         "mean_decisions": transitions / config.selfplay_episodes,
         "voluntary_switch_rate": sum(
             row["action"] in range(4, 10)
@@ -2463,8 +2471,8 @@ def run_transformer_pipeline(
         raise ValueError("balanced final species requires generated schedule v3")
     if config.actor_batch_size < 1:
         raise ValueError("actor_batch_size must be positive")
-    if not 1 <= config.actor_processes <= min(4, config.selfplay_episodes):
-        raise ValueError("actor_processes must be in 1..min(4, selfplay_episodes)")
+    if not 1 <= config.actor_processes <= min(16, config.selfplay_episodes):
+        raise ValueError("actor_processes must be in 1..min(16, selfplay_episodes)")
     if config.precision not in {"bf16", "fp32"}:
         raise ValueError("precision must be bf16 or fp32")
     if config.token_layout not in {"scalar-v1", "semantic-entity-v1"}:
@@ -2708,9 +2716,9 @@ def run_transformer_pipeline(
                     else "progression-weighted-final-species-v1"
                 ),
                 "chance": "fresh-root-v1",
-                "search_solver": "simultaneous-matrix-tree-rmplus-fresh-root-v2",
+                "search_solver": "simultaneous-matrix-tree-rmplus-pooled-node-v3",
                 "action_selector": (
-                    "simultaneous-matrix-tree-rmplus-every-decision-v2"
+                    "simultaneous-matrix-tree-rmplus-every-decision-v3"
                 ),
                 "collection_pairing": "same-reset-opposite-controller-sides-v1",
                 "learning_lineage": "persistent-shadow-v1",
@@ -3138,7 +3146,7 @@ def run_transformer_pipeline(
             config.balanced_final_species, config.generated_schedule_version
         ),
         "device": str(device),
-        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v2",
+        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v3",
         "iterations": config.iterations,
         "selfplay_battles": config.iterations * config.selfplay_episodes,
         "mirror_battles": sum(item["mirror_episodes"] for item in collection),

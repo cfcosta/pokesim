@@ -295,6 +295,14 @@ quality-gated teacher/model alternatives:
     rose from 99.09 to 116.78 ms/root. This is solver-quality evidence, not a
     substitute for paired playing-strength gates. See the
     [production search-quality review](production-simultaneous-mcts-quality-review.md).
+14. **Pooled expanded-node inference.** The V22 distilled path pooled cheap leaf
+    values but synchronously evaluated each promoted child through one or two
+    canonical full-model rows. At 64 roots this produced 1,727 batch-two mirror
+    calls or 3,456 near-batch-one candidate/incumbent calls. V24 makes full node
+    evaluation a barriered frontier. Mirror throughput rose from 12.08 to 21.54
+    roots/s (1.78×) and distinct-model throughput from 8.04 to 16.35 roots/s
+    (2.03×). GPU utilization fell because redundant launch work disappeared.
+    See the [GPU root-cause analysis](gpu-utilization-root-cause.md).
 
 ## Conclusions
 

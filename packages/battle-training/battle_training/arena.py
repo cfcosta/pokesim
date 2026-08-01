@@ -665,7 +665,7 @@ def _run_fast_arena_games(
     baseline: BattleTransformer,
     config: ArenaConfig,
     campaign: bool,
-    batch_size: int = 64,
+    batch_size: int = 128,
     capture_details: bool = False,
 ) -> list[_FastArenaEpisode]:
     games = config.games
@@ -995,7 +995,7 @@ def run_paired_arena(
         "pairs": games // 2,
         "seed_count": config.seed_count,
         "pairing": "same-reset-complete-model-side-swap-v2",
-        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v2",
+        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v3",
         "search": asdict(_joint_search_config(config)),
         **(
             {
@@ -1374,7 +1374,7 @@ def _run_traced_arena_batched(
         candidate_metrics,
         baseline_metrics,
     )
-    result["action_selector"] = "simultaneous-matrix-tree-rmplus-every-decision-v2"
+    result["action_selector"] = "simultaneous-matrix-tree-rmplus-every-decision-v3"
     result["search"] = asdict(_joint_search_config(config))
     return result
 

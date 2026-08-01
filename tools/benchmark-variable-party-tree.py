@@ -33,14 +33,36 @@ class TimedNetwork:
             collections.defaultdict(float)
         )
 
-    def evaluate(self, features: Any, masks: list[int]) -> Any:
-        started = time.perf_counter()
-        result = self.inner.evaluate(features, masks)
+    def _record(self, size: int, started: float) -> None:
         elapsed = time.perf_counter() - started
-        size = len(masks)
         self.seconds += elapsed
         self.calls[size] += 1
         self.seconds_by_batch[size] += elapsed
+
+    def evaluate(self, features: Any, masks: list[int]) -> Any:
+        started = time.perf_counter()
+        result = self.inner.evaluate(features, masks)
+        self._record(len(masks), started)
+        return result
+
+    def evaluate_joint(
+        self, features: Any, own_masks: list[int], opponent_masks: list[int]
+    ) -> Any:
+        started = time.perf_counter()
+        result = self.inner.evaluate_joint(features, own_masks, opponent_masks)
+        self._record(len(own_masks), started)
+        return result
+
+    def evaluate_leaf(self, features: Any) -> Any:
+        started = time.perf_counter()
+        result = self.inner.evaluate_leaf(features)
+        self._record(len(features), started)
+        return result
+
+    def evaluate_budget(self, features: Any) -> Any:
+        started = time.perf_counter()
+        result = self.inner.evaluate_budget(features)
+        self._record(len(features), started)
         return result
 
 
@@ -114,9 +136,7 @@ def search_profile(
         snapshots = []
         for index, (player_size, enemy_size) in enumerate(party_sizes(roots)):
             reset = server.reset if index == 0 else server.reset_append
-            snapshots.append(
-                reset(seed, index, player_size, enemy_size)
-            )
+            snapshots.append(reset(seed, index, player_size, enemy_size))
         timed_network = TimedNetwork(network)
         config = JointSearchConfig(
             chance_samples_per_joint=1,
@@ -167,9 +187,7 @@ def search_profile(
         "native_fraction": native_seconds / elapsed,
         "network_calls": sum(timed_network.calls.values()),
         "network_examples": network_examples,
-        "mean_network_batch": (
-            network_examples / sum(timed_network.calls.values())
-        ),
+        "mean_network_batch": (network_examples / sum(timed_network.calls.values())),
         "network_batches": [
             {
                 "size": size,
@@ -192,18 +210,14 @@ def search_profile(
         ],
         "mean_transitions": sum(result.nodes for result in results) / roots,
         "mean_tree_nodes": sum(row["tree_nodes"] for row in diagnostics) / roots,
-        "mean_simulations": sum(row["tree_simulations"] for row in diagnostics)
-        / roots,
+        "mean_simulations": sum(row["tree_simulations"] for row in diagnostics) / roots,
         "mean_depth": sum(row["tree_max_depth"] for row in diagnostics) / roots,
-        "convergence_rate": sum(row["tree_converged"] for row in diagnostics)
-        / roots,
+        "convergence_rate": sum(row["tree_converged"] for row in diagnostics) / roots,
         "mean_inference_cache_hit_rate": sum(
             row["inference_cache_hit_rate"] for row in diagnostics
         )
         / roots,
-        "inference_cache_hits": max(
-            row["inference_cache_hits"] for row in diagnostics
-        ),
+        "inference_cache_hits": max(row["inference_cache_hits"] for row in diagnostics),
         "inference_cache_misses": max(
             row["inference_cache_misses"] for row in diagnostics
         ),
@@ -228,7 +242,9 @@ def search_profile(
     return report, results
 
 
-def collection_config(network: Any, episodes: int, seed: int) -> TransformerPipelineConfig:
+def collection_config(
+    network: Any, episodes: int, seed: int
+) -> TransformerPipelineConfig:
     model = network.config
     return TransformerPipelineConfig(
         iterations=1,
@@ -364,8 +380,7 @@ def main() -> int:
             ) != max(range(13), key=lambda action: target.enemy_policy[action])
         stability[str(budget)] = {
             "mean_two_side_policy_l1_vs_320": sum(l1) / len(l1),
-            "argmax_disagreement_fraction_vs_320": disagreements
-            / (2 * len(results)),
+            "argmax_disagreement_fraction_vs_320": disagreements / (2 * len(results)),
         }
     collections = []
     if arguments.collection_episodes:

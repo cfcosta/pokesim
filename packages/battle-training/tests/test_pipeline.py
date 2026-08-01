@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pickle
 import random
 import sys
 import tempfile
@@ -12,7 +13,6 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
-
 from battle_training.arena import (
     SkillMetrics,
     _evaluation_level100,
@@ -47,7 +47,7 @@ from battle_training.monitor import (
     build_match_detail,
     write_monitor_state,
 )
-from battle_training.native import Snapshot, _decode_features
+from battle_training.native import NativeRequestTimeout, Snapshot, _decode_features
 from battle_training.network import (
     BattleTransformer,
     TransformerConfig,
@@ -258,6 +258,22 @@ class _ToyServer:
     def search_steps(self, requests: list[tuple[int, int, int, int]]) -> list[Snapshot]:
         self.batches.append(len(requests))
         return [self.search_step(*request) for request in requests]
+
+
+class _DistinctFeatureToyServer(_ToyServer):
+    def _snapshot(
+        self, handle: int, done: bool = False, result: int | None = None
+    ) -> Snapshot:
+        snapshot = super()._snapshot(handle, done, result)
+        player = list(snapshot.player_features)
+        enemy = list(snapshot.enemy_features)
+        player[0] = handle
+        enemy[0] = handle
+        return replace(
+            snapshot,
+            player_features=tuple(player),
+            enemy_features=tuple(enemy),
+        )
 
 
 class _DivergentToyServer(_ToyServer):
@@ -516,6 +532,15 @@ class TransformerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires CUDA"):
             network.configure_inference("compiled")
 
+    def test_native_timeout_round_trips_across_actor_processes(self) -> None:
+        timeout = NativeRequestTimeout("batch", 15.0)
+        restored = pickle.loads(pickle.dumps(timeout))
+        self.assertEqual(restored.operation, "batch")
+        self.assertEqual(restored.seconds, 15.0)
+        self.assertEqual(
+            str(restored), "native search operation 'batch' exceeded 15.0s"
+        )
+
     def test_native_feature_decoding_supports_packed_and_fallback_rows(self) -> None:
         packed = {"feature_encoding": "u16le-base64", "player_features": "NBLNqw=="}
         fallback = {"player_features": [0x1234, 0xABCD]}
@@ -664,7 +689,9 @@ class TransformerTests(unittest.TestCase):
             random.Random(11),
         )
         result = search.search(server._snapshot(0), sample_actions=False)
-        self.assertEqual(result.solver, "simultaneous-matrix-tree-rmplus-fresh-root-v2")
+        self.assertEqual(
+            result.solver, "simultaneous-matrix-tree-rmplus-pooled-node-v3"
+        )
         self.assertGreater(result.player_policy[0], 0.8)
         self.assertEqual(result.diagnostics["tree_max_depth"], 1)
         self.assertEqual(result.diagnostics["root_joint_actions"], 4)
@@ -768,6 +795,46 @@ class TransformerTests(unittest.TestCase):
             all(result.diagnostics["deep_overlap_waves"] > 0 for result in results)
         )
 
+    def test_expanded_node_full_evaluations_use_pooled_joint_frontiers(self) -> None:
+        server = _DistinctFeatureToyServer()
+        server.states[100] = (0, 0)
+        network = _LeafToyNetwork()
+        config = JointSearchConfig(
+            max_depth=2,
+            inference_batch_size=32,
+            max_actions_per_side=2,
+            expansion_budget=16,
+            chance_resample=1.0,
+            regret_iterations_per_update=4,
+            minimum_expansion_budget=4,
+        )
+        results = SimultaneousTreeSearch.search_many(
+            [
+                SimultaneousTreeSearch(
+                    server,
+                    network,
+                    network,
+                    config,
+                    random.Random(index + 1),
+                    random.Random(index + 101),
+                )
+                for index in range(2)
+            ],
+            [server._snapshot(0), server._snapshot(100)],
+        )
+        self.assertEqual(len(results), 2)
+        self.assertTrue(
+            all(
+                result.diagnostics["deep_full_inference_rows"] > 0 for result in results
+            )
+        )
+        self.assertTrue(
+            all(
+                result.diagnostics["mean_deep_full_inference_batch"] >= 2
+                for result in results
+            )
+        )
+
     def test_complete_root_and_deep_tiers_share_one_frontier(self) -> None:
         server = _ToyServer()
         server.states[100] = (0, 0)
@@ -869,8 +936,8 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.tree_minimum_budget, 192)
         self.assertEqual(arguments.tree_convergence_patience, 8)
         self.assertEqual(arguments.deep_search_fraction, 1.0)
-        self.assertEqual(arguments.actor_batch_size, 16)
-        self.assertEqual(arguments.actor_processes, 2)
+        self.assertEqual(arguments.actor_batch_size, 64)
+        self.assertEqual(arguments.actor_processes, 8)
         self.assertEqual(arguments.token_group_size, 1)
         self.assertEqual(arguments.token_layout, "semantic-entity-v1")
         self.assertTrue(arguments.joint_policy_heads)
@@ -1244,11 +1311,11 @@ class TransformerTests(unittest.TestCase):
     def test_training_schedule_pairs_every_reset_and_side_assignment(self) -> None:
         self.assertEqual(
             _pipeline_id(),
-            "transformer-variable-party-bf16-rmplus-v23-quality-search",
+            "transformer-variable-party-bf16-rmplus-v24-pooled-node",
         )
         self.assertEqual(
             _pipeline_id(False, 2),
-            "transformer-variable-party-bf16-rmplus-v23-quality-search",
+            "transformer-variable-party-bf16-rmplus-v24-pooled-node",
         )
         for episode in range(0, 128, 2):
             self.assertEqual(_training_pair(episode), _training_pair(episode + 1))
@@ -1575,7 +1642,9 @@ class TransformerTests(unittest.TestCase):
             random.Random(2),
         ).search(server._snapshot(0), sample_actions=False)
         self.assertEqual(result.nodes, 4)
-        self.assertEqual(result.solver, "simultaneous-matrix-tree-rmplus-fresh-root-v2")
+        self.assertEqual(
+            result.solver, "simultaneous-matrix-tree-rmplus-pooled-node-v3"
+        )
         self.assertEqual(result.diagnostics["adaptive_deep_selected"], 0)
         self.assertEqual(result.diagnostics["adaptive_reason"], "router-stable-root")
         self.assertIsNotNone(result.payoff_matrix)

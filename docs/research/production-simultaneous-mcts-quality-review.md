@@ -170,3 +170,5 @@ These changes define incompatible controller lineage
 `simultaneous-matrix-tree-rmplus-every-decision-v2`. The active V22 process is
 not modified. V23 must start as a separate run and pass collection integrity,
 router calibration, paired promotion, probes, party strata, and campaign gates.
+V24 subsequently supersedes this not-yet-started lineage with pooled expanded-node
+inference; see the [GPU utilization root-cause review](gpu-utilization-root-cause.md).

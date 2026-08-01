@@ -33,6 +33,9 @@ class NativeRequestTimeout(RuntimeError):
         self.operation = operation
         self.seconds = seconds
 
+    def __reduce__(self) -> tuple[type[NativeRequestTimeout], tuple[str, float]]:
+        return type(self), (self.operation, self.seconds)
+
 
 def _decode_features(response: dict[str, Any], side: str) -> NDArray[np.integer[Any]]:
     values = response[f"{side}_features"]
@@ -123,7 +126,7 @@ def build_search_server() -> None:
 class SearchServer:
     """Owns one Lean process and addresses immutable states by integer handle."""
 
-    def __init__(self, request_timeout: float = 15.0) -> None:
+    def __init__(self, request_timeout: float = 60.0) -> None:
         if request_timeout <= 0:
             raise ValueError("request_timeout must be positive")
         self.request_timeout = request_timeout
@@ -230,9 +233,7 @@ class SearchServer:
     ) -> Snapshot:
         if level100:
             operation = (
-                "reset-level100-swapped-append"
-                if swapped
-                else "reset-level100-append"
+                "reset-level100-swapped-append" if swapped else "reset-level100-append"
             )
         else:
             operation = "reset-swapped-append" if swapped else "reset-append"
@@ -289,9 +290,9 @@ class SearchServer:
     def search_step(
         self, handle: int, player_action: int, enemy_action: int, chance_seed: int
     ) -> Snapshot:
-        return self.search_steps(
-            [(handle, player_action, enemy_action, chance_seed)]
-        )[0]
+        return self.search_steps([(handle, player_action, enemy_action, chance_seed)])[
+            0
+        ]
 
     def search_steps(self, requests: list[tuple[int, int, int, int]]) -> list[Snapshot]:
         if not requests:
