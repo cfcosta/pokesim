@@ -40,6 +40,11 @@ def main() -> None:
     parser.add_argument("--batch", type=int, default=256)
     parser.add_argument("--rounds", type=int, default=20)
     parser.add_argument("--engine", choices=("eager", "compiled"), default="eager")
+    parser.add_argument(
+        "--token-layout",
+        choices=("scalar-v1", "semantic-entity-v1"),
+        default="scalar-v1",
+    )
     arguments = parser.parse_args()
     if not torch.cuda.is_available():
         raise SystemExit("CUDA is required")
@@ -54,6 +59,7 @@ def main() -> None:
         layers=4,
         feedforward=512,
         precision="bf16",
+        token_layout=arguments.token_layout,
     )
     first = BattleTransformer(config).to(device).eval()
     second = first.detached_copy(device)
@@ -89,6 +95,7 @@ def main() -> None:
                 "schema": "training-inference-overlap-benchmark-v1",
                 "device": torch.cuda.get_device_name(device),
                 "engine": arguments.engine,
+                "token_layout": arguments.token_layout,
                 "batch_per_network": arguments.batch,
                 "networks": 2,
                 "rounds": arguments.rounds,

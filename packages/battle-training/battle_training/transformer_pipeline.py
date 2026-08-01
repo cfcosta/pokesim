@@ -81,6 +81,7 @@ class TransformerPipelineConfig:
     layers: int
     feedforward: int
     token_group_size: int = 1
+    token_layout: str = "semantic-entity-v1"
     opponent_checkpoints: tuple[str, ...] = ()
     opponent_fraction: float = 0.5
     model_opponent_share: float = 0.5
@@ -208,7 +209,7 @@ def _pipeline_id(
     balanced_final_species: bool = True, generated_schedule_version: int = 3
 ) -> str:
     del balanced_final_species, generated_schedule_version
-    return "transformer-variable-party-bf16-rmplus-v18"
+    return "transformer-variable-party-bf16-rmplus-v19-semantic"
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
@@ -2165,6 +2166,10 @@ def run_transformer_pipeline(
         raise ValueError("actor_processes must be in 1..min(4, selfplay_episodes)")
     if config.precision not in {"bf16", "fp32"}:
         raise ValueError("precision must be bf16 or fp32")
+    if config.token_layout not in {"scalar-v1", "semantic-entity-v1"}:
+        raise ValueError("token_layout must be scalar-v1 or semantic-entity-v1")
+    if config.token_layout == "semantic-entity-v1" and config.token_group_size != 1:
+        raise ValueError("semantic entity tokens require token_group_size = 1")
     if config.max_actions_per_side < 13:
         raise ValueError(
             "full-party training must consider the complete action dictionary"
@@ -2243,6 +2248,7 @@ def run_transformer_pipeline(
         feedforward=config.feedforward,
         precision=config.precision,
         token_group_size=config.token_group_size,
+        token_layout=config.token_layout,
     )
     opponents: list[tuple[Any, str]] = []
     opponent_metadata: list[dict[str, Any]] = []

@@ -18,6 +18,8 @@ from . import FEATURE_COUNT
 
 _INFERENCE_BUCKETS = (2, 4, 8, 16, 32, 64, 96, 128, 192, 256)
 _COMPILED_RECOMPILE_LIMIT = 32
+_SEMANTIC_FEATURE_COUNT = 492
+_SEMANTIC_TOKEN_COUNT = 31
 
 
 class EvaluationTicket(Protocol):
@@ -56,6 +58,7 @@ class TransformerConfig:
     feedforward: int = 512
     precision: str = "bf16"
     token_group_size: int = 1
+    token_layout: str = "scalar-v1"
 
 
 class BattleTransformer(nn.Module):
@@ -69,10 +72,37 @@ class BattleTransformer(nn.Module):
             raise ValueError("precision must be bf16 or fp32")
         if config.token_group_size not in {1, 2, 4, 8}:
             raise ValueError("token_group_size must be one of 1, 2, 4, or 8")
+        if config.token_layout not in {"scalar-v1", "semantic-entity-v1"}:
+            raise ValueError("token_layout must be scalar-v1 or semantic-entity-v1")
+        if (
+            config.token_layout == "semantic-entity-v1"
+            and config.feature_count != _SEMANTIC_FEATURE_COUNT
+        ):
+            raise ValueError("semantic entity tokens require the 492-field v4 schema")
+        if config.token_layout == "semantic-entity-v1" and config.token_group_size != 1:
+            raise ValueError("semantic entity tokens do not use scalar token grouping")
         self.config = config
-        self.low_byte = nn.Embedding(256, config.d_model)
-        self.high_byte = nn.Embedding(256, config.d_model)
-        self.position = nn.Embedding(config.feature_count + 1, config.d_model)
+        if config.token_layout == "scalar-v1":
+            self.low_byte = nn.Embedding(256, config.d_model)
+            self.high_byte = nn.Embedding(256, config.d_model)
+            self.position = nn.Embedding(config.feature_count + 1, config.d_model)
+        else:
+            self.entity_position = nn.Embedding(
+                _SEMANTIC_TOKEN_COUNT + 1, config.d_model
+            )
+            self.mon_projection = nn.Linear(22, config.d_model)
+            self.active_projection = nn.Linear(48, config.d_model)
+            self.move_projection = nn.Linear(6, config.d_model)
+            self.switch_projection = nn.Linear(2, config.d_model)
+            self.selection_projection = nn.Linear(8, config.d_model)
+            self.global_projection = nn.Linear(56, config.d_model)
+            self.species_embedding = nn.Embedding(256, config.d_model)
+            self.move_embedding = nn.Embedding(256, config.d_model)
+            self.register_buffer(
+                "_semantic_global_indexes",
+                torch.tensor([132, 313, *range(438, 492)], dtype=torch.long),
+                persistent=False,
+            )
         self.cls = nn.Parameter(torch.zeros(1, 1, config.d_model))
         layer = nn.TransformerEncoderLayer(
             d_model=config.d_model,
@@ -101,16 +131,19 @@ class BattleTransformer(nn.Module):
             masks.bitwise_and(1 << actions).ne(0),
             persistent=False,
         )
-        pooled_tokens = (
-            config.feature_count + config.token_group_size - 1
-        ) // config.token_group_size
-        counts = torch.full(
-            (pooled_tokens, 1), float(config.token_group_size), dtype=torch.float32
-        )
-        remainder = config.feature_count % config.token_group_size
-        if remainder:
-            counts[-1].fill_(float(remainder))
-        self.register_buffer("_token_pool_counts", counts, persistent=False)
+        if config.token_layout == "scalar-v1":
+            pooled_tokens = (
+                config.feature_count + config.token_group_size - 1
+            ) // config.token_group_size
+            counts = torch.full(
+                (pooled_tokens, 1),
+                float(config.token_group_size),
+                dtype=torch.float32,
+            )
+            remainder = config.feature_count % config.token_group_size
+            if remainder:
+                counts[-1].fill_(float(remainder))
+            self.register_buffer("_token_pool_counts", counts, persistent=False)
         self._pinned_feature_buffers: dict[int, Tensor] = {}
         self._pinned_mask_buffers: dict[int, Tensor] = {}
         self._inference_engine = "eager"
@@ -127,8 +160,7 @@ class BattleTransformer(nn.Module):
                 self.policy.bias[10].fill_(-2.0)
                 self.policy.bias[12].fill_(-4.0)
 
-    def _forward_impl(self, features: Tensor) -> tuple[Tensor, Tensor]:
-        values = features.long().clamp(0, 65535)
+    def _scalar_tokens(self, values: Tensor) -> tuple[Tensor, Tensor]:
         low = values.bitwise_and(255)
         high = values.bitwise_right_shift(8).bitwise_and(255)
         batch = values.shape[0]
@@ -145,6 +177,79 @@ class BattleTransformer(nn.Module):
             tokens = tokens.reshape(batch, -1, group, tokens.shape[-1]).sum(dim=2)
             tokens = tokens / self._token_pool_counts.unsqueeze(0)
         cls = self.cls.expand(batch, -1, -1) + self.position.weight[:1].unsqueeze(0)
+        return cls, tokens
+
+    def _semantic_tokens(self, values: Tensor) -> tuple[Tensor, Tensor]:
+        batch = values.shape[0]
+        normalized = torch.log1p(values.float()) / 11.090354888959125
+        party_values = torch.stack(
+            [
+                normalized[:, base : base + 22]
+                for side in (0, 181)
+                for base in range(side, side + 132, 22)
+            ],
+            dim=1,
+        )
+        active_values = torch.stack(
+            (normalized[:, 133:181], normalized[:, 314:362]), dim=1
+        )
+        move_values = normalized[:, 362:410].reshape(batch, 8, 6)
+        switch_values = normalized[:, 410:422].reshape(batch, 6, 2)
+        selection_values = normalized[:, 422:438].reshape(batch, 2, 8)
+        global_values = normalized.index_select(1, self._semantic_global_indexes)
+
+        party_species = torch.stack(
+            [values[:, side + slot * 22] for side in (0, 181) for slot in range(6)],
+            dim=1,
+        ).clamp(0, 255)
+        party_moves = torch.stack(
+            [
+                values[:, side + slot * 22 + 7 : side + slot * 22 + 11]
+                for side in (0, 181)
+                for slot in range(6)
+            ],
+            dim=1,
+        ).clamp(0, 255)
+        active_species = values[:, (133, 314)].clamp(0, 255)
+        active_moves = torch.stack(
+            (values[:, 140:144], values[:, 321:325]), dim=1
+        ).clamp(0, 255)
+        descriptor_moves = active_moves.reshape(batch, 8)
+
+        party_tokens = (
+            self.mon_projection(party_values)
+            + self.species_embedding(party_species)
+            + self.move_embedding(party_moves).mean(dim=2)
+        )
+        active_tokens = (
+            self.active_projection(active_values)
+            + self.species_embedding(active_species)
+            + self.move_embedding(active_moves).mean(dim=2)
+        )
+        tokens = torch.cat(
+            (
+                party_tokens,
+                active_tokens,
+                self.move_projection(move_values)
+                + self.move_embedding(descriptor_moves),
+                self.switch_projection(switch_values),
+                self.selection_projection(selection_values),
+                self.global_projection(global_values).unsqueeze(1),
+            ),
+            dim=1,
+        )
+        tokens = tokens + self.entity_position.weight[1:].unsqueeze(0)
+        cls = self.cls.expand(batch, -1, -1) + self.entity_position.weight[
+            :1
+        ].unsqueeze(0)
+        return cls, tokens
+
+    def _forward_impl(self, features: Tensor) -> tuple[Tensor, Tensor]:
+        values = features.long().clamp(0, 65535)
+        if self.config.token_layout == "semantic-entity-v1":
+            cls, tokens = self._semantic_tokens(values)
+        else:
+            cls, tokens = self._scalar_tokens(values)
         encoded = self.encoder(torch.cat((cls, tokens), dim=1))
         pooled = self.final_norm(encoded[:, 0])
         return self.policy(pooled), self.value(pooled).squeeze(-1)
@@ -166,6 +271,8 @@ class BattleTransformer(nn.Module):
 
     @property
     def sequence_length(self) -> int:
+        if self.config.token_layout == "semantic-entity-v1":
+            return _SEMANTIC_TOKEN_COUNT + 1
         return (
             self.config.feature_count + self.config.token_group_size - 1
         ) // self.config.token_group_size + 1

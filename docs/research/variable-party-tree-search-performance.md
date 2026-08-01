@@ -247,9 +247,12 @@ quality-gated teacher/model alternatives:
 7. **Multi-process actors.** Two spawned Lean/GPU actors merge temporary shards
    by episode index. A 32-episode CUDA probe improved only 1.09×; startup can make
    shorter runs slower, so this is versioned and smoke defaults to one process.
-8. **Grouped-token encoder (quality-gated).** Mean-pooling groups of eight scalar
-   embeddings reduces 493 tokens to 63 and improved batch-96 eager inference
-   4.45×. It changes model semantics and is not the default.
+8. **Semantic entity encoder.** The v19 model binds fields through typed local
+   projections and categorical species/move embeddings, then attends over 31
+   entity tokens plus CLS. At two batch-96 forwards, eager latency fell from
+   18.17 to 4.37 ms (4.16×) and compiled latency from 11.49 to 2.25 ms
+   (5.11×). Parameter count fell from 940,430 to 900,366. This creates an
+   incompatible lineage; latency alone is not gameplay-strength evidence.
 9. **Tiered deep search (quality-gated).** Every move retains a complete root;
    only a configured fraction receives the full tree. A 25% probe improved a
    short collection workload 4.84×, but trajectories changed, so the production

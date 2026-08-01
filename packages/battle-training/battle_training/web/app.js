@@ -306,7 +306,7 @@ function renderModel(data) {
     ["Learner", model.learning_lineage || "legacy rollback"],
     ["Deployment", model.deployment_lineage || "quality gated"],
     ["Observation", `${network.feature_count || "—"} fields`],
-    ["Sequence", network.feature_count ? `${Math.ceil(network.feature_count / (network.token_group_size || 1)) + 1} tokens` : "—"],
+    ["Sequence", network.feature_count ? `${network.token_layout === "semantic-entity-v1" ? 32 : Math.ceil(network.feature_count / (network.token_group_size || 1)) + 1} tokens` : "—"],
     ["Encoder", network.layers ? `${network.layers} layers / ${network.heads} heads` : "—"],
     ["Width", network.d_model ? `${network.d_model} / FF ${network.feedforward}` : "—"],
     ["Precision", network.precision?.toUpperCase()],

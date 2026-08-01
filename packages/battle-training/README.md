@@ -222,7 +222,7 @@ collection or promotion. It also reports and gates 1–2, 3–4,
 5–6, and unequal-party strata, plus a nine-team fixed campaign suite covering
 Brock through Giovanni and Lance. The campaign teams use canonical natural
 moves and fixed DVs inside the link quotient; they do not claim trainer AI or
-item equivalence. The v16–v18 pipelines separate a persistent shadow learner from the
+item equivalence. The v16–v19 pipelines separate a persistent shadow learner from the
 quality-gated deployed incumbent. Inconclusive evaluations retain the incumbent
 but carry the learner parameters and AdamW state into the next collection
 iteration, allowing small updates to compound without weakening deployment. Each
@@ -240,12 +240,15 @@ without silently deploying it; the new optimizer lineage starts fresh.
 
 ## Model
 
-Each mechanics scalar is encoded as low- and high-byte embeddings plus a learned
-field-position embedding. A learned CLS token attends over all 492
-side-canonical variable-party fields. The quality-gated `--token-group-size`
-option can mean-pool adjacent scalar embeddings before attention; group eight
-reduces the sequence from 493 to 63 tokens but remains opt-in pending full
-promotion evidence. The v4 schema retains v3's move descriptors,
+The v19 encoder maps the 492-field observation into 31 bound semantic entity
+tokens plus CLS: twelve party members, two active states, eight move
+descriptors, six switch matchups, two selection records, and one global record.
+Field-specific projections preserve value-to-field binding inside each entity;
+species and move embeddings retain categorical identity. This replaces the
+493-token scalar self-attention path while leaving it available as
+`--token-layout scalar-v1` for differential checks. The production semantic
+network has 900,366 parameters and a 32-token sequence. The v4 schema retains
+v3's move descriptors,
 current type-effectiveness values, offensive/incoming matchup scores, and Mimic
 continuation action. It appends both party counts and twelve presence bits while
 zeroing every absent party and switch descriptor; present fainted members retain

@@ -726,6 +726,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.actor_batch_size, 16)
         self.assertEqual(arguments.actor_processes, 2)
         self.assertEqual(arguments.token_group_size, 1)
+        self.assertEqual(arguments.token_layout, "semantic-entity-v1")
         self.assertEqual(arguments.precision, "bf16")
         self.assertEqual(arguments.inference_engine, "auto")
         self.assertTrue(arguments.heuristic_opponents)
@@ -1061,9 +1062,13 @@ class TransformerTests(unittest.TestCase):
         )
 
     def test_training_schedule_pairs_every_reset_and_side_assignment(self) -> None:
-        self.assertEqual(_pipeline_id(), "transformer-variable-party-bf16-rmplus-v18")
         self.assertEqual(
-            _pipeline_id(False, 2), "transformer-variable-party-bf16-rmplus-v18"
+            _pipeline_id(),
+            "transformer-variable-party-bf16-rmplus-v19-semantic",
+        )
+        self.assertEqual(
+            _pipeline_id(False, 2),
+            "transformer-variable-party-bf16-rmplus-v19-semantic",
         )
         for episode in range(0, 128, 2):
             self.assertEqual(_training_pair(episode), _training_pair(episode + 1))
@@ -1331,8 +1336,21 @@ class TransformerTests(unittest.TestCase):
             )
             for config in configs
         ]
+        semantic = BattleTransformer(
+            TransformerConfig(
+                feature_count=492,
+                action_count=13,
+                d_model=128,
+                heads=8,
+                layers=4,
+                feedforward=512,
+                token_layout="semantic-entity-v1",
+            )
+        )
+        semantic_count = sum(parameter.numel() for parameter in semantic.parameters())
         self.assertEqual(counts, [153038, 442958, 940430])
-        self.assertTrue(all(count <= 1_000_000 for count in counts))
+        self.assertEqual(semantic_count, 900366)
+        self.assertTrue(all(count <= 1_000_000 for count in [*counts, semantic_count]))
 
     def test_switch_cap_preserves_all_legal_actions(self) -> None:
         policy = tuple([0.05] * 4 + [0.125] * 6 + [0.05, 0.0, 0.0])
@@ -1433,6 +1451,39 @@ class TransformerTests(unittest.TestCase):
                 "result:enemy",
             ],
         )
+
+    def test_semantic_entity_tokens_bind_fields_and_reduce_sequence_length(
+        self,
+    ) -> None:
+        torch.manual_seed(11)
+        network = BattleTransformer(
+            TransformerConfig(
+                feature_count=492,
+                action_count=13,
+                d_model=32,
+                heads=4,
+                layers=1,
+                feedforward=64,
+                token_layout="semantic-entity-v1",
+            )
+        ).eval()
+        self.assertEqual(network.sequence_length, 32)
+        left = [0] * 492
+        right = [0] * 492
+        left[1] = 100
+        right[3] = 100
+        _, left_tokens = network._semantic_tokens(torch.tensor([left]))
+        _, right_tokens = network._semantic_tokens(torch.tensor([right]))
+        self.assertFalse(torch.equal(left_tokens, right_tokens))
+
+    def test_semantic_layout_requires_full_v4_schema(self) -> None:
+        with self.assertRaisesRegex(ValueError, "492-field"):
+            BattleTransformer(
+                TransformerConfig(
+                    feature_count=100,
+                    token_layout="semantic-entity-v1",
+                )
+            )
 
     def test_grouped_scalar_tokens_reduce_sequence_length(self) -> None:
         network = BattleTransformer(
