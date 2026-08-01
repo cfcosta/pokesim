@@ -222,7 +222,7 @@ collection or promotion. It also reports and gates 1–2, 3–4,
 5–6, and unequal-party strata, plus a nine-team fixed campaign suite covering
 Brock through Giovanni and Lance. The campaign teams use canonical natural
 moves and fixed DVs inside the link quotient; they do not claim trainer AI or
-item equivalence. The v16–v19 pipelines separate a persistent shadow learner from the
+item equivalence. The v16–v20 pipelines separate a persistent shadow learner from the
 quality-gated deployed incumbent. Inconclusive evaluations retain the incumbent
 but carry the learner parameters and AdamW state into the next collection
 iteration, allowing small updates to compound without weakening deployment. Each
@@ -240,24 +240,30 @@ without silently deploying it; the new optimizer lineage starts fresh.
 
 ## Model
 
-The v19 encoder maps the 492-field observation into 31 bound semantic entity
+The v20 encoder maps the 492-field observation into 31 bound semantic entity
 tokens plus CLS: twelve party members, two active states, eight move
 descriptors, six switch matchups, two selection records, and one global record.
 Field-specific projections preserve value-to-field binding inside each entity;
 species and move embeddings retain categorical identity. This replaces the
 493-token scalar self-attention path while leaving it available as
 `--token-layout scalar-v1` for differential checks. The production semantic
-network has 900,366 parameters and a 32-token sequence. The v4 schema retains
+network has 902,043 parameters and a 32-token sequence. The v4 schema retains
 v3's move descriptors,
 current type-effectiveness values, offensive/incoming matchup scores, and Mimic
 continuation action. It appends both party counts and twelve presence bits while
 zeroing every absent party and switch descriptor; present fainted members retain
 presence `1` with HP `0`. This
 keeps small networks from having to rediscover static ROM tables from terminal
-labels. Two heads predict:
+labels. Three heads predict:
 
-- logits for all 13 stable link action IDs; and
-- a bounded terminal value in `[-1, 1]`.
+- logits for the canonical player's 13 stable link action IDs;
+- logits for the opposing side's 13 action IDs from the same physical state;
+- one bounded zero-sum value in `[-1, 1]`, whose opposing value is exactly its
+  negation.
+
+Mirror search therefore encodes one physical state rather than evaluating two
+swapped canonical rows. Distinct candidate/incumbent controllers still each
+encode their own canonical view, preserving each model's policy and value.
 
 Encoder and head matrix operations run under BF16 autocast. Both head outputs
 are immediately promoted to FP32 before masks, softmax, RM+ search, losses, or

@@ -686,6 +686,10 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         if config.convergence_patience < 1:
             raise ValueError("tree convergence patience must be positive")
         self._evaluation_cache: dict[int, tuple[list[float], list[float], float]] = {}
+        self._joint_inference_cache: dict[
+            tuple[int, str, bytes | tuple[int, ...], int, int],
+            tuple[list[float], list[float], float],
+        ] = {}
         self._expanded_nodes = 0
         self._chance_outcomes = 0
         self._max_depth_reached = 0
@@ -867,18 +871,71 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         int,
         int,
     ]:
-        """Evaluate side-canonical rows once per network identity and exact key."""
+        """Evaluate exact rows once, using one physical forward for mirrors."""
         outputs: dict[tuple[int, int, int], tuple[list[float], float]] = {}
         known: dict[
             tuple[int, str, bytes | tuple[int, ...], int],
             tuple[list[float], float],
         ] = {}
+        joint_known: dict[
+            tuple[int, str, bytes | tuple[int, ...], int, int],
+            tuple[list[float], list[float], float],
+        ] = {}
         missing: dict[
             tuple[int, str, bytes | tuple[int, ...], int], dict[str, Any]
         ] = {}
+        joint_missing: dict[
+            tuple[int, str, bytes | tuple[int, ...], int, int], dict[str, Any]
+        ] = {}
+
         for group_id, search, snapshots in groups:
-            # Preserve the historical per-root player-block/enemy-block order.
-            for side, network in (
+            network = search.player_network
+            joint = network is search.enemy_network and bool(
+                getattr(network.config, "joint_policy_heads", False)
+            )
+            if joint:
+                for position, snapshot in enumerate(snapshots):
+                    if snapshot.player_mask == 0 or snapshot.enemy_mask == 0:
+                        inspection = search.server.inspect(snapshot.handle)
+                        raise ValueError(
+                            "search reached a nonterminal state with an empty legal mask: "
+                            f"handle={snapshot.handle} turn={snapshot.turn} "
+                            f"request={snapshot.request} player_mask={snapshot.player_mask} "
+                            f"enemy_mask={snapshot.enemy_mask} inspection={inspection!r}"
+                        )
+                    identity = search._feature_identity(snapshot.player_features)
+                    key = (
+                        id(network),
+                        *identity,
+                        snapshot.player_mask,
+                        snapshot.enemy_mask,
+                    )
+                    cached = search._joint_inference_cache.get(key) or joint_known.get(
+                        key
+                    )
+                    consumer = (group_id, position, search)
+                    if cached is not None:
+                        search._inference_cache_stats["hits"] += 1
+                        search._joint_inference_cache[key] = cached
+                        joint_known[key] = cached
+                        outputs[(group_id, position, 0)] = (cached[0], cached[2])
+                        outputs[(group_id, position, 1)] = (cached[1], -cached[2])
+                    elif key in joint_missing:
+                        search._inference_cache_stats["hits"] += 1
+                        joint_missing[key]["consumers"].append(consumer)
+                    else:
+                        search._inference_cache_stats["misses"] += 1
+                        joint_missing[key] = {
+                            "network": network,
+                            "feature": snapshot.player_features,
+                            "own_mask": snapshot.player_mask,
+                            "opponent_mask": snapshot.enemy_mask,
+                            "consumers": [consumer],
+                        }
+                continue
+
+            # Distinct controllers retain one side-canonical forward per model.
+            for side, side_network in (
                 (0, search.player_network),
                 (1, search.enemy_network),
             ):
@@ -897,7 +954,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                             f"request={snapshot.request} player_mask={snapshot.player_mask} "
                             f"enemy_mask={snapshot.enemy_mask} inspection={inspection!r}"
                         )
-                    key = search._cache_key(network, feature, mask)
+                    key = search._cache_key(side_network, feature, mask)
                     cached = search._inference_cache.get(key) or known.get(key)
                     consumer = (group_id, position, side, search)
                     if cached is not None:
@@ -911,11 +968,12 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     else:
                         search._inference_cache_stats["misses"] += 1
                         missing[key] = {
-                            "network": network,
+                            "network": side_network,
                             "feature": feature,
                             "mask": mask,
                             "consumers": [consumer],
                         }
+
         by_network: dict[int, list[tuple[Any, dict[str, Any]]]] = {}
         for key, item in missing.items():
             by_network.setdefault(id(item["network"]), []).append((key, item))
@@ -930,30 +988,58 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             for start in range(0, len(items), batch_size):
                 batches.append((network, items[start : start + batch_size]))
 
+        joint_by_network: dict[int, list[tuple[Any, dict[str, Any]]]] = {}
+        for key, item in joint_missing.items():
+            joint_by_network.setdefault(id(item["network"]), []).append((key, item))
+        joint_batches: list[tuple[Any, list[tuple[Any, dict[str, Any]]]]] = []
+        for items in joint_by_network.values():
+            network = items[0][1]["network"]
+            batch_size = max(
+                consumer[2].config.inference_batch_size
+                for _, item in items
+                for consumer in item["consumers"]
+            )
+            for start in range(0, len(items), batch_size):
+                joint_batches.append((network, items[start : start + batch_size]))
+
         pending: list[tuple[list[tuple[Any, dict[str, Any]]], Any]] = []
         synchronous: list[tuple[Any, list[tuple[Any, dict[str, Any]]]]] = []
-        calls = len(batches)
-        rows = sum(len(batch) for _, batch in batches)
         for network, batch in batches:
             begin = getattr(network, "begin_evaluate", None)
             can_defer = getattr(network, "supports_deferred_evaluation", True)
             if begin is None or not can_defer:
                 synchronous.append((network, batch))
-                continue
-            pending.append(
-                (
-                    batch,
-                    begin(
-                        [item[1]["feature"] for item in batch],
-                        [item[1]["mask"] for item in batch],
-                    ),
+            else:
+                pending.append(
+                    (
+                        batch,
+                        begin(
+                            [item[1]["feature"] for item in batch],
+                            [item[1]["mask"] for item in batch],
+                        ),
+                    )
                 )
-            )
 
-        completed: list[
-            tuple[list[tuple[Any, dict[str, Any]]], list[list[float]], list[float]]
-        ] = []
-        # CPU heuristics execute while every CUDA model already has work queued.
+        joint_pending: list[tuple[list[tuple[Any, dict[str, Any]]], Any]] = []
+        joint_synchronous: list[tuple[Any, list[tuple[Any, dict[str, Any]]]]] = []
+        for network, batch in joint_batches:
+            begin = getattr(network, "begin_evaluate_joint", None)
+            can_defer = getattr(network, "supports_deferred_evaluation", True)
+            if begin is None or not can_defer:
+                joint_synchronous.append((network, batch))
+            else:
+                joint_pending.append(
+                    (
+                        batch,
+                        begin(
+                            [item[1]["feature"] for item in batch],
+                            [item[1]["own_mask"] for item in batch],
+                            [item[1]["opponent_mask"] for item in batch],
+                        ),
+                    )
+                )
+
+        completed = []
         for network, batch in synchronous:
             policies, values = network.evaluate(
                 [item[1]["feature"] for item in batch],
@@ -970,6 +1056,29 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 for group_id, position, side, search in item["consumers"]:
                     search._inference_cache[key] = cached
                     outputs[(group_id, position, side)] = cached
+
+        joint_completed = []
+        for network, batch in joint_synchronous:
+            own, opponent, values = network.evaluate_joint(
+                [item[1]["feature"] for item in batch],
+                [item[1]["own_mask"] for item in batch],
+                [item[1]["opponent_mask"] for item in batch],
+            )
+            joint_completed.append((batch, own, opponent, values))
+        for batch, ticket in joint_pending:
+            own, opponent, values = ticket.result()
+            joint_completed.append((batch, own, opponent, values))
+        for batch, own, opponent, values in joint_completed:
+            for (key, item), player, enemy, value in zip(
+                batch, own, opponent, values, strict=True
+            ):
+                cached = (player, enemy, value)
+                joint_known[key] = cached
+                for group_id, position, search in item["consumers"]:
+                    search._joint_inference_cache[key] = cached
+                    outputs[(group_id, position, 0)] = (player, value)
+                    outputs[(group_id, position, 1)] = (enemy, -value)
+
         results = {}
         for group_id, search, snapshots in groups:
             player_policies = [
@@ -999,6 +1108,8 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             ):
                 search._evaluation_cache[snapshot.handle] = (player, enemy, value)
             results[group_id] = (player_policies, enemy_policies, values)
+        calls = len(batches) + len(joint_batches)
+        rows = sum(len(batch) for _, batch in [*batches, *joint_batches])
         return results, calls, rows
 
     @classmethod

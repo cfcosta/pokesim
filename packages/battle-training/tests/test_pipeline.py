@@ -142,6 +142,29 @@ class _DeferredToyNetwork(_ToyNetwork):
         raise AssertionError("pooled inference serialized a deferred network")
 
 
+class _JointToyNetwork(_ToyNetwork):
+    config = SimpleNamespace(action_count=2, joint_policy_heads=True)
+
+    def evaluate_joint(
+        self,
+        features: object,
+        player_masks: list[int],
+        enemy_masks: list[int],
+    ) -> tuple[list[list[float]], list[list[float]], list[float]]:
+        del features, enemy_masks
+        self.batches.append(len(player_masks))
+        return (
+            [[1.0, 0.0] for _ in player_masks],
+            [[0.0, 1.0] for _ in player_masks],
+            [0.25 for _ in player_masks],
+        )
+
+    def evaluate(
+        self, features: object, masks: list[int]
+    ) -> tuple[list[list[float]], list[float]]:
+        raise AssertionError("mirror search did not use joint evaluation")
+
+
 class _ToyServer:
     def __init__(self) -> None:
         self.states: dict[int, tuple[int, int]] = {0: (0, 0)}
@@ -727,6 +750,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.actor_processes, 2)
         self.assertEqual(arguments.token_group_size, 1)
         self.assertEqual(arguments.token_layout, "semantic-entity-v1")
+        self.assertTrue(arguments.joint_policy_heads)
         self.assertEqual(arguments.precision, "bf16")
         self.assertEqual(arguments.inference_engine, "auto")
         self.assertTrue(arguments.heuristic_opponents)
@@ -1064,11 +1088,11 @@ class TransformerTests(unittest.TestCase):
     def test_training_schedule_pairs_every_reset_and_side_assignment(self) -> None:
         self.assertEqual(
             _pipeline_id(),
-            "transformer-variable-party-bf16-rmplus-v19-semantic",
+            "transformer-variable-party-bf16-rmplus-v20-joint",
         )
         self.assertEqual(
             _pipeline_id(False, 2),
-            "transformer-variable-party-bf16-rmplus-v19-semantic",
+            "transformer-variable-party-bf16-rmplus-v20-joint",
         )
         for episode in range(0, 128, 2):
             self.assertEqual(_training_pair(episode), _training_pair(episode + 1))
@@ -1298,7 +1322,7 @@ class TransformerTests(unittest.TestCase):
                 )
                 + "\n"
             )
-            _, _, _, masks, weights = _load_examples([shard])
+            _, _, _, _, masks, _, weights = _load_examples([shard])
             self.assertEqual(weights.tolist(), [1.0])
             self.assertEqual(masks.tolist(), [[True, False, True, False]])
 
@@ -1348,9 +1372,14 @@ class TransformerTests(unittest.TestCase):
             )
         )
         semantic_count = sum(parameter.numel() for parameter in semantic.parameters())
+        joint = BattleTransformer(replace(semantic.config, joint_policy_heads=True))
+        joint_count = sum(parameter.numel() for parameter in joint.parameters())
         self.assertEqual(counts, [153038, 442958, 940430])
         self.assertEqual(semantic_count, 900366)
-        self.assertTrue(all(count <= 1_000_000 for count in [*counts, semantic_count]))
+        self.assertEqual(joint_count, 902043)
+        self.assertTrue(
+            all(count <= 1_000_000 for count in [*counts, semantic_count, joint_count])
+        )
 
     def test_switch_cap_preserves_all_legal_actions(self) -> None:
         policy = tuple([0.05] * 4 + [0.125] * 6 + [0.05, 0.0, 0.0])
@@ -1373,6 +1402,53 @@ class TransformerTests(unittest.TestCase):
         statused = _tactical_potential(tuple(features))
         self.assertGreater(damaged, neutral)
         self.assertGreater(statused, damaged)
+
+    def test_joint_heads_mask_both_policies_and_share_one_value(self) -> None:
+        torch.manual_seed(8)
+        network = BattleTransformer(
+            TransformerConfig(
+                feature_count=492,
+                action_count=13,
+                d_model=32,
+                heads=4,
+                layers=1,
+                feedforward=64,
+                token_layout="semantic-entity-v1",
+                joint_policy_heads=True,
+            )
+        ).eval()
+        own, opponent, values = network.evaluate_joint(
+            [[0] * 492, [1] * 492], [0b0001, 0b0010], [0b0100, 0b1000]
+        )
+        self.assertEqual(own[0][0], 1.0)
+        self.assertEqual(own[1][1], 1.0)
+        self.assertEqual(opponent[0][2], 1.0)
+        self.assertEqual(opponent[1][3], 1.0)
+        self.assertTrue(all(-1.0 <= value <= 1.0 for value in values))
+
+    def test_mirror_pooled_evaluation_uses_one_physical_state_forward(self) -> None:
+        network = _JointToyNetwork()
+        server = _ToyServer()
+        search = SimultaneousTreeSearch(
+            server,
+            network,
+            network,
+            JointSearchConfig(
+                max_depth=1,
+                expansion_budget=4,
+                minimum_expansion_budget=1,
+            ),
+            random.Random(1),
+            random.Random(2),
+        )
+        evaluated, calls, rows = SimultaneousTreeSearch._pooled_evaluate(
+            [(0, search, [server._snapshot(0)])]
+        )
+        self.assertEqual(calls, 1)
+        self.assertEqual(rows, 1)
+        self.assertEqual(evaluated[0][0], [[1.0, 0.0]])
+        self.assertEqual(evaluated[0][1], [[0.0, 1.0]])
+        self.assertEqual(evaluated[0][2], [0.25])
 
     def test_deferred_evaluation_matches_synchronous_cpu_evaluation(self) -> None:
         torch.manual_seed(9)

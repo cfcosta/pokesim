@@ -28,6 +28,12 @@ class EvaluationTicket(Protocol):
     def result(self) -> tuple[list[list[float]], list[float]]: ...
 
 
+class JointEvaluationTicket(Protocol):
+    def result(
+        self,
+    ) -> tuple[list[list[float]], list[list[float]], list[float]]: ...
+
+
 @dataclass
 class _ImmediateEvaluation:
     output: tuple[list[list[float]], list[float]]
@@ -48,6 +54,32 @@ class _CudaEvaluation:
         return values[:, :-1].tolist(), values[:, -1].tolist()
 
 
+@dataclass
+class _ImmediateJointEvaluation:
+    output: tuple[list[list[float]], list[list[float]], list[float]]
+
+    def result(self) -> tuple[list[list[float]], list[list[float]], list[float]]:
+        return self.output
+
+
+@dataclass
+class _CudaJointEvaluation:
+    output: Tensor
+    ready: torch.cuda.Event
+    action_count: int
+    keepalive: tuple[Tensor, ...]
+
+    def result(self) -> tuple[list[list[float]], list[list[float]], list[float]]:
+        self.ready.synchronize()
+        values = self.output.numpy()
+        split = self.action_count
+        return (
+            values[:, :split].tolist(),
+            values[:, split : 2 * split].tolist(),
+            values[:, -1].tolist(),
+        )
+
+
 @dataclass(frozen=True)
 class TransformerConfig:
     feature_count: int = FEATURE_COUNT
@@ -59,6 +91,7 @@ class TransformerConfig:
     precision: str = "bf16"
     token_group_size: int = 1
     token_layout: str = "scalar-v1"
+    joint_policy_heads: bool = False
 
 
 class BattleTransformer(nn.Module):
@@ -118,6 +151,8 @@ class BattleTransformer(nn.Module):
         )
         self.final_norm = nn.LayerNorm(config.d_model)
         self.policy = nn.Linear(config.d_model, config.action_count)
+        if config.joint_policy_heads:
+            self.opponent_policy = nn.Linear(config.d_model, config.action_count)
         self.value = nn.Sequential(
             nn.Linear(config.d_model, config.d_model),
             nn.GELU(),
@@ -148,17 +183,23 @@ class BattleTransformer(nn.Module):
         self._pinned_mask_buffers: dict[int, Tensor] = {}
         self._inference_engine = "eager"
         self._compiled_forwards: dict[int, Any] = {}
+        self._compiled_joint_forwards: dict[int, Any] = {}
         self._inference_stream: torch.cuda.Stream | None = None
         nn.init.normal_(self.cls, std=0.02)
-        nn.init.zeros_(self.policy.weight)
-        nn.init.zeros_(self.policy.bias)
+        self._initialize_policy(self.policy)
+        if config.joint_policy_heads:
+            self._initialize_policy(self.opponent_policy)
         nn.init.zeros_(self.value[-2].weight)
         nn.init.zeros_(self.value[-2].bias)
-        if config.action_count == 13:
+
+    def _initialize_policy(self, head: nn.Linear) -> None:
+        nn.init.zeros_(head.weight)
+        nn.init.zeros_(head.bias)
+        if self.config.action_count == 13:
             with torch.no_grad():
-                self.policy.bias[4:10].fill_(-2.0)
-                self.policy.bias[10].fill_(-2.0)
-                self.policy.bias[12].fill_(-4.0)
+                head.bias[4:10].fill_(-2.0)
+                head.bias[10].fill_(-2.0)
+                head.bias[12].fill_(-4.0)
 
     def _scalar_tokens(self, values: Tensor) -> tuple[Tensor, Tensor]:
         low = values.bitwise_and(255)
@@ -244,15 +285,28 @@ class BattleTransformer(nn.Module):
         ].unsqueeze(0)
         return cls, tokens
 
-    def _forward_impl(self, features: Tensor) -> tuple[Tensor, Tensor]:
+    def _encode_impl(self, features: Tensor) -> Tensor:
         values = features.long().clamp(0, 65535)
         if self.config.token_layout == "semantic-entity-v1":
             cls, tokens = self._semantic_tokens(values)
         else:
             cls, tokens = self._scalar_tokens(values)
         encoded = self.encoder(torch.cat((cls, tokens), dim=1))
-        pooled = self.final_norm(encoded[:, 0])
+        return self.final_norm(encoded[:, 0])
+
+    def _forward_impl(self, features: Tensor) -> tuple[Tensor, Tensor]:
+        pooled = self._encode_impl(features)
         return self.policy(pooled), self.value(pooled).squeeze(-1)
+
+    def _forward_joint_impl(self, features: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        if not self.config.joint_policy_heads:
+            raise RuntimeError("joint evaluation requires joint policy heads")
+        pooled = self._encode_impl(features)
+        return (
+            self.policy(pooled),
+            self.opponent_policy(pooled),
+            self.value(pooled).squeeze(-1),
+        )
 
     def forward(self, features: Tensor) -> tuple[Tensor, Tensor]:
         if features.ndim != 2 or features.shape[1] != self.config.feature_count:
@@ -268,6 +322,20 @@ class BattleTransformer(nn.Module):
             logits, values = self._forward_impl(features)
         # Keep policy normalization, losses, reductions, and search values in FP32.
         return logits.float(), values.float()
+
+    def forward_joint(self, features: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        if features.ndim != 2 or features.shape[1] != self.config.feature_count:
+            raise ValueError(f"expected [batch,{self.config.feature_count}] features")
+        if self.config.precision == "fp32":
+            return self._forward_joint_impl(features)
+        device_type = features.device.type
+        if device_type == "cuda" and not torch.cuda.is_bf16_supported():
+            raise RuntimeError("bf16 precision requires a bf16-capable CUDA device")
+        if device_type not in {"cpu", "cuda"}:
+            raise RuntimeError(f"bf16 precision is unsupported on {device_type}")
+        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+            own, opponent, values = self._forward_joint_impl(features)
+        return own.float(), opponent.float(), values.float()
 
     @property
     def sequence_length(self) -> int:
@@ -319,6 +387,7 @@ class BattleTransformer(nn.Module):
             )
         if selected != self._inference_engine:
             self._compiled_forwards.clear()
+            self._compiled_joint_forwards.clear()
             self._inference_engine = selected
 
     @staticmethod
@@ -328,18 +397,21 @@ class BattleTransformer(nn.Module):
                 return bucket
         return batch
 
-    def _compiled_forward(self, features: Tensor) -> tuple[Tensor, Tensor]:
+    def _padded_inference(self, features: Tensor) -> tuple[Tensor, int, int]:
         batch = features.shape[0]
         bucket = self._inference_bucket(batch)
-        if bucket != batch:
-            padded = torch.zeros(
-                (bucket, features.shape[1]),
-                dtype=features.dtype,
-                device=features.device,
-            )
-            padded[:batch].copy_(features)
-        else:
-            padded = features
+        if bucket == batch:
+            return features, batch, bucket
+        padded = torch.zeros(
+            (bucket, features.shape[1]),
+            dtype=features.dtype,
+            device=features.device,
+        )
+        padded[:batch].copy_(features)
+        return padded, batch, bucket
+
+    def _compiled_forward(self, features: Tensor) -> tuple[Tensor, Tensor]:
+        padded, batch, bucket = self._padded_inference(features)
         compiled = self._compiled_forwards.get(bucket)
         if compiled is None:
             compiled = torch.compile(
@@ -351,6 +423,22 @@ class BattleTransformer(nn.Module):
             self._compiled_forwards[bucket] = compiled
         logits, values = compiled(padded)
         return logits[:batch], values[:batch]
+
+    def _compiled_joint_forward(
+        self, features: Tensor
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        padded, batch, bucket = self._padded_inference(features)
+        compiled = self._compiled_joint_forwards.get(bucket)
+        if compiled is None:
+            compiled = torch.compile(
+                self._forward_joint_impl,
+                mode="reduce-overhead",
+                fullgraph=True,
+                dynamic=False,
+            )
+            self._compiled_joint_forwards[bucket] = compiled
+        own, opponent, values = compiled(padded)
+        return own[:batch], opponent[:batch], values[:batch]
 
     def _staged_tensor(
         self,
@@ -373,6 +461,13 @@ class BattleTransformer(nn.Module):
         staging.copy_(source)
         return staging.to(device, non_blocking=True)
 
+    def _masked_policy(self, logits: Tensor, mask_indexes: Tensor) -> Tensor:
+        legal = self._legal_mask_lookup.index_select(0, mask_indexes)
+        if (~legal.any(dim=1)).any():
+            raise ValueError("network evaluation received an empty legal mask")
+        logits = logits.masked_fill(~legal, torch.finfo(logits.dtype).min)
+        return torch.softmax(logits, dim=-1)
+
     def _evaluation_outputs(self, tensor: Tensor, mask_indexes: Tensor) -> Tensor:
         if self._inference_engine == "compiled":
             device_type = tensor.device.type
@@ -381,12 +476,27 @@ class BattleTransformer(nn.Module):
             logits, values = logits.float(), values.float()
         else:
             logits, values = self(tensor)
-        legal = self._legal_mask_lookup.index_select(0, mask_indexes)
-        if (~legal.any(dim=1)).any():
-            raise ValueError("network evaluation received an empty legal mask")
-        logits = logits.masked_fill(~legal, torch.finfo(logits.dtype).min)
-        probabilities = torch.softmax(logits, dim=-1)
+        probabilities = self._masked_policy(logits, mask_indexes)
         return torch.cat((probabilities, values.unsqueeze(1)), dim=1)
+
+    def _joint_evaluation_outputs(
+        self, tensor: Tensor, own_masks: Tensor, opponent_masks: Tensor
+    ) -> Tensor:
+        if self._inference_engine == "compiled":
+            device_type = tensor.device.type
+            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                own, opponent, values = self._compiled_joint_forward(tensor)
+            own, opponent, values = own.float(), opponent.float(), values.float()
+        else:
+            own, opponent, values = self.forward_joint(tensor)
+        return torch.cat(
+            (
+                self._masked_policy(own, own_masks),
+                self._masked_policy(opponent, opponent_masks),
+                values.unsqueeze(1),
+            ),
+            dim=1,
+        )
 
     @staticmethod
     def _arrays(
@@ -462,6 +572,99 @@ class BattleTransformer(nn.Module):
         self, features: Sequence[Sequence[int]], masks: Sequence[int]
     ) -> tuple[list[list[float]], list[float]]:
         return self.begin_evaluate(features, masks).result()
+
+    @torch.inference_mode()
+    def begin_evaluate_joint(
+        self,
+        features: Sequence[Sequence[int]],
+        own_masks: Sequence[int],
+        opponent_masks: Sequence[int],
+    ) -> JointEvaluationTicket:
+        if not self.config.joint_policy_heads:
+            raise RuntimeError("joint evaluation requires joint policy heads")
+        device = next(self.parameters()).device
+        feature_array, own_mask_array = self._arrays(features, own_masks)
+        opponent_mask_array = np.asarray(opponent_masks, dtype=np.uint16)
+        if len(feature_array) != len(opponent_mask_array):
+            raise ValueError("joint evaluation feature and mask batches differ")
+        if device.type != "cuda":
+            tensor = self._staged_tensor(
+                feature_array, self._pinned_feature_buffers, device
+            ).long()
+            own_indexes = torch.from_numpy(own_mask_array).to(device).long()
+            opponent_indexes = torch.from_numpy(opponent_mask_array).to(device).long()
+            output = (
+                self._joint_evaluation_outputs(tensor, own_indexes, opponent_indexes)
+                .cpu()
+                .numpy()
+            )
+            split = self.config.action_count
+            return _ImmediateJointEvaluation(
+                (
+                    output[:, :split].tolist(),
+                    output[:, split : 2 * split].tolist(),
+                    output[:, -1].tolist(),
+                )
+            )
+
+        feature_source = torch.from_numpy(feature_array)
+        own_mask_source = torch.from_numpy(own_mask_array)
+        opponent_mask_source = torch.from_numpy(opponent_mask_array)
+        pinned_features = torch.empty(
+            feature_source.shape, dtype=feature_source.dtype, pin_memory=True
+        )
+        pinned_own_masks = torch.empty(
+            own_mask_source.shape, dtype=own_mask_source.dtype, pin_memory=True
+        )
+        pinned_opponent_masks = torch.empty(
+            opponent_mask_source.shape,
+            dtype=opponent_mask_source.dtype,
+            pin_memory=True,
+        )
+        pinned_features.copy_(feature_source)
+        pinned_own_masks.copy_(own_mask_source)
+        pinned_opponent_masks.copy_(opponent_mask_source)
+        if self._inference_stream is None:
+            self._inference_stream = torch.cuda.Stream(device=device)
+        stream = self._inference_stream
+        stream.wait_stream(torch.cuda.current_stream(device))
+        with torch.cuda.stream(stream):
+            tensor = pinned_features.to(device, non_blocking=True).long()
+            own_indexes = pinned_own_masks.to(device, non_blocking=True).long()
+            opponent_indexes = pinned_opponent_masks.to(
+                device, non_blocking=True
+            ).long()
+            outputs = self._joint_evaluation_outputs(
+                tensor, own_indexes, opponent_indexes
+            )
+            host_output = torch.empty(
+                outputs.shape, dtype=outputs.dtype, device="cpu", pin_memory=True
+            )
+            host_output.copy_(outputs, non_blocking=True)
+            ready = torch.cuda.Event()
+            ready.record(stream)
+        return _CudaJointEvaluation(
+            host_output,
+            ready,
+            self.config.action_count,
+            (
+                pinned_features,
+                pinned_own_masks,
+                pinned_opponent_masks,
+                tensor,
+                own_indexes,
+                opponent_indexes,
+                outputs,
+            ),
+        )
+
+    def evaluate_joint(
+        self,
+        features: Sequence[Sequence[int]],
+        own_masks: Sequence[int],
+        opponent_masks: Sequence[int],
+    ) -> tuple[list[list[float]], list[list[float]], list[float]]:
+        return self.begin_evaluate_joint(features, own_masks, opponent_masks).result()
 
     def detached_copy(self, device: torch.device) -> BattleTransformer:
         clone = BattleTransformer(self.config).to(device)

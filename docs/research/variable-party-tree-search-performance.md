@@ -253,11 +253,17 @@ quality-gated teacher/model alternatives:
    18.17 to 4.37 ms (4.16×) and compiled latency from 11.49 to 2.25 ms
    (5.11×). Parameter count fell from 940,430 to 900,366. This creates an
    incompatible lineage; latency alone is not gameplay-strength evidence.
-9. **Tiered deep search (quality-gated).** Every move retains a complete root;
+9. **Joint physical-state evaluation.** V20 predicts both simultaneous policies
+   from one semantic encoding and uses one scalar with exact opposing negation.
+   At batch 96, one joint evaluation replaced two side-canonical forwards and
+   improved eager latency from 4.78 to 2.26 ms (2.12×) and compiled latency
+   from 2.30 to 1.30 ms (1.78×). Distinct models retain separate canonical
+   evaluations, so candidate/incumbent semantics do not collapse.
+10. **Tiered deep search (quality-gated).** Every move retains a complete root;
    only a configured fraction receives the full tree. A 25% probe improved a
    short collection workload 4.84×, but trajectories changed, so the production
    default remains 100% deep pending equal-budget promotion evidence.
-10. **Deferred multi-model CUDA inference.** Pooled search launches all CUDA
+11. **Deferred multi-model CUDA inference.** Pooled search launches all CUDA
     networks before awaiting any result and overlaps CPU heuristic evaluation
     with those launches. Ticket-owned pinned buffers prevent in-flight transfers
     from aliasing same-shaped requests. Two eager 96-row forwards on the RTX

@@ -82,6 +82,13 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
         choices=("scalar-v1", "semantic-entity-v1"),
         default="semantic-entity-v1",
     )
+    parser.add_argument(
+        "--single-policy-head",
+        action="store_false",
+        dest="joint_policy_heads",
+        help="disable the production dual-policy physical-state evaluator",
+    )
+    parser.set_defaults(joint_policy_heads=True)
     parser.add_argument("--chance-samples-per-joint", type=int, default=1)
     parser.add_argument("--regret-iterations", type=int, default=256)
     parser.add_argument("--inference-batch-size", type=int, default=256)
@@ -250,6 +257,7 @@ def main(argv: list[str] | None = None) -> int:
             feedforward=arguments.feedforward,
             token_group_size=arguments.token_group_size,
             token_layout=arguments.token_layout,
+            joint_policy_heads=arguments.joint_policy_heads,
             opponent_checkpoints=tuple(
                 str(path.resolve()) for path in arguments.opponent_checkpoint
             ),

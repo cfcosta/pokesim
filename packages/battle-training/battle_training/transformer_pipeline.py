@@ -82,6 +82,7 @@ class TransformerPipelineConfig:
     feedforward: int
     token_group_size: int = 1
     token_layout: str = "semantic-entity-v1"
+    joint_policy_heads: bool = True
     opponent_checkpoints: tuple[str, ...] = ()
     opponent_fraction: float = 0.5
     model_opponent_share: float = 0.5
@@ -209,7 +210,7 @@ def _pipeline_id(
     balanced_final_species: bool = True, generated_schedule_version: int = 3
 ) -> str:
     del balanced_final_species, generated_schedule_version
-    return "transformer-variable-party-bf16-rmplus-v19-semantic"
+    return "transformer-variable-party-bf16-rmplus-v20-joint"
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
@@ -905,6 +906,8 @@ def _collect_rows_single(
                         "state_hash": snapshot.player_hash,
                         "features": snapshot.player_features.tolist(),
                         "policy": list(result.player_policy),
+                        "opponent_policy": list(result.enemy_policy),
+                        "opponent_legal_mask": snapshot.enemy_mask,
                         "search_value": result.root_value,
                         "action": result.player_action,
                         "target_kind": target_kind,
@@ -925,6 +928,8 @@ def _collect_rows_single(
                         "state_hash": snapshot.enemy_hash,
                         "features": snapshot.enemy_features.tolist(),
                         "policy": list(result.enemy_policy),
+                        "opponent_policy": list(result.player_policy),
+                        "opponent_legal_mask": snapshot.player_mask,
                         "search_value": -result.root_value,
                         "action": result.enemy_action,
                         "target_kind": target_kind,
@@ -1529,16 +1534,24 @@ def _collect_rows(
         return _merge_collection_rows(path, worker_paths, metrics, config)
 
 
-ExampleTensors = tuple[Tensor, Tensor, Tensor, Tensor, Tensor]
+ExampleTensors = tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]
 
 
 def _rows_to_examples(rows: list[dict[str, Any]]) -> ExampleTensors:
     features = [row["features"] for row in rows]
     policies = [row["policy"] for row in rows]
+    opponent_policies = [row.get("opponent_policy", row["policy"]) for row in rows]
     values = [row["value"] for row in rows]
     legal_masks = [
         [
             bool(row["legal_mask"] & (1 << action))
+            for action in range(len(row["policy"]))
+        ]
+        for row in rows
+    ]
+    opponent_legal_masks = [
+        [
+            bool(row.get("opponent_legal_mask", row["legal_mask"]) & (1 << action))
             for action in range(len(row["policy"]))
         ]
         for row in rows
@@ -1549,8 +1562,10 @@ def _rows_to_examples(rows: list[dict[str, Any]]) -> ExampleTensors:
     return (
         torch.tensor(features, dtype=torch.long),
         torch.tensor(policies, dtype=torch.float32),
+        torch.tensor(opponent_policies, dtype=torch.float32),
         torch.tensor(values, dtype=torch.float32),
         torch.tensor(legal_masks, dtype=torch.bool),
+        torch.tensor(opponent_legal_masks, dtype=torch.bool),
         torch.tensor(policy_weights, dtype=torch.float32),
     )
 
@@ -1605,7 +1620,15 @@ def _heldout_diagnostics(
     battle_ids: list[tuple[int, int]],
     batch_size: int,
 ) -> dict[str, Any]:
-    features, target_policy, target_value, legal_masks, policy_weights = examples
+    (
+        features,
+        target_policy,
+        target_opponent_policy,
+        target_value,
+        legal_masks,
+        opponent_legal_masks,
+        policy_weights,
+    ) = examples
     device = next(network.parameters()).device
     squared_errors: list[float] = []
     policy_cross_entropy = 0.0
@@ -1618,20 +1641,45 @@ def _heldout_diagnostics(
             stop = min(len(features), start + batch_size)
             batch_features = features[start:stop].to(device)
             batch_policy = target_policy[start:stop].to(device)
+            batch_opponent_policy = target_opponent_policy[start:stop].to(device)
             batch_value = target_value[start:stop].to(device)
             batch_legal = legal_masks[start:stop].to(device)
+            batch_opponent_legal = opponent_legal_masks[start:stop].to(device)
             batch_weights = policy_weights[start:stop].to(device)
-            logits, values = network(batch_features)
+            if network.config.joint_policy_heads:
+                logits, opponent_logits, values = network.forward_joint(batch_features)
+            else:
+                logits, values = network(batch_features)
+                opponent_logits = logits
             logits = logits.masked_fill(~batch_legal, torch.finfo(logits.dtype).min)
+            opponent_logits = opponent_logits.masked_fill(
+                ~batch_opponent_legal, torch.finfo(opponent_logits.dtype).min
+            )
             log_policy = torch.log_softmax(logits, dim=-1)
+            opponent_log_policy = torch.log_softmax(opponent_logits, dim=-1)
             cross_entropy = -(batch_policy * log_policy).sum(dim=-1)
+            opponent_cross_entropy = -(batch_opponent_policy * opponent_log_policy).sum(
+                dim=-1
+            )
             entropy = -(batch_policy * batch_policy.clamp_min(1e-12).log()).sum(dim=-1)
-            policy_cross_entropy += float((cross_entropy * batch_weights).sum())
-            target_entropy += float((entropy * batch_weights).sum())
-            weighted_policy_rows += float(batch_weights.sum())
+            opponent_entropy = -(
+                batch_opponent_policy * batch_opponent_policy.clamp_min(1e-12).log()
+            ).sum(dim=-1)
+            policy_cross_entropy += float(
+                ((cross_entropy + opponent_cross_entropy) * batch_weights).sum()
+            )
+            target_entropy += float(
+                ((entropy + opponent_entropy) * batch_weights).sum()
+            )
+            weighted_policy_rows += 2.0 * float(batch_weights.sum())
             top_action_matches += int(
                 (
-                    logits.argmax(dim=-1).eq(batch_policy.argmax(dim=-1))
+                    (
+                        logits.argmax(dim=-1).eq(batch_policy.argmax(dim=-1))
+                        + opponent_logits.argmax(dim=-1).eq(
+                            batch_opponent_policy.argmax(dim=-1)
+                        )
+                    )
                     * batch_weights.bool()
                 )
                 .sum()
@@ -1714,14 +1762,20 @@ def _train_network(
     training_examples, heldout_examples, heldout_battles = _load_partitioned_examples(
         shards
     )
-    features, target_policy, target_value, legal_masks, policy_weights = (
-        training_examples
-    )
+    (
+        features,
+        target_policy,
+        target_opponent_policy,
+        target_value,
+        legal_masks,
+        opponent_legal_masks,
+        policy_weights,
+    ) = training_examples
     generator = torch.Generator(device="cpu").manual_seed(config.seed + iteration)
     trunk_parameters = [
         parameter
         for name, parameter in network.named_parameters()
-        if not name.startswith(("policy.", "value."))
+        if not name.startswith(("policy.", "opponent_policy.", "value."))
     ]
     heldout_before = _heldout_diagnostics(
         network, heldout_examples, heldout_battles, config.inference_batch_size
@@ -1738,17 +1792,29 @@ def _train_network(
             indexes = permutation[start : start + config.batch_size]
             batch_features = features[indexes].to(device)
             batch_policy = target_policy[indexes].to(device)
+            batch_opponent_policy = target_opponent_policy[indexes].to(device)
             batch_value = target_value[indexes].to(device)
             batch_legal = legal_masks[indexes].to(device)
+            batch_opponent_legal = opponent_legal_masks[indexes].to(device)
             batch_policy_weight = policy_weights[indexes].to(device)
-            logits, values = network(batch_features)
+            if network.config.joint_policy_heads:
+                logits, opponent_logits, values = network.forward_joint(batch_features)
+            else:
+                logits, values = network(batch_features)
+                opponent_logits = logits
             logits = logits.masked_fill(~batch_legal, torch.finfo(logits.dtype).min)
+            opponent_logits = opponent_logits.masked_fill(
+                ~batch_opponent_legal, torch.finfo(opponent_logits.dtype).min
+            )
             policy_rows = -(batch_policy * torch.log_softmax(logits, dim=-1)).sum(
                 dim=-1
             )
+            opponent_policy_rows = -(
+                batch_opponent_policy * torch.log_softmax(opponent_logits, dim=-1)
+            ).sum(dim=-1)
             policy_loss = (
-                policy_rows * batch_policy_weight
-            ).sum() / batch_policy_weight.sum().clamp_min(1.0)
+                (policy_rows + opponent_policy_rows) * batch_policy_weight
+            ).sum() / (2.0 * batch_policy_weight.sum()).clamp_min(1.0)
             value_loss = torch.nn.functional.mse_loss(values, batch_value)
             loss = policy_loss + config.value_loss_weight * value_loss
             if len(gradient_samples) < 8:
@@ -2249,6 +2315,7 @@ def run_transformer_pipeline(
         precision=config.precision,
         token_group_size=config.token_group_size,
         token_layout=config.token_layout,
+        joint_policy_heads=config.joint_policy_heads,
     )
     opponents: list[tuple[Any, str]] = []
     opponent_metadata: list[dict[str, Any]] = []
