@@ -690,6 +690,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             tuple[int, str, bytes | tuple[int, ...], int, int],
             tuple[list[float], list[float], float],
         ] = {}
+        self._leaf_inference_cache: dict[
+            tuple[int, str, bytes | tuple[int, ...]], float
+        ] = {}
         self._expanded_nodes = 0
         self._chance_outcomes = 0
         self._max_depth_reached = 0
@@ -1113,6 +1116,116 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         return results, calls, rows
 
     @classmethod
+    def _pooled_leaf_values(
+        cls,
+        groups: list[tuple[int, SimultaneousTreeSearch, list[Snapshot]]],
+    ) -> tuple[dict[int, list[float]], int, int]:
+        outputs: dict[tuple[int, int, int], float] = {}
+        known: dict[tuple[int, str, bytes | tuple[int, ...]], float] = {}
+        missing: dict[tuple[int, str, bytes | tuple[int, ...]], dict[str, Any]] = {}
+        for group_id, search, snapshots in groups:
+            mirror = search.player_network is search.enemy_network
+            sides = (
+                ((0, search.player_network),)
+                if mirror
+                else (
+                    (0, search.player_network),
+                    (1, search.enemy_network),
+                )
+            )
+            for side, network in sides:
+                for position, snapshot in enumerate(snapshots):
+                    feature = (
+                        snapshot.player_features
+                        if side == 0
+                        else snapshot.enemy_features
+                    )
+                    key = (id(network), *search._feature_identity(feature))
+                    cached = search._leaf_inference_cache.get(key) or known.get(key)
+                    consumer = (group_id, position, side, mirror, search)
+                    if cached is not None:
+                        search._inference_cache_stats["hits"] += 1
+                        search._leaf_inference_cache[key] = cached
+                        known[key] = cached
+                        outputs[(group_id, position, side)] = cached
+                        if mirror:
+                            outputs[(group_id, position, 1)] = -cached
+                    elif key in missing:
+                        search._inference_cache_stats["hits"] += 1
+                        missing[key]["consumers"].append(consumer)
+                    else:
+                        search._inference_cache_stats["misses"] += 1
+                        missing[key] = {
+                            "network": network,
+                            "feature": feature,
+                            "consumers": [consumer],
+                        }
+
+        by_network: dict[int, list[tuple[Any, dict[str, Any]]]] = {}
+        for key, item in missing.items():
+            by_network.setdefault(id(item["network"]), []).append((key, item))
+        batches = []
+        for items in by_network.values():
+            network = items[0][1]["network"]
+            batch_size = max(
+                consumer[4].config.inference_batch_size
+                for _, item in items
+                for consumer in item["consumers"]
+            )
+            for start in range(0, len(items), batch_size):
+                batches.append((network, items[start : start + batch_size]))
+
+        pending = []
+        synchronous = []
+        for network, batch in batches:
+            begin = getattr(network, "begin_evaluate_leaf", None)
+            can_defer = getattr(network, "supports_deferred_evaluation", True)
+            if begin is None or not can_defer:
+                synchronous.append((network, batch))
+            else:
+                pending.append((batch, begin([item[1]["feature"] for item in batch])))
+        completed = []
+        for network, batch in synchronous:
+            completed.append(
+                (
+                    batch,
+                    network.evaluate_leaf([item[1]["feature"] for item in batch]),
+                )
+            )
+        for batch, ticket in pending:
+            completed.append((batch, ticket.result()))
+        for batch, values in completed:
+            for (key, item), value in zip(batch, values, strict=True):
+                known[key] = value
+                for group_id, position, side, mirror, search in item["consumers"]:
+                    search._leaf_inference_cache[key] = value
+                    outputs[(group_id, position, side)] = value
+                    if mirror:
+                        outputs[(group_id, position, 1)] = -value
+
+        results = {}
+        for group_id, _, snapshots in groups:
+            results[group_id] = [
+                max(
+                    -1.0,
+                    min(
+                        1.0,
+                        (
+                            outputs[(group_id, position, 0)]
+                            - outputs[(group_id, position, 1)]
+                        )
+                        / 2.0,
+                    ),
+                )
+                for position in range(len(snapshots))
+            ]
+        return (
+            results,
+            len(batches),
+            sum(len(batch) for _, batch in batches),
+        )
+
+    @classmethod
     def _pooled_successor_values(
         cls,
         groups: list[tuple[int, SimultaneousTreeSearch, list[Snapshot]]],
@@ -1128,10 +1241,25 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             active = [snapshot for snapshot in snapshots if not snapshot.done]
             if active:
                 active_groups.append((group_id, search, active))
-        evaluated, calls, rows = cls._pooled_evaluate(active_groups)
+        use_distilled = all(
+            bool(
+                getattr(search.player_network.config, "distilled_leaf_evaluator", False)
+            )
+            and bool(
+                getattr(search.enemy_network.config, "distilled_leaf_evaluator", False)
+            )
+            for _, search, _ in active_groups
+        )
+        if use_distilled:
+            leaf_values, calls, rows = cls._pooled_leaf_values(active_groups)
+        else:
+            evaluated, calls, rows = cls._pooled_evaluate(active_groups)
+            leaf_values = {
+                group_id: values[2] for group_id, values in evaluated.items()
+            }
         results = {}
         for group_id, _, snapshots in groups:
-            active_values = iter(evaluated.get(group_id, ([], [], []))[2])
+            active_values = iter(leaf_values.get(group_id, []))
             values = []
             for snapshot in snapshots:
                 value = (

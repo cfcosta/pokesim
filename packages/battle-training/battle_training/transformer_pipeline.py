@@ -83,6 +83,9 @@ class TransformerPipelineConfig:
     token_group_size: int = 1
     token_layout: str = "semantic-entity-v1"
     joint_policy_heads: bool = True
+    distilled_leaf_evaluator: bool = True
+    leaf_hidden: int = 64
+    leaf_loss_weight: float = 0.25
     opponent_checkpoints: tuple[str, ...] = ()
     opponent_fraction: float = 0.5
     model_opponent_share: float = 0.5
@@ -128,7 +131,11 @@ class _HeuristicNetwork:
 
     def __init__(self, style: str) -> None:
         self.style = style
-        self.config = type("HeuristicConfig", (), {"action_count": 13})()
+        self.config = type(
+            "HeuristicConfig",
+            (),
+            {"action_count": 13, "distilled_leaf_evaluator": True},
+        )()
 
     def evaluate(
         self, features: list[tuple[int, ...]], masks: list[int]
@@ -163,6 +170,10 @@ class _HeuristicNetwork:
             total = sum(weights)
             policies.append([weight / total for weight in weights])
         return policies, [0.0] * len(features)
+
+    @staticmethod
+    def evaluate_leaf(features: list[tuple[int, ...]]) -> list[float]:
+        return [0.0] * len(features)
 
 
 def _heuristic_population() -> list[tuple[_HeuristicNetwork, str]]:
@@ -210,7 +221,7 @@ def _pipeline_id(
     balanced_final_species: bool = True, generated_schedule_version: int = 3
 ) -> str:
     del balanced_final_species, generated_schedule_version
-    return "transformer-variable-party-bf16-rmplus-v20-joint"
+    return "transformer-variable-party-bf16-rmplus-v21-distilled-leaf"
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
@@ -1631,6 +1642,8 @@ def _heldout_diagnostics(
     ) = examples
     device = next(network.parameters()).device
     squared_errors: list[float] = []
+    leaf_squared_errors: list[float] = []
+    leaf_distillation_errors: list[float] = []
     policy_cross_entropy = 0.0
     target_entropy = 0.0
     top_action_matches = 0
@@ -1688,6 +1701,14 @@ def _heldout_diagnostics(
             squared_errors.extend(
                 (values - batch_value).square().float().cpu().tolist()
             )
+            if network.config.distilled_leaf_evaluator:
+                leaf_values = network.leaf_forward(batch_features)
+                leaf_squared_errors.extend(
+                    (leaf_values - batch_value).square().float().cpu().tolist()
+                )
+                leaf_distillation_errors.extend(
+                    (leaf_values - values).square().float().cpu().tolist()
+                )
     battle_errors: dict[tuple[int, int], list[float]] = {}
     for battle, error in zip(battle_ids, squared_errors, strict=True):
         battle_errors.setdefault(battle, []).append(error)
@@ -1706,6 +1727,16 @@ def _heldout_diagnostics(
         "value_mse_equal_battle": battle_value_mse,
         "zero_value_mse": zero_value_mse,
         "value_mse_vs_zero_equal_row": row_value_mse - zero_value_mse,
+        "leaf_value_mse": (
+            sum(leaf_squared_errors) / len(leaf_squared_errors)
+            if leaf_squared_errors
+            else None
+        ),
+        "leaf_main_distillation_mse": (
+            sum(leaf_distillation_errors) / len(leaf_distillation_errors)
+            if leaf_distillation_errors
+            else None
+        ),
         "policy_cross_entropy": mean_cross_entropy,
         "policy_target_entropy": mean_target_entropy,
         "policy_kl": mean_cross_entropy - mean_target_entropy,
@@ -1775,7 +1806,7 @@ def _train_network(
     trunk_parameters = [
         parameter
         for name, parameter in network.named_parameters()
-        if not name.startswith(("policy.", "opponent_policy.", "value."))
+        if not name.startswith(("policy.", "opponent_policy.", "value.", "leaf_value."))
     ]
     heldout_before = _heldout_diagnostics(
         network, heldout_examples, heldout_battles, config.inference_batch_size
@@ -1785,7 +1816,7 @@ def _train_network(
     diagnostic_epochs: list[dict[str, Any]] = []
     for epoch in range(config.epochs):
         permutation = torch.randperm(len(features), generator=generator)
-        policy_total = value_total = total_total = 0.0
+        policy_total = value_total = leaf_total = total_total = 0.0
         gradient_samples: list[tuple[float, float, float | None]] = []
         batches = 0
         for start in range(0, len(features), config.batch_size):
@@ -1816,7 +1847,22 @@ def _train_network(
                 (policy_rows + opponent_policy_rows) * batch_policy_weight
             ).sum() / (2.0 * batch_policy_weight.sum()).clamp_min(1.0)
             value_loss = torch.nn.functional.mse_loss(values, batch_value)
-            loss = policy_loss + config.value_loss_weight * value_loss
+            if network.config.distilled_leaf_evaluator:
+                leaf_values = network.leaf_forward(batch_features)
+                leaf_target_loss = torch.nn.functional.mse_loss(
+                    leaf_values, batch_value
+                )
+                leaf_distillation_loss = torch.nn.functional.mse_loss(
+                    leaf_values, values.detach()
+                )
+                leaf_loss = 0.5 * (leaf_target_loss + leaf_distillation_loss)
+            else:
+                leaf_loss = value_loss.new_zeros(())
+            loss = (
+                policy_loss
+                + config.value_loss_weight * value_loss
+                + config.leaf_loss_weight * leaf_loss
+            )
             if len(gradient_samples) < 8:
                 policy_gradients = torch.autograd.grad(
                     policy_loss,
@@ -1866,6 +1912,7 @@ def _train_network(
             optimizer.step()
             policy_total += float(policy_loss.detach())
             value_total += float(value_loss.detach())
+            leaf_total += float(leaf_loss.detach())
             total_total += float(loss.detach())
             batches += 1
         history.append(
@@ -1874,6 +1921,8 @@ def _train_network(
                 "policy_loss": policy_total / batches,
                 "value_loss": value_total / batches,
                 "weighted_value_loss": config.value_loss_weight * value_total / batches,
+                "leaf_loss": leaf_total / batches,
+                "weighted_leaf_loss": config.leaf_loss_weight * leaf_total / batches,
                 "total_loss": total_total / batches,
             }
         )
@@ -1906,7 +1955,8 @@ def _train_network(
         "heldout_battles": len(set(heldout_battles)),
         "epochs": config.epochs,
         "value_loss_weight": config.value_loss_weight,
-        "objective": "policy-ce-plus-weighted-value-mse-v2",
+        "leaf_loss_weight": config.leaf_loss_weight,
+        "objective": "dual-policy-ce-plus-main-value-and-distilled-leaf-v3",
         "batches_per_epoch": math.ceil(len(features) / config.batch_size),
         "history": history,
         "diagnostics": {
@@ -2246,6 +2296,10 @@ def run_transformer_pipeline(
         raise ValueError("epochs must be positive")
     if not 0.0 < config.value_loss_weight <= 1.0:
         raise ValueError("value_loss_weight must be in (0, 1]")
+    if config.leaf_hidden < 1:
+        raise ValueError("leaf_hidden must be positive")
+    if not 0.0 <= config.leaf_loss_weight <= 1.0:
+        raise ValueError("leaf_loss_weight must be in [0, 1]")
     if not 0.0 < config.redundant_action_prior_scale <= 1.0:
         raise ValueError("redundant_action_prior_scale must be in (0, 1]")
     if config.historical_window < 0:
@@ -2316,6 +2370,8 @@ def run_transformer_pipeline(
         token_group_size=config.token_group_size,
         token_layout=config.token_layout,
         joint_policy_heads=config.joint_policy_heads,
+        distilled_leaf_evaluator=config.distilled_leaf_evaluator,
+        leaf_hidden=config.leaf_hidden,
     )
     opponents: list[tuple[Any, str]] = []
     opponent_metadata: list[dict[str, Any]] = []

@@ -89,6 +89,14 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
         help="disable the production dual-policy physical-state evaluator",
     )
     parser.set_defaults(joint_policy_heads=True)
+    parser.add_argument(
+        "--no-distilled-leaf",
+        action="store_false",
+        dest="distilled_leaf_evaluator",
+    )
+    parser.set_defaults(distilled_leaf_evaluator=True)
+    parser.add_argument("--leaf-hidden", type=int, default=64)
+    parser.add_argument("--leaf-loss-weight", type=float, default=0.25)
     parser.add_argument("--chance-samples-per-joint", type=int, default=1)
     parser.add_argument("--regret-iterations", type=int, default=256)
     parser.add_argument("--inference-batch-size", type=int, default=256)
@@ -258,6 +266,9 @@ def main(argv: list[str] | None = None) -> int:
             token_group_size=arguments.token_group_size,
             token_layout=arguments.token_layout,
             joint_policy_heads=arguments.joint_policy_heads,
+            distilled_leaf_evaluator=arguments.distilled_leaf_evaluator,
+            leaf_hidden=arguments.leaf_hidden,
+            leaf_loss_weight=arguments.leaf_loss_weight,
             opponent_checkpoints=tuple(
                 str(path.resolve()) for path in arguments.opponent_checkpoint
             ),

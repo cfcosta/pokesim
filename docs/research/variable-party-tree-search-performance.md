@@ -259,11 +259,17 @@ quality-gated teacher/model alternatives:
    improved eager latency from 4.78 to 2.26 ms (2.12×) and compiled latency
    from 2.30 to 1.30 ms (1.78×). Distinct models retain separate canonical
    evaluations, so candidate/incumbent semantics do not collapse.
-10. **Tiered deep search (quality-gated).** Every move retains a complete root;
+10. **Distilled leaf evaluation.** V21 uses the full semantic model for roots
+   and expanded-node priors, but a 64-hidden-unit MLP for ordinary unresolved
+   successor values. At batch 256, compiled latency fell from 1.819 to 0.372 ms
+   (4.89×) and eager latency from 3.111 to 0.433 ms (7.19×). The leaf learns
+   from both terminal targets and detached main values; quality still requires
+   promotion rather than assuming distillation is lossless.
+11. **Tiered deep search (quality-gated).** Every move retains a complete root;
    only a configured fraction receives the full tree. A 25% probe improved a
    short collection workload 4.84×, but trajectories changed, so the production
    default remains 100% deep pending equal-budget promotion evidence.
-11. **Deferred multi-model CUDA inference.** Pooled search launches all CUDA
+12. **Deferred multi-model CUDA inference.** Pooled search launches all CUDA
     networks before awaiting any result and overlaps CPU heuristic evaluation
     with those launches. Ticket-owned pinned buffers prevent in-flight transfers
     from aliasing same-shaped requests. Two eager 96-row forwards on the RTX

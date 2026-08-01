@@ -165,6 +165,18 @@ class _JointToyNetwork(_ToyNetwork):
         raise AssertionError("mirror search did not use joint evaluation")
 
 
+class _LeafToyNetwork(_JointToyNetwork):
+    config = SimpleNamespace(
+        action_count=2,
+        joint_policy_heads=True,
+        distilled_leaf_evaluator=True,
+    )
+
+    def evaluate_leaf(self, features: object) -> list[float]:
+        self.batches.append(len(features))  # type: ignore[arg-type]
+        return [0.5 for _ in features]  # type: ignore[union-attr]
+
+
 class _ToyServer:
     def __init__(self) -> None:
         self.states: dict[int, tuple[int, int]] = {0: (0, 0)}
@@ -751,6 +763,9 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.token_group_size, 1)
         self.assertEqual(arguments.token_layout, "semantic-entity-v1")
         self.assertTrue(arguments.joint_policy_heads)
+        self.assertTrue(arguments.distilled_leaf_evaluator)
+        self.assertEqual(arguments.leaf_hidden, 64)
+        self.assertEqual(arguments.leaf_loss_weight, 0.25)
         self.assertEqual(arguments.precision, "bf16")
         self.assertEqual(arguments.inference_engine, "auto")
         self.assertTrue(arguments.heuristic_opponents)
@@ -1088,11 +1103,11 @@ class TransformerTests(unittest.TestCase):
     def test_training_schedule_pairs_every_reset_and_side_assignment(self) -> None:
         self.assertEqual(
             _pipeline_id(),
-            "transformer-variable-party-bf16-rmplus-v20-joint",
+            "transformer-variable-party-bf16-rmplus-v21-distilled-leaf",
         )
         self.assertEqual(
             _pipeline_id(False, 2),
-            "transformer-variable-party-bf16-rmplus-v20-joint",
+            "transformer-variable-party-bf16-rmplus-v21-distilled-leaf",
         )
         for episode in range(0, 128, 2):
             self.assertEqual(_training_pair(episode), _training_pair(episode + 1))
@@ -1402,6 +1417,52 @@ class TransformerTests(unittest.TestCase):
         statused = _tactical_potential(tuple(features))
         self.assertGreater(damaged, neutral)
         self.assertGreater(statused, damaged)
+
+    def test_distilled_leaf_value_is_bounded_and_keeps_model_under_budget(self) -> None:
+        torch.manual_seed(12)
+        network = BattleTransformer(
+            TransformerConfig(
+                feature_count=492,
+                action_count=13,
+                d_model=128,
+                heads=8,
+                layers=4,
+                feedforward=512,
+                token_layout="semantic-entity-v1",
+                joint_policy_heads=True,
+                distilled_leaf_evaluator=True,
+                leaf_hidden=64,
+            )
+        ).eval()
+        values = network.evaluate_leaf([[0] * 492, [65535] * 492])
+        self.assertEqual(len(values), 2)
+        self.assertTrue(all(-1.0 <= value <= 1.0 for value in values))
+        self.assertEqual(
+            sum(parameter.numel() for parameter in network.parameters()), 937820
+        )
+
+    def test_pooled_successors_use_the_leaf_evaluator(self) -> None:
+        network = _LeafToyNetwork()
+        server = _ToyServer()
+        search = SimultaneousTreeSearch(
+            server,
+            network,
+            network,
+            JointSearchConfig(
+                max_depth=1,
+                expansion_budget=4,
+                minimum_expansion_budget=1,
+            ),
+            random.Random(1),
+            random.Random(2),
+        )
+        evaluated, calls, rows = SimultaneousTreeSearch._pooled_successor_values(
+            [(0, search, [server._snapshot(0)])]
+        )
+        self.assertEqual(evaluated, {0: [(0.5, 0.5)]})
+        self.assertEqual(calls, 1)
+        self.assertEqual(rows, 1)
+        self.assertEqual(network.batches, [1])
 
     def test_joint_heads_mask_both_policies_and_share_one_value(self) -> None:
         torch.manual_seed(8)

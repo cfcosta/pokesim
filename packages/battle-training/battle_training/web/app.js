@@ -309,6 +309,7 @@ function renderModel(data) {
     ["Sequence", network.feature_count ? `${network.token_layout === "semantic-entity-v1" ? 32 : Math.ceil(network.feature_count / (network.token_group_size || 1)) + 1} tokens` : "—"],
     ["Encoder", network.layers ? `${network.layers} layers / ${network.heads} attention heads` : "—"],
     ["Policy heads", network.joint_policy_heads ? "Player + opponent" : "Single side"],
+    ["Leaf evaluator", network.distilled_leaf_evaluator ? `Distilled MLP · ${network.leaf_hidden} hidden` : "Main encoder"],
     ["Width", network.d_model ? `${network.d_model} / FF ${network.feedforward}` : "—"],
     ["Precision", network.precision?.toUpperCase()],
     ["Device", model.device_name || model.device],

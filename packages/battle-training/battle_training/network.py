@@ -34,6 +34,10 @@ class JointEvaluationTicket(Protocol):
     ) -> tuple[list[list[float]], list[list[float]], list[float]]: ...
 
 
+class ValueEvaluationTicket(Protocol):
+    def result(self) -> list[float]: ...
+
+
 @dataclass
 class _ImmediateEvaluation:
     output: tuple[list[list[float]], list[float]]
@@ -80,6 +84,25 @@ class _CudaJointEvaluation:
         )
 
 
+@dataclass
+class _ImmediateValueEvaluation:
+    output: list[float]
+
+    def result(self) -> list[float]:
+        return self.output
+
+
+@dataclass
+class _CudaValueEvaluation:
+    output: Tensor
+    ready: torch.cuda.Event
+    keepalive: tuple[Tensor, ...]
+
+    def result(self) -> list[float]:
+        self.ready.synchronize()
+        return self.output.numpy().tolist()
+
+
 @dataclass(frozen=True)
 class TransformerConfig:
     feature_count: int = FEATURE_COUNT
@@ -92,6 +115,8 @@ class TransformerConfig:
     token_group_size: int = 1
     token_layout: str = "scalar-v1"
     joint_policy_heads: bool = False
+    distilled_leaf_evaluator: bool = False
+    leaf_hidden: int = 64
 
 
 class BattleTransformer(nn.Module):
@@ -105,6 +130,8 @@ class BattleTransformer(nn.Module):
             raise ValueError("precision must be bf16 or fp32")
         if config.token_group_size not in {1, 2, 4, 8}:
             raise ValueError("token_group_size must be one of 1, 2, 4, or 8")
+        if config.leaf_hidden < 1:
+            raise ValueError("leaf_hidden must be positive")
         if config.token_layout not in {"scalar-v1", "semantic-entity-v1"}:
             raise ValueError("token_layout must be scalar-v1 or semantic-entity-v1")
         if (
@@ -159,6 +186,15 @@ class BattleTransformer(nn.Module):
             nn.Linear(config.d_model, 1),
             nn.Tanh(),
         )
+        if config.distilled_leaf_evaluator:
+            self.leaf_value = nn.Sequential(
+                nn.Linear(config.feature_count, config.leaf_hidden),
+                nn.GELU(),
+                nn.Linear(config.leaf_hidden, config.leaf_hidden),
+                nn.GELU(),
+                nn.Linear(config.leaf_hidden, 1),
+                nn.Tanh(),
+            )
         masks = torch.arange(1 << config.action_count, dtype=torch.long).unsqueeze(1)
         actions = torch.arange(config.action_count, dtype=torch.long).unsqueeze(0)
         self.register_buffer(
@@ -184,6 +220,7 @@ class BattleTransformer(nn.Module):
         self._inference_engine = "eager"
         self._compiled_forwards: dict[int, Any] = {}
         self._compiled_joint_forwards: dict[int, Any] = {}
+        self._compiled_leaf_forwards: dict[int, Any] = {}
         self._inference_stream: torch.cuda.Stream | None = None
         nn.init.normal_(self.cls, std=0.02)
         self._initialize_policy(self.policy)
@@ -191,6 +228,9 @@ class BattleTransformer(nn.Module):
             self._initialize_policy(self.opponent_policy)
         nn.init.zeros_(self.value[-2].weight)
         nn.init.zeros_(self.value[-2].bias)
+        if config.distilled_leaf_evaluator:
+            nn.init.zeros_(self.leaf_value[-2].weight)
+            nn.init.zeros_(self.leaf_value[-2].bias)
 
     def _initialize_policy(self, head: nn.Linear) -> None:
         nn.init.zeros_(head.weight)
@@ -323,6 +363,26 @@ class BattleTransformer(nn.Module):
         # Keep policy normalization, losses, reductions, and search values in FP32.
         return logits.float(), values.float()
 
+    def _leaf_forward_impl(self, features: Tensor) -> Tensor:
+        if not self.config.distilled_leaf_evaluator:
+            raise RuntimeError("distilled leaf evaluation is disabled")
+        normalized = torch.log1p(features.float().clamp(0, 65535)) / 11.090354888959125
+        return self.leaf_value(normalized).squeeze(-1)
+
+    def leaf_forward(self, features: Tensor) -> Tensor:
+        if features.ndim != 2 or features.shape[1] != self.config.feature_count:
+            raise ValueError(f"expected [batch,{self.config.feature_count}] features")
+        if self.config.precision == "fp32":
+            return self._leaf_forward_impl(features)
+        device_type = features.device.type
+        if device_type == "cuda" and not torch.cuda.is_bf16_supported():
+            raise RuntimeError("bf16 precision requires a bf16-capable CUDA device")
+        if device_type not in {"cpu", "cuda"}:
+            raise RuntimeError(f"bf16 precision is unsupported on {device_type}")
+        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+            values = self._leaf_forward_impl(features)
+        return values.float()
+
     def forward_joint(self, features: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         if features.ndim != 2 or features.shape[1] != self.config.feature_count:
             raise ValueError(f"expected [batch,{self.config.feature_count}] features")
@@ -388,6 +448,7 @@ class BattleTransformer(nn.Module):
         if selected != self._inference_engine:
             self._compiled_forwards.clear()
             self._compiled_joint_forwards.clear()
+            self._compiled_leaf_forwards.clear()
             self._inference_engine = selected
 
     @staticmethod
@@ -440,6 +501,19 @@ class BattleTransformer(nn.Module):
         own, opponent, values = compiled(padded)
         return own[:batch], opponent[:batch], values[:batch]
 
+    def _compiled_leaf_forward(self, features: Tensor) -> Tensor:
+        padded, batch, bucket = self._padded_inference(features)
+        compiled = self._compiled_leaf_forwards.get(bucket)
+        if compiled is None:
+            compiled = torch.compile(
+                self._leaf_forward_impl,
+                mode="reduce-overhead",
+                fullgraph=True,
+                dynamic=False,
+            )
+            self._compiled_leaf_forwards[bucket] = compiled
+        return compiled(padded)[:batch]
+
     def _staged_tensor(
         self,
         values: np.ndarray,
@@ -478,6 +552,14 @@ class BattleTransformer(nn.Module):
             logits, values = self(tensor)
         probabilities = self._masked_policy(logits, mask_indexes)
         return torch.cat((probabilities, values.unsqueeze(1)), dim=1)
+
+    def _leaf_evaluation_outputs(self, tensor: Tensor) -> Tensor:
+        if self._inference_engine == "compiled":
+            device_type = tensor.device.type
+            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                values = self._compiled_leaf_forward(tensor)
+            return values.float()
+        return self.leaf_forward(tensor)
 
     def _joint_evaluation_outputs(
         self, tensor: Tensor, own_masks: Tensor, opponent_masks: Tensor
@@ -665,6 +747,50 @@ class BattleTransformer(nn.Module):
         opponent_masks: Sequence[int],
     ) -> tuple[list[list[float]], list[list[float]], list[float]]:
         return self.begin_evaluate_joint(features, own_masks, opponent_masks).result()
+
+    @torch.inference_mode()
+    def begin_evaluate_leaf(
+        self, features: Sequence[Sequence[int]]
+    ) -> ValueEvaluationTicket:
+        if not self.config.distilled_leaf_evaluator:
+            raise RuntimeError("distilled leaf evaluation is disabled")
+        feature_array = np.stack(features)
+        if feature_array.ndim != 2:
+            raise ValueError("leaf evaluation requires a rectangular feature batch")
+        device = next(self.parameters()).device
+        if device.type != "cuda":
+            tensor = self._staged_tensor(
+                feature_array, self._pinned_feature_buffers, device
+            ).long()
+            values = self._leaf_evaluation_outputs(tensor).cpu().tolist()
+            return _ImmediateValueEvaluation(values)
+
+        feature_source = torch.from_numpy(feature_array)
+        pinned_features = torch.empty(
+            feature_source.shape, dtype=feature_source.dtype, pin_memory=True
+        )
+        pinned_features.copy_(feature_source)
+        if self._inference_stream is None:
+            self._inference_stream = torch.cuda.Stream(device=device)
+        stream = self._inference_stream
+        stream.wait_stream(torch.cuda.current_stream(device))
+        with torch.cuda.stream(stream):
+            tensor = pinned_features.to(device, non_blocking=True).long()
+            outputs = self._leaf_evaluation_outputs(tensor)
+            host_output = torch.empty(
+                outputs.shape, dtype=outputs.dtype, device="cpu", pin_memory=True
+            )
+            host_output.copy_(outputs, non_blocking=True)
+            ready = torch.cuda.Event()
+            ready.record(stream)
+        return _CudaValueEvaluation(
+            host_output,
+            ready,
+            (pinned_features, tensor, outputs),
+        )
+
+    def evaluate_leaf(self, features: Sequence[Sequence[int]]) -> list[float]:
+        return self.begin_evaluate_leaf(features).result()
 
     def detached_copy(self, device: torch.device) -> BattleTransformer:
         clone = BattleTransformer(self.config).to(device)
