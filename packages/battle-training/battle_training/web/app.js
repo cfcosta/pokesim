@@ -364,6 +364,7 @@ function renderBattlePopulation(data) {
     ["Setup use", collection ? `${number(collection.setup_uses)} · ${pct(collection.setup_use_rate)}` : "—"],
     ["Exploitability", collection ? number(collection.mean_search_exploitability, 3) : "—"],
     ["Deep / root", collection ? `${number(collection.deep_search_decisions)} / ${number(collection.root_only_decisions)}` : "—"],
+    ["Router misses", collection ? `${number(collection.forced_router_false_negatives)} / ${number(collection.forced_router_samples)} · ${pct(collection.forced_router_false_negative_rate)}` : "—"],
     ["Mirror / model / AI", collection ? `${number(collection.mirror_episodes)} / ${number(collection.model_opponent_episodes)} / ${number(collection.heuristic_opponent_episodes)}` : "—"],
     ["Species coverage", collection?.species_schedule ? `${number(speciesValues.length)} / 151 · ${speciesRange}` : "—"],
     ["Status overlap", qualityAvailable ? `${number((collection.redundant_status_same || 0) + (collection.redundant_status_other || 0))} / ${number(collection.major_status_attempts)} · ${pct(collection.redundant_status_rate)}` : "—"],

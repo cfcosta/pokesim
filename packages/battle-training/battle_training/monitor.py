@@ -159,6 +159,8 @@ def _aggregate_actor_progress(actors: list[dict[str, Any]]) -> dict[str, Any] | 
         "ohko_into_faster",
         "deep_search_decisions",
         "root_only_decisions",
+        "forced_router_samples",
+        "forced_router_false_negatives",
         "mirror_episodes",
         "opponent_episodes",
         "model_opponent_episodes",
@@ -166,14 +168,14 @@ def _aggregate_actor_progress(actors: list[dict[str, Any]]) -> dict[str, Any] | 
         "six_vs_six_battles",
         "level100_six_vs_six_battles",
     )
-    result = {
-        name: sum(int(actor.get(name, 0)) for actor in actors) for name in summed
-    }
+    result = {name: sum(int(actor.get(name, 0)) for actor in actors) for name in summed}
+    result["forced_router_false_negative_rate"] = result[
+        "forced_router_false_negatives"
+    ] / max(1, result["forced_router_samples"])
     completed = result["completed"]
     result["mean_decisions"] = (
         sum(
-            float(actor.get("mean_decisions", 0.0))
-            * int(actor.get("completed", 0))
+            float(actor.get("mean_decisions", 0.0)) * int(actor.get("completed", 0))
             for actor in actors
         )
         / completed
@@ -183,9 +185,7 @@ def _aggregate_actor_progress(actors: list[dict[str, Any]]) -> dict[str, Any] | 
     result["voluntary_switch_rate"] = result["voluntary_switches"] / max(
         1, result["ordinary_actions"]
     )
-    result["setup_use_rate"] = result["setup_uses"] / max(
-        1, result["ordinary_actions"]
-    )
+    result["setup_use_rate"] = result["setup_uses"] / max(1, result["ordinary_actions"])
     result["redundant_status_rate"] = (
         result["redundant_status_same"] + result["redundant_status_other"]
     ) / max(1, result["major_status_attempts"])
@@ -292,9 +292,7 @@ def build_dashboard_snapshot(root: Path) -> dict[str, Any]:
             "sha256": sha256(latest_checkpoint),
         }
     actor_paths = sorted(
-        (root / ".monitor").glob("actor-*.json")
-        if (root / ".monitor").is_dir()
-        else []
+        (root / ".monitor").glob("actor-*.json") if (root / ".monitor").is_dir() else []
     )
     actors = [value for path in actor_paths if (value := _read_json(path)) is not None]
     public_actors = [
@@ -355,10 +353,7 @@ def build_match_detail(
         return None
     if kind == "promotion":
         game = _read_json(
-            root
-            / "matches"
-            / f"promotion-{iteration:03d}"
-            / f"game-{match:05d}.json"
+            root / "matches" / f"promotion-{iteration:03d}" / f"game-{match:05d}.json"
         )
         if game is not None and int(game.get("game", -1)) == match:
             return {"kind": kind, "iteration": iteration, **game}

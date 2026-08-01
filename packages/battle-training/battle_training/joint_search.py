@@ -9,6 +9,8 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias, cast
 
+import numpy as np
+
 from .decision_quality import shape_redundant_action_priors
 from .native import SearchServer, Snapshot
 from .network import BattleTransformer
@@ -18,8 +20,6 @@ PayoffMatrix: TypeAlias = list[list[float]]
 _PARTY_MON_WIDTH = 22
 _FULL_SIDE_WIDTH = 181
 _PARTY_SIZE = 6
-_FIGHT_ACTIONS = range(4)
-_SWITCH_ACTIONS = range(4, 10)
 
 
 @dataclass(frozen=True)
@@ -42,7 +42,7 @@ class SearchResult:
 class JointSearchConfig:
     chance_samples_per_joint: int = 1
     max_depth: int = 1
-    regret_iterations: int = 256
+    regret_iterations: int = 2048
     inference_batch_size: int = 256
     max_actions_per_side: int = 13
     expansion_budget: int = 320
@@ -92,85 +92,6 @@ def _tactical_potential(features: Sequence[int]) -> float:
     )
 
 
-def _cap_switch_mass(
-    policy: tuple[float, ...],
-    priors: list[float],
-    legal: list[int],
-    cap: float,
-) -> tuple[float, ...]:
-    switches = [action for action in legal if action in _SWITCH_ACTIONS]
-    recipients = [action for action in legal if action not in _SWITCH_ACTIONS]
-    switch_mass = sum(policy[action] for action in switches)
-    if not switches or not recipients or switch_mass <= cap:
-        return policy
-    result = list(policy)
-    scale = cap / switch_mass
-    for action in switches:
-        result[action] *= scale
-    removed = switch_mass - cap
-    recipient_mass = sum(result[action] for action in recipients)
-    if recipient_mass > 0:
-        for action in recipients:
-            result[action] += removed * result[action] / recipient_mass
-    else:
-        prior_mass = sum(priors[action] for action in recipients)
-        for action in recipients:
-            weight = (
-                priors[action] / prior_mass if prior_mass > 0 else 1.0 / len(recipients)
-            )
-            result[action] += removed * weight
-    return tuple(result)
-
-
-def _switch_cap(advantage: float) -> float:
-    if advantage <= 0.02:
-        return 0.10
-    if advantage <= 0.10:
-        return 0.20
-    return 0.30
-
-
-def _gate_voluntary_switches(
-    payoff: PayoffMatrix,
-    player_policy: tuple[float, ...],
-    enemy_policy: tuple[float, ...],
-    player_priors: list[float],
-    enemy_priors: list[float],
-    player_legal: list[int],
-    enemy_legal: list[int],
-) -> tuple[tuple[float, ...], tuple[float, ...]]:
-    player_moves = [action for action in player_legal if action in _FIGHT_ACTIONS]
-    player_switches = [action for action in player_legal if action in _SWITCH_ACTIONS]
-    enemy_moves = [action for action in enemy_legal if action in _FIGHT_ACTIONS]
-    enemy_switches = [action for action in enemy_legal if action in _SWITCH_ACTIONS]
-    if player_moves and player_switches:
-        row_values = [
-            sum(enemy_policy[enemy] * payoff[action][enemy] for enemy in enemy_legal)
-            for action in range(len(payoff))
-        ]
-        advantage = max(row_values[action] for action in player_switches) - max(
-            row_values[action] for action in player_moves
-        )
-        player_policy = _cap_switch_mass(
-            player_policy, player_priors, player_legal, _switch_cap(advantage)
-        )
-    if enemy_moves and enemy_switches:
-        column_values = [
-            sum(
-                player_policy[player] * payoff[player][action]
-                for player in player_legal
-            )
-            for action in range(len(payoff))
-        ]
-        advantage = min(column_values[action] for action in enemy_moves) - min(
-            column_values[action] for action in enemy_switches
-        )
-        enemy_policy = _cap_switch_mass(
-            enemy_policy, enemy_priors, enemy_legal, _switch_cap(advantage)
-        )
-    return player_policy, enemy_policy
-
-
 def _sample(probabilities: list[float], rng: random.Random) -> int:
     threshold = rng.random()
     cumulative = 0.0
@@ -210,73 +131,70 @@ def solve_zero_sum_regret(
     enemy_legal: list[int],
     iterations: int,
 ) -> tuple[tuple[float, ...], tuple[float, ...], float, float]:
-    """Approximate a zero-sum matrix equilibrium with regret matching+."""
+    """Approximate a zero-sum matrix equilibrium with regret matching+.
+
+    The solver operates on the legal submatrix in float64 NumPy.  Keeping the
+    iteration loop in Python preserves deterministic RM+ update order while
+    vectorized matrix products make production-quality root solves cheap.
+    """
     if iterations < 1:
         raise ValueError("regret iterations must be positive")
+    if not player_legal or not enemy_legal:
+        raise ValueError("each side needs at least one legal action")
     action_count = len(payoff)
-    player_regrets = [0.0] * action_count
-    enemy_regrets = [0.0] * action_count
-    player_sum = [0.0] * action_count
-    enemy_sum = [0.0] * action_count
+    matrix = np.asarray(payoff, dtype=np.float64)[np.ix_(player_legal, enemy_legal)]
+    player_prior = np.asarray(
+        [player_priors[action] for action in player_legal], dtype=np.float64
+    )
+    enemy_prior = np.asarray(
+        [enemy_priors[action] for action in enemy_legal], dtype=np.float64
+    )
+    player_prior_total = float(player_prior.sum())
+    enemy_prior_total = float(enemy_prior.sum())
+    if player_prior_total > 0.0:
+        player_prior /= player_prior_total
+    else:
+        player_prior.fill(1.0 / len(player_legal))
+    if enemy_prior_total > 0.0:
+        enemy_prior /= enemy_prior_total
+    else:
+        enemy_prior.fill(1.0 / len(enemy_legal))
+
+    player_regrets = np.zeros(len(player_legal), dtype=np.float64)
+    enemy_regrets = np.zeros(len(enemy_legal), dtype=np.float64)
+    player_sum = np.zeros(len(player_legal), dtype=np.float64)
+    enemy_sum = np.zeros(len(enemy_legal), dtype=np.float64)
     for _ in range(iterations):
-        player = _strategy(player_regrets, player_priors, player_legal)
-        enemy = _strategy(enemy_regrets, enemy_priors, enemy_legal)
-        for action in player_legal:
-            player_sum[action] += player[action]
-        for action in enemy_legal:
-            enemy_sum[action] += enemy[action]
-        row_values = [0.0] * action_count
-        column_values = [0.0] * action_count
-        for player_action in player_legal:
-            row_values[player_action] = sum(
-                enemy[enemy_action] * payoff[player_action][enemy_action]
-                for enemy_action in enemy_legal
-            )
-        for enemy_action in enemy_legal:
-            column_values[enemy_action] = sum(
-                player[player_action] * payoff[player_action][enemy_action]
-                for player_action in player_legal
-            )
-        value = sum(
-            player[player_action] * row_values[player_action]
-            for player_action in player_legal
-        )
-        for action in player_legal:
-            player_regrets[action] = max(
-                0.0, player_regrets[action] + row_values[action] - value
-            )
-        for action in enemy_legal:
-            enemy_regrets[action] = max(
-                0.0, enemy_regrets[action] + value - column_values[action]
-            )
-    player_average = tuple(value / iterations for value in player_sum)
-    enemy_average = tuple(value / iterations for value in enemy_sum)
-    row_best_response = max(
-        sum(
-            enemy_average[enemy_action] * payoff[player_action][enemy_action]
-            for enemy_action in enemy_legal
-        )
-        for player_action in player_legal
-    )
-    column_best_response = min(
-        sum(
-            player_average[player_action] * payoff[player_action][enemy_action]
-            for player_action in player_legal
-        )
-        for enemy_action in enemy_legal
-    )
-    value = sum(
-        player_average[player_action]
-        * enemy_average[enemy_action]
-        * payoff[player_action][enemy_action]
-        for player_action in player_legal
-        for enemy_action in enemy_legal
-    )
+        player_positive = np.maximum(player_regrets, 0.0)
+        player_total = float(player_positive.sum())
+        player = player_positive / player_total if player_total > 0.0 else player_prior
+        enemy_positive = np.maximum(enemy_regrets, 0.0)
+        enemy_total = float(enemy_positive.sum())
+        enemy = enemy_positive / enemy_total if enemy_total > 0.0 else enemy_prior
+        player_sum += player
+        enemy_sum += enemy
+        row_values = matrix @ enemy
+        column_values = player @ matrix
+        current_value = float(player @ row_values)
+        player_regrets = np.maximum(0.0, player_regrets + row_values - current_value)
+        enemy_regrets = np.maximum(0.0, enemy_regrets + current_value - column_values)
+
+    player_legal_average = player_sum / iterations
+    enemy_legal_average = enemy_sum / iterations
+    player_average = [0.0] * action_count
+    enemy_average = [0.0] * action_count
+    for index, action in enumerate(player_legal):
+        player_average[action] = float(player_legal_average[index])
+    for index, action in enumerate(enemy_legal):
+        enemy_average[action] = float(enemy_legal_average[index])
+    row_values = matrix @ enemy_legal_average
+    column_values = player_legal_average @ matrix
+    value = float(player_legal_average @ row_values)
     return (
-        player_average,
-        enemy_average,
+        tuple(player_average),
+        tuple(enemy_average),
         value,
-        row_best_response - column_best_response,
+        float(row_values.max() - column_values.min()),
     )
 
 
@@ -551,15 +469,6 @@ class BatchedJointRegretSearch:
             enemy_legal,
             self.config.regret_iterations,
         )
-        player_policy, enemy_policy = _gate_voluntary_switches(
-            payoff,
-            player_policy,
-            enemy_policy,
-            root_player[0],
-            root_enemy[0],
-            player_legal,
-            enemy_legal,
-        )
         root_value = sum(
             player_policy[player] * enemy_policy[enemy] * payoff[player][enemy]
             for player in player_legal
@@ -592,7 +501,7 @@ class BatchedJointRegretSearch:
             enemy_action,
             root_value,
             transition_count,
-            solver="tactical-switch-gated-joint-regret-crn-v1",
+            solver="simultaneous-joint-regret-crn-v2",
             exploitability=exploitability,
             payoff_spread=max(legal_payoffs) - min(legal_payoffs),
             payoff_matrix=tuple(tuple(row) for row in payoff),
@@ -626,6 +535,7 @@ class _TreeNode:
     enemy_policy: tuple[float, ...] = ()
     root_value: float = 0.0
     exploitability: float = 0.0
+    online_exploitability: float = 0.0
     expanded: bool = False
     visits: int = 0
     solve_count: int = 0
@@ -821,15 +731,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     node.enemy_legal,
                 )
             )
-            player, enemy = _gate_voluntary_switches(
-                node.payoff,
-                raw_player,
-                raw_enemy,
-                node.player_priors,
-                node.enemy_priors,
-                node.player_legal,
-                node.enemy_legal,
-            )
+            player, enemy = raw_player, raw_enemy
             row_values = [0.0] * self.action_count
             column_values = [0.0] * self.action_count
             for player_action in node.player_legal:
@@ -874,6 +776,19 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             enemy,
             node.player_legal,
             node.enemy_legal,
+        )
+
+    def _root_equilibrium(
+        self, node: _TreeNode
+    ) -> tuple[tuple[float, ...], tuple[float, ...], float, float]:
+        """Solve the current root matrix without stale online-search averages."""
+        return solve_zero_sum_regret(
+            node.payoff,
+            node.player_priors,
+            node.enemy_priors,
+            node.player_legal,
+            node.enemy_legal,
+            self.config.regret_iterations,
         )
 
     @staticmethod
@@ -953,6 +868,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                         joint_missing[key] = {
                             "network": network,
                             "feature": snapshot.player_features,
+                            "opponent_feature": snapshot.enemy_features,
                             "own_mask": snapshot.player_mask,
                             "opponent_mask": snapshot.enemy_mask,
                             "consumers": [consumer],
@@ -1076,6 +992,12 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             completed.append((batch, policies, values))
         for batch, policies, values in completed:
             for (key, item), policy, value in zip(batch, policies, values, strict=True):
+                network = item["network"]
+                if isinstance(network, BattleTransformer):
+                    scale = item["consumers"][0][3].config.redundant_action_prior_scale
+                    policy = shape_redundant_action_priors(
+                        policy, item["feature"], item["mask"], scale
+                    )
                 cached = (policy, value)
                 known[key] = cached
                 for group_id, position, side, search in item["consumers"]:
@@ -1097,6 +1019,18 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             for (key, item), player, enemy, value in zip(
                 batch, own, opponent, values, strict=True
             ):
+                network = item["network"]
+                if isinstance(network, BattleTransformer):
+                    scale = item["consumers"][0][2].config.redundant_action_prior_scale
+                    player = shape_redundant_action_priors(
+                        player, item["feature"], item["own_mask"], scale
+                    )
+                    enemy = shape_redundant_action_priors(
+                        enemy,
+                        item["opponent_feature"],
+                        item["opponent_mask"],
+                        scale,
+                    )
                 cached = (player, enemy, value)
                 joint_known[key] = cached
                 for group_id, position, search in item["consumers"]:
@@ -1381,13 +1315,28 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         evaluated = cast(list[tuple[float, float]], response)
         return self._install_expansion(node, samples, successors, evaluated)
 
+    def _chance_resample_probability(self, evidence: int) -> float:
+        """Sample uncertain chance outcomes aggressively, then decay to the floor."""
+        if evidence < 1:
+            return 1.0
+        return max(self.config.chance_resample, 1.0 / math.sqrt(evidence))
+
     def _mixed_policy(
-        self, policy: tuple[float, ...], legal: list[int], visits: int
+        self,
+        policy: tuple[float, ...],
+        priors: list[float],
+        legal: list[int],
+        visits: int,
     ) -> list[float]:
+        """Progressively mix RM+ with neural priors while retaining legal support."""
         epsilon = max(0.02, self.config.exploration / ((visits + 1) ** 0.5))
+        prior_total = sum(priors[action] for action in legal)
         result = [0.0] * self.action_count
         for action in legal:
-            result[action] = (1.0 - epsilon) * policy[action] + epsilon / len(legal)
+            exploration = (
+                priors[action] / prior_total if prior_total > 0.0 else 1.0 / len(legal)
+            )
+            result[action] = (1.0 - epsilon) * policy[action] + epsilon * exploration
         return result
 
     def _new_chance_outcome_frontier(
@@ -1435,10 +1384,16 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._max_depth_reached = max(self._max_depth_reached, depth)
         node.visits += 1
         player_policy = self._mixed_policy(
-            node.player_policy, node.player_legal, node.visits
+            tuple(node.player_policy),
+            node.player_priors,
+            node.player_legal,
+            node.visits,
         )
         enemy_policy = self._mixed_policy(
-            node.enemy_policy, node.enemy_legal, node.visits
+            tuple(node.enemy_policy),
+            node.enemy_priors,
+            node.enemy_legal,
+            node.visits,
         )
         player_action = _sample(player_policy, self.selection_rng)
         enemy_action = _sample(enemy_policy, self.selection_rng)
@@ -1446,8 +1401,11 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         pair = (player_action, enemy_action)
         if pair not in node.outcomes and remaining <= 0:
             return node.root_value, 0, False
+        evidence = len(node.outcomes.get(pair, ()))
         fresh = pair not in node.outcomes or (
-            remaining > 0 and self.selection_rng.random() < self.config.chance_resample
+            remaining > 0
+            and self.selection_rng.random()
+            < self._chance_resample_probability(evidence)
         )
         if fresh:
             outcome = yield from self._new_chance_outcome_frontier(
@@ -1576,12 +1534,10 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             return True, "adaptive-disabled"
         if self.config.max_depth <= 1:
             return False, "configured-root-only"
-        if self.budget_rng.random() < self.config.adaptive_force_deep_fraction:
-            return True, "forced-calibration-sample"
         if router_score >= self.config.adaptive_deep_threshold:
             return True, "learned-router"
-        if root.exploitability >= self.config.adaptive_exploitability_threshold:
-            return True, "root-exploitability"
+        if root.online_exploitability >= self.config.adaptive_exploitability_threshold:
+            return True, "root-online-exploitability"
         legal_payoffs = [
             root.payoff[player][enemy]
             for player in root.player_legal
@@ -1596,6 +1552,8 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             and entropy >= 1.0
         ):
             return True, "root-payoff-uncertainty"
+        if self.budget_rng.random() < self.config.adaptive_force_deep_fraction:
+            return True, "forced-calibration-sample"
         return False, "router-stable-root"
 
     def _diagnostics(
@@ -1645,6 +1603,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 root.enemy_legal
             )
             diagnostics["root_solves"] = root.solve_count
+            diagnostics["root_online_exploitability"] = root.online_exploitability
+            diagnostics["root_final_exploitability"] = root.exploitability
+            diagnostics["root_equilibrium_iterations"] = self.config.regret_iterations
         return diagnostics
 
     def _fallback(
@@ -1681,19 +1642,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
     ) -> Generator[_Frontier, _FrontierResponse, SearchResult]:
         simulations = 0
         converged = False
-        initial_player = self._average_policy(
-            root.player_strategy_sum, root.solve_count, root.player_policy
-        )
-        initial_enemy = self._average_policy(
-            root.enemy_strategy_sum, root.solve_count, root.enemy_policy
-        )
-        initial_value = self._matrix_value(
-            root.payoff,
-            initial_player,
-            initial_enemy,
-            root.player_legal,
-            root.enemy_legal,
-        )
+        initial_player = tuple(root.player_policy)
+        initial_enemy = tuple(root.enemy_policy)
+        initial_value = root.root_value
         previous_player: tuple[float, ...] | None = initial_player
         previous_enemy: tuple[float, ...] | None = initial_enemy
         stable_updates = 0
@@ -1758,12 +1709,19 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 transitions,
                 simulations,
             )
-        player_policy = self._average_policy(
-            root.player_strategy_sum, root.solve_count, root.player_policy
-        )
-        enemy_policy = self._average_policy(
-            root.enemy_strategy_sum, root.solve_count, root.enemy_policy
-        )
+        if self._adaptive_deep_selected:
+            player_policy, enemy_policy, final_value, exploitability = (
+                self._root_equilibrium(root)
+            )
+            root.player_policy = list(player_policy)
+            root.enemy_policy = list(enemy_policy)
+            root.root_value = final_value
+            root.exploitability = exploitability
+        else:
+            player_policy = initial_player
+            enemy_policy = initial_enemy
+            final_value = initial_value
+            exploitability = root.exploitability
         self._deep_policy_change = sum(
             abs(left - right)
             for left, right in zip(player_policy, initial_player, strict=True)
@@ -1776,13 +1734,6 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             != max(root.player_legal, key=lambda action: initial_player[action])
             or max(root.enemy_legal, key=lambda action: enemy_policy[action])
             != max(root.enemy_legal, key=lambda action: initial_enemy[action])
-        )
-        final_value = self._matrix_value(
-            root.payoff,
-            player_policy,
-            enemy_policy,
-            root.player_legal,
-            root.enemy_legal,
         )
         self._deep_search_needed = (
             int(
@@ -1803,20 +1754,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             enemy_action = max(
                 root.enemy_legal, key=lambda action: enemy_policy[action]
             )
-        root_value = self._matrix_value(
-            root.payoff,
-            player_policy,
-            enemy_policy,
-            root.player_legal,
-            root.enemy_legal,
-        )
-        exploitability = self._exploitability(
-            root.payoff,
-            player_policy,
-            enemy_policy,
-            root.player_legal,
-            root.enemy_legal,
-        )
+        root_value = final_value
         legal_payoffs = [
             root.payoff[player][enemy]
             for player in root.player_legal
@@ -1829,7 +1767,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             enemy_action,
             root_value,
             transitions,
-            "simultaneous-matrix-tree-rmplus-v1",
+            "simultaneous-matrix-tree-rmplus-fresh-root-v2",
             exploitability,
             max(legal_payoffs) - min(legal_payoffs),
             tuple(tuple(row) for row in root.payoff),
@@ -2098,6 +2036,14 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             transitions = search._install_expansion(
                 root, spec[0], root_successors, root_values[index]
             )
+            root.online_exploitability = root.exploitability
+            player_policy, enemy_policy, value, exploitability = (
+                search._root_equilibrium(root)
+            )
+            root.player_policy = list(player_policy)
+            root.enemy_policy = list(enemy_policy)
+            root.root_value = value
+            root.exploitability = exploitability
             router_score = router_scores.get(index, 1.0)
             selected, reason = search._choose_adaptive_depth(root, router_score)
             search._adaptive_deep_selected = selected

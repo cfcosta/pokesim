@@ -12,6 +12,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
+
 from battle_training.arena import (
     SkillMetrics,
     _evaluation_level100,
@@ -37,7 +38,6 @@ from battle_training.decision_quality import (
 from battle_training.joint_search import (
     JointSearchConfig,
     SimultaneousTreeSearch,
-    _cap_switch_mass,
     _tactical_potential,
     solve_zero_sum_regret,
 )
@@ -188,6 +188,28 @@ class _AdaptiveToyNetwork(_LeafToyNetwork):
     @staticmethod
     def evaluate_budget(features: object) -> list[float]:
         return [0.0 for _ in features]  # type: ignore[union-attr]
+
+
+class _ThirteenActionToyNetwork:
+    config = SimpleNamespace(
+        action_count=13,
+        joint_policy_heads=False,
+        distilled_leaf_evaluator=False,
+        adaptive_budget_head=False,
+    )
+
+    @staticmethod
+    def evaluate(
+        features: object, masks: list[int]
+    ) -> tuple[list[list[float]], list[float]]:
+        del features
+        policies = []
+        for mask in masks:
+            legal = [action for action in range(13) if mask & (1 << action)]
+            policies.append(
+                [1.0 / len(legal) if action in legal else 0.0 for action in range(13)]
+            )
+        return policies, [0.0] * len(masks)
 
 
 class _ToyServer:
@@ -543,6 +565,81 @@ class TransformerTests(unittest.TestCase):
         self.assertGreater(enemy[1], 0.99)
         self.assertLess(exploitability, 0.01)
 
+    def test_fresh_root_solver_ignores_stale_online_strategy_sums(self) -> None:
+        server = _ToyServer()
+        network = _ToyNetwork()
+        search = SimultaneousTreeSearch(
+            server,
+            network,
+            network,
+            JointSearchConfig(regret_iterations=2048),
+            random.Random(1),
+            random.Random(2),
+        )
+        node = search._make_node(server._snapshot(0), ([0.5, 0.5], [0.5, 0.5], 0.0))
+        node.payoff = [[1.0, -1.0], [-1.0, 1.0]]
+        node.player_strategy_sum = [1000.0, 0.0]
+        node.enemy_strategy_sum = [1000.0, 0.0]
+        node.solve_count = 1000
+        player, enemy, value, exploitability = search._root_equilibrium(node)
+        self.assertAlmostEqual(player[0], 0.5, places=3)
+        self.assertAlmostEqual(enemy[0], 0.5, places=3)
+        self.assertAlmostEqual(value, 0.0, places=3)
+        self.assertLess(exploitability, 0.005)
+
+    def test_tree_rmplus_does_not_cap_equilibrium_switch_mass(self) -> None:
+        server = _ToyServer()
+        network = _ThirteenActionToyNetwork()
+        search = SimultaneousTreeSearch(
+            server,
+            network,
+            network,
+            JointSearchConfig(regret_iterations_per_update=64),
+            random.Random(1),
+            random.Random(2),
+        )
+        snapshot = replace(
+            server._snapshot(0), player_mask=(1 << 0) | (1 << 4), enemy_mask=1
+        )
+        priors = [0.0] * 13
+        priors[0] = priors[4] = 0.5
+        enemy_priors = [0.0] * 13
+        enemy_priors[0] = 1.0
+        node = search._make_node(snapshot, (priors, enemy_priors, 0.0))
+        node.payoff[4][0] = 1.0
+        search._solve_node(node)
+        self.assertGreater(node.player_policy[4], 0.9)
+
+    def test_chance_resampling_decays_with_evidence(self) -> None:
+        server = _ToyServer()
+        network = _ToyNetwork()
+        search = SimultaneousTreeSearch(
+            server,
+            network,
+            network,
+            JointSearchConfig(chance_resample=0.1),
+            random.Random(1),
+            random.Random(2),
+        )
+        self.assertEqual(search._chance_resample_probability(1), 1.0)
+        self.assertEqual(search._chance_resample_probability(4), 0.5)
+        self.assertEqual(search._chance_resample_probability(100), 0.1)
+
+    def test_tree_exploration_uses_neural_progressive_bias(self) -> None:
+        server = _ToyServer()
+        network = _ToyNetwork()
+        search = SimultaneousTreeSearch(
+            server,
+            network,
+            network,
+            JointSearchConfig(exploration=0.2),
+            random.Random(1),
+            random.Random(2),
+        )
+        mixed = search._mixed_policy((1.0, 0.0), [0.0, 1.0], [0, 1], 0)
+        self.assertAlmostEqual(mixed[0], 0.8)
+        self.assertAlmostEqual(mixed[1], 0.2)
+
     def test_simultaneous_tree_backs_up_deeper_equilibrium_values(self) -> None:
         server = _ToyServer()
         network = _ToyNetwork()
@@ -567,7 +664,7 @@ class TransformerTests(unittest.TestCase):
             random.Random(11),
         )
         result = search.search(server._snapshot(0), sample_actions=False)
-        self.assertEqual(result.solver, "simultaneous-matrix-tree-rmplus-v1")
+        self.assertEqual(result.solver, "simultaneous-matrix-tree-rmplus-fresh-root-v2")
         self.assertGreater(result.player_policy[0], 0.8)
         self.assertEqual(result.diagnostics["tree_max_depth"], 1)
         self.assertEqual(result.diagnostics["root_joint_actions"], 4)
@@ -766,6 +863,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.probe_games, 256)
         self.assertEqual(arguments.campaign_games, 288)
         self.assertEqual(arguments.tree_expansion_budget, 320)
+        self.assertEqual(arguments.regret_iterations, 2048)
         self.assertEqual(arguments.tree_regret_iterations, 16)
         self.assertEqual(arguments.tree_deeper_joint_rotations, 2)
         self.assertEqual(arguments.tree_minimum_budget, 192)
@@ -783,6 +881,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.adaptive_warmup_iterations, 1)
         self.assertEqual(arguments.adaptive_deep_threshold, 0.55)
         self.assertEqual(arguments.adaptive_force_deep_fraction, 0.10)
+        self.assertEqual(arguments.adaptive_max_false_negative_rate, 0.10)
         self.assertEqual(arguments.budget_loss_weight, 0.05)
         self.assertEqual(arguments.budget_positive_weight, 4.0)
         self.assertEqual(arguments.precision, "bf16")
@@ -1093,9 +1192,29 @@ class TransformerTests(unittest.TestCase):
             },
             config,
         )
-        self.assertEqual(report["version"], "completion-integrity-v2")
+        self.assertEqual(report["version"], "completion-and-router-integrity-v3")
         self.assertTrue(report["pass"])
         self.assertEqual(report["reasons"], [])
+
+    def test_collection_quality_gates_witnessed_router_false_negatives(self) -> None:
+        config = SimpleNamespace(
+            selfplay_episodes=100, adaptive_max_false_negative_rate=0.10
+        )
+        report = _collection_quality(
+            {
+                "truncated": 0,
+                "semantic_divergences": 0,
+                "mean_decisions": 20.0,
+                "finished": 100,
+                "forced_router_samples": 200,
+                "forced_router_false_negative_rate": 0.11,
+            },
+            config,
+        )
+        self.assertFalse(report["pass"])
+        self.assertIn(
+            "adaptive-router-false-negative-rate-above-limit", report["reasons"]
+        )
 
     def test_fixed_opponent_schedule_is_exact_and_periodic(self) -> None:
         schedule = [_scheduled_for_opponent(episode, 0.5) for episode in range(1000)]
@@ -1125,11 +1244,11 @@ class TransformerTests(unittest.TestCase):
     def test_training_schedule_pairs_every_reset_and_side_assignment(self) -> None:
         self.assertEqual(
             _pipeline_id(),
-            "transformer-variable-party-bf16-rmplus-v22-adaptive",
+            "transformer-variable-party-bf16-rmplus-v23-quality-search",
         )
         self.assertEqual(
             _pipeline_id(False, 2),
-            "transformer-variable-party-bf16-rmplus-v22-adaptive",
+            "transformer-variable-party-bf16-rmplus-v23-quality-search",
         )
         for episode in range(0, 128, 2):
             self.assertEqual(_training_pair(episode), _training_pair(episode + 1))
@@ -1419,13 +1538,6 @@ class TransformerTests(unittest.TestCase):
             all(count <= 1_000_000 for count in [*counts, semantic_count, joint_count])
         )
 
-    def test_switch_cap_preserves_all_legal_actions(self) -> None:
-        policy = tuple([0.05] * 4 + [0.125] * 6 + [0.05, 0.0, 0.0])
-        capped = _cap_switch_mass(policy, list(policy), list(range(11)), 0.2)
-        self.assertAlmostEqual(sum(capped), 1.0)
-        self.assertAlmostEqual(sum(capped[4:10]), 0.2)
-        self.assertTrue(all(capped[action] > 0 for action in range(10)))
-
     def test_tactical_potential_rewards_hp_and_status_advantage(self) -> None:
         features = [0] * 492
         for side in (0, 181):
@@ -1463,7 +1575,7 @@ class TransformerTests(unittest.TestCase):
             random.Random(2),
         ).search(server._snapshot(0), sample_actions=False)
         self.assertEqual(result.nodes, 4)
-        self.assertEqual(result.solver, "simultaneous-matrix-tree-rmplus-v1")
+        self.assertEqual(result.solver, "simultaneous-matrix-tree-rmplus-fresh-root-v2")
         self.assertEqual(result.diagnostics["adaptive_deep_selected"], 0)
         self.assertEqual(result.diagnostics["adaptive_reason"], "router-stable-root")
         self.assertIsNotNone(result.payoff_matrix)

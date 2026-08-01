@@ -78,7 +78,7 @@ class ArenaConfig:
     budget: int = 512
     chance_samples_per_joint: int = 1
     search_depth: int = 4
-    regret_iterations: int = 256
+    regret_iterations: int = 2048
     inference_batch_size: int = 256
     max_actions_per_side: int = 13
     tree_expansion_budget: int = 320
@@ -995,7 +995,7 @@ def run_paired_arena(
         "pairs": games // 2,
         "seed_count": config.seed_count,
         "pairing": "same-reset-complete-model-side-swap-v2",
-        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v1",
+        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v2",
         "search": asdict(_joint_search_config(config)),
         **(
             {
@@ -1374,7 +1374,7 @@ def _run_traced_arena_batched(
         candidate_metrics,
         baseline_metrics,
     )
-    result["action_selector"] = "simultaneous-matrix-tree-rmplus-every-decision-v1"
+    result["action_selector"] = "simultaneous-matrix-tree-rmplus-every-decision-v2"
     result["search"] = asdict(_joint_search_config(config))
     return result
 

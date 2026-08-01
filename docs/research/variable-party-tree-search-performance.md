@@ -285,6 +285,16 @@ quality-gated teacher/model alternatives:
     preserves outputs and avoids a measured production regression while showing
     that streams alone are not a substitute for a shorter encoder or cheaper
     leaf evaluation.
+13. **Fresh current-matrix root equilibrium.** V23 retains online RM+ for tree
+    selection but publishes a fresh 2,048-update equilibrium of the final root
+    matrix, removes the non-equilibrium switch cap, resamples sparse chance pairs
+    with a `1/sqrt(n)` schedule, and uses neural priors as progressive deeper
+    exploration. On 128 random 13×13 zero-sum matrices, mean exploitability fell
+    4.26× from 0.03659 to 0.00858 at 16.21 ms/matrix. On sixteen exact complete
+    Pokémon roots, it fell 8× from 0.000849 to 0.000106 while compiled latency
+    rose from 99.09 to 116.78 ms/root. This is solver-quality evidence, not a
+    substitute for paired playing-strength gates. See the
+    [production search-quality review](production-simultaneous-mcts-quality-review.md).
 
 ## Conclusions
 
@@ -305,7 +315,7 @@ quality-gated teacher/model alternatives:
 
 ## Recommended order
 
-1. Run the full 36-matchup v22 benchmark with eager and compiled engines,
+1. Run the full 36-matchup v23 benchmark with eager and compiled engines,
    recording compilation and process startup separately from steady state.
 2. Compare semantic/joint/distilled models over multiple training seeds; do not
    infer strength from latency alone.

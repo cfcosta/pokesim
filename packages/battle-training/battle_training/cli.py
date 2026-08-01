@@ -106,10 +106,11 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--adaptive-force-deep-fraction", type=float, default=0.10)
     parser.add_argument("--adaptive-exploitability-threshold", type=float, default=0.08)
     parser.add_argument("--adaptive-payoff-spread-threshold", type=float, default=0.75)
+    parser.add_argument("--adaptive-max-false-negative-rate", type=float, default=0.10)
     parser.add_argument("--budget-loss-weight", type=float, default=0.05)
     parser.add_argument("--budget-positive-weight", type=float, default=4.0)
     parser.add_argument("--chance-samples-per-joint", type=int, default=1)
-    parser.add_argument("--regret-iterations", type=int, default=256)
+    parser.add_argument("--regret-iterations", type=int, default=2048)
     parser.add_argument("--inference-batch-size", type=int, default=256)
     parser.add_argument("--max-actions-per-side", type=int, default=13)
     parser.add_argument("--replay-window", type=int, default=2)
@@ -168,7 +169,7 @@ def parser() -> argparse.ArgumentParser:
     arena.add_argument("--budget", type=int, default=512)
     arena.add_argument("--chance-samples-per-joint", type=int, default=1)
     arena.add_argument("--search-depth", type=int, default=4)
-    arena.add_argument("--regret-iterations", type=int, default=256)
+    arena.add_argument("--regret-iterations", type=int, default=2048)
     arena.add_argument("--inference-batch-size", type=int, default=256)
     arena.add_argument("--tree-expansion-budget", type=int, default=320)
     arena.add_argument("--tree-exploration", type=float, default=0.10)
@@ -306,6 +307,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             adaptive_payoff_spread_threshold=(
                 arguments.adaptive_payoff_spread_threshold
+            ),
+            adaptive_max_false_negative_rate=(
+                arguments.adaptive_max_false_negative_rate
             ),
             budget_loss_weight=arguments.budget_loss_weight,
             budget_positive_weight=arguments.budget_positive_weight,

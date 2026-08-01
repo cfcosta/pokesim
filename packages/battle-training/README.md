@@ -57,9 +57,12 @@ labeling a raw-policy action. This preserves complete action consideration
 without top-k pruning.
 V18 makes this selector a lineage invariant. V22 additionally changes the
 encoder, policy/value heads, leaf evaluator, and search-budget controller, so no
-earlier checkpoint can resume or warm-start into it. Each controller decision
-still ends in simultaneous RM+ over the complete root; adaptive routing changes
-only whether deeper refinements are requested.
+earlier checkpoint can resume or warm-start into it. V23 keeps that model but
+changes the controller: the final current root matrix receives a fresh 2,048-step
+RM+ solve, chance resampling decays with evidence, and learned priors provide
+progressive deeper exploration. Each controller decision still ends in
+simultaneous RM+ over the complete root; adaptive routing changes only whether
+deeper refinements are requested.
 
 `transformer-train` is the production profile:
 30 iterations of 2,048 training battles, or 61,440 independently reset random
@@ -227,7 +230,7 @@ collection or promotion. It also reports and gates 1–2, 3–4,
 5–6, and unequal-party strata, plus a nine-team fixed campaign suite covering
 Brock through Giovanni and Lance. The campaign teams use canonical natural
 moves and fixed DVs inside the link quotient; they do not claim trainer AI or
-item equivalence. The v16–v22 pipelines separate a persistent shadow learner from the
+item equivalence. The v16–v23 pipelines separate a persistent shadow learner from the
 quality-gated deployed incumbent. Inconclusive evaluations retain the incumbent
 but carry the learner parameters and AdamW state into the next collection
 iteration, allowing small updates to compound without weakening deployment. Each
@@ -245,7 +248,7 @@ without silently deploying it; the new optimizer lineage starts fresh.
 
 ## Model
 
-The v22 encoder maps the 492-field observation into 31 bound semantic entity
+The v23 model retains the v22 encoder, which maps the 492-field observation into 31 bound semantic entity
 tokens plus CLS: twelve party members, two active states, eight move
 descriptors, six switch matchups, two selection records, and one global record.
 Field-specific projections preserve value-to-field binding inside each entity;
@@ -289,12 +292,17 @@ explicit chance outcomes, and immutable child handles. The root matrix is
 complete; progressive deeper matrices represent unvisited pairs with the neural
 leaf prior while mandatory exploration gives every legal action initial support.
 A dense,
-antisymmetric HP/faint/status delta stabilizes one-step leaf estimates, and an
-adaptive 10–30% aggregate switch cap applies only to voluntary-switch targets;
-all six switch actions remain evaluated and retain nonzero support. Common
-random numbers couple sampled chance seeds across actions only inside the estimator;
-each action retains the required `fresh-root-v1` marginal distribution. The old
-sequential Exp3 path and its replay compatibility have been removed.
+antisymmetric HP/faint/status delta stabilizes one-step leaf estimates. No
+post-solver switch cap or other semantic policy override remains: the fresh
+2,048-update RM+ solve alone determines final move and switch mass. Online RM+
+still guides deeper traversal, but the published root target never averages
+strategies from obsolete payoff matrices. Common random numbers couple initial
+sampled chance seeds across actions only inside the estimator; each action
+retains the required `fresh-root-v1` marginal distribution. Additional chance
+sampling follows `max(0.10, 1/sqrt(n))` for pair evidence `n`, and deeper
+exploration progressively mixes RM+ with the normalized neural prior rather
+than uniform noise. The old sequential Exp3 path and its replay compatibility
+have been removed.
 Search-selection entropy, search-chance entropy, real battle entropy, and
 team-generation entropy remain separate.
 

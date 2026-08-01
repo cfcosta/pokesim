@@ -92,6 +92,7 @@ class TransformerPipelineConfig:
     adaptive_force_deep_fraction: float = 0.10
     adaptive_exploitability_threshold: float = 0.08
     adaptive_payoff_spread_threshold: float = 0.75
+    adaptive_max_false_negative_rate: float = 0.10
     budget_loss_weight: float = 0.05
     budget_positive_weight: float = 4.0
     opponent_checkpoints: tuple[str, ...] = ()
@@ -107,7 +108,7 @@ class TransformerPipelineConfig:
     minimum_promotion_score: float = 0.50
     enforce_quality_gate: bool = True
     chance_samples_per_joint: int = 1
-    regret_iterations: int = 256
+    regret_iterations: int = 2048
     inference_batch_size: int = 256
     max_actions_per_side: int = 13
     replay_window: int = 2
@@ -238,7 +239,7 @@ def _pipeline_id(
     balanced_final_species: bool = True, generated_schedule_version: int = 3
 ) -> str:
     del balanced_final_species, generated_schedule_version
-    return "transformer-variable-party-bf16-rmplus-v22-adaptive"
+    return "transformer-variable-party-bf16-rmplus-v23-quality-search"
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
@@ -525,8 +526,8 @@ def _collect_rows_single(
         "schema": FULL_SCHEMA,
         "entropy": ENTROPY,
         "chance": "fresh-root-v1",
-        "solver": "simultaneous-matrix-tree-rmplus-v1",
-        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v1",
+        "solver": "simultaneous-matrix-tree-rmplus-fresh-root-v2",
+        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v2",
         "iteration": iteration,
         "episodes": len(episode_indices),
         "depth": config.search_depth,
@@ -584,6 +585,7 @@ def _collect_rows_single(
     rows: list[dict[str, Any]] = [meta]
     finished = truncated = semantic_divergences = examples = transitions = 0
     deep_search_decisions = root_only_decisions = 0
+    forced_router_samples = forced_router_false_negatives = 0
     mirror_episodes = opponent_episodes = 0
     model_opponent_episodes = heuristic_opponent_episodes = 0
     candidate_player_episodes = candidate_enemy_episodes = 0
@@ -884,6 +886,14 @@ def _collect_rows_single(
                         else:
                             target_kind = "joint-regret-root"
                             root_only_decisions += 1
+                        if (
+                            search_diagnostics.get("adaptive_reason")
+                            == "forced-calibration-sample"
+                        ):
+                            forced_router_samples += 1
+                            forced_router_false_negatives += int(
+                                search_diagnostics.get("deep_search_needed", 0) == 1
+                            )
                     else:
                         raise RuntimeError("available RM+ search lacks a payoff matrix")
                     player_choice = _choice_detail(
@@ -1111,6 +1121,11 @@ def _collect_rows_single(
                     **decision_quality.report(),
                     deep_search_decisions=deep_search_decisions,
                     root_only_decisions=root_only_decisions,
+                    forced_router_samples=forced_router_samples,
+                    forced_router_false_negatives=forced_router_false_negatives,
+                    forced_router_false_negative_rate=(
+                        forced_router_false_negatives / max(1, forced_router_samples)
+                    ),
                     mirror_episodes=mirror_episodes,
                     opponent_episodes=opponent_episodes,
                     model_opponent_episodes=model_opponent_episodes,
@@ -1197,6 +1212,11 @@ def _collect_rows_single(
         "transitions": transitions,
         "deep_search_decisions": deep_search_decisions,
         "root_only_decisions": root_only_decisions,
+        "forced_router_samples": forced_router_samples,
+        "forced_router_false_negatives": forced_router_false_negatives,
+        "forced_router_false_negative_rate": (
+            forced_router_false_negatives / max(1, forced_router_samples)
+        ),
         "mirror_episodes": mirror_episodes,
         "opponent_episodes": opponent_episodes,
         "model_opponent_episodes": model_opponent_episodes,
@@ -1455,6 +1475,12 @@ def _merge_collection_rows(
         "transitions": transitions,
         "deep_search_decisions": total("deep_search_decisions"),
         "root_only_decisions": total("root_only_decisions"),
+        "forced_router_samples": total("forced_router_samples"),
+        "forced_router_false_negatives": total("forced_router_false_negatives"),
+        "forced_router_false_negative_rate": (
+            total("forced_router_false_negatives")
+            / max(1, total("forced_router_samples"))
+        ),
         "mirror_episodes": total("mirror_episodes"),
         "opponent_episodes": total("opponent_episodes"),
         "model_opponent_episodes": total("model_opponent_episodes"),
@@ -2205,8 +2231,15 @@ def _collection_quality(
         reasons.append("mean-battle-length-above-96")
     if metrics["finished"] / episodes < 0.98:
         reasons.append("finished-rate-below-98pct")
+    forced_samples = metrics.get("forced_router_samples", 0)
+    if (
+        forced_samples >= 128
+        and metrics.get("forced_router_false_negative_rate", 0.0)
+        > config.adaptive_max_false_negative_rate
+    ):
+        reasons.append("adaptive-router-false-negative-rate-above-limit")
     return {
-        "version": "completion-integrity-v2",
+        "version": "completion-and-router-integrity-v3",
         "pass": not reasons,
         "reasons": reasons,
     }
@@ -2418,6 +2451,8 @@ def run_transformer_pipeline(
         raise ValueError("adaptive_exploitability_threshold must be nonnegative")
     if config.adaptive_payoff_spread_threshold < 0.0:
         raise ValueError("adaptive_payoff_spread_threshold must be nonnegative")
+    if not 0.0 <= config.adaptive_max_false_negative_rate <= 1.0:
+        raise ValueError("adaptive_max_false_negative_rate must be in [0, 1]")
     if not 0.0 <= config.budget_loss_weight <= 1.0:
         raise ValueError("budget_loss_weight must be in [0, 1]")
     if config.budget_positive_weight < 1.0:
@@ -2673,9 +2708,9 @@ def run_transformer_pipeline(
                     else "progression-weighted-final-species-v1"
                 ),
                 "chance": "fresh-root-v1",
-                "search_solver": "simultaneous-matrix-tree-rmplus-v1",
+                "search_solver": "simultaneous-matrix-tree-rmplus-fresh-root-v2",
                 "action_selector": (
-                    "simultaneous-matrix-tree-rmplus-every-decision-v1"
+                    "simultaneous-matrix-tree-rmplus-every-decision-v2"
                 ),
                 "collection_pairing": "same-reset-opposite-controller-sides-v1",
                 "learning_lineage": "persistent-shadow-v1",
@@ -3103,7 +3138,7 @@ def run_transformer_pipeline(
             config.balanced_final_species, config.generated_schedule_version
         ),
         "device": str(device),
-        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v1",
+        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v2",
         "iterations": config.iterations,
         "selfplay_battles": config.iterations * config.selfplay_episodes,
         "mirror_battles": sum(item["mirror_episodes"] for item in collection),
