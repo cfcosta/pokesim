@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import math
+import multiprocessing
 import random
+import tempfile
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+
+import torch
 
 from . import (
     FULL_CAMPAIGN_COUNT,
@@ -23,7 +28,12 @@ from .decision_quality import (
 )
 from .joint_search import JointSearchConfig, SearchResult, SimultaneousTreeSearch
 from .native import NativeRequestTimeout, SearchServer
-from .network import BattleTransformer
+from .network import (
+    BattleTransformer,
+    TransformerConfig,
+    choose_device,
+    configure_determinism,
+)
 
 _FIXED_DAMAGE_MOVES = {68, 69, 82, 101, 149, 162}
 # Self-buffs, screens, and persistent defensive/utility setup. Charge turns,
@@ -200,11 +210,11 @@ class Replay:
 class _FastArenaEpisode:
     game: int
     candidate_player: bool
-    player: BattleTransformer
-    enemy: BattleTransformer
-    selection_rng: random.Random
-    chance_rng: random.Random
-    budget_rng: random.Random
+    player: BattleTransformer | None
+    enemy: BattleTransformer | None
+    selection_rng: random.Random | None
+    chance_rng: random.Random | None
+    budget_rng: random.Random | None
     player_size: int
     enemy_size: int
     level100: bool
@@ -660,6 +670,126 @@ def _stratified_report(scores: dict[str, list[float]]) -> dict[str, Any]:
     return {"pass": all(row["pass"] for row in strata.values()), "groups": strata}
 
 
+def _arena_batch_spans(games: int, batch_size: int) -> list[tuple[int, int]]:
+    """Slice games into the exact server-level batches a sequential run uses."""
+    if batch_size < 2 or batch_size % 2:
+        raise ValueError("arena batch size must be a positive even number")
+    return [
+        (start, min(games, start + batch_size)) for start in range(0, games, batch_size)
+    ]
+
+
+def _arena_span_partition(
+    spans: list[tuple[int, int]], processes: int
+) -> list[list[tuple[int, int]]]:
+    return [spans[process::processes] for process in range(processes)]
+
+
+def _serialized_arena_model(model: BattleTransformer) -> dict[str, Any]:
+    if not isinstance(model, BattleTransformer):
+        raise TypeError("parallel arena evaluation requires transformer models")
+    return {
+        "config": asdict(model.config),
+        "state": {
+            name: value.detach().cpu() for name, value in model.state_dict().items()
+        },
+        "engine": model.inference_engine,
+    }
+
+
+def _load_arena_model(
+    record: dict[str, Any], device: torch.device
+) -> BattleTransformer:
+    network = BattleTransformer(TransformerConfig(**record["config"])).to(device)
+    network.load_state_dict(record["state"])
+    network.eval()
+    network.configure_inference(record["engine"])
+    return network
+
+
+def _slim_arena_episode(episode: _FastArenaEpisode) -> _FastArenaEpisode:
+    """Keep only the fields the reports read so results pickle cheaply."""
+    return _FastArenaEpisode(
+        game=episode.game,
+        candidate_player=episode.candidate_player,
+        player=None,
+        enemy=None,
+        selection_rng=None,
+        chance_rng=None,
+        budget_rng=None,
+        player_size=episode.player_size,
+        enemy_size=episode.enemy_size,
+        level100=episode.level100,
+        campaign_index=episode.campaign_index,
+        snapshot=None,
+        result=episode.result,
+        stop=episode.stop,
+        reason=episode.reason,
+        initial=episode.initial,
+        final=episode.final,
+        timeline=episode.timeline,
+        inspection=None,
+    )
+
+
+def _arena_process_worker(
+    payload_path: str,
+    config: ArenaConfig,
+    campaign: bool,
+    capture_details: bool,
+    spans: list[tuple[int, int]],
+) -> list[_FastArenaEpisode]:
+    torch.set_num_threads(1)
+    configure_determinism(config.seed)
+    payload = torch.load(payload_path, map_location="cpu", weights_only=False)
+    device = choose_device(payload["device"])
+    candidate = _load_arena_model(payload["candidate"], device)
+    baseline = _load_arena_model(payload["baseline"], device)
+    episodes = _run_fast_arena_spans(
+        candidate, baseline, config, campaign, spans, capture_details
+    )
+    return [_slim_arena_episode(episode) for episode in episodes]
+
+
+def _run_fast_arena_parallel(
+    candidate: BattleTransformer,
+    baseline: BattleTransformer,
+    config: ArenaConfig,
+    campaign: bool,
+    spans: list[tuple[int, int]],
+    capture_details: bool,
+    processes: int,
+) -> list[_FastArenaEpisode]:
+    payload = {
+        "device": str(next(candidate.parameters()).device),
+        "candidate": _serialized_arena_model(candidate),
+        "baseline": _serialized_arena_model(baseline),
+    }
+    partitions = [rows for rows in _arena_span_partition(spans, processes) if rows]
+    episodes: list[_FastArenaEpisode] = []
+    with tempfile.TemporaryDirectory(prefix="arena-eval-") as temporary:
+        payload_path = Path(temporary) / "models.pt"
+        torch.save(payload, payload_path)
+        context = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(
+            max_workers=len(partitions), mp_context=context
+        ) as pool:
+            futures = [
+                pool.submit(
+                    _arena_process_worker,
+                    str(payload_path),
+                    config,
+                    campaign,
+                    capture_details,
+                    rows,
+                )
+                for rows in partitions
+            ]
+            for future in futures:
+                episodes.extend(future.result())
+    return sorted(episodes, key=lambda episode: episode.game)
+
+
 def _run_fast_arena_games(
     candidate: BattleTransformer,
     baseline: BattleTransformer,
@@ -667,16 +797,33 @@ def _run_fast_arena_games(
     campaign: bool,
     batch_size: int = 128,
     capture_details: bool = False,
+    processes: int = 1,
 ) -> list[_FastArenaEpisode]:
-    games = config.games
+    spans = _arena_batch_spans(config.games, batch_size)
+    if processes > 1 and len(spans) > 1:
+        return _run_fast_arena_parallel(
+            candidate, baseline, config, campaign, spans, capture_details, processes
+        )
+    return _run_fast_arena_spans(
+        candidate, baseline, config, campaign, spans, capture_details
+    )
+
+
+def _run_fast_arena_spans(
+    candidate: BattleTransformer,
+    baseline: BattleTransformer,
+    config: ArenaConfig,
+    campaign: bool,
+    spans: list[tuple[int, int]],
+    capture_details: bool,
+) -> list[_FastArenaEpisode]:
     budget = config.budget
     seed = config.seed
     seed_count = config.seed_count
     completed: list[_FastArenaEpisode] = []
     server = SearchServer()
     try:
-        for batch_start in range(0, games, batch_size):
-            batch_stop = min(games, batch_start + batch_size)
+        for batch_start, batch_stop in spans:
             episodes = []
             for game in range(batch_start, batch_stop):
                 pair = game // 2
@@ -859,9 +1006,12 @@ def run_paired_arena(
     *,
     campaign: bool = False,
     capture_details: bool = False,
+    processes: int = 1,
 ) -> dict[str, Any]:
     """RM+-selected paired evaluation with nonfinishes scored as losses."""
     games = config.games
+    if not 1 <= processes <= 16:
+        raise ValueError("paired arena processes must be in 1..16")
     if games < 2 or games % 2:
         raise ValueError("paired arena games must be a positive even number")
     if config.seed_count < 2 or games < 2 * config.seed_count:
@@ -888,6 +1038,7 @@ def run_paired_arena(
         config,
         campaign,
         capture_details=capture_details,
+        processes=processes,
     )
     for pair in range(games // 2):
         first, second = episodes[2 * pair : 2 * pair + 2]
@@ -1034,11 +1185,15 @@ def run_campaign_arena(
     candidate: BattleTransformer,
     baseline: BattleTransformer,
     config: ArenaConfig,
+    *,
+    processes: int = 1,
 ) -> dict[str, Any]:
     """Evaluate both model sides across the fixed patched campaign suite."""
     if config.games < 2 * len(_CAMPAIGN_NAMES):
         raise ValueError("campaign arena requires at least one pair per fixed team")
-    return run_paired_arena(candidate, baseline, config, campaign=True)
+    return run_paired_arena(
+        candidate, baseline, config, campaign=True, processes=processes
+    )
 
 
 def _traced_summary(

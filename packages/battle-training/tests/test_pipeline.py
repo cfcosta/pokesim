@@ -13,14 +13,23 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
+
 from battle_training.arena import (
+    ArenaConfig,
     SkillMetrics,
+    _arena_batch_spans,
+    _arena_span_partition,
     _evaluation_level100,
     _evaluation_party_sizes,
+    _FastArenaEpisode,
+    _load_arena_model,
     _mean_ci95,
     _paired_coordinates,
+    _serialized_arena_model,
     _setup_move_name,
+    _slim_arena_episode,
     _update_side_metrics,
+    run_paired_arena,
     skill_probe_report,
 )
 from battle_training.artifacts import (
@@ -938,6 +947,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.deep_search_fraction, 1.0)
         self.assertEqual(arguments.actor_batch_size, 64)
         self.assertEqual(arguments.actor_processes, 8)
+        self.assertEqual(arguments.eval_processes, 8)
         self.assertEqual(arguments.token_group_size, 1)
         self.assertEqual(arguments.token_layout, "semantic-entity-v1")
         self.assertTrue(arguments.joint_policy_heads)
@@ -1113,6 +1123,143 @@ class TransformerTests(unittest.TestCase):
         )
         low, high = _mean_ci95([1.0] * 512)
         self.assertEqual((low, high), (1.0, 1.0))
+
+    def test_arena_batch_spans_align_with_sequential_batching(self) -> None:
+        self.assertEqual(
+            _arena_batch_spans(288, 128), [(0, 128), (128, 256), (256, 288)]
+        )
+        self.assertEqual(_arena_batch_spans(256, 128), [(0, 128), (128, 256)])
+        self.assertEqual(_arena_batch_spans(4, 128), [(0, 4)])
+        with self.assertRaisesRegex(ValueError, "even"):
+            _arena_batch_spans(288, 127)
+
+    def test_arena_span_partition_covers_every_batch_once(self) -> None:
+        spans = _arena_batch_spans(2048, 128)
+        partitions = _arena_span_partition(spans, 8)
+        self.assertEqual(len(partitions), 8)
+        self.assertEqual(sorted(span for rows in partitions for span in rows), spans)
+        self.assertEqual(partitions[0][:2], [(0, 128), (1024, 1152)])
+        self.assertEqual(partitions[1][0], (128, 256))
+        ragged = _arena_span_partition(_arena_batch_spans(288, 128), 8)
+        self.assertEqual([len(rows) for rows in ragged], [1, 1, 1, 0, 0, 0, 0, 0])
+
+    def test_arena_worker_payload_round_trips_transformer_models(self) -> None:
+        network = BattleTransformer(
+            TransformerConfig(
+                feature_count=8,
+                action_count=2,
+                d_model=8,
+                heads=2,
+                layers=1,
+                feedforward=16,
+                precision="fp32",
+            )
+        )
+        record = _serialized_arena_model(network)
+        loaded = _load_arena_model(record, torch.device("cpu"))
+        self.assertIsInstance(loaded, BattleTransformer)
+        self.assertFalse(loaded.training)
+        self.assertEqual(loaded.inference_engine, network.inference_engine)
+        for name, value in network.state_dict().items():
+            self.assertTrue(torch.equal(value, loaded.state_dict()[name]))
+        with self.assertRaises(TypeError):
+            _serialized_arena_model(_ToyNetwork())
+
+    def test_parallel_arena_episodes_travel_without_models_or_native_state(
+        self,
+    ) -> None:
+        episode = _FastArenaEpisode(
+            game=3,
+            candidate_player=False,
+            player=object(),
+            enemy=object(),
+            selection_rng=random.Random(0),
+            chance_rng=random.Random(1),
+            budget_rng=random.Random(2),
+            player_size=6,
+            enemy_size=5,
+            level100=True,
+            campaign_index=4,
+            snapshot=object(),
+            result=1,
+            stop="finished",
+            reason=None,
+            initial={"request": "battle"},
+            final={"request": "battle"},
+            timeline=[{"turn": 1}],
+            inspection={"request": "battle"},
+        )
+        slim = _slim_arena_episode(episode)
+        self.assertEqual(
+            (
+                slim.game,
+                slim.candidate_player,
+                slim.player_size,
+                slim.enemy_size,
+                slim.level100,
+                slim.campaign_index,
+                slim.result,
+                slim.stop,
+                slim.reason,
+            ),
+            (3, False, 6, 5, True, 4, 1, "finished", None),
+        )
+        self.assertEqual(slim.initial, {"request": "battle"})
+        self.assertEqual(slim.final, {"request": "battle"})
+        self.assertEqual(slim.timeline, [{"turn": 1}])
+        for name in (
+            "player",
+            "enemy",
+            "selection_rng",
+            "chance_rng",
+            "budget_rng",
+            "snapshot",
+            "inspection",
+        ):
+            self.assertIsNone(getattr(slim, name))
+        pickle.dumps(slim)
+
+    def test_paired_arena_rejects_invalid_process_counts(self) -> None:
+        config = ArenaConfig(games=8, seed_count=2)
+        for processes in (0, 17):
+            with self.assertRaisesRegex(ValueError, "processes"):
+                run_paired_arena(
+                    _ToyNetwork(), _ToyNetwork(), config, processes=processes
+                )
+
+    def test_resume_defaults_legacy_runs_to_sequential_evaluation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = asdict(
+                TransformerPipelineConfig(
+                    iterations=1,
+                    selfplay_episodes=8,
+                    arena_episodes=8,
+                    episode_budget=64,
+                    search_depth=1,
+                    epochs=1,
+                    batch_size=8,
+                    learning_rate=1e-3,
+                    weight_decay=0.0,
+                    seed=1,
+                    device="cpu",
+                    d_model=8,
+                    heads=2,
+                    layers=1,
+                    feedforward=16,
+                )
+            )
+            config.pop("eval_processes")
+            write_json(
+                root / "run.json",
+                {
+                    "pipeline": _pipeline_id(),
+                    "profile": "full-link-party-1to6-perfect-v2",
+                    "schema": "full-link-party-state-v4",
+                    "config": config,
+                },
+            )
+            self.assertEqual(_resume_config(root).eval_processes, 1)
 
     def test_skill_probes_observe_switching_without_gating_it(self) -> None:
         skills = {

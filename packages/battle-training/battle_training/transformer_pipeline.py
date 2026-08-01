@@ -124,6 +124,7 @@ class TransformerPipelineConfig:
     deep_search_fraction: float = 1.0
     actor_batch_size: int = 16
     actor_processes: int = 1
+    eval_processes: int = 1
     precision: str = "bf16"
     inference_engine: str = "auto"
     warm_start_checkpoint: str | None = None
@@ -2473,6 +2474,8 @@ def run_transformer_pipeline(
         raise ValueError("actor_batch_size must be positive")
     if not 1 <= config.actor_processes <= min(16, config.selfplay_episodes):
         raise ValueError("actor_processes must be in 1..min(16, selfplay_episodes)")
+    if not 1 <= config.eval_processes <= 16:
+        raise ValueError("eval_processes must be in 1..16")
     if config.precision not in {"bf16", "fp32"}:
         raise ValueError("precision must be bf16 or fp32")
     if config.token_layout not in {"scalar-v1", "semantic-entity-v1"}:
@@ -2867,6 +2870,7 @@ def run_transformer_pipeline(
                 config.promotion_seed_count,
             ),
             capture_details=True,
+            processes=config.eval_processes,
         )
         promotion_detail_dir = root / "matches" / f"promotion-{iteration:03d}"
         for battle in promotion["battles"]:
@@ -2946,6 +2950,7 @@ def run_transformer_pipeline(
                 config.seed + 85_000_000 + iteration * 10_019,
                 config.campaign_seed_count,
             ),
+            processes=config.eval_processes,
         )
         promotion_score = promotion["score_with_nonfinishes_as_losses"]
         confidence_low = promotion["paired_score_ci95"][0]
