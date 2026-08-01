@@ -97,6 +97,17 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.set_defaults(distilled_leaf_evaluator=True)
     parser.add_argument("--leaf-hidden", type=int, default=64)
     parser.add_argument("--leaf-loss-weight", type=float, default=0.25)
+    parser.add_argument(
+        "--no-adaptive-search", action="store_false", dest="adaptive_search"
+    )
+    parser.set_defaults(adaptive_search=True)
+    parser.add_argument("--adaptive-warmup-iterations", type=int, default=1)
+    parser.add_argument("--adaptive-deep-threshold", type=float, default=0.55)
+    parser.add_argument("--adaptive-force-deep-fraction", type=float, default=0.10)
+    parser.add_argument("--adaptive-exploitability-threshold", type=float, default=0.08)
+    parser.add_argument("--adaptive-payoff-spread-threshold", type=float, default=0.75)
+    parser.add_argument("--budget-loss-weight", type=float, default=0.05)
+    parser.add_argument("--budget-positive-weight", type=float, default=4.0)
     parser.add_argument("--chance-samples-per-joint", type=int, default=1)
     parser.add_argument("--regret-iterations", type=int, default=256)
     parser.add_argument("--inference-batch-size", type=int, default=256)
@@ -168,6 +179,14 @@ def parser() -> argparse.ArgumentParser:
     arena.add_argument("--tree-convergence-tolerance", type=float, default=0.005)
     arena.add_argument("--tree-convergence-patience", type=int, default=8)
     arena.add_argument("--redundant-action-prior-scale", type=float, default=0.25)
+    arena.add_argument(
+        "--no-adaptive-search", action="store_false", dest="adaptive_search"
+    )
+    arena.set_defaults(adaptive_search=True)
+    arena.add_argument("--adaptive-deep-threshold", type=float, default=0.55)
+    arena.add_argument("--adaptive-force-deep-fraction", type=float, default=0.10)
+    arena.add_argument("--adaptive-exploitability-threshold", type=float, default=0.08)
+    arena.add_argument("--adaptive-payoff-spread-threshold", type=float, default=0.75)
     arena.add_argument("--seed", type=int, default=90210)
     arena.add_argument("--device", default="auto")
     arena.add_argument(
@@ -219,6 +238,15 @@ def main(argv: list[str] | None = None) -> int:
                 tree_convergence_tolerance=arguments.tree_convergence_tolerance,
                 tree_convergence_patience=arguments.tree_convergence_patience,
                 redundant_action_prior_scale=(arguments.redundant_action_prior_scale),
+                adaptive_search=arguments.adaptive_search,
+                adaptive_deep_threshold=arguments.adaptive_deep_threshold,
+                adaptive_force_deep_fraction=(arguments.adaptive_force_deep_fraction),
+                adaptive_exploitability_threshold=(
+                    arguments.adaptive_exploitability_threshold
+                ),
+                adaptive_payoff_spread_threshold=(
+                    arguments.adaptive_payoff_spread_threshold
+                ),
                 seed=arguments.seed,
                 replay_games=arguments.replay_games,
                 seed_count=arguments.seed_count,
@@ -269,6 +297,18 @@ def main(argv: list[str] | None = None) -> int:
             distilled_leaf_evaluator=arguments.distilled_leaf_evaluator,
             leaf_hidden=arguments.leaf_hidden,
             leaf_loss_weight=arguments.leaf_loss_weight,
+            adaptive_search=arguments.adaptive_search,
+            adaptive_warmup_iterations=arguments.adaptive_warmup_iterations,
+            adaptive_deep_threshold=arguments.adaptive_deep_threshold,
+            adaptive_force_deep_fraction=arguments.adaptive_force_deep_fraction,
+            adaptive_exploitability_threshold=(
+                arguments.adaptive_exploitability_threshold
+            ),
+            adaptive_payoff_spread_threshold=(
+                arguments.adaptive_payoff_spread_threshold
+            ),
+            budget_loss_weight=arguments.budget_loss_weight,
+            budget_positive_weight=arguments.budget_positive_weight,
             opponent_checkpoints=tuple(
                 str(path.resolve()) for path in arguments.opponent_checkpoint
             ),

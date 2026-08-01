@@ -39,10 +39,14 @@ The smoke command performs the complete loop:
 9. writes SHA-256 manifests; and
 10. regenerates the first search shard byte for byte from checkpoint zero.
 
-Default training searches every real decision with an adaptive
-192–320-transition matrix-valued simultaneous tree. It may stop after eight
-stable average-strategy updates once the full depth has been reached. The root
-evaluates every legal joint action; deeper nodes begin with two cyclic
+Default training searches every real decision with a matrix-valued
+simultaneous tree. The root always evaluates every legal joint action. After one
+full-search calibration iteration, a learned budget head predicts whether the
+320-transition teacher would materially change the complete-root RM+ target.
+High root exploitability or joint-payoff uncertainty forces deep search, and a
+separate budget RNG forces 10% of otherwise skipped decisions deep to keep
+measuring false negatives. Deep searches may also stop after eight stable
+average-strategy updates once full depth is reached. Deeper nodes begin with two cyclic
 joint-action rotations that cover every legal move and switch, then sample
 additional pairs and fresh chance outcomes under persistent regret matching+.
 Every completed neural-model decision therefore carries an RM+ average-strategy
@@ -51,10 +55,11 @@ selection has been removed. If a search encounters semantic divergence before
 it can produce an RM+ strategy, the episode fails closed without selecting or
 labeling a raw-policy action. This preserves complete action consideration
 without top-k pruning.
-V18 makes this selector a lineage invariant. V16/V17 artifacts cannot resume
-under V18; same-schema learner and incumbent weights may only enter through the
-existing explicit warm-start paths with a fresh optimizer and new immutable
-lineage.
+V18 makes this selector a lineage invariant. V22 additionally changes the
+encoder, policy/value heads, leaf evaluator, and search-budget controller, so no
+earlier checkpoint can resume or warm-start into it. Each controller decision
+still ends in simultaneous RM+ over the complete root; adaptive routing changes
+only whether deeper refinements are requested.
 
 `transformer-train` is the production profile:
 30 iterations of 2,048 training battles, or 61,440 independently reset random
@@ -222,7 +227,7 @@ collection or promotion. It also reports and gates 1–2, 3–4,
 5–6, and unequal-party strata, plus a nine-team fixed campaign suite covering
 Brock through Giovanni and Lance. The campaign teams use canonical natural
 moves and fixed DVs inside the link quotient; they do not claim trainer AI or
-item equivalence. The v16–v21 pipelines separate a persistent shadow learner from the
+item equivalence. The v16–v22 pipelines separate a persistent shadow learner from the
 quality-gated deployed incumbent. Inconclusive evaluations retain the incumbent
 but carry the learner parameters and AdamW state into the next collection
 iteration, allowing small updates to compound without weakening deployment. Each
@@ -240,14 +245,14 @@ without silently deploying it; the new optimizer lineage starts fresh.
 
 ## Model
 
-The v21 encoder maps the 492-field observation into 31 bound semantic entity
+The v22 encoder maps the 492-field observation into 31 bound semantic entity
 tokens plus CLS: twelve party members, two active states, eight move
 descriptors, six switch matchups, two selection records, and one global record.
 Field-specific projections preserve value-to-field binding inside each entity;
 species and move embeddings retain categorical identity. This replaces the
 493-token scalar self-attention path while leaving it available as
 `--token-layout scalar-v1` for differential checks. The production semantic
-network has 937,820 parameters and a 32-token sequence. The v4 schema retains
+network has 937,949 parameters and a 32-token sequence. The v4 schema retains
 v3's move descriptors,
 current type-effectiveness values, offensive/incoming matchup scores, and Mimic
 continuation action. It appends both party counts and twelve presence bits while
@@ -267,7 +272,9 @@ encode their own canonical view, preserving each model's policy and value.
 Ordinary successor leaves use a 64-hidden-unit MLP trained against both terminal
 returns and the detached main value. Roots and expanded nodes still use the full
 semantic encoder for priors and values. The distilled leaf is an estimator only;
-Lean remains the transition and terminal authority.
+Lean remains the transition and terminal authority. A one-logit budget head is
+trained only from witnessed full-search disagreement and is consumed after the
+complete root matrix has already been solved.
 
 Encoder and head matrix operations run under BF16 autocast. Both head outputs
 are immediately promoted to FP32 before masks, softmax, RM+ search, losses, or
@@ -307,9 +314,12 @@ across compatible independent roots. Deeper progressive simulations are
 resumable frontiers: native requests and leaf rows are pooled across roots and
 model identities, then deterministic cohorts overlap Lean mechanics with GPU
 inference. Independent search, chance, and deep-tier RNG streams are retained.
-`--deep-search-fraction` optionally stops a randomized fraction after the complete
-root while labeling those targets `joint-regret-root`; its default remains 1.0
-pending equal-budget quality gates.
+Random deep-search tiers have been removed. `--deep-search-fraction` is fixed at
+1.0 for compatibility, while the learned router labels full-search examples by
+whether depth changed an argmax, moved the two-side policy by at least 0.25, or
+changed root value by at least 0.10. Root-only decisions receive no fabricated
+counterfactual label. Positive examples receive 4× classifier weight; held-out
+recall, precision, Brier score, and forced-calibration outcomes remain explicit.
 
 Promotion, campaign, probe, and final arenas use the same RM+ tree parameters
 and every-decision action selector as collection. They keep live games on one

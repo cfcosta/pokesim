@@ -117,6 +117,7 @@ class TransformerConfig:
     joint_policy_heads: bool = False
     distilled_leaf_evaluator: bool = False
     leaf_hidden: int = 64
+    adaptive_budget_head: bool = False
 
 
 class BattleTransformer(nn.Module):
@@ -195,6 +196,8 @@ class BattleTransformer(nn.Module):
                 nn.Linear(config.leaf_hidden, 1),
                 nn.Tanh(),
             )
+        if config.adaptive_budget_head:
+            self.budget = nn.Linear(config.d_model, 1)
         masks = torch.arange(1 << config.action_count, dtype=torch.long).unsqueeze(1)
         actions = torch.arange(config.action_count, dtype=torch.long).unsqueeze(0)
         self.register_buffer(
@@ -231,6 +234,9 @@ class BattleTransformer(nn.Module):
         if config.distilled_leaf_evaluator:
             nn.init.zeros_(self.leaf_value[-2].weight)
             nn.init.zeros_(self.leaf_value[-2].bias)
+        if config.adaptive_budget_head:
+            nn.init.zeros_(self.budget.weight)
+            nn.init.zeros_(self.budget.bias)
 
     def _initialize_policy(self, head: nn.Linear) -> None:
         nn.init.zeros_(head.weight)
@@ -382,6 +388,25 @@ class BattleTransformer(nn.Module):
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
             values = self._leaf_forward_impl(features)
         return values.float()
+
+    def _budget_forward_impl(self, features: Tensor) -> Tensor:
+        if not self.config.adaptive_budget_head:
+            raise RuntimeError("adaptive budget head is disabled")
+        return self.budget(self._encode_impl(features)).squeeze(-1)
+
+    def budget_forward(self, features: Tensor) -> Tensor:
+        if features.ndim != 2 or features.shape[1] != self.config.feature_count:
+            raise ValueError(f"expected [batch,{self.config.feature_count}] features")
+        if self.config.precision == "fp32":
+            return self._budget_forward_impl(features)
+        device_type = features.device.type
+        if device_type == "cuda" and not torch.cuda.is_bf16_supported():
+            raise RuntimeError("bf16 precision requires a bf16-capable CUDA device")
+        if device_type not in {"cpu", "cuda"}:
+            raise RuntimeError(f"bf16 precision is unsupported on {device_type}")
+        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+            logits = self._budget_forward_impl(features)
+        return logits.float()
 
     def forward_joint(self, features: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         if features.ndim != 2 or features.shape[1] != self.config.feature_count:
@@ -791,6 +816,19 @@ class BattleTransformer(nn.Module):
 
     def evaluate_leaf(self, features: Sequence[Sequence[int]]) -> list[float]:
         return self.begin_evaluate_leaf(features).result()
+
+    @torch.inference_mode()
+    def evaluate_budget(self, features: Sequence[Sequence[int]]) -> list[float]:
+        if not self.config.adaptive_budget_head:
+            raise RuntimeError("adaptive budget head is disabled")
+        feature_array = np.stack(features)
+        if feature_array.ndim != 2:
+            raise ValueError("budget evaluation requires a rectangular feature batch")
+        device = next(self.parameters()).device
+        tensor = self._staged_tensor(
+            feature_array, self._pinned_feature_buffers, device
+        ).long()
+        return torch.sigmoid(self.budget_forward(tensor)).cpu().tolist()
 
     def detached_copy(self, device: torch.device) -> BattleTransformer:
         clone = BattleTransformer(self.config).to(device)

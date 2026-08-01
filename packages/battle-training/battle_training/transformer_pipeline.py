@@ -86,6 +86,14 @@ class TransformerPipelineConfig:
     distilled_leaf_evaluator: bool = True
     leaf_hidden: int = 64
     leaf_loss_weight: float = 0.25
+    adaptive_search: bool = True
+    adaptive_warmup_iterations: int = 1
+    adaptive_deep_threshold: float = 0.55
+    adaptive_force_deep_fraction: float = 0.10
+    adaptive_exploitability_threshold: float = 0.08
+    adaptive_payoff_spread_threshold: float = 0.75
+    budget_loss_weight: float = 0.05
+    budget_positive_weight: float = 4.0
     opponent_checkpoints: tuple[str, ...] = ()
     opponent_fraction: float = 0.5
     model_opponent_share: float = 0.5
@@ -134,7 +142,11 @@ class _HeuristicNetwork:
         self.config = type(
             "HeuristicConfig",
             (),
-            {"action_count": 13, "distilled_leaf_evaluator": True},
+            {
+                "action_count": 13,
+                "distilled_leaf_evaluator": True,
+                "adaptive_budget_head": True,
+            },
         )()
 
     def evaluate(
@@ -174,6 +186,11 @@ class _HeuristicNetwork:
     @staticmethod
     def evaluate_leaf(features: list[tuple[int, ...]]) -> list[float]:
         return [0.0] * len(features)
+
+    @staticmethod
+    def evaluate_budget(features: list[tuple[int, ...]]) -> list[float]:
+        # Unknown heuristic-controller counterfactuals remain fully searched.
+        return [1.0] * len(features)
 
 
 def _heuristic_population() -> list[tuple[_HeuristicNetwork, str]]:
@@ -221,7 +238,7 @@ def _pipeline_id(
     balanced_final_species: bool = True, generated_schedule_version: int = 3
 ) -> str:
     del balanced_final_species, generated_schedule_version
-    return "transformer-variable-party-bf16-rmplus-v21-distilled-leaf"
+    return "transformer-variable-party-bf16-rmplus-v22-adaptive"
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
@@ -361,6 +378,8 @@ def _new_search(
     chance_rng: random.Random,
     *,
     deep: bool = True,
+    adaptive: bool = False,
+    budget_rng: random.Random | None = None,
 ) -> SimultaneousTreeSearch:
     return SimultaneousTreeSearch(
         server,
@@ -381,9 +400,15 @@ def _new_search(
             config.tree_convergence_tolerance,
             config.tree_convergence_patience,
             config.redundant_action_prior_scale,
+            adaptive,
+            config.adaptive_deep_threshold,
+            config.adaptive_force_deep_fraction,
+            config.adaptive_exploitability_threshold,
+            config.adaptive_payoff_spread_threshold,
         ),
         selection_rng,
         chance_rng,
+        budget_rng,
     )
 
 
@@ -412,6 +437,11 @@ def _arena_config(
         tree_convergence_tolerance=config.tree_convergence_tolerance,
         tree_convergence_patience=config.tree_convergence_patience,
         redundant_action_prior_scale=config.redundant_action_prior_scale,
+        adaptive_search=config.adaptive_search,
+        adaptive_deep_threshold=config.adaptive_deep_threshold,
+        adaptive_force_deep_fraction=config.adaptive_force_deep_fraction,
+        adaptive_exploitability_threshold=(config.adaptive_exploitability_threshold),
+        adaptive_payoff_spread_threshold=config.adaptive_payoff_spread_threshold,
         seed=seed,
         replay_games=replay_games,
         seed_count=seed_count,
@@ -527,7 +557,13 @@ def _collect_rows_single(
         "tree_convergence_tolerance": config.tree_convergence_tolerance,
         "tree_convergence_patience": config.tree_convergence_patience,
         "deep_search_fraction": config.deep_search_fraction,
-        "deep_search_schedule": "independent-episode-tier-v1",
+        "deep_search_schedule": "learned-root-disagreement-router-v1",
+        "adaptive_search": config.adaptive_search,
+        "adaptive_warmup_iterations": config.adaptive_warmup_iterations,
+        "adaptive_deep_threshold": config.adaptive_deep_threshold,
+        "adaptive_force_deep_fraction": config.adaptive_force_deep_fraction,
+        "adaptive_exploitability_threshold": (config.adaptive_exploitability_threshold),
+        "adaptive_payoff_spread_threshold": (config.adaptive_payoff_spread_threshold),
         "redundant_action_prior_scale": config.redundant_action_prior_scale,
         "redundant_action_prior": "non-excluding-static-context-v1",
         "decision_quality_version": "static-active-context-v1",
@@ -771,10 +807,6 @@ def _collect_rows_single(
                             species_counts[key] = species_counts.get(key, 0) + 1
             for decision in range(config.episode_budget):
                 results: dict[int, SearchResult] = {}
-                deep_by_episode = {
-                    actor.episode: actor.tier_rng.random() < config.deep_search_fraction
-                    for actor in active
-                }
                 actor_results = SimultaneousTreeSearch.search_many(
                     [
                         _new_search(
@@ -784,7 +816,12 @@ def _collect_rows_single(
                             config,
                             actor.selection_rng,
                             actor.chance_rng,
-                            deep=deep_by_episode[actor.episode],
+                            deep=True,
+                            adaptive=(
+                                config.adaptive_search
+                                and iteration > config.adaptive_warmup_iterations
+                            ),
+                            budget_rng=actor.tier_rng,
                         )
                         for actor in active
                     ],
@@ -839,8 +876,9 @@ def _collect_rows_single(
                     result = results[actor.episode]
                     snapshot = actor.snapshot
                     valid_search_target = result.payoff_matrix is not None
+                    search_diagnostics = result.diagnostics or {}
                     if valid_search_target:
-                        if deep_by_episode[actor.episode]:
+                        if int(search_diagnostics.get("adaptive_deep_selected", 1)):
                             target_kind = "joint-regret"
                             deep_search_decisions += 1
                         else:
@@ -848,7 +886,6 @@ def _collect_rows_single(
                             root_only_decisions += 1
                     else:
                         raise RuntimeError("available RM+ search lacks a payoff matrix")
-                    search_diagnostics = result.diagnostics or {}
                     player_choice = _choice_detail(
                         actor.inspection, "player", result.player_action
                     )
@@ -1545,7 +1582,9 @@ def _collect_rows(
         return _merge_collection_rows(path, worker_paths, metrics, config)
 
 
-ExampleTensors = tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]
+ExampleTensors = tuple[
+    Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor
+]
 
 
 def _rows_to_examples(rows: list[dict[str, Any]]) -> ExampleTensors:
@@ -1570,6 +1609,12 @@ def _rows_to_examples(rows: list[dict[str, Any]]) -> ExampleTensors:
     policy_weights = [
         0.0 if row.get("target_kind") == "policy-rollout" else 1.0 for row in rows
     ]
+    budget_labels = [
+        float(max(0, int(row.get("deep_search_needed", -1)))) for row in rows
+    ]
+    budget_weights = [
+        1.0 if int(row.get("deep_search_needed", -1)) in {0, 1} else 0.0 for row in rows
+    ]
     return (
         torch.tensor(features, dtype=torch.long),
         torch.tensor(policies, dtype=torch.float32),
@@ -1578,6 +1623,8 @@ def _rows_to_examples(rows: list[dict[str, Any]]) -> ExampleTensors:
         torch.tensor(legal_masks, dtype=torch.bool),
         torch.tensor(opponent_legal_masks, dtype=torch.bool),
         torch.tensor(policy_weights, dtype=torch.float32),
+        torch.tensor(budget_labels, dtype=torch.float32),
+        torch.tensor(budget_weights, dtype=torch.float32),
     )
 
 
@@ -1639,6 +1686,8 @@ def _heldout_diagnostics(
         legal_masks,
         opponent_legal_masks,
         policy_weights,
+        budget_labels,
+        budget_weights,
     ) = examples
     device = next(network.parameters()).device
     squared_errors: list[float] = []
@@ -1648,6 +1697,9 @@ def _heldout_diagnostics(
     target_entropy = 0.0
     top_action_matches = 0
     weighted_policy_rows = 0.0
+    budget_loss_total = budget_brier_total = 0.0
+    budget_correct = budget_rows = budget_positive = 0.0
+    budget_true_positive = budget_false_positive = budget_false_negative = 0.0
     network.eval()
     with torch.inference_mode():
         for start in range(0, len(features), batch_size):
@@ -1659,6 +1711,8 @@ def _heldout_diagnostics(
             batch_legal = legal_masks[start:stop].to(device)
             batch_opponent_legal = opponent_legal_masks[start:stop].to(device)
             batch_weights = policy_weights[start:stop].to(device)
+            batch_budget_labels = budget_labels[start:stop].to(device)
+            batch_budget_weights = budget_weights[start:stop].to(device)
             if network.config.joint_policy_heads:
                 logits, opponent_logits, values = network.forward_joint(batch_features)
             else:
@@ -1701,6 +1755,38 @@ def _heldout_diagnostics(
             squared_errors.extend(
                 (values - batch_value).square().float().cpu().tolist()
             )
+            if network.config.adaptive_budget_head:
+                budget_logits = network.budget_forward(batch_features)
+                budget_probabilities = torch.sigmoid(budget_logits)
+                budget_losses = torch.nn.functional.binary_cross_entropy_with_logits(
+                    budget_logits, batch_budget_labels, reduction="none"
+                )
+                budget_loss_total += float((budget_losses * batch_budget_weights).sum())
+                budget_brier_total += float(
+                    (
+                        (budget_probabilities - batch_budget_labels).square()
+                        * batch_budget_weights
+                    ).sum()
+                )
+                budget_prediction = budget_probabilities.ge(0.5)
+                budget_target = batch_budget_labels.bool()
+                budget_valid = batch_budget_weights.bool()
+                budget_correct += float(
+                    (budget_prediction.eq(budget_target) * budget_valid).sum()
+                )
+                budget_true_positive += float(
+                    (budget_prediction & budget_target & budget_valid).sum()
+                )
+                budget_false_positive += float(
+                    (budget_prediction & ~budget_target & budget_valid).sum()
+                )
+                budget_false_negative += float(
+                    (~budget_prediction & budget_target & budget_valid).sum()
+                )
+                budget_positive += float(
+                    (batch_budget_labels * batch_budget_weights).sum()
+                )
+                budget_rows += float(batch_budget_weights.sum())
             if network.config.distilled_leaf_evaluator:
                 leaf_values = network.leaf_forward(batch_features)
                 leaf_squared_errors.extend(
@@ -1742,6 +1828,27 @@ def _heldout_diagnostics(
         "policy_kl": mean_cross_entropy - mean_target_entropy,
         "policy_top_action_agreement": top_action_matches
         / max(1.0, weighted_policy_rows),
+        "budget_rows": int(budget_rows),
+        "budget_positive_rate": (
+            budget_positive / budget_rows if budget_rows else None
+        ),
+        "budget_binary_cross_entropy": (
+            budget_loss_total / budget_rows if budget_rows else None
+        ),
+        "budget_brier": budget_brier_total / budget_rows if budget_rows else None,
+        "budget_accuracy": budget_correct / budget_rows if budget_rows else None,
+        "budget_recall": (
+            budget_true_positive
+            / max(1.0, budget_true_positive + budget_false_negative)
+            if budget_rows
+            else None
+        ),
+        "budget_precision": (
+            budget_true_positive
+            / max(1.0, budget_true_positive + budget_false_positive)
+            if budget_rows
+            else None
+        ),
     }
 
 
@@ -1801,12 +1908,16 @@ def _train_network(
         legal_masks,
         opponent_legal_masks,
         policy_weights,
+        budget_labels,
+        budget_weights,
     ) = training_examples
     generator = torch.Generator(device="cpu").manual_seed(config.seed + iteration)
     trunk_parameters = [
         parameter
         for name, parameter in network.named_parameters()
-        if not name.startswith(("policy.", "opponent_policy.", "value.", "leaf_value."))
+        if not name.startswith(
+            ("policy.", "opponent_policy.", "value.", "leaf_value.", "budget.")
+        )
     ]
     heldout_before = _heldout_diagnostics(
         network, heldout_examples, heldout_battles, config.inference_batch_size
@@ -1816,7 +1927,7 @@ def _train_network(
     diagnostic_epochs: list[dict[str, Any]] = []
     for epoch in range(config.epochs):
         permutation = torch.randperm(len(features), generator=generator)
-        policy_total = value_total = leaf_total = total_total = 0.0
+        policy_total = value_total = leaf_total = budget_total = total_total = 0.0
         gradient_samples: list[tuple[float, float, float | None]] = []
         batches = 0
         for start in range(0, len(features), config.batch_size):
@@ -1828,6 +1939,8 @@ def _train_network(
             batch_legal = legal_masks[indexes].to(device)
             batch_opponent_legal = opponent_legal_masks[indexes].to(device)
             batch_policy_weight = policy_weights[indexes].to(device)
+            batch_budget_labels = budget_labels[indexes].to(device)
+            batch_budget_weights = budget_weights[indexes].to(device)
             if network.config.joint_policy_heads:
                 logits, opponent_logits, values = network.forward_joint(batch_features)
             else:
@@ -1858,10 +1971,24 @@ def _train_network(
                 leaf_loss = 0.5 * (leaf_target_loss + leaf_distillation_loss)
             else:
                 leaf_loss = value_loss.new_zeros(())
+            if network.config.adaptive_budget_head and batch_budget_weights.any():
+                budget_logits = network.budget_forward(batch_features)
+                budget_rows = torch.nn.functional.binary_cross_entropy_with_logits(
+                    budget_logits,
+                    batch_budget_labels,
+                    reduction="none",
+                    pos_weight=budget_logits.new_tensor(config.budget_positive_weight),
+                )
+                budget_loss = (
+                    budget_rows * batch_budget_weights
+                ).sum() / batch_budget_weights.sum()
+            else:
+                budget_loss = value_loss.new_zeros(())
             loss = (
                 policy_loss
                 + config.value_loss_weight * value_loss
                 + config.leaf_loss_weight * leaf_loss
+                + config.budget_loss_weight * budget_loss
             )
             if len(gradient_samples) < 8:
                 policy_gradients = torch.autograd.grad(
@@ -1913,6 +2040,7 @@ def _train_network(
             policy_total += float(policy_loss.detach())
             value_total += float(value_loss.detach())
             leaf_total += float(leaf_loss.detach())
+            budget_total += float(budget_loss.detach())
             total_total += float(loss.detach())
             batches += 1
         history.append(
@@ -1923,6 +2051,10 @@ def _train_network(
                 "weighted_value_loss": config.value_loss_weight * value_total / batches,
                 "leaf_loss": leaf_total / batches,
                 "weighted_leaf_loss": config.leaf_loss_weight * leaf_total / batches,
+                "budget_loss": budget_total / batches,
+                "weighted_budget_loss": (
+                    config.budget_loss_weight * budget_total / batches
+                ),
                 "total_loss": total_total / batches,
             }
         )
@@ -1956,7 +2088,9 @@ def _train_network(
         "epochs": config.epochs,
         "value_loss_weight": config.value_loss_weight,
         "leaf_loss_weight": config.leaf_loss_weight,
-        "objective": "dual-policy-ce-plus-main-value-and-distilled-leaf-v3",
+        "budget_loss_weight": config.budget_loss_weight,
+        "budget_positive_weight": config.budget_positive_weight,
+        "objective": "dual-policy-value-leaf-and-budget-router-v4",
         "batches_per_epoch": math.ceil(len(features) / config.batch_size),
         "history": history,
         "diagnostics": {
@@ -2270,8 +2404,24 @@ def run_transformer_pipeline(
         raise ValueError("tree_convergence_tolerance must be nonnegative")
     if config.tree_convergence_patience < 1:
         raise ValueError("tree_convergence_patience must be positive")
-    if not 0.0 <= config.deep_search_fraction <= 1.0:
-        raise ValueError("deep_search_fraction must be in [0, 1]")
+    if config.deep_search_fraction != 1.0:
+        raise ValueError(
+            "random deep-search tiers are replaced by the adaptive root router"
+        )
+    if config.adaptive_warmup_iterations < 1:
+        raise ValueError("adaptive_warmup_iterations must be positive")
+    if not 0.0 <= config.adaptive_deep_threshold <= 1.0:
+        raise ValueError("adaptive_deep_threshold must be in [0, 1]")
+    if not 0.0 <= config.adaptive_force_deep_fraction <= 1.0:
+        raise ValueError("adaptive_force_deep_fraction must be in [0, 1]")
+    if config.adaptive_exploitability_threshold < 0.0:
+        raise ValueError("adaptive_exploitability_threshold must be nonnegative")
+    if config.adaptive_payoff_spread_threshold < 0.0:
+        raise ValueError("adaptive_payoff_spread_threshold must be nonnegative")
+    if not 0.0 <= config.budget_loss_weight <= 1.0:
+        raise ValueError("budget_loss_weight must be in [0, 1]")
+    if config.budget_positive_weight < 1.0:
+        raise ValueError("budget_positive_weight must be at least one")
     if config.generated_schedule_version not in {2, 3}:
         raise ValueError("generated_schedule_version must be 2 or 3")
     if config.balanced_final_species and config.generated_schedule_version != 3:
@@ -2372,6 +2522,7 @@ def run_transformer_pipeline(
         joint_policy_heads=config.joint_policy_heads,
         distilled_leaf_evaluator=config.distilled_leaf_evaluator,
         leaf_hidden=config.leaf_hidden,
+        adaptive_budget_head=config.adaptive_search,
     )
     opponents: list[tuple[Any, str]] = []
     opponent_metadata: list[dict[str, Any]] = []

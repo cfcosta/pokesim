@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 from collections.abc import Generator, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -33,7 +34,7 @@ class SearchResult:
     exploitability: float | None
     payoff_spread: float | None
     payoff_matrix: tuple[tuple[float, ...], ...] | None
-    diagnostics: dict[str, float | int] | None = None
+    diagnostics: dict[str, float | int | str] | None = None
     failure: str | None = None
 
 
@@ -53,6 +54,11 @@ class JointSearchConfig:
     convergence_tolerance: float = 0.005
     convergence_patience: int = 8
     redundant_action_prior_scale: float = 1.0
+    adaptive_search: bool = False
+    adaptive_deep_threshold: float = 0.55
+    adaptive_force_deep_fraction: float = 0.10
+    adaptive_exploitability_threshold: float = 0.08
+    adaptive_payoff_spread_threshold: float = 0.75
 
 
 def legal_actions(mask: int, action_count: int) -> list[int]:
@@ -660,6 +666,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         config: JointSearchConfig,
         selection_rng: random.Random,
         chance_rng: random.Random,
+        budget_rng: random.Random | None = None,
     ) -> None:
         super().__init__(
             server,
@@ -685,6 +692,14 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             raise ValueError("tree convergence tolerance must be nonnegative")
         if config.convergence_patience < 1:
             raise ValueError("tree convergence patience must be positive")
+        if not 0.0 <= config.adaptive_deep_threshold <= 1.0:
+            raise ValueError("adaptive deep threshold must be in [0, 1]")
+        if not 0.0 <= config.adaptive_force_deep_fraction <= 1.0:
+            raise ValueError("adaptive force-deep fraction must be in [0, 1]")
+        if config.adaptive_exploitability_threshold < 0.0:
+            raise ValueError("adaptive exploitability threshold must be nonnegative")
+        if config.adaptive_payoff_spread_threshold < 0.0:
+            raise ValueError("adaptive payoff-spread threshold must be nonnegative")
         self._evaluation_cache: dict[int, tuple[list[float], list[float], float]] = {}
         self._joint_inference_cache: dict[
             tuple[int, str, bytes | tuple[int, ...], int, int],
@@ -707,6 +722,13 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._deep_native_rows = 0
         self._deep_native_waves = 0
         self._deep_overlap_waves = 0
+        self.budget_rng = budget_rng or random.Random(0)
+        self._adaptive_deep_selected = True
+        self._adaptive_router_score = 1.0
+        self._adaptive_reason = "adaptive-disabled"
+        self._deep_policy_change = 0.0
+        self._deep_action_changed = 0
+        self._deep_search_needed = -1
 
     def _legal_from_priors(self, mask: int, priors: list[float]) -> list[int]:
         actions = legal_actions(mask, self.action_count)
@@ -1490,10 +1512,96 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             return fallback
         return tuple(value / solves for value in strategy_sum)
 
+    @classmethod
+    def _pooled_budget_scores(
+        cls,
+        groups: list[tuple[int, SimultaneousTreeSearch, Snapshot]],
+    ) -> dict[int, float]:
+        outputs: dict[tuple[int, int], float] = {}
+        by_network: dict[int, dict[str, Any]] = {}
+        for group_id, search, snapshot in groups:
+            mirror = search.player_network is search.enemy_network
+            controllers = (
+                ((0, search.player_network),)
+                if mirror
+                else (
+                    (0, search.player_network),
+                    (1, search.enemy_network),
+                )
+            )
+            for side, network in controllers:
+                feature = (
+                    snapshot.player_features if side == 0 else snapshot.enemy_features
+                )
+                if not bool(
+                    getattr(network.config, "adaptive_budget_head", False)
+                ) or not hasattr(network, "evaluate_budget"):
+                    score = 1.0
+                    outputs[(group_id, side)] = score
+                    if mirror:
+                        outputs[(group_id, 1)] = score
+                    continue
+                bucket = by_network.setdefault(
+                    id(network), {"network": network, "items": []}
+                )
+                bucket["items"].append((group_id, side, mirror, feature, search))
+        for bucket in by_network.values():
+            items = bucket["items"]
+            network = bucket["network"]
+            batch_size = max(item[4].config.inference_batch_size for item in items)
+            for start in range(0, len(items), batch_size):
+                batch = items[start : start + batch_size]
+                scores = network.evaluate_budget([item[3] for item in batch])
+                for (group_id, side, mirror, _, _), score in zip(
+                    batch, scores, strict=True
+                ):
+                    outputs[(group_id, side)] = score
+                    if mirror:
+                        outputs[(group_id, 1)] = score
+        return {
+            group_id: max(outputs[(group_id, 0)], outputs[(group_id, 1)])
+            for group_id, _, _ in groups
+        }
+
+    @staticmethod
+    def _policy_entropy(policy: tuple[float, ...]) -> float:
+        return -sum(
+            probability * math.log(probability) for probability in policy if probability
+        )
+
+    def _choose_adaptive_depth(
+        self, root: _TreeNode, router_score: float
+    ) -> tuple[bool, str]:
+        if not self.config.adaptive_search:
+            return True, "adaptive-disabled"
+        if self.config.max_depth <= 1:
+            return False, "configured-root-only"
+        if self.budget_rng.random() < self.config.adaptive_force_deep_fraction:
+            return True, "forced-calibration-sample"
+        if router_score >= self.config.adaptive_deep_threshold:
+            return True, "learned-router"
+        if root.exploitability >= self.config.adaptive_exploitability_threshold:
+            return True, "root-exploitability"
+        legal_payoffs = [
+            root.payoff[player][enemy]
+            for player in root.player_legal
+            for enemy in root.enemy_legal
+        ]
+        payoff_spread = max(legal_payoffs) - min(legal_payoffs)
+        entropy = self._policy_entropy(root.player_policy) + self._policy_entropy(
+            root.enemy_policy
+        )
+        if (
+            payoff_spread >= self.config.adaptive_payoff_spread_threshold
+            and entropy >= 1.0
+        ):
+            return True, "root-payoff-uncertainty"
+        return False, "router-stable-root"
+
     def _diagnostics(
         self, simulations: int, converged: bool, root: _TreeNode | None
-    ) -> dict[str, float | int]:
-        diagnostics: dict[str, float | int] = {
+    ) -> dict[str, float | int | str]:
+        diagnostics: dict[str, float | int | str] = {
             "tree_nodes": self._expanded_nodes,
             "tree_simulations": simulations,
             "tree_max_depth": self._max_depth_reached,
@@ -1525,6 +1633,12 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 self._deep_native_rows / max(1, self._deep_native_calls)
             ),
             "deep_overlap_waves": self._deep_overlap_waves,
+            "adaptive_deep_selected": int(self._adaptive_deep_selected),
+            "adaptive_router_score": self._adaptive_router_score,
+            "adaptive_reason": self._adaptive_reason,
+            "deep_policy_change": self._deep_policy_change,
+            "deep_action_changed": self._deep_action_changed,
+            "deep_search_needed": self._deep_search_needed,
         }
         if root is not None:
             diagnostics["root_joint_actions"] = len(root.player_legal) * len(
@@ -1567,12 +1681,28 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
     ) -> Generator[_Frontier, _FrontierResponse, SearchResult]:
         simulations = 0
         converged = False
-        previous_player: tuple[float, ...] | None = None
-        previous_enemy: tuple[float, ...] | None = None
+        initial_player = self._average_policy(
+            root.player_strategy_sum, root.solve_count, root.player_policy
+        )
+        initial_enemy = self._average_policy(
+            root.enemy_strategy_sum, root.solve_count, root.enemy_policy
+        )
+        initial_value = self._matrix_value(
+            root.payoff,
+            initial_player,
+            initial_enemy,
+            root.player_legal,
+            root.enemy_legal,
+        )
+        previous_player: tuple[float, ...] | None = initial_player
+        previous_enemy: tuple[float, ...] | None = initial_enemy
         stable_updates = 0
         try:
             attempts_without_learning = 0
-            while transitions < self.config.expansion_budget:
+            while (
+                self._adaptive_deep_selected
+                and transitions < self.config.expansion_budget
+            ):
                 _, cost, learned = yield from self._simulate_frontier(
                     root, 0, self.config.expansion_budget - transitions
                 )
@@ -1633,6 +1763,35 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         )
         enemy_policy = self._average_policy(
             root.enemy_strategy_sum, root.solve_count, root.enemy_policy
+        )
+        self._deep_policy_change = sum(
+            abs(left - right)
+            for left, right in zip(player_policy, initial_player, strict=True)
+        ) + sum(
+            abs(left - right)
+            for left, right in zip(enemy_policy, initial_enemy, strict=True)
+        )
+        self._deep_action_changed = int(
+            max(root.player_legal, key=lambda action: player_policy[action])
+            != max(root.player_legal, key=lambda action: initial_player[action])
+            or max(root.enemy_legal, key=lambda action: enemy_policy[action])
+            != max(root.enemy_legal, key=lambda action: initial_enemy[action])
+        )
+        final_value = self._matrix_value(
+            root.payoff,
+            player_policy,
+            enemy_policy,
+            root.player_legal,
+            root.enemy_legal,
+        )
+        self._deep_search_needed = (
+            int(
+                self._deep_action_changed
+                or self._deep_policy_change >= 0.25
+                or abs(final_value - initial_value) >= 0.10
+            )
+            if self._adaptive_deep_selected
+            else -1
         )
         if sample_actions:
             player_action = _sample(list(player_policy), self.selection_rng)
@@ -1911,6 +2070,12 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             if is_good
         ]
         root_values, _, _ = cls._pooled_successor_values(root_groups)
+        adaptive_groups = [
+            (index, searches[index], snapshots[index])
+            for index, is_good in enumerate(good)
+            if is_good and searches[index].config.adaptive_search
+        ]
+        router_scores = cls._pooled_budget_scores(adaptive_groups)
         results: list[SearchResult | None] = [None] * len(searches)
         finish_jobs = []
         batch_size = len(searches)
@@ -1933,6 +2098,11 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             transitions = search._install_expansion(
                 root, spec[0], root_successors, root_values[index]
             )
+            router_score = router_scores.get(index, 1.0)
+            selected, reason = search._choose_adaptive_depth(root, router_score)
+            search._adaptive_deep_selected = selected
+            search._adaptive_router_score = router_score
+            search._adaptive_reason = reason
             finish_jobs.append(
                 (
                     index,

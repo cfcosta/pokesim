@@ -90,6 +90,11 @@ class ArenaConfig:
     tree_convergence_tolerance: float = 0.005
     tree_convergence_patience: int = 8
     redundant_action_prior_scale: float = 0.25
+    adaptive_search: bool = True
+    adaptive_deep_threshold: float = 0.55
+    adaptive_force_deep_fraction: float = 0.10
+    adaptive_exploitability_threshold: float = 0.08
+    adaptive_payoff_spread_threshold: float = 0.75
     seed: int = 0
     replay_games: int = 3
     seed_count: int = 8
@@ -199,6 +204,7 @@ class _FastArenaEpisode:
     enemy: BattleTransformer
     selection_rng: random.Random
     chance_rng: random.Random
+    budget_rng: random.Random
     player_size: int
     enemy_size: int
     level100: bool
@@ -317,6 +323,11 @@ def _joint_search_config(config: ArenaConfig) -> JointSearchConfig:
         convergence_tolerance=config.tree_convergence_tolerance,
         convergence_patience=config.tree_convergence_patience,
         redundant_action_prior_scale=config.redundant_action_prior_scale,
+        adaptive_search=config.adaptive_search,
+        adaptive_deep_threshold=config.adaptive_deep_threshold,
+        adaptive_force_deep_fraction=config.adaptive_force_deep_fraction,
+        adaptive_exploitability_threshold=(config.adaptive_exploitability_threshold),
+        adaptive_payoff_spread_threshold=config.adaptive_payoff_spread_threshold,
     )
 
 
@@ -335,6 +346,7 @@ def _rmplus_search_many(
                 search_config,
                 episode.selection_rng,
                 episode.chance_rng,
+                episode.budget_rng,
             )
             for episode in episodes
         ],
@@ -671,6 +683,7 @@ def _run_fast_arena_games(
                 candidate_player = game % 2 == 0
                 selection_rng = random.Random(seed + 30_000_019 + pair * 2_000_003)
                 chance_rng = random.Random(seed + 40_000_033 + pair * 2_000_003)
+                budget_rng = random.Random(seed + 50_000_087 + pair * 2_000_003)
                 player_size, enemy_size = _evaluation_party_sizes(
                     pair, config.generated_schedule_version
                 )
@@ -682,6 +695,7 @@ def _run_fast_arena_games(
                         enemy=baseline if candidate_player else candidate,
                         selection_rng=selection_rng,
                         chance_rng=chance_rng,
+                        budget_rng=budget_rng,
                         player_size=player_size,
                         enemy_size=enemy_size,
                         level100=not campaign
@@ -1108,6 +1122,7 @@ def _run_traced_arena_batched(
                     config.seed + 30_000_019 + pair * 2_000_003
                 )
                 chance_rng = random.Random(config.seed + 40_000_033 + pair * 2_000_003)
+                budget_rng = random.Random(config.seed + 50_000_087 + pair * 2_000_003)
                 player_size, enemy_size = _evaluation_party_sizes(
                     pair, config.generated_schedule_version
                 )
@@ -1120,6 +1135,7 @@ def _run_traced_arena_batched(
                         enemy=baseline if candidate_player else candidate,
                         selection_rng=selection_rng,
                         chance_rng=chance_rng,
+                        budget_rng=budget_rng,
                         player_size=player_size,
                         enemy_size=enemy_size,
                         level100=_evaluation_level100(
@@ -1396,6 +1412,7 @@ def _run_traced_arena_sequential(
         )
     selection_rng = random.Random(config.seed + 0xA7E9A)
     chance_rng = random.Random(config.seed + 0xA7E9B)
+    budget_rng = random.Random(config.seed + 0xA7E9C)
     search_config = _joint_search_config(config)
     candidate_metrics = SkillMetrics()
     baseline_metrics = SkillMetrics()
@@ -1455,6 +1472,7 @@ def _run_traced_arena_sequential(
                         search_config,
                         selection_rng,
                         chance_rng,
+                        budget_rng,
                     )
                     result = search.search(snapshot, sample_actions=True)
                     if result.failure is not None:

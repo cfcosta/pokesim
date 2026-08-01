@@ -177,6 +177,19 @@ class _LeafToyNetwork(_JointToyNetwork):
         return [0.5 for _ in features]  # type: ignore[union-attr]
 
 
+class _AdaptiveToyNetwork(_LeafToyNetwork):
+    config = SimpleNamespace(
+        action_count=2,
+        joint_policy_heads=True,
+        distilled_leaf_evaluator=True,
+        adaptive_budget_head=True,
+    )
+
+    @staticmethod
+    def evaluate_budget(features: object) -> list[float]:
+        return [0.0 for _ in features]  # type: ignore[union-attr]
+
+
 class _ToyServer:
     def __init__(self) -> None:
         self.states: dict[int, tuple[int, int]] = {0: (0, 0)}
@@ -766,6 +779,12 @@ class TransformerTests(unittest.TestCase):
         self.assertTrue(arguments.distilled_leaf_evaluator)
         self.assertEqual(arguments.leaf_hidden, 64)
         self.assertEqual(arguments.leaf_loss_weight, 0.25)
+        self.assertTrue(arguments.adaptive_search)
+        self.assertEqual(arguments.adaptive_warmup_iterations, 1)
+        self.assertEqual(arguments.adaptive_deep_threshold, 0.55)
+        self.assertEqual(arguments.adaptive_force_deep_fraction, 0.10)
+        self.assertEqual(arguments.budget_loss_weight, 0.05)
+        self.assertEqual(arguments.budget_positive_weight, 4.0)
         self.assertEqual(arguments.precision, "bf16")
         self.assertEqual(arguments.inference_engine, "auto")
         self.assertTrue(arguments.heuristic_opponents)
@@ -809,6 +828,9 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arena.search_depth, 4)
         self.assertEqual(arena.tree_expansion_budget, 320)
         self.assertEqual(arena.redundant_action_prior_scale, 0.25)
+        self.assertTrue(arena.adaptive_search)
+        self.assertEqual(arena.adaptive_deep_threshold, 0.55)
+        self.assertEqual(arena.adaptive_force_deep_fraction, 0.10)
 
     def test_pre_rmplus_everywhere_lineage_cannot_resume(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1103,11 +1125,11 @@ class TransformerTests(unittest.TestCase):
     def test_training_schedule_pairs_every_reset_and_side_assignment(self) -> None:
         self.assertEqual(
             _pipeline_id(),
-            "transformer-variable-party-bf16-rmplus-v21-distilled-leaf",
+            "transformer-variable-party-bf16-rmplus-v22-adaptive",
         )
         self.assertEqual(
             _pipeline_id(False, 2),
-            "transformer-variable-party-bf16-rmplus-v21-distilled-leaf",
+            "transformer-variable-party-bf16-rmplus-v22-adaptive",
         )
         for episode in range(0, 128, 2):
             self.assertEqual(_training_pair(episode), _training_pair(episode + 1))
@@ -1337,8 +1359,9 @@ class TransformerTests(unittest.TestCase):
                 )
                 + "\n"
             )
-            _, _, _, _, masks, _, weights = _load_examples([shard])
+            _, _, _, _, masks, _, weights, _, budget_weights = _load_examples([shard])
             self.assertEqual(weights.tolist(), [1.0])
+            self.assertEqual(budget_weights.tolist(), [0.0])
             self.assertEqual(masks.tolist(), [[True, False, True, False]])
 
     def test_full_party_models_stay_under_one_million_parameters(self) -> None:
@@ -1418,6 +1441,33 @@ class TransformerTests(unittest.TestCase):
         self.assertGreater(damaged, neutral)
         self.assertGreater(statused, damaged)
 
+    def test_adaptive_router_skips_stable_roots_but_retains_rmplus(self) -> None:
+        server = _ToyServer()
+        network = _AdaptiveToyNetwork()
+        config = JointSearchConfig(
+            max_depth=2,
+            expansion_budget=16,
+            minimum_expansion_budget=4,
+            adaptive_search=True,
+            adaptive_deep_threshold=0.6,
+            adaptive_force_deep_fraction=0.0,
+            adaptive_exploitability_threshold=1.0,
+            adaptive_payoff_spread_threshold=2.0,
+        )
+        result = SimultaneousTreeSearch(
+            server,
+            network,
+            network,
+            config,
+            random.Random(1),
+            random.Random(2),
+        ).search(server._snapshot(0), sample_actions=False)
+        self.assertEqual(result.nodes, 4)
+        self.assertEqual(result.solver, "simultaneous-matrix-tree-rmplus-v1")
+        self.assertEqual(result.diagnostics["adaptive_deep_selected"], 0)
+        self.assertEqual(result.diagnostics["adaptive_reason"], "router-stable-root")
+        self.assertIsNotNone(result.payoff_matrix)
+
     def test_distilled_leaf_value_is_bounded_and_keeps_model_under_budget(self) -> None:
         torch.manual_seed(12)
         network = BattleTransformer(
@@ -1432,13 +1482,14 @@ class TransformerTests(unittest.TestCase):
                 joint_policy_heads=True,
                 distilled_leaf_evaluator=True,
                 leaf_hidden=64,
+                adaptive_budget_head=True,
             )
         ).eval()
         values = network.evaluate_leaf([[0] * 492, [65535] * 492])
         self.assertEqual(len(values), 2)
         self.assertTrue(all(-1.0 <= value <= 1.0 for value in values))
         self.assertEqual(
-            sum(parameter.numel() for parameter in network.parameters()), 937820
+            sum(parameter.numel() for parameter in network.parameters()), 937949
         )
 
     def test_pooled_successors_use_the_leaf_evaluator(self) -> None:

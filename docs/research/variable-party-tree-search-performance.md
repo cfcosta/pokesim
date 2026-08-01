@@ -265,10 +265,15 @@ quality-gated teacher/model alternatives:
    (4.89×) and eager latency from 3.111 to 0.433 ms (7.19×). The leaf learns
    from both terminal targets and detached main values; quality still requires
    promotion rather than assuming distillation is lossless.
-11. **Tiered deep search (quality-gated).** Every move retains a complete root;
-   only a configured fraction receives the full tree. A 25% probe improved a
-   short collection workload 4.84×, but trajectories changed, so the production
-   default remains 100% deep pending equal-budget promotion evidence.
+11. **Learned adaptive depth.** V22 always solves the complete root, then uses
+   a classifier plus exploitability/payoff guards to request deeper refinement.
+   One full-search warmup iteration supplies labels; 10% forced deep samples
+   continue measuring false negatives. On sixteen production-size roots with a
+   deliberately root-only router, compiled search fell from 79.00 to 3.26
+   ms/root (24.24× ceiling) and transitions from 306.1 to 42.6. The two-side
+   policy L1 was 1.151, confirming that routing requires quality gates rather
+   than treating root-only output as equivalent. At 25–40% deep routing, the
+   measured costs imply roughly 2.4–3.6× search speedup before battle overhead.
 12. **Deferred multi-model CUDA inference.** Pooled search launches all CUDA
     networks before awaiting any result and overlaps CPU heuristic evaluation
     with those launches. Ticket-owned pinned buffers prevent in-flight transfers
@@ -289,9 +294,9 @@ quality-gated teacher/model alternatives:
    complete-root target.
 2. **The baseline GPU path was launch-bound at depth.** Complete-frontier
    scheduling and double buffering now address that measured fragmentation.
-3. **Adaptive stopping rarely saves enough.** Most roots approach the maximum
-   transition budget, and the average tree does not fully reach configured
-   depth four.
+3. **Convergence-only stopping rarely saves enough.** Most roots approach the
+   maximum transition budget. The learned router instead decides after complete
+   root coverage and keeps independent forced-deep calibration samples.
 4. **RM+ is not the leading optimization target.** Removing all Python overhead
    could save less than 10% in this profile.
 5. **Reducing budget changes the teacher.** Budget 192 still disagreed with the
@@ -300,12 +305,12 @@ quality-gated teacher/model alternatives:
 
 ## Recommended order
 
-1. Run the full 36-matchup v8 benchmark with eager and compiled engines, recording
-   compilation and process startup separately from steady state.
-2. Compare group-one and grouped-token models over multiple training seeds. Do
-   not promote grouping from its latency result alone.
-3. Compare 96, 192, 320, and tiered teachers at equal wall-clock and transition
-   budgets against raw policy, zero-value search, and learned-value search.
+1. Run the full 36-matchup v22 benchmark with eager and compiled engines,
+   recording compilation and process startup separately from steady state.
+2. Compare semantic/joint/distilled models over multiple training seeds; do not
+   infer strength from latency alone.
+3. Compare full-depth and adaptively routed teachers at equal wall-clock and
+   transition budgets, tracking forced-sample false negatives.
 4. Tune one through four actor processes on the production workload; the measured
    two-process gain is modest and must not be extrapolated from launch-bound
    assumptions.
