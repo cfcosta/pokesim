@@ -82,7 +82,13 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--inference-batch-size", type=int, default=256)
     parser.add_argument("--max-actions-per-side", type=int, default=13)
     parser.add_argument("--replay-window", type=int, default=2)
-    parser.add_argument("--search-every", type=int, default=1)
+    parser.add_argument(
+        "--search-every",
+        type=int,
+        choices=(1,),
+        default=1,
+        help="fixed at one: every neural action is selected by RM+ search",
+    )
     parser.add_argument("--tree-expansion-budget", type=int, default=320)
     parser.add_argument("--tree-exploration", type=float, default=0.10)
     parser.add_argument("--tree-chance-resample", type=float, default=0.10)
@@ -130,9 +136,18 @@ def parser() -> argparse.ArgumentParser:
     arena.add_argument("--games", type=int, default=10000)
     arena.add_argument("--budget", type=int, default=512)
     arena.add_argument("--chance-samples-per-joint", type=int, default=1)
-    arena.add_argument("--search-depth", type=int, default=1)
+    arena.add_argument("--search-depth", type=int, default=4)
     arena.add_argument("--regret-iterations", type=int, default=256)
     arena.add_argument("--inference-batch-size", type=int, default=256)
+    arena.add_argument("--tree-expansion-budget", type=int, default=320)
+    arena.add_argument("--tree-exploration", type=float, default=0.10)
+    arena.add_argument("--tree-chance-resample", type=float, default=0.10)
+    arena.add_argument("--tree-regret-iterations", type=int, default=16)
+    arena.add_argument("--tree-deeper-joint-rotations", type=int, default=2)
+    arena.add_argument("--tree-minimum-budget", type=int, default=192)
+    arena.add_argument("--tree-convergence-tolerance", type=float, default=0.005)
+    arena.add_argument("--tree-convergence-patience", type=int, default=8)
+    arena.add_argument("--redundant-action-prior-scale", type=float, default=0.25)
     arena.add_argument("--seed", type=int, default=90210)
     arena.add_argument("--device", default="auto")
     arena.add_argument(
@@ -141,7 +156,6 @@ def parser() -> argparse.ArgumentParser:
         default="auto",
     )
     arena.add_argument("--replay-games", type=int, default=3)
-    arena.add_argument("--search-every", type=int, default=0)
     arena.add_argument("--seed-count", type=int, default=8)
     verify = subparsers.add_parser("verify")
     verify.add_argument("run", type=Path)
@@ -176,9 +190,17 @@ def main(argv: list[str] | None = None) -> int:
                 regret_iterations=arguments.regret_iterations,
                 inference_batch_size=arguments.inference_batch_size,
                 max_actions_per_side=13,
+                tree_expansion_budget=arguments.tree_expansion_budget,
+                tree_exploration=arguments.tree_exploration,
+                tree_chance_resample=arguments.tree_chance_resample,
+                tree_regret_iterations=arguments.tree_regret_iterations,
+                tree_deeper_joint_rotations=arguments.tree_deeper_joint_rotations,
+                tree_minimum_budget=arguments.tree_minimum_budget,
+                tree_convergence_tolerance=arguments.tree_convergence_tolerance,
+                tree_convergence_patience=arguments.tree_convergence_patience,
+                redundant_action_prior_scale=(arguments.redundant_action_prior_scale),
                 seed=arguments.seed,
                 replay_games=arguments.replay_games,
-                search_every=arguments.search_every,
                 seed_count=arguments.seed_count,
             ),
         )

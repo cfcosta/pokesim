@@ -21,7 +21,7 @@ from .decision_quality import (
     DecisionQualityMetrics,
     classify_feature_decision,
 )
-from .joint_search import JointSearchConfig, SimultaneousTreeSearch
+from .joint_search import JointSearchConfig, SearchResult, SimultaneousTreeSearch
 from .native import NativeRequestTimeout, SearchServer
 from .network import BattleTransformer
 
@@ -77,13 +77,21 @@ class ArenaConfig:
     games: int
     budget: int = 512
     chance_samples_per_joint: int = 1
-    search_depth: int = 1
+    search_depth: int = 4
     regret_iterations: int = 256
     inference_batch_size: int = 256
     max_actions_per_side: int = 13
+    tree_expansion_budget: int = 320
+    tree_exploration: float = 0.10
+    tree_chance_resample: float = 0.10
+    tree_regret_iterations: int = 16
+    tree_deeper_joint_rotations: int = 2
+    tree_minimum_budget: int = 192
+    tree_convergence_tolerance: float = 0.005
+    tree_convergence_patience: int = 8
+    redundant_action_prior_scale: float = 0.25
     seed: int = 0
     replay_games: int = 3
-    search_every: int = 0
     seed_count: int = 8
     balanced_final_species: bool = True
     generated_schedule_version: int = 3
@@ -189,8 +197,8 @@ class _FastArenaEpisode:
     candidate_player: bool
     player: BattleTransformer
     enemy: BattleTransformer
-    player_rng: random.Random
-    enemy_rng: random.Random
+    selection_rng: random.Random
+    chance_rng: random.Random
     player_size: int
     enemy_size: int
     level100: bool
@@ -198,6 +206,7 @@ class _FastArenaEpisode:
     snapshot: Any
     result: int | None = None
     stop: str = "truncated"
+    reason: str | None = None
     initial: dict[str, Any] | None = None
     final: dict[str, Any] | None = None
     timeline: list[dict[str, Any]] = field(default_factory=list)
@@ -258,9 +267,7 @@ def _choice_detail(
         }
     return {
         **detail,
-        "kind": {10: "no-action", 11: "struggle", 12: "run"}.get(
-            action, "unknown"
-        ),
+        "kind": {10: "no-action", 11: "struggle", 12: "run"}.get(action, "unknown"),
     }
 
 
@@ -294,91 +301,46 @@ def _compact_turn_inspection(inspection: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _sample_policy(probabilities: list[float], rng: random.Random) -> int:
-    threshold = rng.random()
-    cumulative = 0.0
-    for action, probability in enumerate(probabilities):
-        cumulative += probability
-        if threshold <= cumulative:
-            return action
-    return max(
-        index for index, probability in enumerate(probabilities) if probability > 0
+def _joint_search_config(config: ArenaConfig) -> JointSearchConfig:
+    return JointSearchConfig(
+        chance_samples_per_joint=config.chance_samples_per_joint,
+        max_depth=config.search_depth,
+        regret_iterations=config.regret_iterations,
+        inference_batch_size=config.inference_batch_size,
+        max_actions_per_side=config.max_actions_per_side,
+        expansion_budget=config.tree_expansion_budget,
+        exploration=config.tree_exploration,
+        chance_resample=config.tree_chance_resample,
+        regret_iterations_per_update=config.tree_regret_iterations,
+        deeper_joint_rotations=config.tree_deeper_joint_rotations,
+        minimum_expansion_budget=config.tree_minimum_budget,
+        convergence_tolerance=config.tree_convergence_tolerance,
+        convergence_patience=config.tree_convergence_patience,
+        redundant_action_prior_scale=config.redundant_action_prior_scale,
     )
 
 
-def _network_actions_split(
-    player: BattleTransformer,
-    enemy: BattleTransformer,
-    snapshot: Any,
-    player_rng: random.Random,
-    enemy_rng: random.Random,
-) -> tuple[int, int]:
-    if player is enemy:
-        policies, _ = player.evaluate(
-            [snapshot.player_features, snapshot.enemy_features],
-            [snapshot.player_mask, snapshot.enemy_mask],
-        )
-        return _sample_policy(policies[0], player_rng), _sample_policy(
-            policies[1], enemy_rng
-        )
-    player_policy, _ = player.evaluate(
-        [snapshot.player_features], [snapshot.player_mask]
-    )
-    enemy_policy, _ = enemy.evaluate([snapshot.enemy_features], [snapshot.enemy_mask])
-    return _sample_policy(player_policy[0], player_rng), _sample_policy(
-        enemy_policy[0], enemy_rng
-    )
-
-
-def _network_actions_many(
-    episodes: list[_FastArenaEpisode], batch_size: int = 256
-) -> list[tuple[int, int]]:
-    grouped: dict[int, list[tuple[int, int, Any, int, BattleTransformer]]] = {}
-    for index, episode in enumerate(episodes):
-        grouped.setdefault(id(episode.player), []).append(
-            (
-                index,
-                0,
-                episode.snapshot.player_features,
-                episode.snapshot.player_mask,
+def _rmplus_search_many(
+    server: SearchServer,
+    episodes: list[_FastArenaEpisode],
+    config: ArenaConfig,
+) -> list[SearchResult]:
+    search_config = _joint_search_config(config)
+    return SimultaneousTreeSearch.search_many(
+        [
+            SimultaneousTreeSearch(
+                server,
                 episode.player,
-            )
-        )
-        grouped.setdefault(id(episode.enemy), []).append(
-            (
-                index,
-                1,
-                episode.snapshot.enemy_features,
-                episode.snapshot.enemy_mask,
                 episode.enemy,
+                search_config,
+                episode.selection_rng,
+                episode.chance_rng,
             )
-        )
-    policies: dict[tuple[int, int], list[float]] = {}
-    for items in grouped.values():
-        network = items[0][4]
-        for start in range(0, len(items), batch_size):
-            batch = items[start : start + batch_size]
-            outputs, _ = network.evaluate(
-                [item[2] for item in batch], [item[3] for item in batch]
-            )
-            for item, policy in zip(batch, outputs, strict=True):
-                policies[(item[0], item[1])] = policy
-    return [
-        (
-            _sample_policy(policies[(index, 0)], episode.player_rng),
-            _sample_policy(policies[(index, 1)], episode.enemy_rng),
-        )
-        for index, episode in enumerate(episodes)
-    ]
-
-
-def _network_actions(
-    player: BattleTransformer,
-    enemy: BattleTransformer,
-    snapshot: Any,
-    rng: random.Random,
-) -> tuple[int, int]:
-    return _network_actions_split(player, enemy, snapshot, rng, rng)
+            for episode in episodes
+        ],
+        [episode.snapshot for episode in episodes],
+        sample_actions=True,
+    )
 
 
 def _legal(mask: int, action: int) -> bool:
@@ -612,9 +574,7 @@ def _mean_ci95(values: list[float]) -> tuple[float, float]:
     return max(0.0, mean - radius), min(1.0, mean + radius)
 
 
-def _evaluation_party_sizes(
-    pair: int, schedule_version: int = 3
-) -> tuple[int, int]:
+def _evaluation_party_sizes(pair: int, schedule_version: int = 3) -> tuple[int, int]:
     return generated_party_sizes(pair, schedule_version)
 
 
@@ -622,9 +582,7 @@ def _evaluation_level100(pair: int, schedule_version: int = 3) -> bool:
     return generated_level100(pair, schedule_version)
 
 
-def _generated_party_report(
-    games: int, schedule_version: int = 3
-) -> dict[str, Any]:
+def _generated_party_report(games: int, schedule_version: int = 3) -> dict[str, Any]:
     six_vs_six_games = 2 * sum(
         _evaluation_party_sizes(pair, schedule_version)
         == (FULL_PARTY_SIZE, FULL_PARTY_SIZE)
@@ -636,9 +594,8 @@ def _generated_party_report(
     denominator = 4 if schedule_version == 2 else 3
     if abs(six_vs_six_games * denominator - games) > 2 * (denominator - 1):
         raise RuntimeError("generated arena 6v6 schedule differs from its target")
-    if (
-        abs(level100_six_vs_six_games * denominator - six_vs_six_games)
-        > 2 * (denominator - 1)
+    if abs(level100_six_vs_six_games * denominator - six_vs_six_games) > 2 * (
+        denominator - 1
     ):
         raise RuntimeError(
             "generated arena level-100 6v6 schedule differs from its target"
@@ -694,16 +651,15 @@ def _stratified_report(scores: dict[str, list[float]]) -> dict[str, Any]:
 def _run_fast_arena_games(
     candidate: BattleTransformer,
     baseline: BattleTransformer,
-    games: int,
-    budget: int,
-    seed: int,
-    seed_count: int,
+    config: ArenaConfig,
     campaign: bool,
-    batch_size: int = 256,
+    batch_size: int = 64,
     capture_details: bool = False,
-    balanced_final_species: bool = True,
-    generated_schedule_version: int = 3,
 ) -> list[_FastArenaEpisode]:
+    games = config.games
+    budget = config.budget
+    seed = config.seed
+    seed_count = config.seed_count
     completed: list[_FastArenaEpisode] = []
     server = SearchServer()
     try:
@@ -713,10 +669,10 @@ def _run_fast_arena_games(
             for game in range(batch_start, batch_stop):
                 pair = game // 2
                 candidate_player = game % 2 == 0
-                candidate_rng = random.Random(seed + 30_000_019 + pair * 2_000_003)
-                baseline_rng = random.Random(seed + 40_000_033 + pair * 2_000_003)
+                selection_rng = random.Random(seed + 30_000_019 + pair * 2_000_003)
+                chance_rng = random.Random(seed + 40_000_033 + pair * 2_000_003)
                 player_size, enemy_size = _evaluation_party_sizes(
-                    pair, generated_schedule_version
+                    pair, config.generated_schedule_version
                 )
                 episodes.append(
                     _FastArenaEpisode(
@@ -724,16 +680,14 @@ def _run_fast_arena_games(
                         candidate_player=candidate_player,
                         player=candidate if candidate_player else baseline,
                         enemy=baseline if candidate_player else candidate,
-                        player_rng=(
-                            candidate_rng if candidate_player else baseline_rng
-                        ),
-                        enemy_rng=(
-                            baseline_rng if candidate_player else candidate_rng
-                        ),
+                        selection_rng=selection_rng,
+                        chance_rng=chance_rng,
                         player_size=player_size,
                         enemy_size=enemy_size,
                         level100=not campaign
-                        and _evaluation_level100(pair, generated_schedule_version),
+                        and _evaluation_level100(
+                            pair, config.generated_schedule_version
+                        ),
                         campaign_index=pair % len(_CAMPAIGN_NAMES),
                         snapshot=None,
                     )
@@ -753,7 +707,7 @@ def _run_fast_arena_games(
                             root_seed,
                             reset_episode,
                             episode.campaign_index,
-                            balanced_final_species=balanced_final_species,
+                            balanced_final_species=config.balanced_final_species,
                         )
                     else:
                         reset = server.reset if offset == 0 else server.reset_append
@@ -763,26 +717,43 @@ def _run_fast_arena_games(
                             episode.player_size,
                             episode.enemy_size,
                             level100=episode.level100,
-                            balanced_final_species=balanced_final_species,
+                            balanced_final_species=config.balanced_final_species,
                         )
                 if capture_details:
                     inspections = server.inspect_many(
                         [episode.snapshot.handle for episode in episodes]
                     )
-                    for episode, inspection in zip(
-                        episodes, inspections, strict=True
-                    ):
+                    for episode, inspection in zip(episodes, inspections, strict=True):
                         episode.inspection = inspection
                         episode.initial = _compact_inspection(inspection)
                 active = episodes.copy()
                 for decision in range(budget):
                     if not active:
                         break
-                    actions = _network_actions_many(active, batch_size)
+                    search_results = _rmplus_search_many(server, active, config)
+                    searchable: list[_FastArenaEpisode] = []
+                    available_results: list[SearchResult] = []
+                    for episode, result in zip(active, search_results, strict=True):
+                        if result.failure is not None:
+                            episode.stop = "semantic-divergence"
+                            episode.reason = result.failure
+                            if capture_details:
+                                episode.final = _compact_inspection(episode.inspection)
+                        else:
+                            searchable.append(episode)
+                            available_results.append(result)
+                    active = searchable
+                    search_results = available_results
+                    if not active:
+                        break
+                    actions = [
+                        (result.player_action, result.enemy_action)
+                        for result in search_results
+                    ]
                     if capture_details:
-                        for episode, (player_action, enemy_action) in zip(
-                            active, actions, strict=True
-                        ):
+                        for episode, result in zip(active, search_results, strict=True):
+                            player_action = result.player_action
+                            enemy_action = result.enemy_action
                             episode.timeline.append(
                                 {
                                     "turn": decision + 1,
@@ -790,6 +761,8 @@ def _run_fast_arena_games(
                                     "before": _compact_turn_inspection(
                                         episode.inspection
                                     ),
+                                    "search_solver": result.solver,
+                                    "search_diagnostics": result.diagnostics,
                                     "player_action": player_action,
                                     "enemy_action": enemy_action,
                                     "player_choice": _choice_detail(
@@ -820,8 +793,8 @@ def _run_fast_arena_games(
                             active, inspections, strict=True
                         ):
                             episode.inspection = inspection
-                            episode.timeline[-1]["after"] = (
-                                _compact_turn_inspection(inspection)
+                            episode.timeline[-1]["after"] = _compact_turn_inspection(
+                                inspection
                             )
                     survivors = []
                     stopped = []
@@ -829,6 +802,7 @@ def _run_fast_arena_games(
                         episode.snapshot = snapshot
                         if snapshot.divergence is not None:
                             episode.stop = "semantic-divergence"
+                            episode.reason = snapshot.divergence
                             stopped.append(episode)
                         elif snapshot.done:
                             episode.result = snapshot.terminal_return
@@ -867,20 +841,16 @@ def _run_fast_arena_games(
 def run_paired_arena(
     candidate: BattleTransformer,
     baseline: BattleTransformer,
-    games: int,
-    budget: int,
-    seed: int,
-    seed_count: int = 8,
+    config: ArenaConfig,
     *,
     campaign: bool = False,
     capture_details: bool = False,
-    balanced_final_species: bool = True,
-    generated_schedule_version: int = 3,
 ) -> dict[str, Any]:
-    """Fast paired, side-swapped evaluation with nonfinishes scored as losses."""
+    """RM+-selected paired evaluation with nonfinishes scored as losses."""
+    games = config.games
     if games < 2 or games % 2:
         raise ValueError("paired arena games must be a positive even number")
-    if seed_count < 2 or games < 2 * seed_count:
+    if config.seed_count < 2 or games < 2 * config.seed_count:
         raise ValueError(
             "paired arena requires at least two seeds and one pair per seed"
         )
@@ -901,14 +871,9 @@ def run_paired_arena(
     episodes = _run_fast_arena_games(
         candidate,
         baseline,
-        games,
-        budget,
-        seed,
-        seed_count,
+        config,
         campaign,
         capture_details=capture_details,
-        balanced_final_species=balanced_final_species,
-        generated_schedule_version=generated_schedule_version,
     )
     for pair in range(games // 2):
         first, second = episodes[2 * pair : 2 * pair + 2]
@@ -955,14 +920,16 @@ def run_paired_arena(
             "player_party_size": episode.player_size,
             "enemy_party_size": episode.enemy_size,
             "level_profile": "level100" if episode.level100 else "distributed",
-            "campaign": (
-                _CAMPAIGN_NAMES[episode.campaign_index] if campaign else None
-            ),
+            "campaign": (_CAMPAIGN_NAMES[episode.campaign_index] if campaign else None),
             "stop": episode.stop,
             "reason": (
-                f"decision-horizon-{budget}"
-                if episode.stop == "truncated"
-                else None
+                episode.reason
+                if episode.reason is not None
+                else (
+                    f"decision-horizon-{config.budget}"
+                    if episode.stop == "truncated"
+                    else None
+                )
             ),
             "candidate_return": candidate_result,
             "score": score,
@@ -979,9 +946,7 @@ def run_paired_arena(
             if campaign:
                 campaign_scores[episode.campaign_index].append(paired)
             else:
-                for stratum in _party_strata(
-                    episode.player_size, episode.enemy_size
-                ):
+                for stratum in _party_strata(episode.player_size, episode.enemy_size):
                     stratum_scores[stratum].append(paired)
             pair_score = []
     robust_score = sum(game_scores) / games
@@ -1014,8 +979,10 @@ def run_paired_arena(
     return {
         "games": games,
         "pairs": games // 2,
-        "seed_count": seed_count,
+        "seed_count": config.seed_count,
         "pairing": "same-reset-complete-model-side-swap-v2",
+        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v1",
+        "search": asdict(_joint_search_config(config)),
         **(
             {
                 "side_swap_complete": True,
@@ -1026,7 +993,7 @@ def run_paired_arena(
                 "six_vs_six_games": None,
             }
             if campaign
-            else _generated_party_report(games, generated_schedule_version)
+            else _generated_party_report(games, config.generated_schedule_version)
         ),
         "strata": None if campaign else _stratified_report(stratum_scores),
         "campaign": campaign_report if campaign else None,
@@ -1052,28 +1019,12 @@ def run_paired_arena(
 def run_campaign_arena(
     candidate: BattleTransformer,
     baseline: BattleTransformer,
-    games: int,
-    budget: int,
-    seed: int,
-    seed_count: int = 8,
-    *,
-    balanced_final_species: bool = True,
-    generated_schedule_version: int = 3,
+    config: ArenaConfig,
 ) -> dict[str, Any]:
     """Evaluate both model sides across the fixed patched campaign suite."""
-    if games < 2 * len(_CAMPAIGN_NAMES):
+    if config.games < 2 * len(_CAMPAIGN_NAMES):
         raise ValueError("campaign arena requires at least one pair per fixed team")
-    return run_paired_arena(
-        candidate,
-        baseline,
-        games,
-        budget,
-        seed,
-        seed_count,
-        campaign=True,
-        balanced_final_species=balanced_final_species,
-        generated_schedule_version=generated_schedule_version,
-    )
+    return run_paired_arena(candidate, baseline, config, campaign=True)
 
 
 def _traced_summary(
@@ -1153,12 +1104,10 @@ def _run_traced_arena_batched(
             for game in range(batch_start, batch_stop):
                 pair = game // 2
                 candidate_player = game % 2 == 0
-                candidate_rng = random.Random(
+                selection_rng = random.Random(
                     config.seed + 30_000_019 + pair * 2_000_003
                 )
-                baseline_rng = random.Random(
-                    config.seed + 40_000_033 + pair * 2_000_003
-                )
+                chance_rng = random.Random(config.seed + 40_000_033 + pair * 2_000_003)
                 player_size, enemy_size = _evaluation_party_sizes(
                     pair, config.generated_schedule_version
                 )
@@ -1169,12 +1118,8 @@ def _run_traced_arena_batched(
                         candidate_player=candidate_player,
                         player=candidate if candidate_player else baseline,
                         enemy=baseline if candidate_player else candidate,
-                        player_rng=(
-                            candidate_rng if candidate_player else baseline_rng
-                        ),
-                        enemy_rng=(
-                            baseline_rng if candidate_player else candidate_rng
-                        ),
+                        selection_rng=selection_rng,
+                        chance_rng=chance_rng,
                         player_size=player_size,
                         enemy_size=enemy_size,
                         level100=_evaluation_level100(
@@ -1217,26 +1162,42 @@ def _run_traced_arena_batched(
                 for decision in range(config.budget):
                     if not active:
                         break
-                    actions = _network_actions_many(
-                        active, config.inference_batch_size
-                    )
-                    for episode, (player_action, enemy_action) in zip(
-                        active, actions, strict=True
-                    ):
+                    search_results = _rmplus_search_many(server, active, config)
+                    searchable: list[_TracedArenaEpisode] = []
+                    available_results: list[SearchResult] = []
+                    for episode, result in zip(active, search_results, strict=True):
+                        if result.failure is not None:
+                            episode.stop = "semantic-divergence"
+                            if episode.replay is not None:
+                                episode.replay.add(
+                                    "|message|RM+ search unavailable: " + result.failure
+                                )
+                        else:
+                            searchable.append(episode)
+                            available_results.append(result)
+                    active = searchable
+                    search_results = available_results
+                    if not active:
+                        break
+                    actions = [
+                        (result.player_action, result.enemy_action)
+                        for result in search_results
+                    ]
+                    for episode, result in zip(active, search_results, strict=True):
                         if episode.replay is not None:
                             assert episode.inspection is not None
                             episode.replay.add(f"|turn|{decision + 1}")
                             _action_line(
                                 episode.replay,
                                 0,
-                                player_action,
+                                result.player_action,
                                 episode.inspection,
                                 episode.snapshot.request,
                             )
                             _action_line(
                                 episode.replay,
                                 1,
-                                enemy_action,
+                                result.enemy_action,
                                 episode.inspection,
                                 episode.snapshot.request,
                             )
@@ -1385,7 +1346,7 @@ def _run_traced_arena_batched(
                     "|message|Battle truncated without a terminal result."
                 )
             episode.replay_path.write_text(episode.replay.text())
-    return _traced_summary(
+    result = _traced_summary(
         config,
         wins,
         losses,
@@ -1397,6 +1358,9 @@ def _run_traced_arena_batched(
         candidate_metrics,
         baseline_metrics,
     )
+    result["action_selector"] = "simultaneous-matrix-tree-rmplus-every-decision-v1"
+    result["search"] = asdict(_joint_search_config(config))
+    return result
 
 
 def run_traced_arena(
@@ -1412,10 +1376,6 @@ def run_traced_arena(
     ):
         raise ValueError(
             "traced arena requires even games and at least one pair for each seed"
-        )
-    if config.search_every:
-        return _run_traced_arena_sequential(
-            candidate, baseline, config, replay_dir
         )
     return _run_traced_arena_batched(candidate, baseline, config, replay_dir)
 
@@ -1436,13 +1396,7 @@ def _run_traced_arena_sequential(
         )
     selection_rng = random.Random(config.seed + 0xA7E9A)
     chance_rng = random.Random(config.seed + 0xA7E9B)
-    search_config = JointSearchConfig(
-        config.chance_samples_per_joint,
-        config.search_depth,
-        config.regret_iterations,
-        config.inference_batch_size,
-        config.max_actions_per_side,
-    )
+    search_config = _joint_search_config(config)
     candidate_metrics = SkillMetrics()
     baseline_metrics = SkillMetrics()
     wins = losses = draws = truncated = semantic_divergences = mechanics_timeouts = 0
@@ -1457,10 +1411,6 @@ def _run_traced_arena_sequential(
         player_size, enemy_size = _evaluation_party_sizes(
             pair, config.generated_schedule_version
         )
-        candidate_rng = random.Random(config.seed + 30_000_019 + pair * 2_000_003)
-        baseline_rng = random.Random(config.seed + 40_000_033 + pair * 2_000_003)
-        player_rng = candidate_rng if candidate_player else baseline_rng
-        enemy_rng = baseline_rng if candidate_player else candidate_rng
         replay = Replay() if episode < config.replay_games else None
         replay_path = (
             replay_dir / f"game-{episode:05d}.log"
@@ -1498,22 +1448,25 @@ def _run_traced_arena_sequential(
                     before = server.inspect(snapshot.handle)
                     before["player_mask"] = snapshot.player_mask
                     before["enemy_mask"] = snapshot.enemy_mask
-                    if config.search_every and decision % config.search_every == 0:
-                        search = SimultaneousTreeSearch(
-                            server,
-                            player,
-                            enemy,
-                            search_config,
-                            selection_rng,
-                            chance_rng,
-                        )
-                        result = search.search(snapshot, sample_actions=True)
-                        player_action = result.player_action
-                        enemy_action = result.enemy_action
-                    else:
-                        player_action, enemy_action = _network_actions_split(
-                            player, enemy, snapshot, player_rng, enemy_rng
-                        )
+                    search = SimultaneousTreeSearch(
+                        server,
+                        player,
+                        enemy,
+                        search_config,
+                        selection_rng,
+                        chance_rng,
+                    )
+                    result = search.search(snapshot, sample_actions=True)
+                    if result.failure is not None:
+                        semantic_divergence = True
+                        semantic_divergences += 1
+                        if replay is not None:
+                            replay.add(
+                                "|message|RM+ search unavailable: " + result.failure
+                            )
+                        break
+                    player_action = result.player_action
+                    enemy_action = result.enemy_action
                     if replay is not None:
                         replay.add(f"|turn|{decision + 1}")
                         _action_line(replay, 0, player_action, before, snapshot.request)

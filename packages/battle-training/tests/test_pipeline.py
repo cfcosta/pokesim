@@ -5,13 +5,14 @@ import random
 import sys
 import tempfile
 import unittest
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
+
 from battle_training.arena import (
     SkillMetrics,
     _evaluation_level100,
@@ -155,6 +156,14 @@ class _ToyServer:
     def search_steps(self, requests: list[tuple[int, int, int, int]]) -> list[Snapshot]:
         self.batches.append(len(requests))
         return [self.search_step(*request) for request in requests]
+
+
+class _DivergentToyServer(_ToyServer):
+    def search_steps(self, requests: list[tuple[int, int, int, int]]) -> list[Snapshot]:
+        return [
+            replace(snapshot, divergence="toy-search-divergence")
+            for snapshot in super().search_steps(requests)
+        ]
 
 
 class MoveValueModelTests(unittest.TestCase):
@@ -484,6 +493,30 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(result.diagnostics["root_joint_actions"], 4)
         self.assertEqual(result.diagnostics["sampled_joint_coverage"], 1.0)
 
+    def test_search_divergence_never_falls_back_to_raw_policy_actions(self) -> None:
+        server = _DivergentToyServer()
+        network = _ToyNetwork()
+        search = SimultaneousTreeSearch(
+            server,  # type: ignore[arg-type]
+            network,  # type: ignore[arg-type]
+            network,  # type: ignore[arg-type]
+            JointSearchConfig(
+                max_depth=1,
+                max_actions_per_side=2,
+                expansion_budget=4,
+                minimum_expansion_budget=1,
+            ),
+            random.Random(7),
+            random.Random(11),
+        )
+        result = search.search(server._snapshot(0))
+        self.assertEqual(result.failure, "search-semantic-divergence")
+        self.assertIsNone(result.player_action)
+        self.assertIsNone(result.enemy_action)
+        self.assertEqual(sum(result.player_policy), 0.0)
+        self.assertEqual(sum(result.enemy_policy), 0.0)
+        self.assertEqual(result.solver, "rmplus-unavailable-on-semantic-divergence-v1")
+
     def test_cross_root_search_batches_and_caches_inference(self) -> None:
         server = _ToyServer()
         server.states[100] = (0, 0)
@@ -679,8 +712,33 @@ class TransformerTests(unittest.TestCase):
             ["transformer-resume", "--output", "/tmp/overnight"]
         )
         self.assertEqual(resume.command, "transformer-resume")
+        with self.assertRaises(SystemExit):
+            training_parser().parse_args(
+                [
+                    "transformer-train",
+                    "--output",
+                    "/tmp/invalid-sparse-search",
+                    "--search-every",
+                    "2",
+                ]
+            )
+        arena = training_parser().parse_args(
+            [
+                "arena",
+                "--candidate",
+                "/tmp/candidate.pt",
+                "--baseline",
+                "/tmp/baseline.pt",
+                "--output",
+                "/tmp/arena",
+            ]
+        )
+        self.assertFalse(hasattr(arena, "search_every"))
+        self.assertEqual(arena.search_depth, 4)
+        self.assertEqual(arena.tree_expansion_budget, 320)
+        self.assertEqual(arena.redundant_action_prior_scale, 0.25)
 
-    def test_v16_resume_restores_legacy_species_and_party_schedules(self) -> None:
+    def test_pre_rmplus_everywhere_lineage_cannot_resume(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             config = asdict(
@@ -713,9 +771,8 @@ class TransformerTests(unittest.TestCase):
                     "config": config,
                 },
             )
-            resumed = _resume_config(root)
-            self.assertFalse(resumed.balanced_final_species)
-            self.assertEqual(resumed.generated_schedule_version, 2)
+            with self.assertRaisesRegex(ValueError, "resume pipeline version differs"):
+                _resume_config(root)
 
     def test_resume_loads_complete_prefix_and_archives_partial_iteration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -784,9 +841,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(schedule.count((6, 6)), 171)
         level100 = [_evaluation_level100(pair) for pair in range(512)]
         self.assertEqual(sum(level100), 57)
-        legacy_schedule = [
-            _evaluation_party_sizes(pair, 2) for pair in range(512)
-        ]
+        legacy_schedule = [_evaluation_party_sizes(pair, 2) for pair in range(512)]
         legacy_level100 = [_evaluation_level100(pair, 2) for pair in range(512)]
         self.assertEqual(legacy_schedule.count((6, 6)), 128)
         self.assertEqual(sum(legacy_level100), 32)
@@ -958,23 +1013,25 @@ class TransformerTests(unittest.TestCase):
         models = [(_ToyNetwork(), "model-a"), (_ToyNetwork(), "model-b")]
         opponents = [*heuristics, *models]
         selected = [
-            _select_training_opponent(opponents, ordinal, 0.5)
-            for ordinal in range(20)
+            _select_training_opponent(opponents, ordinal, 0.5) for ordinal in range(20)
         ]
         identities = [identity for _, identity, _ in selected]
-        self.assertEqual(sum(identity.startswith("model-") for identity in identities), 10)
+        self.assertEqual(
+            sum(identity.startswith("model-") for identity in identities), 10
+        )
         self.assertEqual(identities[1::2], ["model-a", "model-b"] * 5)
         self.assertEqual(
             identities[0::2],
-            [identity for _, identity in heuristics] * 3
-            + [heuristics[0][1]],
+            [identity for _, identity in heuristics] * 3 + [heuristics[0][1]],
         )
-        self.assertEqual([ordinal for _, _, ordinal in selected[:6]], [0, 0, 1, 1, 2, 2])
+        self.assertEqual(
+            [ordinal for _, _, ordinal in selected[:6]], [0, 0, 1, 1, 2, 2]
+        )
 
     def test_training_schedule_pairs_every_reset_and_side_assignment(self) -> None:
-        self.assertEqual(_pipeline_id(), "transformer-variable-party-bf16-tree-v17")
+        self.assertEqual(_pipeline_id(), "transformer-variable-party-bf16-rmplus-v18")
         self.assertEqual(
-            _pipeline_id(False, 2), "transformer-variable-party-bf16-tree-v16"
+            _pipeline_id(False, 2), "transformer-variable-party-bf16-rmplus-v18"
         )
         for episode in range(0, 128, 2):
             self.assertEqual(_training_pair(episode), _training_pair(episode + 1))
@@ -1173,7 +1230,9 @@ class TransformerTests(unittest.TestCase):
             save_network(source_path, source, None, {"iteration": 4})
             target = warm_start_network(source_path, config, torch.device("cpu"))
             for name, source_value in source.state_dict().items():
-                self.assertTrue(torch.equal(target.state_dict()[name], source_value), name)
+                self.assertTrue(
+                    torch.equal(target.state_dict()[name], source_value), name
+                )
 
     def test_gradient_diagnostics_report_norm_conflict(self) -> None:
         report = _gradient_report(

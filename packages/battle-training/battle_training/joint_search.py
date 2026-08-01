@@ -25,8 +25,8 @@ _SWITCH_ACTIONS = range(4, 10)
 class SearchResult:
     player_policy: tuple[float, ...]
     enemy_policy: tuple[float, ...]
-    player_action: int
-    enemy_action: int
+    player_action: int | None
+    enemy_action: int | None
     root_value: float
     nodes: int
     solver: str
@@ -34,6 +34,7 @@ class SearchResult:
     payoff_spread: float | None
     payoff_matrix: tuple[tuple[float, ...], ...] | None
     diagnostics: dict[str, float | int] | None = None
+    failure: str | None = None
 
 
 @dataclass(frozen=True)
@@ -311,7 +312,9 @@ class BatchedJointRegretSearch:
         self._inference_cache_stats = {"hits": 0, "misses": 0}
 
     @staticmethod
-    def _feature_identity(feature: Sequence[int]) -> tuple[str, bytes | tuple[int, ...]]:
+    def _feature_identity(
+        feature: Sequence[int],
+    ) -> tuple[str, bytes | tuple[int, ...]]:
         dtype = getattr(feature, "dtype", None)
         tobytes = getattr(feature, "tobytes", None)
         if dtype is not None and tobytes is not None:
@@ -458,19 +461,18 @@ class BatchedJointRegretSearch:
         ]
         trajectories = self.server.search_steps(requests)
         if any(successor.divergence is not None for successor in trajectories):
-            player_policy = root_player[0]
-            enemy_policy = root_enemy[0]
             return SearchResult(
-                tuple(player_policy),
-                tuple(enemy_policy),
-                _sample(player_policy, self.selection_rng),
-                _sample(enemy_policy, self.selection_rng),
+                tuple(0.0 for _ in range(self.action_count)),
+                tuple(0.0 for _ in range(self.action_count)),
+                None,
+                None,
                 root_values[0],
                 len(trajectories),
-                "network-fallback-on-semantic-divergence-v1",
+                "rmplus-unavailable-on-semantic-divergence-v1",
                 None,
                 None,
                 None,
+                failure="search-semantic-divergence",
             )
         root_potential = _tactical_potential(snapshot.player_features)
         transition_count = len(trajectories)
@@ -866,9 +868,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         int,
     ]:
         """Evaluate side-canonical rows once per network identity and exact key."""
-        outputs: dict[
-            tuple[int, int, int], tuple[list[float], float]
-        ] = {}
+        outputs: dict[tuple[int, int, int], tuple[list[float], float]] = {}
         known: dict[
             tuple[int, str, bytes | tuple[int, ...], int],
             tuple[list[float], float],
@@ -1184,7 +1184,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             if not child.expanded:
                 expansion_cost = self._joint_cost(child)
                 if cost + expansion_cost <= remaining:
-                    cost += (yield from self._expand_frontier(child, False))
+                    cost += yield from self._expand_frontier(child, False)
                     self._max_depth_reached = max(self._max_depth_reached, depth + 1)
                     value = max(
                         -1.0,
@@ -1198,7 +1198,11 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     )
                     learned = fresh
             else:
-                child_value, child_cost, child_learned = yield from self._simulate_frontier(
+                (
+                    child_value,
+                    child_cost,
+                    child_learned,
+                ) = yield from self._simulate_frontier(
                     child, depth + 1, remaining - cost
                 )
                 learned = fresh or child_learned
@@ -1272,17 +1276,18 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         simulations: int,
     ) -> SearchResult:
         return SearchResult(
-            tuple(player_policy),
-            tuple(enemy_policy),
-            _sample(player_policy, self.selection_rng),
-            _sample(enemy_policy, self.selection_rng),
+            tuple(0.0 for _ in range(self.action_count)),
+            tuple(0.0 for _ in range(self.action_count)),
+            None,
+            None,
             value,
             transitions,
-            "network-fallback-on-semantic-divergence-v1",
+            "rmplus-unavailable-on-semantic-divergence-v1",
             None,
             None,
             None,
             self._diagnostics(simulations, False, None),
+            "search-semantic-divergence",
         )
 
     def _finish_root_frontier(
@@ -1469,9 +1474,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 split = len(native) // 2
                 leading, native = native[:split], native[split:]
                 leading_requests = [
-                    request
-                    for _, frontier in leading
-                    for request in frontier.requests
+                    request for _, frontier in leading for request in frontier.requests
                 ]
                 leading_snapshots = jobs[0][1].server.search_steps(leading_requests)
                 native_calls += 1
@@ -1569,6 +1572,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                         result.payoff_spread,
                         result.payoff_matrix,
                         diagnostics,
+                        result.failure,
                     ),
                 )
             )
@@ -1588,7 +1592,8 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         if any(snapshot.done for snapshot in snapshots):
             raise ValueError("cannot search a terminal state")
         if any(
-            search.server is not first.server or search.action_count != first.action_count
+            search.server is not first.server
+            or search.action_count != first.action_count
             for search in searches[1:]
         ):
             raise ValueError("cross-root batches require one server and action schema")
@@ -1600,7 +1605,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 )
             ]
         )
-        player_priors = [root_evaluations[index][0][0] for index in range(len(searches))]
+        player_priors = [
+            root_evaluations[index][0][0] for index in range(len(searches))
+        ]
         enemy_priors = [root_evaluations[index][1][0] for index in range(len(searches))]
         prior_values = [root_evaluations[index][2][0] for index in range(len(searches))]
         roots = [

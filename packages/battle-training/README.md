@@ -28,7 +28,7 @@ The smoke command performs the complete loop:
 
 1. builds and starts the persistent Lean search server;
 2. initializes a side-canonical transformer policy/value network;
-3. periodically builds a persistent simultaneous tree with complete root coverage;
+3. builds a persistent simultaneous tree at every neural-model decision;
 4. couples independent `fresh-root-v1` chance samples across joint actions for
    lower-variance payoff comparisons without reading the episode RNG suffix;
 5. runs persistent regret matching+ at every expanded typed request and records
@@ -45,14 +45,21 @@ stable average-strategy updates once the full depth has been reached. The root
 evaluates every legal joint action; deeper nodes begin with two cyclic
 joint-action rotations that cover every legal move and switch, then sample
 additional pairs and fresh chance outcomes under persistent regret matching+.
-Except for typed search fallbacks, every completed training decision therefore
-carries an RM+ average-strategy policy target. `--search-every` remains available
-for explicit sparse-search experiments, but it is not the production default.
-This preserves complete action consideration without top-k pruning.
+Every completed neural-model decision therefore carries an RM+ average-strategy
+policy target. `--search-every` is fixed at one; sparse raw-policy action
+selection has been removed. If a search encounters semantic divergence before
+it can produce an RM+ strategy, the episode fails closed without selecting or
+labeling a raw-policy action. This preserves complete action consideration
+without top-k pruning.
+V18 makes this selector a lineage invariant. V16/V17 artifacts cannot resume
+under V18; same-schema learner and incumbent weights may only enter through the
+existing explicit warm-start paths with a fresh optimizer and new immutable
+lineage.
+
 `transformer-train` is the production profile:
 30 iterations of 2,048 training battles, or 61,440 independently reset random
 variable-party battles. One third of generated battles are 6v6; the remaining
-schedule cycles through every other ordered party-size matchup. V17 selects the
+schedule cycles through every other ordered party-size matchup. V18 selects the
 displayed final species with a bounded two-byte map whose 151 fibers contain
 434 or 435 words each. This removes the prior 2:1 byte-modulo bias and the
 funneling of several evolutionary-family entries into one final form while
@@ -215,7 +222,7 @@ collection or promotion. It also reports and gates 1–2, 3–4,
 5–6, and unequal-party strata, plus a nine-team fixed campaign suite covering
 Brock through Giovanni and Lance. The campaign teams use canonical natural
 moves and fixed DVs inside the link quotient; they do not claim trainer AI or
-item equivalence. The v16/v17 pipelines separate a persistent shadow learner from the
+item equivalence. The v16–v18 pipelines separate a persistent shadow learner from the
 quality-gated deployed incumbent. Inconclusive evaluations retain the incumbent
 but carry the learner parameters and AdamW state into the next collection
 iteration, allowing small updates to compound without weakening deployment. Each
@@ -282,8 +289,8 @@ unchanged observations; `batch-episode` advances several real trajectories with
 their existing hidden RNG. The compatibility `compact-many` command still emits
 full snapshots for external protocol probes. Python cannot
 mutate or resolve battle state itself. Actors run in groups of 16. Root matrices,
-root leaf inference, network-only decisions, and real episode transitions are
-batched across compatible independent roots. Deeper progressive simulations are
+root leaf inference, RM+ decisions, and real episode transitions are batched
+across compatible independent roots. Deeper progressive simulations are
 resumable frontiers: native requests and leaf rows are pooled across roots and
 model identities, then deterministic cohorts overlap Lean mechanics with GPU
 inference. Independent search, chance, and deep-tier RNG streams are retained.
@@ -291,8 +298,10 @@ inference. Independent search, chance, and deep-tier RNG streams are retained.
 root while labeling those targets `joint-regret-root`; its default remains 1.0
 pending equal-budget quality gates.
 
-Promotion and campaign arenas keep hundreds of live games on one Lean server,
-batching inference, episode steps, and handle compaction. Probe arenas use 64-game
+Promotion, campaign, probe, and final arenas use the same RM+ tree parameters
+and every-decision action selector as collection. They keep live games on one
+Lean server while batching inference, episode steps, and handle compaction.
+Probe arenas use 64-game
 batches and carry each post-step inspection into the next decision. A timed-out
 batch is discarded and the server is respawned. Arena directories contain
 Showdown-style `.log` replays plus aggregate metrics

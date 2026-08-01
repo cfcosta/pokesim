@@ -207,11 +207,8 @@ class _ActorEpisode:
 def _pipeline_id(
     balanced_final_species: bool = True, generated_schedule_version: int = 3
 ) -> str:
-    return (
-        "transformer-variable-party-bf16-tree-v16"
-        if not balanced_final_species and generated_schedule_version == 2
-        else "transformer-variable-party-bf16-tree-v17"
-    )
+    del balanced_final_species, generated_schedule_version
+    return "transformer-variable-party-bf16-rmplus-v18"
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
@@ -270,9 +267,7 @@ def _training_party_sizes(
     )
 
 
-def _training_level100(
-    iteration: int, episode: int, schedule_version: int = 3
-) -> bool:
+def _training_level100(iteration: int, episode: int, schedule_version: int = 3) -> bool:
     return generated_level100(
         _training_party_index(iteration, episode), schedule_version
     )
@@ -379,6 +374,39 @@ def _new_search(
     )
 
 
+def _arena_config(
+    config: TransformerPipelineConfig,
+    games: int,
+    seed: int,
+    seed_count: int,
+    *,
+    replay_games: int = 0,
+) -> ArenaConfig:
+    return ArenaConfig(
+        games=games,
+        budget=config.episode_budget,
+        chance_samples_per_joint=config.chance_samples_per_joint,
+        search_depth=config.search_depth,
+        regret_iterations=config.regret_iterations,
+        inference_batch_size=config.inference_batch_size,
+        max_actions_per_side=config.max_actions_per_side,
+        tree_expansion_budget=config.tree_expansion_budget,
+        tree_exploration=config.tree_exploration,
+        tree_chance_resample=config.tree_chance_resample,
+        tree_regret_iterations=config.tree_regret_iterations,
+        tree_deeper_joint_rotations=config.tree_deeper_joint_rotations,
+        tree_minimum_budget=config.tree_minimum_budget,
+        tree_convergence_tolerance=config.tree_convergence_tolerance,
+        tree_convergence_patience=config.tree_convergence_patience,
+        redundant_action_prior_scale=config.redundant_action_prior_scale,
+        seed=seed,
+        replay_games=replay_games,
+        seed_count=seed_count,
+        balanced_final_species=config.balanced_final_species,
+        generated_schedule_version=config.generated_schedule_version,
+    )
+
+
 def _sample_policy(probabilities: list[float], rng: random.Random) -> int:
     threshold = rng.random()
     cumulative = 0.0
@@ -389,121 +417,6 @@ def _sample_policy(probabilities: list[float], rng: random.Random) -> int:
     return max(
         index for index, probability in enumerate(probabilities) if probability > 0
     )
-
-
-def _policy_rollout_many(
-    player: BattleTransformer,
-    enemy: BattleTransformer,
-    snapshots: list[Snapshot],
-    rngs: list[random.Random],
-) -> list[SearchResult]:
-    if not snapshots:
-        return []
-    if len(rngs) != len(snapshots):
-        raise ValueError("policy rollout requires one RNG per snapshot")
-    if player is enemy:
-        policies, values = player.evaluate(
-            [snapshot.player_features for snapshot in snapshots]
-            + [snapshot.enemy_features for snapshot in snapshots],
-            [snapshot.player_mask for snapshot in snapshots]
-            + [snapshot.enemy_mask for snapshot in snapshots],
-        )
-        count = len(snapshots)
-        player_policies, enemy_policies = policies[:count], policies[count:]
-        player_values, enemy_values = values[:count], values[count:]
-    else:
-        player_policies, player_values = player.evaluate(
-            [snapshot.player_features for snapshot in snapshots],
-            [snapshot.player_mask for snapshot in snapshots],
-        )
-        enemy_policies, enemy_values = enemy.evaluate(
-            [snapshot.enemy_features for snapshot in snapshots],
-            [snapshot.enemy_mask for snapshot in snapshots],
-        )
-    results: list[SearchResult] = []
-    for player_policy, enemy_policy, player_value, enemy_value, rng in zip(
-        player_policies,
-        enemy_policies,
-        player_values,
-        enemy_values,
-        rngs,
-        strict=True,
-    ):
-        value = max(-1.0, min(1.0, (player_value - enemy_value) / 2.0))
-        results.append(
-            SearchResult(
-                tuple(player_policy),
-                tuple(enemy_policy),
-                _sample_policy(player_policy, rng),
-                _sample_policy(enemy_policy, rng),
-                value,
-                0,
-                "network-policy-rollout-v1",
-                None,
-                None,
-                None,
-            )
-        )
-    return results
-
-
-def _policy_rollout_actor_many(actors: list[_ActorEpisode]) -> list[SearchResult]:
-    grouped: dict[int, list[tuple[int, int, Any, int, Any]]] = {}
-    for index, actor in enumerate(actors):
-        grouped.setdefault(id(actor.player_network), []).append(
-            (
-                index,
-                0,
-                actor.snapshot.player_features,
-                actor.snapshot.player_mask,
-                actor.player_network,
-            )
-        )
-        grouped.setdefault(id(actor.enemy_network), []).append(
-            (
-                index,
-                1,
-                actor.snapshot.enemy_features,
-                actor.snapshot.enemy_mask,
-                actor.enemy_network,
-            )
-        )
-    outputs: dict[tuple[int, int], tuple[list[float], float]] = {}
-    for items in grouped.values():
-        policies, values = items[0][4].evaluate(
-            [item[2] for item in items], [item[3] for item in items]
-        )
-        for item, policy, value in zip(items, policies, values, strict=True):
-            outputs[(item[0], item[1])] = (policy, value)
-    results = []
-    for index, actor in enumerate(actors):
-        player_policy, player_value = outputs[(index, 0)]
-        enemy_policy, enemy_value = outputs[(index, 1)]
-        value = max(-1.0, min(1.0, (player_value - enemy_value) / 2.0))
-        results.append(
-            SearchResult(
-                tuple(player_policy),
-                tuple(enemy_policy),
-                _sample_policy(player_policy, actor.selection_rng),
-                _sample_policy(enemy_policy, actor.selection_rng),
-                value,
-                0,
-                "network-policy-rollout-v1",
-                None,
-                None,
-                None,
-            )
-        )
-    return results
-
-
-def _policy_rollout(
-    player: BattleTransformer,
-    enemy: BattleTransformer,
-    snapshot: Snapshot,
-    rng: random.Random,
-) -> SearchResult:
-    return _policy_rollout_many(player, enemy, [snapshot], [rng])[0]
 
 
 def _policy_entropy(policy: list[float]) -> float:
@@ -564,12 +477,13 @@ def _collect_rows_single(
     completed_episodes = 0
     meta: dict[str, Any] = {
         "type": "meta",
-        "format": "variable-party-joint-regret-policy-value-jsonl-v2",
+        "format": "variable-party-joint-regret-policy-value-jsonl-v3",
         "profile": FULL_PROFILE,
         "schema": FULL_SCHEMA,
         "entropy": ENTROPY,
         "chance": "fresh-root-v1",
         "solver": "simultaneous-matrix-tree-rmplus-v1",
+        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v1",
         "iteration": iteration,
         "episodes": len(episode_indices),
         "depth": config.search_depth,
@@ -578,7 +492,9 @@ def _collect_rows_single(
         "party_size_schedule": generated_schedule_names(
             config.generated_schedule_version
         )[0],
-        "level_schedule": generated_schedule_names(config.generated_schedule_version)[1],
+        "level_schedule": generated_schedule_names(config.generated_schedule_version)[
+            1
+        ],
         "species_schedule": (
             "near-uniform-final-species-u16-v1"
             if config.balanced_final_species
@@ -841,32 +757,46 @@ def _collect_rows_single(
                             key = f"{int(mon['dex']):03d}:{mon['name']}"
                             species_counts[key] = species_counts.get(key, 0) + 1
             for decision in range(config.episode_budget):
-                searched = decision % config.search_every == 0
                 results: dict[int, SearchResult] = {}
                 deep_by_episode = {
-                    actor.episode: searched
-                    and actor.tier_rng.random() < config.deep_search_fraction
+                    actor.episode: actor.tier_rng.random() < config.deep_search_fraction
                     for actor in active
                 }
-                if searched:
-                    actor_results = SimultaneousTreeSearch.search_many(
-                        [
-                            _new_search(
-                                server,
-                                actor.player_network,
-                                actor.enemy_network,
-                                config,
-                                actor.selection_rng,
-                                actor.chance_rng,
-                                deep=deep_by_episode[actor.episode],
-                            )
-                            for actor in active
-                        ],
-                        [actor.snapshot for actor in active],
-                        sample_actions=True,
-                    )
-                else:
-                    actor_results = _policy_rollout_actor_many(active)
+                actor_results = SimultaneousTreeSearch.search_many(
+                    [
+                        _new_search(
+                            server,
+                            actor.player_network,
+                            actor.enemy_network,
+                            config,
+                            actor.selection_rng,
+                            actor.chance_rng,
+                            deep=deep_by_episode[actor.episode],
+                        )
+                        for actor in active
+                    ],
+                    [actor.snapshot for actor in active],
+                    sample_actions=True,
+                )
+                searchable: list[_ActorEpisode] = []
+                available_results: list[SearchResult] = []
+                for actor, result in zip(active, actor_results, strict=True):
+                    if result.failure is not None:
+                        actor.final = _compact_inspection(actor.inspection)
+                        append_episode(
+                            actor,
+                            "semantic-divergence",
+                            decision,
+                            reason=result.failure,
+                        )
+                        semantic_divergences += 1
+                    else:
+                        searchable.append(actor)
+                        available_results.append(result)
+                active = searchable
+                actor_results = available_results
+                if not active:
+                    break
                 for actor, result in zip(active, actor_results, strict=True):
                     if actor.episode_kind == "heuristic-opponent":
                         heuristic = (
@@ -895,7 +825,7 @@ def _collect_rows_single(
                 for actor in active:
                     result = results[actor.episode]
                     snapshot = actor.snapshot
-                    valid_search_target = searched and result.payoff_matrix is not None
+                    valid_search_target = result.payoff_matrix is not None
                     if valid_search_target:
                         if deep_by_episode[actor.episode]:
                             target_kind = "joint-regret"
@@ -904,7 +834,7 @@ def _collect_rows_single(
                             target_kind = "joint-regret-root"
                             root_only_decisions += 1
                     else:
-                        target_kind = "policy-rollout"
+                        raise RuntimeError("available RM+ search lacks a payoff matrix")
                     search_diagnostics = result.diagnostics or {}
                     player_choice = _choice_detail(
                         actor.inspection, "player", result.player_action
@@ -1164,18 +1094,13 @@ def _collect_rows_single(
     schedule_tolerance = 2 * (schedule_denominator - 1)
     if (
         len(episode_indices) == config.selfplay_episodes
-        and abs(
-            six_vs_six_battles * schedule_denominator - len(episode_indices)
-        )
+        and abs(six_vs_six_battles * schedule_denominator - len(episode_indices))
         > schedule_tolerance
     ):
         raise RuntimeError("collection 6v6 schedule differs from its target")
     if (
         len(episode_indices) == config.selfplay_episodes
-        and abs(
-            level100_six_vs_six_battles * schedule_denominator
-            - six_vs_six_battles
-        )
+        and abs(level100_six_vs_six_battles * schedule_denominator - six_vs_six_battles)
         > schedule_tolerance
     ):
         raise RuntimeError("collection level-100 6v6 schedule differs from its target")
@@ -1195,7 +1120,9 @@ def _collect_rows_single(
         "party_size_schedule": generated_schedule_names(
             config.generated_schedule_version
         )[0],
-        "level_schedule": generated_schedule_names(config.generated_schedule_version)[1],
+        "level_schedule": generated_schedule_names(config.generated_schedule_version)[
+            1
+        ],
         "species_schedule": (
             "near-uniform-final-species-u16-v1"
             if config.balanced_final_species
@@ -1449,10 +1376,7 @@ def _merge_collection_rows(
     ):
         raise RuntimeError("collection 6v6 schedule differs from its target")
     if (
-        abs(
-            level100_six_vs_six_battles * schedule_denominator
-            - six_vs_six_battles
-        )
+        abs(level100_six_vs_six_battles * schedule_denominator - six_vs_six_battles)
         > schedule_tolerance
     ):
         raise RuntimeError("collection level-100 6v6 schedule differs from its target")
@@ -1488,7 +1412,9 @@ def _merge_collection_rows(
         "party_size_schedule": generated_schedule_names(
             config.generated_schedule_version
         )[0],
-        "level_schedule": generated_schedule_names(config.generated_schedule_version)[1],
+        "level_schedule": generated_schedule_names(config.generated_schedule_version)[
+            1
+        ],
         "species_schedule": (
             "near-uniform-final-species-u16-v1"
             if config.balanced_final_species
@@ -1880,9 +1806,7 @@ def _train_network(
                 "epoch": epoch,
                 "policy_loss": policy_total / batches,
                 "value_loss": value_total / batches,
-                "weighted_value_loss": config.value_loss_weight
-                * value_total
-                / batches,
+                "weighted_value_loss": config.value_loss_weight * value_total / batches,
                 "total_loss": total_total / batches,
             }
         )
@@ -1950,6 +1874,8 @@ def _play_game(
     for _ in range(config.episode_budget):
         search = _new_search(server, player, enemy, config, selection_rng, chance_rng)
         result = search.search(snapshot, sample_actions=True)
+        if result.failure is not None:
+            return None
         snapshot = server.episode_step(
             snapshot.handle, result.player_action, result.enemy_action
         )
@@ -2209,8 +2135,8 @@ def run_transformer_pipeline(
     write_monitor_state(root, "initializing", message="Validating native protocol")
     if config.selfplay_episodes < 4 or config.selfplay_episodes % 4:
         raise ValueError("selfplay_episodes must be a positive multiple of four")
-    if config.search_every < 1:
-        raise ValueError("search_every must be positive")
+    if config.search_every != 1:
+        raise ValueError("RM+ action selection requires search_every = 1")
     if config.tree_expansion_budget < 1:
         raise ValueError("tree_expansion_budget must be positive")
     if not 0.0 <= config.tree_exploration <= 1.0:
@@ -2428,19 +2354,13 @@ def run_transformer_pipeline(
                 raise ValueError(
                     "an incumbent warm start requires a learner warm start"
                 )
-            incumbent_source = Path(
-                config.warm_start_incumbent_checkpoint
-            ).resolve()
+            incumbent_source = Path(config.warm_start_incumbent_checkpoint).resolve()
             incumbent_sha = sha256(incumbent_source)
             incumbent_copy = root / "warm-start" / "incumbent.pt"
             write_new(incumbent_copy, incumbent_source.read_bytes())
             incumbent_payload = load_checkpoint(incumbent_copy, device)
-            incumbent_feature_count = int(
-                incumbent_payload["config"]["feature_count"]
-            )
-            incumbent_network = warm_start_network(
-                incumbent_copy, model_config, device
-            )
+            incumbent_feature_count = int(incumbent_payload["config"]["feature_count"])
+            incumbent_network = warm_start_network(incumbent_copy, model_config, device)
             incumbent_warm_start_metadata = {
                 "checkpoint": incumbent_copy.relative_to(root).as_posix(),
                 "sha256": incumbent_sha,
@@ -2474,6 +2394,9 @@ def run_transformer_pipeline(
                 ),
                 "chance": "fresh-root-v1",
                 "search_solver": "simultaneous-matrix-tree-rmplus-v1",
+                "action_selector": (
+                    "simultaneous-matrix-tree-rmplus-every-decision-v1"
+                ),
                 "collection_pairing": "same-reset-opposite-controller-sides-v1",
                 "learning_lineage": "persistent-shadow-v1",
                 "deployment_lineage": "quality-gated-incumbent-v1",
@@ -2614,13 +2537,13 @@ def run_transformer_pipeline(
         promotion = run_paired_arena(
             network,
             incumbent_network,
-            config.promotion_games,
-            config.episode_budget,
-            config.seed + 70_000_000 + iteration * 10_007,
-            config.promotion_seed_count,
+            _arena_config(
+                config,
+                config.promotion_games,
+                config.seed + 70_000_000 + iteration * 10_007,
+                config.promotion_seed_count,
+            ),
             capture_details=True,
-            balanced_final_species=config.balanced_final_species,
-            generated_schedule_version=config.generated_schedule_version,
         )
         promotion_detail_dir = root / "matches" / f"promotion-{iteration:03d}"
         for battle in promotion["battles"]:
@@ -2673,14 +2596,11 @@ def run_transformer_pipeline(
         probe_arena = run_traced_arena(
             network,
             incumbent_network,
-            ArenaConfig(
-                games=config.probe_games,
-                budget=config.episode_budget,
-                seed=config.seed + 80_000_000 + iteration * 10_009,
-                replay_games=0,
-                seed_count=config.probe_seed_count,
-                balanced_final_species=config.balanced_final_species,
-                generated_schedule_version=config.generated_schedule_version,
+            _arena_config(
+                config,
+                config.probe_games,
+                config.seed + 80_000_000 + iteration * 10_009,
+                config.probe_seed_count,
             ),
         )
         probes = skill_probe_report(probe_arena)
@@ -2697,12 +2617,12 @@ def run_transformer_pipeline(
         campaign_arena = run_campaign_arena(
             network,
             incumbent_network,
-            config.campaign_games,
-            config.episode_budget,
-            config.seed + 85_000_000 + iteration * 10_019,
-            config.campaign_seed_count,
-            balanced_final_species=config.balanced_final_species,
-            generated_schedule_version=config.generated_schedule_version,
+            _arena_config(
+                config,
+                config.campaign_games,
+                config.seed + 85_000_000 + iteration * 10_019,
+                config.campaign_seed_count,
+            ),
         )
         promotion_score = promotion["score_with_nonfinishes_as_losses"]
         confidence_low = promotion["paired_score_ci95"][0]
@@ -2814,19 +2734,12 @@ def run_transformer_pipeline(
     )
     deployed_distance = _parameter_distance(initial, incumbent_network)
     learner_distance = _parameter_distance(initial, network)
-    arena_config = ArenaConfig(
-        games=config.arena_episodes,
-        budget=config.episode_budget,
-        chance_samples_per_joint=config.chance_samples_per_joint,
-        search_depth=config.search_depth,
-        regret_iterations=config.regret_iterations,
-        inference_batch_size=config.inference_batch_size,
-        max_actions_per_side=13,
-        seed=config.seed,
+    arena_config = _arena_config(
+        config,
+        config.arena_episodes,
+        config.seed,
+        min(8, config.arena_episodes // 2),
         replay_games=min(3, config.arena_episodes),
-        seed_count=min(8, config.arena_episodes // 2),
-        balanced_final_species=config.balanced_final_species,
-        generated_schedule_version=config.generated_schedule_version,
     )
     arena = write_arena_report(
         root / "arena" / "final-vs-initial", incumbent_network, initial, arena_config
@@ -2910,6 +2823,7 @@ def run_transformer_pipeline(
             config.balanced_final_species, config.generated_schedule_version
         ),
         "device": str(device),
+        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v1",
         "iterations": config.iterations,
         "selfplay_battles": config.iterations * config.selfplay_episodes,
         "mirror_battles": sum(item["mirror_episodes"] for item in collection),
