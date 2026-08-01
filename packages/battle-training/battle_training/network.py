@@ -8,7 +8,7 @@ import tempfile
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 import torch
@@ -18,6 +18,32 @@ from . import FEATURE_COUNT
 
 _INFERENCE_BUCKETS = (2, 4, 8, 16, 32, 64, 96, 128, 192, 256)
 _COMPILED_RECOMPILE_LIMIT = 32
+
+
+class EvaluationTicket(Protocol):
+    """One launched inference whose host result may be collected later."""
+
+    def result(self) -> tuple[list[list[float]], list[float]]: ...
+
+
+@dataclass
+class _ImmediateEvaluation:
+    output: tuple[list[list[float]], list[float]]
+
+    def result(self) -> tuple[list[list[float]], list[float]]:
+        return self.output
+
+
+@dataclass
+class _CudaEvaluation:
+    output: Tensor
+    ready: torch.cuda.Event
+    keepalive: tuple[Tensor, ...]
+
+    def result(self) -> tuple[list[list[float]], list[float]]:
+        self.ready.synchronize()
+        values = self.output.numpy()
+        return values[:, :-1].tolist(), values[:, -1].tolist()
 
 
 @dataclass(frozen=True)
@@ -89,6 +115,7 @@ class BattleTransformer(nn.Module):
         self._pinned_mask_buffers: dict[int, Tensor] = {}
         self._inference_engine = "eager"
         self._compiled_forwards: dict[int, Any] = {}
+        self._inference_stream: torch.cuda.Stream | None = None
         nn.init.normal_(self.cls, std=0.02)
         nn.init.zeros_(self.policy.weight)
         nn.init.zeros_(self.policy.bias)
@@ -147,6 +174,14 @@ class BattleTransformer(nn.Module):
     def inference_engine(self) -> str:
         return self._inference_engine
 
+    @property
+    def supports_deferred_evaluation(self) -> bool:
+        device = next(self.parameters()).device
+        # Inductor's static CUDA graphs did not overlap on the production GPU:
+        # two batch-96 launches regressed 1.8%. Keep that path serialized while
+        # eager kernels and CPU heuristic work retain measured overlap.
+        return device.type == "cuda" and self._inference_engine == "eager"
+
     def configure_inference(self, engine: str) -> None:
         if engine not in {"auto", "eager", "compiled"}:
             raise ValueError("inference engine must be auto, eager, or compiled")
@@ -160,6 +195,15 @@ class BattleTransformer(nn.Module):
             driver = Path("/run/opengl-driver/lib")
             if "TRITON_LIBCUDA_PATH" not in os.environ and driver.is_dir():
                 os.environ["TRITON_LIBCUDA_PATH"] = str(driver)
+            cuda_home = Path(os.environ.get("CUDA_HOME", ""))
+            for tool, variable in (
+                ("ptxas", "TRITON_PTXAS_PATH"),
+                ("cuobjdump", "TRITON_CUOBJDUMP_PATH"),
+                ("nvdisasm", "TRITON_NVDISASM_PATH"),
+            ):
+                executable = cuda_home / "bin" / tool
+                if variable not in os.environ and executable.is_file():
+                    os.environ[variable] = str(executable)
             # The ten intentional static batch shapes exceed Dynamo's default
             # eight-entry per-frame recompilation limit in production search.
             torch._dynamo.config.recompile_limit = max(
@@ -182,7 +226,9 @@ class BattleTransformer(nn.Module):
         bucket = self._inference_bucket(batch)
         if bucket != batch:
             padded = torch.zeros(
-                (bucket, features.shape[1]), dtype=features.dtype, device=features.device
+                (bucket, features.shape[1]),
+                dtype=features.dtype,
+                device=features.device,
             )
             padded[:batch].copy_(features)
         else:
@@ -220,17 +266,7 @@ class BattleTransformer(nn.Module):
         staging.copy_(source)
         return staging.to(device, non_blocking=True)
 
-    @torch.inference_mode()
-    def evaluate(
-        self, features: Sequence[Sequence[int]], masks: Sequence[int]
-    ) -> tuple[list[list[float]], list[float]]:
-        device = next(self.parameters()).device
-        feature_array = np.stack(features)
-        if feature_array.ndim != 2:
-            raise ValueError("network evaluation requires a rectangular feature batch")
-        tensor = self._staged_tensor(
-            feature_array, self._pinned_feature_buffers, device
-        ).long()
+    def _evaluation_outputs(self, tensor: Tensor, mask_indexes: Tensor) -> Tensor:
         if self._inference_engine == "compiled":
             device_type = tensor.device.type
             with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
@@ -238,17 +274,87 @@ class BattleTransformer(nn.Module):
             logits, values = logits.float(), values.float()
         else:
             logits, values = self(tensor)
-        mask_array = np.asarray(masks, dtype=np.uint16)
-        mask_indexes = self._staged_tensor(
-            mask_array, self._pinned_mask_buffers, device
-        ).long()
         legal = self._legal_mask_lookup.index_select(0, mask_indexes)
         if (~legal.any(dim=1)).any():
             raise ValueError("network evaluation received an empty legal mask")
         logits = logits.masked_fill(~legal, torch.finfo(logits.dtype).min)
         probabilities = torch.softmax(logits, dim=-1)
-        outputs = torch.cat((probabilities, values.unsqueeze(1)), dim=1).cpu().numpy()
-        return outputs[:, :-1].tolist(), outputs[:, -1].tolist()
+        return torch.cat((probabilities, values.unsqueeze(1)), dim=1)
+
+    @staticmethod
+    def _arrays(
+        features: Sequence[Sequence[int]], masks: Sequence[int]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        feature_array = np.stack(features)
+        if feature_array.ndim != 2:
+            raise ValueError("network evaluation requires a rectangular feature batch")
+        mask_array = np.asarray(masks, dtype=np.uint16)
+        if len(feature_array) != len(mask_array):
+            raise ValueError("network evaluation feature and mask batches differ")
+        return feature_array, mask_array
+
+    @torch.inference_mode()
+    def begin_evaluate(
+        self, features: Sequence[Sequence[int]], masks: Sequence[int]
+    ) -> EvaluationTicket:
+        """Launch inference without synchronizing independent CUDA work.
+
+        CUDA inputs and outputs use ticket-owned pinned buffers. This prevents a
+        later same-shaped launch from overwriting an in-flight transfer while
+        allowing the pooled search scheduler to launch every model before it
+        waits for any result.
+        """
+        device = next(self.parameters()).device
+        feature_array, mask_array = self._arrays(features, masks)
+        if device.type != "cuda":
+            tensor = self._staged_tensor(
+                feature_array, self._pinned_feature_buffers, device
+            ).long()
+            mask_indexes = self._staged_tensor(
+                mask_array, self._pinned_mask_buffers, device
+            ).long()
+            values = self._evaluation_outputs(tensor, mask_indexes).cpu().numpy()
+            return _ImmediateEvaluation(
+                (values[:, :-1].tolist(), values[:, -1].tolist())
+            )
+
+        feature_source = torch.from_numpy(feature_array)
+        mask_source = torch.from_numpy(mask_array)
+        pinned_features = torch.empty(
+            feature_source.shape, dtype=feature_source.dtype, pin_memory=True
+        )
+        pinned_masks = torch.empty(
+            mask_source.shape, dtype=mask_source.dtype, pin_memory=True
+        )
+        pinned_features.copy_(feature_source)
+        pinned_masks.copy_(mask_source)
+        if self._inference_stream is None:
+            self._inference_stream = torch.cuda.Stream(device=device)
+        stream = self._inference_stream
+        stream.wait_stream(torch.cuda.current_stream(device))
+        with torch.cuda.stream(stream):
+            tensor = pinned_features.to(device, non_blocking=True).long()
+            mask_indexes = pinned_masks.to(device, non_blocking=True).long()
+            outputs = self._evaluation_outputs(tensor, mask_indexes)
+            host_output = torch.empty(
+                outputs.shape,
+                dtype=outputs.dtype,
+                device="cpu",
+                pin_memory=True,
+            )
+            host_output.copy_(outputs, non_blocking=True)
+            ready = torch.cuda.Event()
+            ready.record(stream)
+        return _CudaEvaluation(
+            host_output,
+            ready,
+            (pinned_features, pinned_masks, tensor, mask_indexes, outputs),
+        )
+
+    def evaluate(
+        self, features: Sequence[Sequence[int]], masks: Sequence[int]
+    ) -> tuple[list[list[float]], list[float]]:
+        return self.begin_evaluate(features, masks).result()
 
     def detached_copy(self, device: torch.device) -> BattleTransformer:
         clone = BattleTransformer(self.config).to(device)

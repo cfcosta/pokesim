@@ -919,7 +919,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         by_network: dict[int, list[tuple[Any, dict[str, Any]]]] = {}
         for key, item in missing.items():
             by_network.setdefault(id(item["network"]), []).append((key, item))
-        calls = rows = 0
+        batches: list[tuple[Any, list[tuple[Any, dict[str, Any]]]]] = []
         for items in by_network.values():
             network = items[0][1]["network"]
             batch_size = max(
@@ -928,21 +928,48 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 for consumer in item["consumers"]
             )
             for start in range(0, len(items), batch_size):
-                batch = items[start : start + batch_size]
-                policies, values = network.evaluate(
-                    [item[1]["feature"] for item in batch],
-                    [item[1]["mask"] for item in batch],
+                batches.append((network, items[start : start + batch_size]))
+
+        pending: list[tuple[list[tuple[Any, dict[str, Any]]], Any]] = []
+        synchronous: list[tuple[Any, list[tuple[Any, dict[str, Any]]]]] = []
+        calls = len(batches)
+        rows = sum(len(batch) for _, batch in batches)
+        for network, batch in batches:
+            begin = getattr(network, "begin_evaluate", None)
+            can_defer = getattr(network, "supports_deferred_evaluation", True)
+            if begin is None or not can_defer:
+                synchronous.append((network, batch))
+                continue
+            pending.append(
+                (
+                    batch,
+                    begin(
+                        [item[1]["feature"] for item in batch],
+                        [item[1]["mask"] for item in batch],
+                    ),
                 )
-                calls += 1
-                rows += len(batch)
-                for (key, item), policy, value in zip(
-                    batch, policies, values, strict=True
-                ):
-                    cached = (policy, value)
-                    known[key] = cached
-                    for group_id, position, side, search in item["consumers"]:
-                        search._inference_cache[key] = cached
-                        outputs[(group_id, position, side)] = cached
+            )
+
+        completed: list[
+            tuple[list[tuple[Any, dict[str, Any]]], list[list[float]], list[float]]
+        ] = []
+        # CPU heuristics execute while every CUDA model already has work queued.
+        for network, batch in synchronous:
+            policies, values = network.evaluate(
+                [item[1]["feature"] for item in batch],
+                [item[1]["mask"] for item in batch],
+            )
+            completed.append((batch, policies, values))
+        for batch, ticket in pending:
+            policies, values = ticket.result()
+            completed.append((batch, policies, values))
+        for batch, policies, values in completed:
+            for (key, item), policy, value in zip(batch, policies, values, strict=True):
+                cached = (policy, value)
+                known[key] = cached
+                for group_id, position, side, search in item["consumers"]:
+                    search._inference_cache[key] = cached
+                    outputs[(group_id, position, side)] = cached
         results = {}
         for group_id, search, snapshots in groups:
             player_policies = [

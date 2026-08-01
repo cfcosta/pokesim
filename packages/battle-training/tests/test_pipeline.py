@@ -12,7 +12,6 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
-
 from battle_training.arena import (
     SkillMetrics,
     _evaluation_level100,
@@ -108,6 +107,39 @@ class _ToyNetwork:
                 policy[action] = 1.0 / len(legal)
             policies.append(policy)
         return policies, [0.0] * len(masks)
+
+
+class _DeferredEvaluation:
+    def __init__(
+        self,
+        trace: list[str],
+        name: str,
+        result: tuple[list[list[float]], list[float]],
+    ) -> None:
+        self.trace = trace
+        self.name = name
+        self.output = result
+
+    def result(self) -> tuple[list[list[float]], list[float]]:
+        self.trace.append(f"result:{self.name}")
+        return self.output
+
+
+class _DeferredToyNetwork(_ToyNetwork):
+    def __init__(self, trace: list[str], name: str) -> None:
+        super().__init__()
+        self.trace = trace
+        self.name = name
+
+    def begin_evaluate(self, features: object, masks: list[int]) -> _DeferredEvaluation:
+        self.trace.append(f"begin:{self.name}")
+        result = super().evaluate(features, masks)
+        return _DeferredEvaluation(self.trace, self.name, result)
+
+    def evaluate(
+        self, features: object, masks: list[int]
+    ) -> tuple[list[list[float]], list[float]]:
+        raise AssertionError("pooled inference serialized a deferred network")
 
 
 class _ToyServer:
@@ -1324,6 +1356,19 @@ class TransformerTests(unittest.TestCase):
         self.assertGreater(damaged, neutral)
         self.assertGreater(statused, damaged)
 
+    def test_deferred_evaluation_matches_synchronous_cpu_evaluation(self) -> None:
+        torch.manual_seed(9)
+        network = BattleTransformer(
+            TransformerConfig(d_model=32, heads=4, layers=1, feedforward=64)
+        ).eval()
+        features = [[0] * 100, [1] * 100]
+        masks = [0b0101, 0b1010]
+        expected = network.evaluate(features, masks)
+        actual = network.begin_evaluate(features, masks).result()
+        for left, right in zip(expected[0], actual[0], strict=True):
+            self.assertEqual(left, right)
+        self.assertEqual(expected[1], actual[1])
+
     def test_policy_masks_and_value_bounds(self) -> None:
         torch.manual_seed(7)
         network = BattleTransformer(
@@ -1344,6 +1389,50 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(policies[1][0], 0.0)
         self.assertEqual(policies[1][2], 0.0)
         self.assertTrue(all(-1.0 <= value <= 1.0 for value in values))
+
+    def test_pooled_inference_launches_all_networks_before_waiting(self) -> None:
+        trace: list[str] = []
+        player = _DeferredToyNetwork(trace, "player")
+        enemy = _DeferredToyNetwork(trace, "enemy")
+        server = _ToyServer()
+        search = SimultaneousTreeSearch(
+            server,
+            player,
+            enemy,
+            JointSearchConfig(
+                max_depth=1,
+                expansion_budget=4,
+                minimum_expansion_budget=1,
+                inference_batch_size=1,
+            ),
+            random.Random(1),
+            random.Random(2),
+        )
+        first = server._snapshot(0)
+        second = replace(
+            first,
+            handle=1,
+            player_features=tuple([1] + list(first.player_features[1:])),
+            enemy_features=tuple([2] + list(first.enemy_features[1:])),
+        )
+        _, calls, rows = SimultaneousTreeSearch._pooled_evaluate(
+            [(0, search, [first, second])]
+        )
+        self.assertEqual(calls, 4)
+        self.assertEqual(rows, 4)
+        self.assertEqual(
+            trace,
+            [
+                "begin:player",
+                "begin:player",
+                "begin:enemy",
+                "begin:enemy",
+                "result:player",
+                "result:player",
+                "result:enemy",
+                "result:enemy",
+            ],
+        )
 
     def test_grouped_scalar_tokens_reduce_sequence_length(self) -> None:
         network = BattleTransformer(

@@ -254,6 +254,17 @@ quality-gated teacher/model alternatives:
    only a configured fraction receives the full tree. A 25% probe improved a
    short collection workload 4.84×, but trajectories changed, so the production
    default remains 100% deep pending equal-budget promotion evidence.
+10. **Deferred multi-model CUDA inference.** Pooled search launches all CUDA
+    networks before awaiting any result and overlaps CPU heuristic evaluation
+    with those launches. Ticket-owned pinned buffers prevent in-flight transfers
+    from aliasing same-shaped requests. Two eager 96-row forwards on the RTX
+    3080 Ti improved from an 18.17 ms serialized median to 17.23 ms deferred
+    (1.055×, ten rounds); batch 32 improved 1.033×. Compiled batch 96 instead
+    measured 11.49 ms serialized and 11.70 ms deferred (0.982×), so the pooled
+    scheduler deliberately keeps static compiled graphs serialized. This
+    preserves outputs and avoids a measured production regression while showing
+    that streams alone are not a substitute for a shorter encoder or cheaper
+    leaf evaluation.
 
 ## Conclusions
 
