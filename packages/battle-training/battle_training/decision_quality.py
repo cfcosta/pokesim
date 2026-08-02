@@ -124,8 +124,7 @@ class DecisionQualityMetrics:
             / max(1, self.stat_setup_attempts),
             "ohko_attempts": self.ohko_attempts,
             "ohko_into_faster": self.ohko_into_faster,
-            "ohko_into_faster_rate": self.ohko_into_faster
-            / max(1, self.ohko_attempts),
+            "ohko_into_faster_rate": self.ohko_into_faster / max(1, self.ohko_attempts),
         }
 
 
@@ -152,9 +151,7 @@ def classify_move_decision(
         desired_status is not None and _has_major_status(target_status, desired_status)
     )
     redundant_status_other = bool(
-        desired_status is not None
-        and target_status != 0
-        and not redundant_status_same
+        desired_status is not None and target_status != 0 and not redundant_status_same
     )
     setup_stat = _STAGE_SETUP_MOVES.get(move_id)
     stat_setup_attempt = setup_stat is not None
@@ -193,6 +190,30 @@ def classify_feature_decision(
     )
 
 
+def _statically_redundant_move(
+    move_id: int,
+    target_status: int,
+    own_stages: Sequence[int],
+    own_speed: int,
+    target_speed: int,
+) -> bool:
+    """Mirror DecisionQualityFlags.statically_redundant without building flags.
+
+    A major-status move is redundant against any already-statused target, so
+    the same/other split collapses to a nonzero status check here.
+    """
+    if move_id in _MAJOR_STATUS_MOVES and target_status != 0:
+        return True
+    setup_stat = _STAGE_SETUP_MOVES.get(move_id)
+    if (
+        setup_stat is not None
+        and setup_stat < len(own_stages)
+        and int(own_stages[setup_stat]) >= 13
+    ):
+        return True
+    return move_id in _OHKO_MOVES and own_speed < target_speed
+
+
 def shape_redundant_action_priors(
     policy: list[float],
     features: Sequence[int],
@@ -210,10 +231,20 @@ def shape_redundant_action_priors(
     if scale == 1.0:
         return policy
     result = list(policy)
-    for action in range(min(4, len(result))):
-        if legal_mask & (1 << action):
-            flags = classify_feature_decision(features, action)
-            if flags.statically_redundant:
+    if len(features) >= 2 * _FULL_SIDE_WIDTH:
+        own_stages = features[_ACTIVE_STAGE_OFFSET : _ACTIVE_STAGE_OFFSET + 6]
+        own_speed = int(features[_ACTIVE_MON_OFFSET + 16])
+        target_active = _FULL_SIDE_WIDTH + _ACTIVE_MON_OFFSET
+        target_status = int(features[target_active + 3])
+        target_speed = int(features[target_active + 16])
+        for action in range(min(4, len(result))):
+            if legal_mask & (1 << action) and _statically_redundant_move(
+                int(features[_ACTIVE_MON_OFFSET + 7 + action]),
+                target_status,
+                own_stages,
+                own_speed,
+                target_speed,
+            ):
                 result[action] *= scale
     legal = [action for action in range(len(result)) if legal_mask & (1 << action)]
     total = sum(result[action] for action in legal)

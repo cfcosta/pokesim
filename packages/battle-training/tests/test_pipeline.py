@@ -872,6 +872,45 @@ class TransformerTests(unittest.TestCase):
         search._solve_node(node)
         self.assertGreater(node.player_policy[4], 0.9)
 
+    def test_tree_solver_accumulates_rmplus_state_across_updates(self) -> None:
+        server = _ToyServer()
+        network = _ThirteenActionToyNetwork()
+        search = SimultaneousTreeSearch(
+            server,
+            network,
+            network,
+            JointSearchConfig(regret_iterations_per_update=64),
+            random.Random(1),
+            random.Random(2),
+        )
+        mask = (1 << 0) | (1 << 4)
+        snapshot = replace(server._snapshot(0), player_mask=mask, enemy_mask=mask)
+        priors = [0.0] * 13
+        priors[0] = priors[4] = 0.5
+        node = search._make_node(snapshot, (list(priors), list(priors), 0.0))
+        # Player action 4 strictly dominates action 0; enemy column 0 strictly
+        # dominates column 4, so the last iterate settles on the pure pair
+        # (4, 0) with value 0.4.
+        node.payoff[0][0] = -0.6
+        node.payoff[0][4] = -0.2
+        node.payoff[4][0] = 0.4
+        node.payoff[4][4] = 0.8
+        search._solve_node(node)
+        self.assertEqual(node.solve_count, 64)
+        self.assertGreater(node.player_policy[4], 0.95)
+        self.assertGreater(node.enemy_policy[0], 0.95)
+        self.assertAlmostEqual(node.root_value, 0.4, places=1)
+        self.assertLess(node.exploitability, 0.2)
+        self.assertAlmostEqual(sum(node.player_strategy_sum), 64.0, places=6)
+        self.assertAlmostEqual(sum(node.enemy_strategy_sum), 64.0, places=6)
+        self.assertTrue(all(regret >= 0.0 for regret in node.player_regrets))
+        self.assertTrue(all(regret >= 0.0 for regret in node.enemy_regrets))
+        first_dominant_mass = node.player_policy[4]
+        search._solve_node(node)
+        self.assertEqual(node.solve_count, 128)
+        self.assertGreaterEqual(node.player_policy[4], first_dominant_mass - 0.01)
+        self.assertAlmostEqual(sum(node.player_strategy_sum), 128.0, places=6)
+
     def test_chance_resampling_decays_with_evidence(self) -> None:
         server = _ToyServer()
         network = _ToyNetwork()
@@ -1607,6 +1646,53 @@ class TransformerTests(unittest.TestCase):
         self.assertTrue(all(shaped[action] > 0.0 for action in range(4)))
         self.assertLess(shaped[0], policy[0])
         self.assertGreater(shaped[1], policy[1])
+
+    def test_redundant_action_shaping_matches_flag_classification(self) -> None:
+        policy = [0.35, 0.3, 0.2, 0.1, 0.05] + [0.0] * 8
+        move_sets = (
+            (86, 92, 45, 34),  # Thunder Wave, Toxic, Sing, Body Slam
+            (14, 97, 32, 0),  # Swords Dance, Agility, Horn Drill, empty slot
+            (12, 86, 14, 33),  # Guillotine, Thunder Wave, Swords Dance, Tackle
+        )
+        for moves in move_sets:
+            for target_status in (0, 0x02, 0x08, 0x40):
+                for attack_stage in (6, 13):
+                    for target_speed in (99, 101):
+                        features = [0] * 492
+                        for slot, move in enumerate(moves):
+                            features[140 + slot] = move
+                        features[159] = attack_stage
+                        features[149] = 100
+                        features[317] = target_status
+                        features[330] = target_speed
+                        self.assertIs(
+                            shape_redundant_action_priors(
+                                policy, features, 0b1111, 1.0
+                            ),
+                            policy,
+                        )
+                        for mask in (0b1111, 0b10101, 0b0110):
+                            shaped = shape_redundant_action_priors(
+                                policy, features, mask, 0.25
+                            )
+                            expected = list(policy)
+                            for action in range(4):
+                                if (
+                                    mask & (1 << action)
+                                    and classify_feature_decision(
+                                        features, action
+                                    ).statically_redundant
+                                ):
+                                    expected[action] *= 0.25
+                            legal = [
+                                action
+                                for action in range(len(policy))
+                                if mask & (1 << action)
+                            ]
+                            total = sum(expected[action] for action in legal)
+                            for action in legal:
+                                expected[action] /= total
+                            self.assertEqual(shaped, expected)
 
     def test_setup_move_observation_is_explicit_and_ungated(self) -> None:
         self.assertEqual(

@@ -104,23 +104,12 @@ def _sample(probabilities: list[float], rng: random.Random) -> int:
     )
 
 
-def _strategy(
-    regrets: list[float], priors: list[float], legal: list[int]
-) -> list[float]:
-    positive = sum(max(0.0, regrets[action]) for action in legal)
-    strategy = [0.0] * len(regrets)
-    if positive > 0.0:
-        for action in legal:
-            strategy[action] = max(0.0, regrets[action]) / positive
-        return strategy
-    prior_total = sum(priors[action] for action in legal)
-    if prior_total > 0.0:
-        for action in legal:
-            strategy[action] = priors[action] / prior_total
-    else:
-        for action in legal:
-            strategy[action] = 1.0 / len(legal)
-    return strategy
+def _normalized_prior(priors: list[float], legal: list[int]) -> np.ndarray:
+    values = np.asarray([priors[action] for action in legal], dtype=np.float64)
+    total = float(values.sum())
+    if total > 0.0:
+        return values / total
+    return np.full(len(legal), 1.0 / len(legal), dtype=np.float64)
 
 
 def solve_zero_sum_regret(
@@ -689,104 +678,64 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 node.payoff[player_action][enemy_action] = leaf_value
         return node
 
-    @staticmethod
-    def _matrix_value(
-        payoff: PayoffMatrix,
-        player_policy: tuple[float, ...],
-        enemy_policy: tuple[float, ...],
-        player_legal: list[int],
-        enemy_legal: list[int],
-    ) -> float:
-        return sum(
-            player_policy[player] * enemy_policy[enemy] * payoff[player][enemy]
-            for player in player_legal
-            for enemy in enemy_legal
-        )
-
-    @staticmethod
-    def _exploitability(
-        payoff: PayoffMatrix,
-        player_policy: tuple[float, ...],
-        enemy_policy: tuple[float, ...],
-        player_legal: list[int],
-        enemy_legal: list[int],
-    ) -> float:
-        row_best = max(
-            sum(enemy_policy[enemy] * payoff[player][enemy] for enemy in enemy_legal)
-            for player in player_legal
-        )
-        column_best = min(
-            sum(
-                player_policy[player] * payoff[player][enemy] for player in player_legal
-            )
-            for enemy in enemy_legal
-        )
-        return row_best - column_best
-
     def _solve_node(self, node: _TreeNode) -> None:
-        player: tuple[float, ...] = ()
-        enemy: tuple[float, ...] = ()
+        """Warm-started RM+ on the node's legal submatrix in float64 NumPy.
+
+        Node state stays in plain lists for cheap single-cell payoff updates;
+        each call converts once, iterates vectorized, and writes back so the
+        per-iteration cost no longer pays Python-loop dot products.
+        """
+        player_legal = node.player_legal
+        enemy_legal = node.enemy_legal
+        matrix = np.asarray(node.payoff, dtype=np.float64)[
+            np.ix_(player_legal, enemy_legal)
+        ]
+        player_regrets = np.asarray(
+            [node.player_regrets[action] for action in player_legal], dtype=np.float64
+        )
+        enemy_regrets = np.asarray(
+            [node.enemy_regrets[action] for action in enemy_legal], dtype=np.float64
+        )
+        player_prior = _normalized_prior(node.player_priors, player_legal)
+        enemy_prior = _normalized_prior(node.enemy_priors, enemy_legal)
+        player_sum = np.zeros(len(player_legal), dtype=np.float64)
+        enemy_sum = np.zeros(len(enemy_legal), dtype=np.float64)
+        player = player_prior
+        enemy = enemy_prior
         for _ in range(self.config.regret_iterations_per_update):
-            raw_player = tuple(
-                _strategy(
-                    node.player_regrets,
-                    node.player_priors,
-                    node.player_legal,
-                )
+            player_positive = np.maximum(player_regrets, 0.0)
+            player_total = float(player_positive.sum())
+            player = (
+                player_positive / player_total if player_total > 0.0 else player_prior
             )
-            raw_enemy = tuple(
-                _strategy(
-                    node.enemy_regrets,
-                    node.enemy_priors,
-                    node.enemy_legal,
-                )
-            )
-            player, enemy = raw_player, raw_enemy
-            row_values = [0.0] * self.action_count
-            column_values = [0.0] * self.action_count
-            for player_action in node.player_legal:
-                row_values[player_action] = sum(
-                    enemy[enemy_action] * node.payoff[player_action][enemy_action]
-                    for enemy_action in node.enemy_legal
-                )
-            for enemy_action in node.enemy_legal:
-                column_values[enemy_action] = sum(
-                    player[player_action] * node.payoff[player_action][enemy_action]
-                    for player_action in node.player_legal
-                )
-            value = sum(
-                player[player_action] * row_values[player_action]
-                for player_action in node.player_legal
-            )
-            for action in node.player_legal:
-                node.player_regrets[action] = max(
-                    0.0,
-                    node.player_regrets[action] + row_values[action] - value,
-                )
-                node.player_strategy_sum[action] += player[action]
-            for action in node.enemy_legal:
-                node.enemy_regrets[action] = max(
-                    0.0,
-                    node.enemy_regrets[action] + value - column_values[action],
-                )
-                node.enemy_strategy_sum[action] += enemy[action]
-            node.solve_count += 1
-        node.player_policy = player
-        node.enemy_policy = enemy
-        node.root_value = self._matrix_value(
-            node.payoff,
-            player,
-            enemy,
-            node.player_legal,
-            node.enemy_legal,
-        )
-        node.exploitability = self._exploitability(
-            node.payoff,
-            player,
-            enemy,
-            node.player_legal,
-            node.enemy_legal,
-        )
+            enemy_positive = np.maximum(enemy_regrets, 0.0)
+            enemy_total = float(enemy_positive.sum())
+            enemy = enemy_positive / enemy_total if enemy_total > 0.0 else enemy_prior
+            player_sum += player
+            enemy_sum += enemy
+            row_values = matrix @ enemy
+            column_values = player @ matrix
+            value = float(player @ row_values)
+            player_regrets = np.maximum(0.0, player_regrets + row_values - value)
+            enemy_regrets = np.maximum(0.0, enemy_regrets + value - column_values)
+        for index, action in enumerate(player_legal):
+            node.player_regrets[action] = float(player_regrets[index])
+            node.player_strategy_sum[action] += float(player_sum[index])
+        for index, action in enumerate(enemy_legal):
+            node.enemy_regrets[action] = float(enemy_regrets[index])
+            node.enemy_strategy_sum[action] += float(enemy_sum[index])
+        node.solve_count += self.config.regret_iterations_per_update
+        player_policy = [0.0] * self.action_count
+        enemy_policy = [0.0] * self.action_count
+        for index, action in enumerate(player_legal):
+            player_policy[action] = float(player[index])
+        for index, action in enumerate(enemy_legal):
+            enemy_policy[action] = float(enemy[index])
+        node.player_policy = tuple(player_policy)
+        node.enemy_policy = tuple(enemy_policy)
+        row_values = matrix @ enemy
+        node.root_value = float(player @ row_values)
+        node.exploitability = float(row_values.max() - (player @ matrix).min())
 
     def _root_equilibrium(
         self, node: _TreeNode
