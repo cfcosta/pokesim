@@ -2929,6 +2929,7 @@ def run_transformer_pipeline(
                 config.seed + 80_000_000 + iteration * 10_009,
                 config.probe_seed_count,
             ),
+            processes=config.eval_processes,
         )
         probes = skill_probe_report(probe_arena)
         write_monitor_state(

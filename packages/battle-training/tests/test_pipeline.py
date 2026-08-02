@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import torch
 from battle_training.arena import (
     ArenaConfig,
+    Replay,
     SkillMetrics,
     _arena_batch_spans,
     _arena_span_partition,
@@ -28,8 +29,11 @@ from battle_training.arena import (
     _serialized_arena_model,
     _setup_move_name,
     _slim_arena_episode,
+    _slim_traced_episode,
+    _TracedArenaEpisode,
     _update_side_metrics,
     run_paired_arena,
+    run_traced_arena,
     skill_probe_report,
 )
 from battle_training.artifacts import (
@@ -1491,6 +1495,59 @@ class TransformerTests(unittest.TestCase):
         for processes in (0, 17):
             with self.assertRaisesRegex(ValueError, "processes"):
                 run_paired_arena(
+                    _ToyNetwork(), _ToyNetwork(), config, processes=processes
+                )
+
+    def test_parallel_traced_episodes_travel_with_replays_and_metrics(self) -> None:
+        candidate_metrics = SkillMetrics(damaging_moves=4, best_effectiveness_choices=2)
+        baseline_metrics = SkillMetrics(status_uses=3, status_successes=1)
+        episode = _TracedArenaEpisode(
+            game=5,
+            candidate_player=False,
+            player=object(),
+            enemy=object(),
+            selection_rng=random.Random(0),
+            chance_rng=random.Random(1),
+            budget_rng=random.Random(2),
+            player_size=4,
+            enemy_size=4,
+            level100=False,
+            campaign_index=0,
+            snapshot=object(),
+            result=-1,
+            stop="finished",
+            inspection={"request": "battle"},
+            replay=Replay(lines=["|start", "|turn|1"]),
+            replay_path=Path("replays/game-00005.log"),
+            candidate_metrics=candidate_metrics,
+            baseline_metrics=baseline_metrics,
+        )
+        slim = _slim_traced_episode(episode)
+        self.assertEqual(
+            (slim.game, slim.candidate_player, slim.result, slim.stop),
+            (5, False, -1, "finished"),
+        )
+        self.assertEqual(slim.replay.lines, ["|start", "|turn|1"])
+        self.assertEqual(slim.replay_path, Path("replays/game-00005.log"))
+        self.assertEqual(slim.candidate_metrics, candidate_metrics)
+        self.assertEqual(slim.baseline_metrics, baseline_metrics)
+        for name in (
+            "player",
+            "enemy",
+            "selection_rng",
+            "chance_rng",
+            "budget_rng",
+            "snapshot",
+            "inspection",
+        ):
+            self.assertIsNone(getattr(slim, name))
+        pickle.dumps(slim)
+
+    def test_traced_arena_rejects_invalid_process_counts(self) -> None:
+        config = ArenaConfig(games=8, seed_count=2)
+        for processes in (0, 17):
+            with self.assertRaisesRegex(ValueError, "processes"):
+                run_traced_arena(
                     _ToyNetwork(), _ToyNetwork(), config, processes=processes
                 )
 

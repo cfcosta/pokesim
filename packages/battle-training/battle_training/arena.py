@@ -1254,21 +1254,98 @@ def _traced_summary(
     }
 
 
-def _run_traced_arena_batched(
+def _slim_traced_episode(episode: _TracedArenaEpisode) -> _TracedArenaEpisode:
+    """Keep only the fields the traced summary reads so results pickle cheaply."""
+    return _TracedArenaEpisode(
+        game=episode.game,
+        candidate_player=episode.candidate_player,
+        player=None,
+        enemy=None,
+        selection_rng=None,
+        chance_rng=None,
+        budget_rng=None,
+        player_size=episode.player_size,
+        enemy_size=episode.enemy_size,
+        level100=episode.level100,
+        campaign_index=episode.campaign_index,
+        snapshot=None,
+        result=episode.result,
+        stop=episode.stop,
+        reason=episode.reason,
+        inspection=None,
+        replay=episode.replay,
+        replay_path=episode.replay_path,
+        candidate_metrics=episode.candidate_metrics,
+        baseline_metrics=episode.baseline_metrics,
+    )
+
+
+def _traced_arena_process_worker(
+    payload_path: str,
+    config: ArenaConfig,
+    replay_dir: Path | None,
+    spans: list[tuple[int, int]],
+) -> list[_TracedArenaEpisode]:
+    torch.set_num_threads(1)
+    configure_determinism(config.seed)
+    payload = torch.load(payload_path, map_location="cpu", weights_only=False)
+    device = choose_device(payload["device"])
+    candidate = _load_arena_model(payload["candidate"], device)
+    baseline = _load_arena_model(payload["baseline"], device)
+    episodes = _run_traced_arena_spans(candidate, baseline, config, replay_dir, spans)
+    return [_slim_traced_episode(episode) for episode in episodes]
+
+
+def _run_traced_arena_parallel(
     candidate: BattleTransformer,
     baseline: BattleTransformer,
     config: ArenaConfig,
     replay_dir: Path | None,
-) -> dict[str, Any]:
-    candidate_metrics = SkillMetrics()
-    baseline_metrics = SkillMetrics()
+    spans: list[tuple[int, int]],
+    processes: int,
+) -> list[_TracedArenaEpisode]:
+    """Fan traced batches across processes; per-pair RNGs keep games identical."""
+    payload = {
+        "device": str(next(candidate.parameters()).device),
+        "candidate": _serialized_arena_model(candidate),
+        "baseline": _serialized_arena_model(baseline),
+    }
+    partitions = [rows for rows in _arena_span_partition(spans, processes) if rows]
+    episodes: list[_TracedArenaEpisode] = []
+    with tempfile.TemporaryDirectory(prefix="arena-probe-") as temporary:
+        payload_path = Path(temporary) / "models.pt"
+        torch.save(payload, payload_path)
+        context = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(
+            max_workers=len(partitions), mp_context=context
+        ) as pool:
+            futures = [
+                pool.submit(
+                    _traced_arena_process_worker,
+                    str(payload_path),
+                    config,
+                    replay_dir,
+                    rows,
+                )
+                for rows in partitions
+            ]
+            for future in futures:
+                episodes.extend(future.result())
+    return sorted(episodes, key=lambda episode: episode.game)
+
+
+def _run_traced_arena_spans(
+    candidate: BattleTransformer,
+    baseline: BattleTransformer,
+    config: ArenaConfig,
+    replay_dir: Path | None,
+    spans: list[tuple[int, int]],
+) -> list[_TracedArenaEpisode]:
+    """Play the given server-level batches on one native search server."""
     all_episodes: list[_TracedArenaEpisode] = []
-    if replay_dir is not None:
-        replay_dir.mkdir(parents=True, exist_ok=True)
     server = SearchServer()
     try:
-        for batch_start in range(0, config.games, 64):
-            batch_stop = min(config.games, batch_start + 64)
+        for batch_start, batch_stop in spans:
             episodes = []
             for game in range(batch_start, batch_stop):
                 pair = game // 2
@@ -1476,6 +1553,29 @@ def _run_traced_arena_batched(
             all_episodes.extend(episodes)
     finally:
         server.close()
+    return all_episodes
+
+
+def _run_traced_arena_batched(
+    candidate: BattleTransformer,
+    baseline: BattleTransformer,
+    config: ArenaConfig,
+    replay_dir: Path | None,
+    processes: int = 1,
+) -> dict[str, Any]:
+    candidate_metrics = SkillMetrics()
+    baseline_metrics = SkillMetrics()
+    if replay_dir is not None:
+        replay_dir.mkdir(parents=True, exist_ok=True)
+    spans = _arena_batch_spans(config.games, 64)
+    if processes > 1 and len(spans) > 1:
+        all_episodes = _run_traced_arena_parallel(
+            candidate, baseline, config, replay_dir, spans, processes
+        )
+    else:
+        all_episodes = _run_traced_arena_spans(
+            candidate, baseline, config, replay_dir, spans
+        )
     wins = losses = draws = truncated = semantic_divergences = mechanics_timeouts = 0
     game_scores = []
     for episode in sorted(all_episodes, key=lambda item: item.game):
@@ -1539,7 +1639,11 @@ def run_traced_arena(
     baseline: BattleTransformer,
     config: ArenaConfig,
     replay_dir: Path | None = None,
+    *,
+    processes: int = 1,
 ) -> dict[str, Any]:
+    if not 1 <= processes <= 16:
+        raise ValueError("traced arena processes must be in 1..16")
     if (
         config.games % 2
         or config.seed_count < 2
@@ -1548,7 +1652,9 @@ def run_traced_arena(
         raise ValueError(
             "traced arena requires even games and at least one pair for each seed"
         )
-    return _run_traced_arena_batched(candidate, baseline, config, replay_dir)
+    return _run_traced_arena_batched(
+        candidate, baseline, config, replay_dir, processes=processes
+    )
 
 
 def _run_traced_arena_sequential(
