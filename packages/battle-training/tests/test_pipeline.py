@@ -2152,6 +2152,28 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(policies[1][2], 0.0)
         self.assertTrue(all(-1.0 <= value <= 1.0 for value in values))
 
+    def test_empty_legal_masks_are_rejected_at_launch(self) -> None:
+        torch.manual_seed(7)
+        network = BattleTransformer(
+            TransformerConfig(d_model=32, heads=4, layers=1, feedforward=64)
+        ).eval()
+        features = [[0] * 100, [1] * 100]
+        with self.assertRaisesRegex(ValueError, "empty legal mask"):
+            network.evaluate(features, [0b0101, 0])
+        joint = BattleTransformer(
+            TransformerConfig(
+                d_model=32,
+                heads=4,
+                layers=1,
+                feedforward=64,
+                joint_policy_heads=True,
+            )
+        ).eval()
+        with self.assertRaisesRegex(ValueError, "empty legal mask"):
+            joint.evaluate_joint(features, [0, 0b1010], [0b0101, 0b0101])
+        with self.assertRaisesRegex(ValueError, "empty legal mask"):
+            joint.evaluate_joint(features, [0b0101, 0b1010], [0b0101, 0])
+
     def test_pooled_inference_launches_all_networks_before_waiting(self) -> None:
         trace: list[str] = []
         player = _DeferredToyNetwork(trace, "player")

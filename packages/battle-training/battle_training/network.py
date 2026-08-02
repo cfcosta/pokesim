@@ -561,9 +561,10 @@ class BattleTransformer(nn.Module):
         return staging.to(device, non_blocking=True)
 
     def _masked_policy(self, logits: Tensor, mask_indexes: Tensor) -> Tensor:
+        # Empty masks are rejected host-side in _checked_masks (mask 0 is the
+        # only all-illegal lookup row); a device-side check here would force a
+        # CUDA sync in the middle of an asynchronous launch.
         legal = self._legal_mask_lookup.index_select(0, mask_indexes)
-        if (~legal.any(dim=1)).any():
-            raise ValueError("network evaluation received an empty legal mask")
         logits = logits.masked_fill(~legal, torch.finfo(logits.dtype).min)
         return torch.softmax(logits, dim=-1)
 
@@ -606,13 +607,20 @@ class BattleTransformer(nn.Module):
         )
 
     @staticmethod
+    def _checked_masks(masks: Sequence[int]) -> np.ndarray:
+        mask_array = np.asarray(masks, dtype=np.uint16)
+        if (mask_array == 0).any():
+            raise ValueError("network evaluation received an empty legal mask")
+        return mask_array
+
+    @staticmethod
     def _arrays(
         features: Sequence[Sequence[int]], masks: Sequence[int]
     ) -> tuple[np.ndarray, np.ndarray]:
         feature_array = np.stack(features)
         if feature_array.ndim != 2:
             raise ValueError("network evaluation requires a rectangular feature batch")
-        mask_array = np.asarray(masks, dtype=np.uint16)
+        mask_array = BattleTransformer._checked_masks(masks)
         if len(feature_array) != len(mask_array):
             raise ValueError("network evaluation feature and mask batches differ")
         return feature_array, mask_array
@@ -691,7 +699,7 @@ class BattleTransformer(nn.Module):
             raise RuntimeError("joint evaluation requires joint policy heads")
         device = next(self.parameters()).device
         feature_array, own_mask_array = self._arrays(features, own_masks)
-        opponent_mask_array = np.asarray(opponent_masks, dtype=np.uint16)
+        opponent_mask_array = self._checked_masks(opponent_masks)
         if len(feature_array) != len(opponent_mask_array):
             raise ValueError("joint evaluation feature and mask batches differ")
         if device.type != "cuda":
