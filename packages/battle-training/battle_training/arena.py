@@ -602,6 +602,26 @@ def _mean_ci95(values: list[float]) -> tuple[float, float]:
     return max(0.0, mean - radius), min(1.0, mean + radius)
 
 
+def _battle_finished(battle: dict[str, Any]) -> bool:
+    # Mirrors the paired-arena scoring branch order: an infrastructure stop is a
+    # non-finish even when the engine still reported a result for the episode.
+    if battle["stop"] in ("mechanics-timeout", "semantic-divergence"):
+        return False
+    return battle["candidate_return"] in (1, -1, 0)
+
+
+def _finished_pair_scores(battles: list[dict[str, Any]]) -> list[float]:
+    legs_by_pair: dict[int, list[dict[str, Any]]] = {}
+    for battle in battles:
+        legs_by_pair.setdefault(battle["pair"], []).append(battle)
+    scores = []
+    for pair in sorted(legs_by_pair):
+        legs = legs_by_pair[pair]
+        if len(legs) == 2 and all(_battle_finished(leg) for leg in legs):
+            scores.append(sum(leg["score"] for leg in legs) / 2)
+    return scores
+
+
 def _evaluation_party_sizes(pair: int, schedule_version: int = 3) -> tuple[int, int]:
     return generated_party_sizes(pair, schedule_version)
 
@@ -1279,6 +1299,13 @@ def run_paired_arena(
             pair_score = []
     robust_score = sum(game_scores) / games
     ci_low, ci_high = _mean_ci95(pair_scores)
+    finished_pair_scores = _finished_pair_scores(battles)
+    if finished_pair_scores:
+        excluded_score = sum(finished_pair_scores) / len(finished_pair_scores)
+        excluded_ci = list(_mean_ci95(finished_pair_scores))
+    else:
+        excluded_score = None
+        excluded_ci = [None, None]
     finished = wins + losses + draws
     campaign_cases = {}
     for index, name in enumerate(_CAMPAIGN_NAMES):
@@ -1335,6 +1362,9 @@ def run_paired_arena(
         "score": (wins + 0.5 * draws) / finished if finished else None,
         "score_with_nonfinishes_as_losses": robust_score,
         "paired_score_ci95": [ci_low, ci_high],
+        "finished_pairs": len(finished_pair_scores),
+        "score_excluding_nonfinish_pairs": excluded_score,
+        "paired_score_ci95_excluding_nonfinish_pairs": excluded_ci,
         "battles": battles,
         "data_quality_pass": mechanics_timeouts == 0,
         "quality_pass": (

@@ -14,7 +14,6 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
-
 from battle_training.arena import (
     ArenaConfig,
     ArenaReportJob,
@@ -23,9 +22,11 @@ from battle_training.arena import (
     _arena_batch_spans,
     _arena_parallel_batch_size,
     _arena_span_partition,
+    _battle_finished,
     _evaluation_level100,
     _evaluation_party_sizes,
     _FastArenaEpisode,
+    _finished_pair_scores,
     _load_arena_model,
     _load_final_arena_baseline,
     _mean_ci95,
@@ -109,6 +110,7 @@ from battle_training.transformer_pipeline import (
     _load_examples,
     _normalized_saved_config,
     _pipeline_id,
+    _promotion_gate_scores,
     _resume_config,
     _scheduled_for_opponent,
     _select_training_opponent,
@@ -119,6 +121,18 @@ from battle_training.transformer_pipeline import (
     _update_leaf_ema,
     _validate_collection_pairs,
 )
+
+
+def _paired_battle(
+    game: int, stop: str | None, candidate_return: int | None, score: float
+) -> dict[str, object]:
+    return {
+        "game": game,
+        "pair": game // 2,
+        "stop": stop,
+        "candidate_return": candidate_return,
+        "score": score,
+    }
 
 
 def _toy_features() -> tuple[int, ...]:
@@ -1378,6 +1392,7 @@ class TransformerTests(unittest.TestCase):
         self.assertIsNone(arguments.leaf_hidden_layers)
         self.assertEqual(arguments.leaf_ema_decay, 0.0)
         self.assertEqual(arguments.leaf_loss_weight, 0.25)
+        self.assertEqual(arguments.promotion_nonfinish_policy, "losses")
         self.assertTrue(arguments.adaptive_search)
         self.assertEqual(arguments.adaptive_warmup_iterations, 1)
         self.assertEqual(arguments.adaptive_deep_threshold, 0.55)
@@ -1512,9 +1527,11 @@ class TransformerTests(unittest.TestCase):
         )
         config.pop("leaf_hidden_layers")
         config.pop("leaf_ema_decay")
+        config.pop("promotion_nonfinish_policy")
         normalized = _normalized_saved_config(config)
         self.assertIsNone(normalized["leaf_hidden_layers"])
         self.assertEqual(normalized["leaf_ema_decay"], 0.0)
+        self.assertEqual(normalized["promotion_nonfinish_policy"], "losses")
         self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
         self.assertNotIn("leaf_hidden_layers", config)
 
@@ -1598,6 +1615,85 @@ class TransformerTests(unittest.TestCase):
                 state["average"]["leaf_value.0.bias"],
             )
         )
+
+    def test_finished_pair_scores_drop_pairs_with_any_nonfinish(self) -> None:
+        battles = [
+            _paired_battle(0, "finished", 1, 1.0),
+            _paired_battle(1, "finished", -1, 0.0),
+            _paired_battle(2, "truncated", None, 0.0),
+            _paired_battle(3, "finished", 1, 1.0),
+            _paired_battle(4, "mechanics-timeout", 1, 0.0),
+            _paired_battle(5, "finished", 0, 0.5),
+            _paired_battle(6, "finished", 0, 0.5),
+            _paired_battle(7, "finished", 0, 0.5),
+        ]
+        self.assertTrue(_battle_finished(battles[0]))
+        self.assertFalse(_battle_finished(battles[2]))
+        self.assertFalse(_battle_finished(battles[4]))
+        self.assertEqual(_finished_pair_scores(battles), [0.5, 0.5])
+        self.assertEqual(_finished_pair_scores([]), [])
+
+    def test_exclude_pairs_policy_recovers_a_nonfinish_dragged_gate(self) -> None:
+        battles = []
+        for pair in range(20):
+            battles.append(_paired_battle(2 * pair, "finished", 1, 1.0))
+            battles.append(_paired_battle(2 * pair + 1, "finished", -1, 0.0))
+        battles.append(_paired_battle(40, "semantic-divergence", None, 0.0))
+        battles.append(_paired_battle(41, "finished", -1, 0.0))
+        battles.append(_paired_battle(42, "truncated", None, 0.0))
+        battles.append(_paired_battle(43, "truncated", None, 0.0))
+        losses_pairs = [
+            (battles[game]["score"] + battles[game + 1]["score"]) / 2.0
+            for game in range(0, len(battles), 2)
+        ]
+        self.assertLess(sum(losses_pairs) / len(losses_pairs), 0.5)
+        self.assertLess(_mean_ci95(losses_pairs)[0], 0.5)
+        excluded = _finished_pair_scores(battles)
+        self.assertEqual(excluded, [0.5] * 20)
+        self.assertEqual(_mean_ci95(excluded), (0.5, 0.5))
+
+    def test_promotion_gate_scores_follow_the_nonfinish_policy(self) -> None:
+        promotion = {
+            "score_with_nonfinishes_as_losses": 0.4545,
+            "paired_score_ci95": [0.44, 0.47],
+            "score_excluding_nonfinish_pairs": 0.5,
+            "paired_score_ci95_excluding_nonfinish_pairs": [0.5, 0.5],
+        }
+        self.assertEqual(_promotion_gate_scores(promotion, "losses"), (0.4545, 0.44))
+        self.assertEqual(_promotion_gate_scores(promotion, "exclude-pairs"), (0.5, 0.5))
+        empty = {
+            "score_with_nonfinishes_as_losses": 0.0,
+            "paired_score_ci95": [0.0, 0.0],
+            "score_excluding_nonfinish_pairs": None,
+            "paired_score_ci95_excluding_nonfinish_pairs": [None, None],
+        }
+        self.assertEqual(_promotion_gate_scores(empty, "exclude-pairs"), (None, None))
+
+    def test_promotion_nonfinish_policy_flows_from_the_cli(self) -> None:
+        arguments = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/nonfinish-policy",
+                "--promotion-nonfinish-policy",
+                "exclude-pairs",
+            ]
+        )
+        self.assertEqual(arguments.promotion_nonfinish_policy, "exclude-pairs")
+        with self.assertRaises(SystemExit):
+            training_parser().parse_args(
+                [
+                    "transformer-train",
+                    "--output",
+                    "/tmp/nonfinish-policy",
+                    "--promotion-nonfinish-policy",
+                    "ignore",
+                ]
+            )
+
+    def test_promotion_nonfinish_policy_is_validated(self) -> None:
+        with self.assertRaisesRegex(ValueError, "promotion_nonfinish_policy"):
+            _promotion_gate_scores({}, "ignore")
 
     def test_resume_loads_complete_prefix_and_archives_partial_iteration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

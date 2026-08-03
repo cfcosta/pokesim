@@ -111,6 +111,7 @@ class TransformerPipelineConfig:
     campaign_games: int = 288
     campaign_seed_count: int = 8
     minimum_promotion_score: float = 0.50
+    promotion_nonfinish_policy: str = "losses"
     enforce_quality_gate: bool = True
     chance_samples_per_joint: int = 1
     regret_iterations: int = 2048
@@ -2531,6 +2532,7 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("redundant_action_prior_scale", 1.0)
     normalized.setdefault("leaf_hidden_layers", None)
     normalized.setdefault("leaf_ema_decay", 0.0)
+    normalized.setdefault("promotion_nonfinish_policy", "losses")
     return normalized
 
 
@@ -2554,6 +2556,30 @@ def _resume_config(root: Path) -> TransformerPipelineConfig:
 def resume_transformer_pipeline(root: Path) -> dict[str, Any]:
     """Continue an interrupted run from its last committed iteration."""
     return run_transformer_pipeline(root, _resume_config(root), resume=True)
+
+
+def _promotion_gate_scores(
+    promotion: dict[str, Any], policy: str
+) -> tuple[float | None, float | None]:
+    """Select the paired score and CI lower bound the promotion gate compares.
+
+    "losses" keeps the historical scoring where every non-finish counts as a
+    candidate loss; "exclude-pairs" scores only pairs whose both legs finished,
+    so infrastructure stops cannot veto an otherwise superior candidate. The
+    arena quality gate still bounds how many non-finishes can be excluded.
+    Returns (None, None) when the exclusion leaves no finished pairs.
+    """
+    if policy == "losses":
+        return (
+            promotion["score_with_nonfinishes_as_losses"],
+            promotion["paired_score_ci95"][0],
+        )
+    if policy == "exclude-pairs":
+        return (
+            promotion["score_excluding_nonfinish_pairs"],
+            promotion["paired_score_ci95_excluding_nonfinish_pairs"][0],
+        )
+    raise ValueError("promotion_nonfinish_policy must be 'losses' or 'exclude-pairs'")
 
 
 def run_transformer_pipeline(
@@ -2596,6 +2622,10 @@ def run_transformer_pipeline(
         raise ValueError("tree_convergence_patience must be positive")
     if not 0.0 <= config.leaf_ema_decay < 1.0:
         raise ValueError("leaf_ema_decay must be in [0, 1)")
+    if config.promotion_nonfinish_policy not in ("losses", "exclude-pairs"):
+        raise ValueError(
+            "promotion_nonfinish_policy must be 'losses' or 'exclude-pairs'"
+        )
     if config.deep_search_fraction != 1.0:
         raise ValueError(
             "random deep-search tiers are replaced by the adaptive root router"
@@ -3158,10 +3188,14 @@ def run_transformer_pipeline(
             )
         finally:
             evaluation_pool.close()
-        promotion_score = promotion["score_with_nonfinishes_as_losses"]
-        confidence_low = promotion["paired_score_ci95"][0]
+        promotion_score, confidence_low = _promotion_gate_scores(
+            promotion, config.promotion_nonfinish_policy
+        )
         statistically_superior = (
-            promotion_score >= config.minimum_promotion_score and confidence_low >= 0.50
+            promotion_score is not None
+            and confidence_low is not None
+            and promotion_score >= config.minimum_promotion_score
+            and confidence_low >= 0.50
         )
         if config.enforce_quality_gate:
             accepted = (
@@ -3183,10 +3217,12 @@ def run_transformer_pipeline(
                 and promotion["quality_pass"]
                 and probe_arena["data_quality_pass"]
                 and probe_arena["quality_pass"]
+                and promotion_score is not None
                 and promotion_score >= config.minimum_promotion_score
             )
         promotion["statistically_superior"] = statistically_superior
         promotion["minimum_score"] = config.minimum_promotion_score
+        promotion["nonfinish_policy"] = config.promotion_nonfinish_policy
         promotion["stratified_party_gate"] = promotion["strata"]["pass"]
         promotion["held_out_probes"] = probes
         promotion["probe_arena"] = probe_arena

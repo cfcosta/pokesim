@@ -165,6 +165,11 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument(
         "--minimum-promotion-score", type=float, default=0.0 if smoke else 0.50
     )
+    parser.add_argument(
+        "--promotion-nonfinish-policy",
+        choices=("losses", "exclude-pairs"),
+        default="losses",
+    )
 
 
 def parser() -> argparse.ArgumentParser:
@@ -348,6 +353,7 @@ def main(argv: list[str] | None = None) -> int:
             campaign_games=arguments.campaign_games,
             campaign_seed_count=arguments.campaign_seed_count,
             minimum_promotion_score=arguments.minimum_promotion_score,
+            promotion_nonfinish_policy=arguments.promotion_nonfinish_policy,
             enforce_quality_gate=arguments.command == "transformer-train",
             chance_samples_per_joint=arguments.chance_samples_per_joint,
             regret_iterations=arguments.regret_iterations,
