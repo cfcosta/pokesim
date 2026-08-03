@@ -37,6 +37,47 @@ def _lr_milestones(text: str) -> tuple[int, ...]:
     return milestones
 
 
+def _capacity_defaults(smoke: bool) -> dict[str, object]:
+    """Parser defaults for every flag a capacity preset may fill in."""
+    return {
+        "d_model": 64 if smoke else 128,
+        "heads": 4 if smoke else 8,
+        "layers": 2 if smoke else 4,
+        "feedforward": 192 if smoke else 512,
+        "leaf_hidden_layers": None,
+        "replay_window": 2,
+        "lr_schedule": "constant",
+        "lr_milestones": (),
+    }
+
+
+_CAPACITY_PRESETS: dict[str, dict[str, object]] = {
+    "tier-a": {
+        "d_model": 192,
+        "heads": 8,
+        "layers": 6,
+        "feedforward": 768,
+        "leaf_hidden_layers": (256, 128),
+        "replay_window": 3,
+        "lr_schedule": "step",
+        "lr_milestones": (10, 20),
+    },
+}
+
+
+def _apply_capacity_preset(arguments: argparse.Namespace) -> argparse.Namespace:
+    preset_name = getattr(arguments, "capacity_preset", None)
+    if preset_name is None:
+        return arguments
+    # Preset values only fill flags still at their parser defaults, so any
+    # explicitly passed flag wins over the preset.
+    defaults = _capacity_defaults(arguments.command == "transformer-smoke")
+    for name, value in _CAPACITY_PRESETS[preset_name].items():
+        if getattr(arguments, name) == defaults[name]:
+            setattr(arguments, name, value)
+    return arguments
+
+
 def _pipeline_parser(subparsers: argparse._SubParsersAction, name: str) -> None:
     smoke = name.endswith("smoke")
     parser = subparsers.add_parser(name)
@@ -53,6 +94,7 @@ def _pipeline_parser(subparsers: argparse._SubParsersAction, name: str) -> None:
 
 def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> None:
     smoke = name == "transformer-smoke"
+    defaults = _capacity_defaults(smoke)
     parser = subparsers.add_parser(name)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--iterations", type=int, default=1 if smoke else 30)
@@ -65,9 +107,11 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--learning-rate", type=float, default=3e-4 if smoke else 2e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument(
-        "--lr-schedule", choices=("constant", "step"), default="constant"
+        "--lr-schedule", choices=("constant", "step"), default=defaults["lr_schedule"]
     )
-    parser.add_argument("--lr-milestones", type=_lr_milestones, default=())
+    parser.add_argument(
+        "--lr-milestones", type=_lr_milestones, default=defaults["lr_milestones"]
+    )
     parser.add_argument("--lr-decay-factor", type=float, default=0.1)
     parser.add_argument("--value-loss-weight", type=float, default=0.25)
     parser.add_argument("--redundant-action-prior-scale", type=float, default=0.25)
@@ -91,10 +135,13 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument(
         "--no-heuristic-opponents", dest="heuristic_opponents", action="store_false"
     )
-    parser.add_argument("--d-model", type=int, default=64 if smoke else 128)
-    parser.add_argument("--heads", type=int, default=4 if smoke else 8)
-    parser.add_argument("--layers", type=int, default=2 if smoke else 4)
-    parser.add_argument("--feedforward", type=int, default=192 if smoke else 512)
+    parser.add_argument(
+        "--capacity-preset", choices=tuple(_CAPACITY_PRESETS), default=None
+    )
+    parser.add_argument("--d-model", type=int, default=defaults["d_model"])
+    parser.add_argument("--heads", type=int, default=defaults["heads"])
+    parser.add_argument("--layers", type=int, default=defaults["layers"])
+    parser.add_argument("--feedforward", type=int, default=defaults["feedforward"])
     parser.add_argument("--token-group-size", type=int, choices=(1, 2, 4, 8), default=1)
     parser.add_argument(
         "--token-layout",
@@ -118,7 +165,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument(
         "--leaf-hidden-layers",
         type=_leaf_hidden_layers,
-        default=None,
+        default=defaults["leaf_hidden_layers"],
         help="comma-separated hidden sizes replacing the two leaf-hidden layers",
     )
     parser.add_argument("--leaf-loss-weight", type=float, default=0.25)
@@ -145,7 +192,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--regret-iterations", type=int, default=2048)
     parser.add_argument("--inference-batch-size", type=int, default=256)
     parser.add_argument("--max-actions-per-side", type=int, default=13)
-    parser.add_argument("--replay-window", type=int, default=2)
+    parser.add_argument("--replay-window", type=int, default=defaults["replay_window"])
     parser.add_argument(
         "--search-every",
         type=int,
@@ -242,7 +289,7 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    arguments = parser().parse_args(argv)
+    arguments = _apply_capacity_preset(parser().parse_args(argv))
     if arguments.command == "monitor":
         serve_monitor(
             arguments.run,

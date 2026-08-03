@@ -14,6 +14,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
+
 from battle_training.arena import (
     ArenaConfig,
     ArenaReportJob,
@@ -50,7 +51,13 @@ from battle_training.artifacts import (
     verify_manifest,
     write_json,
 )
-from battle_training.cli import parser as training_parser
+from battle_training.cli import (
+    _CAPACITY_PRESETS,
+    _apply_capacity_preset,
+)
+from battle_training.cli import (
+    parser as training_parser,
+)
 from battle_training.decision_quality import (
     DecisionQualityMetrics,
     classify_feature_decision,
@@ -1402,6 +1409,8 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.lr_schedule, "constant")
         self.assertEqual(arguments.lr_milestones, ())
         self.assertEqual(arguments.lr_decay_factor, 0.1)
+        self.assertIsNone(arguments.capacity_preset)
+        self.assertEqual(arguments.replay_window, 2)
         self.assertTrue(arguments.adaptive_search)
         self.assertEqual(arguments.adaptive_warmup_iterations, 1)
         self.assertEqual(arguments.adaptive_deep_threshold, 0.55)
@@ -1868,6 +1877,107 @@ class TransformerTests(unittest.TestCase):
                 training_parser().parse_args(
                     ["transformer-train", "--output", "/tmp/lr-schedule", *invalid]
                 )
+
+    def test_capacity_preset_tier_a_fills_unset_flags(self) -> None:
+        for command in ("transformer-train", "transformer-smoke"):
+            arguments = _apply_capacity_preset(
+                training_parser().parse_args(
+                    [command, "--output", "/tmp/tier-a", "--capacity-preset", "tier-a"]
+                )
+            )
+            self.assertEqual(arguments.d_model, 192)
+            self.assertEqual(arguments.heads, 8)
+            self.assertEqual(arguments.layers, 6)
+            self.assertEqual(arguments.feedforward, 768)
+            self.assertEqual(arguments.leaf_hidden_layers, (256, 128))
+            self.assertEqual(arguments.replay_window, 3)
+            self.assertEqual(arguments.lr_schedule, "step")
+            self.assertEqual(arguments.lr_milestones, (10, 20))
+
+    def test_capacity_preset_yields_to_explicit_flags(self) -> None:
+        arguments = _apply_capacity_preset(
+            training_parser().parse_args(
+                [
+                    "transformer-train",
+                    "--output",
+                    "/tmp/tier-a",
+                    "--capacity-preset",
+                    "tier-a",
+                    "--d-model",
+                    "160",
+                    "--lr-milestones",
+                    "12,24",
+                ]
+            )
+        )
+        self.assertEqual(arguments.d_model, 160)
+        self.assertEqual(arguments.lr_milestones, (12, 24))
+        self.assertEqual(arguments.heads, 8)
+        self.assertEqual(arguments.layers, 6)
+        self.assertEqual(arguments.feedforward, 768)
+        self.assertEqual(arguments.leaf_hidden_layers, (256, 128))
+        self.assertEqual(arguments.replay_window, 3)
+        self.assertEqual(arguments.lr_schedule, "step")
+
+    def test_capacity_preset_defaults_stay_legacy_without_it(self) -> None:
+        train = _apply_capacity_preset(
+            training_parser().parse_args(["transformer-train", "--output", "/tmp/run"])
+        )
+        self.assertIsNone(train.capacity_preset)
+        self.assertEqual(
+            (train.d_model, train.heads, train.layers, train.feedforward),
+            (128, 8, 4, 512),
+        )
+        self.assertIsNone(train.leaf_hidden_layers)
+        self.assertEqual(train.replay_window, 2)
+        self.assertEqual(train.lr_schedule, "constant")
+        self.assertEqual(train.lr_milestones, ())
+        smoke = _apply_capacity_preset(
+            training_parser().parse_args(["transformer-smoke", "--output", "/tmp/run"])
+        )
+        self.assertEqual(
+            (smoke.d_model, smoke.heads, smoke.layers, smoke.feedforward),
+            (64, 4, 2, 192),
+        )
+        verify = _apply_capacity_preset(training_parser().parse_args(["verify", "run"]))
+        self.assertEqual(verify.run, Path("run"))
+        with self.assertRaises(SystemExit):
+            training_parser().parse_args(
+                [
+                    "transformer-train",
+                    "--output",
+                    "/tmp/run",
+                    "--capacity-preset",
+                    "tier-b",
+                ]
+            )
+
+    def test_tier_a_preset_matches_the_audited_parameter_count(self) -> None:
+        preset = _CAPACITY_PRESETS["tier-a"]
+        network = BattleTransformer(
+            TransformerConfig(
+                feature_count=492,
+                action_count=13,
+                d_model=preset["d_model"],
+                heads=preset["heads"],
+                layers=preset["layers"],
+                feedforward=preset["feedforward"],
+                token_group_size=1,
+                token_layout="semantic-entity-v1",
+                joint_policy_heads=True,
+                distilled_leaf_evaluator=True,
+                leaf_hidden_layers=preset["leaf_hidden_layers"],
+                adaptive_budget_head=True,
+            )
+        )
+        total = sum(parameter.numel() for parameter in network.parameters())
+        self.assertEqual(total, 3_004_317)
+        leaf = sum(
+            value.numel()
+            for key, value in network.state_dict().items()
+            if key.startswith("leaf_value.")
+        )
+        self.assertEqual(leaf, 159_233)
 
     def test_resume_loads_complete_prefix_and_archives_partial_iteration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
