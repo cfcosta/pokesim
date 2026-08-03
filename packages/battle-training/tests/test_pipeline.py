@@ -31,6 +31,7 @@ from battle_training.arena import (
     _load_final_arena_baseline,
     _mean_ci95,
     _paired_coordinates,
+    _score_moments,
     _serialized_arena_model,
     _serialized_final_arena_baseline,
     _setup_move_name,
@@ -110,8 +111,10 @@ from battle_training.transformer_pipeline import (
     _load_examples,
     _normalized_saved_config,
     _pipeline_id,
+    _pooled_promotion_evidence,
     _promotion_gate_scores,
     _resume_config,
+    _resumed_pooled_evidence,
     _scheduled_for_opponent,
     _select_training_opponent,
     _training_level100,
@@ -1393,6 +1396,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.leaf_ema_decay, 0.0)
         self.assertEqual(arguments.leaf_loss_weight, 0.25)
         self.assertEqual(arguments.promotion_nonfinish_policy, "losses")
+        self.assertEqual(arguments.promotion_pooled_z, 0.0)
         self.assertTrue(arguments.adaptive_search)
         self.assertEqual(arguments.adaptive_warmup_iterations, 1)
         self.assertEqual(arguments.adaptive_deep_threshold, 0.55)
@@ -1528,10 +1532,12 @@ class TransformerTests(unittest.TestCase):
         config.pop("leaf_hidden_layers")
         config.pop("leaf_ema_decay")
         config.pop("promotion_nonfinish_policy")
+        config.pop("promotion_pooled_z")
         normalized = _normalized_saved_config(config)
         self.assertIsNone(normalized["leaf_hidden_layers"])
         self.assertEqual(normalized["leaf_ema_decay"], 0.0)
         self.assertEqual(normalized["promotion_nonfinish_policy"], "losses")
+        self.assertEqual(normalized["promotion_pooled_z"], 0.0)
         self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
         self.assertNotIn("leaf_hidden_layers", config)
 
@@ -1694,6 +1700,88 @@ class TransformerTests(unittest.TestCase):
     def test_promotion_nonfinish_policy_is_validated(self) -> None:
         with self.assertRaisesRegex(ValueError, "promotion_nonfinish_policy"):
             _promotion_gate_scores({}, "ignore")
+
+    def test_score_moments_summarize_paired_scores(self) -> None:
+        self.assertEqual(_score_moments([1.0, 0.5, 0.5]), [2.0, 1.5, 3])
+        self.assertEqual(_score_moments([]), [0.0, 0.0, 0])
+
+    def test_pooled_evidence_accumulates_until_the_z_threshold(self) -> None:
+        iteration = {"paired_score_moments": [530.0, 530.0, 1000]}
+        first = _pooled_promotion_evidence(None, iteration, "losses", 0.50, 2.25)
+        self.assertEqual(first["iterations"], 1)
+        self.assertEqual(first["pairs"], 1000)
+        self.assertAlmostEqual(first["mean"], 0.53)
+        self.assertAlmostEqual(first["z"], 1.8998, places=3)
+        self.assertFalse(first["triggered"])
+        second = _pooled_promotion_evidence(first, iteration, "losses", 0.50, 2.25)
+        self.assertEqual(second["iterations"], 2)
+        self.assertEqual(second["pairs"], 2000)
+        self.assertAlmostEqual(second["mean"], 0.53)
+        self.assertAlmostEqual(second["z"], 2.6875, places=3)
+        self.assertTrue(second["triggered"])
+        self.assertEqual(second["threshold"], 2.25)
+
+    def test_pooled_evidence_respects_policy_and_minimum_score(self) -> None:
+        iteration = {
+            "paired_score_moments": [0.0, 0.0, 0],
+            "paired_score_moments_excluding_nonfinish_pairs": [1060.0, 1060.0, 2000],
+        }
+        pooled = _pooled_promotion_evidence(
+            None, iteration, "exclude-pairs", 0.50, 2.25
+        )
+        self.assertEqual(pooled["pairs"], 2000)
+        self.assertTrue(pooled["triggered"])
+        held_back = _pooled_promotion_evidence(
+            None, iteration, "exclude-pairs", 0.55, 2.25
+        )
+        self.assertFalse(held_back["triggered"])
+        with self.assertRaisesRegex(ValueError, "promotion_nonfinish_policy"):
+            _pooled_promotion_evidence(None, iteration, "ignore", 0.50, 2.25)
+
+    def test_pooled_evidence_handles_degenerate_samples(self) -> None:
+        empty = _pooled_promotion_evidence(
+            None, {"paired_score_moments": [0.0, 0.0, 0]}, "losses", 0.50, 2.25
+        )
+        self.assertIsNone(empty["mean"])
+        self.assertIsNone(empty["z"])
+        self.assertFalse(empty["triggered"])
+        constant = _pooled_promotion_evidence(
+            None, {"paired_score_moments": [50.0, 25.0, 100]}, "losses", 0.50, 2.25
+        )
+        self.assertAlmostEqual(constant["mean"], 0.5)
+        self.assertIsNone(constant["z"])
+        self.assertFalse(constant["triggered"])
+
+    def test_resumed_pooled_evidence_survives_only_unaccepted_records(self) -> None:
+        pooled = {"iterations": 2, "pairs": 2000}
+        self.assertIsNone(_resumed_pooled_evidence([]))
+        self.assertIsNone(
+            _resumed_pooled_evidence(
+                [{"promotion": {"accepted": True, "pooled": pooled}}]
+            )
+        )
+        self.assertEqual(
+            _resumed_pooled_evidence(
+                [{"promotion": {"accepted": False, "pooled": pooled}}]
+            ),
+            pooled,
+        )
+        self.assertIsNone(
+            _resumed_pooled_evidence([{"promotion": {"accepted": False}}])
+        )
+        self.assertIsNone(_resumed_pooled_evidence([{}]))
+
+    def test_promotion_pooled_z_flows_from_the_cli(self) -> None:
+        arguments = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/pooled-z",
+                "--promotion-pooled-z",
+                "2.25",
+            ]
+        )
+        self.assertEqual(arguments.promotion_pooled_z, 2.25)
 
     def test_resume_loads_complete_prefix_and_archives_partial_iteration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

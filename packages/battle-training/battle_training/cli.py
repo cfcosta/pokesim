@@ -170,6 +170,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
         choices=("losses", "exclude-pairs"),
         default="losses",
     )
+    parser.add_argument("--promotion-pooled-z", type=float, default=0.0)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -354,6 +355,7 @@ def main(argv: list[str] | None = None) -> int:
             campaign_seed_count=arguments.campaign_seed_count,
             minimum_promotion_score=arguments.minimum_promotion_score,
             promotion_nonfinish_policy=arguments.promotion_nonfinish_policy,
+            promotion_pooled_z=arguments.promotion_pooled_z,
             enforce_quality_gate=arguments.command == "transformer-train",
             chance_samples_per_joint=arguments.chance_samples_per_joint,
             regret_iterations=arguments.regret_iterations,

@@ -602,6 +602,16 @@ def _mean_ci95(values: list[float]) -> tuple[float, float]:
     return max(0.0, mean - radius), min(1.0, mean + radius)
 
 
+def _score_moments(values: list[float]) -> list[float | int]:
+    # Sufficient statistics for pooling paired scores across arenas without
+    # persisting the raw per-pair lists.
+    return [
+        float(sum(values)),
+        float(sum(value * value for value in values)),
+        len(values),
+    ]
+
+
 def _battle_finished(battle: dict[str, Any]) -> bool:
     # Mirrors the paired-arena scoring branch order: an infrastructure stop is a
     # non-finish even when the engine still reported a result for the episode.
@@ -1362,9 +1372,13 @@ def run_paired_arena(
         "score": (wins + 0.5 * draws) / finished if finished else None,
         "score_with_nonfinishes_as_losses": robust_score,
         "paired_score_ci95": [ci_low, ci_high],
+        "paired_score_moments": _score_moments(pair_scores),
         "finished_pairs": len(finished_pair_scores),
         "score_excluding_nonfinish_pairs": excluded_score,
         "paired_score_ci95_excluding_nonfinish_pairs": excluded_ci,
+        "paired_score_moments_excluding_nonfinish_pairs": _score_moments(
+            finished_pair_scores
+        ),
         "battles": battles,
         "data_quality_pass": mechanics_timeouts == 0,
         "quality_pass": (

@@ -112,6 +112,7 @@ class TransformerPipelineConfig:
     campaign_seed_count: int = 8
     minimum_promotion_score: float = 0.50
     promotion_nonfinish_policy: str = "losses"
+    promotion_pooled_z: float = 0.0
     enforce_quality_gate: bool = True
     chance_samples_per_joint: int = 1
     regret_iterations: int = 2048
@@ -2533,6 +2534,7 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("leaf_hidden_layers", None)
     normalized.setdefault("leaf_ema_decay", 0.0)
     normalized.setdefault("promotion_nonfinish_policy", "losses")
+    normalized.setdefault("promotion_pooled_z", 0.0)
     return normalized
 
 
@@ -2582,6 +2584,71 @@ def _promotion_gate_scores(
     raise ValueError("promotion_nonfinish_policy must be 'losses' or 'exclude-pairs'")
 
 
+def _pooled_promotion_evidence(
+    pooled: dict[str, Any] | None,
+    promotion: dict[str, Any],
+    policy: str,
+    minimum_score: float,
+    threshold: float,
+) -> dict[str, Any]:
+    """Fold one promotion arena into the group-sequential evidence pool.
+
+    Consecutive shadow learners face the same incumbent until a promotion
+    lands, so their paired scores accumulate as evidence about the lineage.
+    The pool triggers once the pooled mean clears the minimum score with a
+    z-statistic at or above the configured threshold; it resets whenever a
+    candidate is promoted.
+    """
+    if policy == "losses":
+        moments = promotion["paired_score_moments"]
+    elif policy == "exclude-pairs":
+        moments = promotion["paired_score_moments_excluding_nonfinish_pairs"]
+    else:
+        raise ValueError(
+            "promotion_nonfinish_policy must be 'losses' or 'exclude-pairs'"
+        )
+    score_sum, score_sumsq, pairs = moments
+    iterations = 1
+    if pooled is not None:
+        score_sum += pooled["score_sum"]
+        score_sumsq += pooled["score_sumsq"]
+        pairs += pooled["pairs"]
+        iterations = pooled["iterations"] + 1
+    mean = score_sum / pairs if pairs else None
+    z = None
+    if pairs >= 2:
+        variance = (score_sumsq - score_sum * score_sum / pairs) / (pairs - 1)
+        if variance > 0.0:
+            z = (mean - 0.5) / math.sqrt(variance / pairs)
+    return {
+        "iterations": iterations,
+        "pairs": pairs,
+        "score_sum": score_sum,
+        "score_sumsq": score_sumsq,
+        "mean": mean,
+        "z": z,
+        "threshold": threshold,
+        "triggered": z is not None and z >= threshold and mean >= minimum_score,
+    }
+
+
+def _resumed_pooled_evidence(
+    training: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Restore the evidence pool from the last committed iteration.
+
+    Records written before pooling existed carry no pool and restart it
+    empty, and an accepted promotion resets the pool because the incumbent
+    it measured is gone.
+    """
+    if not training:
+        return None
+    promotion = training[-1].get("promotion") or {}
+    if promotion.get("accepted"):
+        return None
+    return promotion.get("pooled")
+
+
 def run_transformer_pipeline(
     root: Path, config: TransformerPipelineConfig, *, resume: bool = False
 ) -> dict[str, Any]:
@@ -2626,6 +2693,8 @@ def run_transformer_pipeline(
         raise ValueError(
             "promotion_nonfinish_policy must be 'losses' or 'exclude-pairs'"
         )
+    if config.promotion_pooled_z < 0.0:
+        raise ValueError("promotion_pooled_z must be nonnegative")
     if config.deep_search_fraction != 1.0:
         raise ValueError(
             "random deep-search tiers are replaced by the adaptive root router"
@@ -2984,6 +3053,7 @@ def run_transformer_pipeline(
         iteration=first_iteration,
         message="Models loaded; collection is ready",
     )
+    pooled_evidence = _resumed_pooled_evidence(training)
     for iteration in range(first_iteration, config.iterations + 1):
         population = opponents + [(incumbent_network, incumbent_identity)]
         if incumbent_identity != initial_identity:
@@ -3197,6 +3267,19 @@ def run_transformer_pipeline(
             and promotion_score >= config.minimum_promotion_score
             and confidence_low >= 0.50
         )
+        if config.promotion_pooled_z > 0.0:
+            pooled_evidence = _pooled_promotion_evidence(
+                pooled_evidence,
+                promotion,
+                config.promotion_nonfinish_policy,
+                config.minimum_promotion_score,
+                config.promotion_pooled_z,
+            )
+            statistically_superior = (
+                statistically_superior or pooled_evidence["triggered"]
+            )
+        else:
+            pooled_evidence = None
         if config.enforce_quality_gate:
             accepted = (
                 collection_quality["pass"]
@@ -3223,6 +3306,7 @@ def run_transformer_pipeline(
         promotion["statistically_superior"] = statistically_superior
         promotion["minimum_score"] = config.minimum_promotion_score
         promotion["nonfinish_policy"] = config.promotion_nonfinish_policy
+        promotion["pooled"] = pooled_evidence
         promotion["stratified_party_gate"] = promotion["strata"]["pass"]
         promotion["held_out_probes"] = probes
         promotion["probe_arena"] = probe_arena
@@ -3234,6 +3318,7 @@ def run_transformer_pipeline(
         if accepted:
             incumbent_network.load_state_dict(network.state_dict())
             incumbent_network.eval()
+            pooled_evidence = None
         training_metrics["promotion"] = promotion
         training.append(training_metrics)
         write_monitor_state(
