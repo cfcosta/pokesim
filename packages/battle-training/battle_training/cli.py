@@ -111,6 +111,12 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     )
     parser.add_argument("--leaf-loss-weight", type=float, default=0.25)
     parser.add_argument(
+        "--leaf-ema-decay",
+        type=float,
+        default=0.0,
+        help="per-step EMA decay for the deployed leaf evaluator; 0 disables",
+    )
+    parser.add_argument(
         "--no-adaptive-search", action="store_false", dest="adaptive_search"
     )
     parser.set_defaults(adaptive_search=True)
@@ -313,6 +319,7 @@ def main(argv: list[str] | None = None) -> int:
             leaf_hidden=arguments.leaf_hidden,
             leaf_hidden_layers=arguments.leaf_hidden_layers,
             leaf_loss_weight=arguments.leaf_loss_weight,
+            leaf_ema_decay=arguments.leaf_ema_decay,
             adaptive_search=arguments.adaptive_search,
             adaptive_warmup_iterations=arguments.adaptive_warmup_iterations,
             adaptive_deep_threshold=arguments.adaptive_deep_threshold,

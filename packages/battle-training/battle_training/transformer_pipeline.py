@@ -90,6 +90,7 @@ class TransformerPipelineConfig:
     leaf_hidden: int = 64
     leaf_hidden_layers: tuple[int, ...] | None = None
     leaf_loss_weight: float = 0.25
+    leaf_ema_decay: float = 0.0
     adaptive_search: bool = True
     adaptive_warmup_iterations: int = 1
     adaptive_deep_threshold: float = 0.55
@@ -1962,12 +1963,86 @@ def _gradient_report(
     }
 
 
+def _leaf_parameters(network: BattleTransformer) -> dict[str, Tensor]:
+    return {
+        name: parameter
+        for name, parameter in network.named_parameters()
+        if name.startswith("leaf_value.")
+    }
+
+
+def _initial_leaf_ema_state(
+    network: BattleTransformer, decay: float
+) -> dict[str, dict[str, Tensor]] | None:
+    """Track a lagged (EMA) copy of the leaf evaluator beside its raw weights.
+
+    Outside training the network carries the lagged copy, so search leaves,
+    arena candidates, and deployed checkpoints all see the smoothed evaluator;
+    the raw weights in "training" continue to learn between the swaps.
+    """
+    if decay <= 0.0 or not network.config.distilled_leaf_evaluator:
+        return None
+    leaf = {
+        name: parameter.detach().clone()
+        for name, parameter in _leaf_parameters(network).items()
+    }
+    return {
+        "average": leaf,
+        "training": {name: tensor.clone() for name, tensor in leaf.items()},
+    }
+
+
+def _begin_leaf_training(
+    network: BattleTransformer, state: dict[str, dict[str, Tensor]] | None
+) -> None:
+    if state is None:
+        return
+    with torch.no_grad():
+        for name, parameter in _leaf_parameters(network).items():
+            parameter.copy_(state["training"][name])
+
+
+def _update_leaf_ema(
+    network: BattleTransformer,
+    state: dict[str, dict[str, Tensor]] | None,
+    decay: float,
+) -> None:
+    if state is None:
+        return
+    with torch.no_grad():
+        for name, parameter in _leaf_parameters(network).items():
+            state["average"][name].mul_(decay).add_(parameter, alpha=1.0 - decay)
+
+
+def _end_leaf_training(
+    network: BattleTransformer, state: dict[str, dict[str, Tensor]] | None
+) -> None:
+    if state is None:
+        return
+    with torch.no_grad():
+        for name, parameter in _leaf_parameters(network).items():
+            state["training"][name].copy_(parameter)
+            parameter.copy_(state["average"][name])
+
+
+def _leaf_ema_checkpoint_state(
+    state: dict[str, dict[str, Tensor]] | None,
+) -> dict[str, dict[str, Tensor]] | None:
+    if state is None:
+        return None
+    return {
+        key: {name: tensor.detach().cpu().clone() for name, tensor in group.items()}
+        for key, group in state.items()
+    }
+
+
 def _train_network(
     network: BattleTransformer,
     optimizer: torch.optim.Optimizer,
     shards: list[Path],
     config: TransformerPipelineConfig,
     iteration: int,
+    leaf_ema_state: dict[str, dict[str, Tensor]] | None = None,
 ) -> dict[str, Any]:
     device = next(network.parameters()).device
     training_examples, heldout_examples, heldout_battles = _load_partitioned_examples(
@@ -1995,6 +2070,7 @@ def _train_network(
     heldout_before = _heldout_diagnostics(
         network, heldout_examples, heldout_battles, config.inference_batch_size
     )
+    _begin_leaf_training(network, leaf_ema_state)
     network.train()
     history: list[dict[str, float]] = []
     diagnostic_epochs: list[dict[str, Any]] = []
@@ -2110,6 +2186,7 @@ def _train_network(
             loss.backward()
             torch.nn.utils.clip_grad_norm_(network.parameters(), 1.0)
             optimizer.step()
+            _update_leaf_ema(network, leaf_ema_state, config.leaf_ema_decay)
             policy_total += float(policy_loss.detach())
             value_total += float(value_loss.detach())
             leaf_total += float(leaf_loss.detach())
@@ -2154,8 +2231,25 @@ def _train_network(
         )
         network.train()
     network.eval()
+    _end_leaf_training(network, leaf_ema_state)
+    leaf_ema_report: dict[str, float] | None = None
+    if leaf_ema_state is not None:
+        leaf_ema_report = {
+            "decay": config.leaf_ema_decay,
+            "lag_l2": math.sqrt(
+                sum(
+                    float(
+                        (state_average - leaf_ema_state["training"][name])
+                        .square()
+                        .sum()
+                    )
+                    for name, state_average in leaf_ema_state["average"].items()
+                )
+            ),
+        }
     return {
         "examples": len(features),
+        "leaf_ema": leaf_ema_report,
         "heldout_examples": len(heldout_examples[0]),
         "heldout_battles": len(set(heldout_battles)),
         "epochs": config.epochs,
@@ -2436,6 +2530,7 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     # network priors. Preserve that exact resume behavior.
     normalized.setdefault("redundant_action_prior_scale", 1.0)
     normalized.setdefault("leaf_hidden_layers", None)
+    normalized.setdefault("leaf_ema_decay", 0.0)
     return normalized
 
 
@@ -2499,6 +2594,8 @@ def run_transformer_pipeline(
         raise ValueError("tree_convergence_tolerance must be nonnegative")
     if config.tree_convergence_patience < 1:
         raise ValueError("tree_convergence_patience must be positive")
+    if not 0.0 <= config.leaf_ema_decay < 1.0:
+        raise ValueError("leaf_ema_decay must be in [0, 1)")
     if config.deep_search_fraction != 1.0:
         raise ValueError(
             "random deep-search tiers are replaced by the adaptive root router"
@@ -2666,6 +2763,13 @@ def run_transformer_pipeline(
         network = BattleTransformer(model_config).to(device)
         network.load_state_dict(learner_state)
         network.eval()
+        leaf_ema_state = _initial_leaf_ema_state(network, config.leaf_ema_decay)
+        if leaf_ema_state is not None:
+            saved_leaf_ema = latest_payload.get("leaf_ema")
+            if isinstance(saved_leaf_ema, dict):
+                for key in ("average", "training"):
+                    for name, tensor in saved_leaf_ema[key].items():
+                        leaf_ema_state[key][name] = tensor.to(device)
         optimizer = torch.optim.AdamW(
             network.parameters(),
             lr=config.learning_rate,
@@ -2795,6 +2899,10 @@ def run_transformer_pipeline(
                 else "cpu",
             },
         )
+        leaf_ema_state = _initial_leaf_ema_state(network, config.leaf_ema_decay)
+        initial_state: dict[str, object] = {"learner_model": network.state_dict()}
+        if leaf_ema_state is not None:
+            initial_state["leaf_ema"] = _leaf_ema_checkpoint_state(leaf_ema_state)
         save_network(
             initial_checkpoint,
             incumbent_network,
@@ -2806,7 +2914,7 @@ def run_transformer_pipeline(
                 "incumbent_warm_start": incumbent_warm_start_metadata,
                 "learning_lineage": "persistent-shadow-v1",
             },
-            {"learner_model": network.state_dict()},
+            initial_state,
         )
         shards = []
         collection = []
@@ -2904,7 +3012,7 @@ def run_transformer_pipeline(
             },
         )
         training_metrics = _train_network(
-            network, optimizer, training_shards, config, iteration
+            network, optimizer, training_shards, config, iteration, leaf_ema_state
         )
         if device.type == "cuda":
             torch.cuda.empty_cache()
@@ -3108,6 +3216,9 @@ def run_transformer_pipeline(
             training_diagnostics=training_metrics["diagnostics"]["latest"],
         )
         checkpoint = root / "checkpoints" / f"policy-{iteration:03d}.pt"
+        iteration_state: dict[str, object] = {"learner_model": network.state_dict()}
+        if leaf_ema_state is not None:
+            iteration_state["leaf_ema"] = _leaf_ema_checkpoint_state(leaf_ema_state)
         save_network(
             checkpoint,
             incumbent_network,
@@ -3122,7 +3233,7 @@ def run_transformer_pipeline(
                 "learning_lineage": "persistent-shadow-v1",
                 "deployment_lineage": "quality-gated-incumbent-v1",
             },
-            {"learner_model": network.state_dict()},
+            iteration_state,
         )
         if accepted:
             incumbent_identity = sha256(checkpoint)

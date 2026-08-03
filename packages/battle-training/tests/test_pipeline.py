@@ -97,10 +97,14 @@ from battle_training.rmplus_native import (
 )
 from battle_training.transformer_pipeline import (
     TransformerPipelineConfig,
+    _begin_leaf_training,
     _collection_quality,
+    _end_leaf_training,
     _gradient_report,
     _heuristic_population,
     _HeuristicNetwork,
+    _initial_leaf_ema_state,
+    _leaf_ema_checkpoint_state,
     _load_completed_prefix,
     _load_examples,
     _normalized_saved_config,
@@ -112,6 +116,7 @@ from battle_training.transformer_pipeline import (
     _training_pair,
     _training_pair_leg,
     _training_party_sizes,
+    _update_leaf_ema,
     _validate_collection_pairs,
 )
 
@@ -1371,6 +1376,7 @@ class TransformerTests(unittest.TestCase):
         self.assertTrue(arguments.distilled_leaf_evaluator)
         self.assertEqual(arguments.leaf_hidden, 64)
         self.assertIsNone(arguments.leaf_hidden_layers)
+        self.assertEqual(arguments.leaf_ema_decay, 0.0)
         self.assertEqual(arguments.leaf_loss_weight, 0.25)
         self.assertTrue(arguments.adaptive_search)
         self.assertEqual(arguments.adaptive_warmup_iterations, 1)
@@ -1505,10 +1511,93 @@ class TransformerTests(unittest.TestCase):
             )
         )
         config.pop("leaf_hidden_layers")
+        config.pop("leaf_ema_decay")
         normalized = _normalized_saved_config(config)
         self.assertIsNone(normalized["leaf_hidden_layers"])
+        self.assertEqual(normalized["leaf_ema_decay"], 0.0)
         self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
         self.assertNotIn("leaf_hidden_layers", config)
+
+    def _leaf_ema_network(self) -> BattleTransformer:
+        return BattleTransformer(
+            TransformerConfig(
+                feature_count=8,
+                action_count=2,
+                d_model=8,
+                heads=2,
+                layers=1,
+                feedforward=16,
+                distilled_leaf_evaluator=True,
+            )
+        )
+
+    def test_leaf_ema_state_lags_training_and_swaps_on_exit(self) -> None:
+        network = self._leaf_ema_network()
+        with torch.no_grad():
+            for name, parameter in network.named_parameters():
+                if name.startswith("leaf_value."):
+                    parameter.fill_(1.0)
+        state = _initial_leaf_ema_state(network, 0.5)
+        self.assertIsNotNone(state)
+        _begin_leaf_training(network, state)
+        with torch.no_grad():
+            for name, parameter in network.named_parameters():
+                if name.startswith("leaf_value."):
+                    parameter.fill_(3.0)
+        _update_leaf_ema(network, state, 0.5)
+        _end_leaf_training(network, state)
+        for name, parameter in network.named_parameters():
+            if name.startswith("leaf_value."):
+                torch.testing.assert_close(parameter, torch.full_like(parameter, 2.0))
+                torch.testing.assert_close(
+                    state["training"][name],
+                    torch.full_like(parameter, 3.0),
+                )
+
+    def test_leaf_ema_restores_raw_weights_for_the_next_epoch(self) -> None:
+        network = self._leaf_ema_network()
+        state = _initial_leaf_ema_state(network, 0.9)
+        _begin_leaf_training(network, state)
+        with torch.no_grad():
+            network.leaf_value[0].bias.fill_(5.0)
+        _update_leaf_ema(network, state, 0.9)
+        _end_leaf_training(network, state)
+        _begin_leaf_training(network, state)
+        torch.testing.assert_close(
+            network.leaf_value[0].bias,
+            torch.full_like(network.leaf_value[0].bias, 5.0),
+        )
+
+    def test_leaf_ema_state_is_disabled_at_zero_decay(self) -> None:
+        network = self._leaf_ema_network()
+        self.assertIsNone(_initial_leaf_ema_state(network, 0.0))
+        before = {
+            name: parameter.detach().clone()
+            for name, parameter in network.named_parameters()
+        }
+        _begin_leaf_training(network, None)
+        _update_leaf_ema(network, None, 0.0)
+        _end_leaf_training(network, None)
+        for name, parameter in network.named_parameters():
+            torch.testing.assert_close(parameter, before[name])
+        self.assertIsNone(_leaf_ema_checkpoint_state(None))
+
+    def test_leaf_ema_checkpoint_state_is_a_detached_cpu_copy(self) -> None:
+        network = self._leaf_ema_network()
+        state = _initial_leaf_ema_state(network, 0.5)
+        saved = _leaf_ema_checkpoint_state(state)
+        for key in ("average", "training"):
+            for tensor in saved[key].values():
+                self.assertEqual(tensor.device.type, "cpu")
+                self.assertFalse(tensor.requires_grad)
+        with torch.no_grad():
+            state["average"]["leaf_value.0.bias"].fill_(9.0)
+        self.assertFalse(
+            torch.equal(
+                saved["average"]["leaf_value.0.bias"],
+                state["average"]["leaf_value.0.bias"],
+            )
+        )
 
     def test_resume_loads_complete_prefix_and_archives_partial_iteration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
