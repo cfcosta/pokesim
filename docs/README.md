@@ -58,6 +58,7 @@ These documents record twelve codebase, processor, and proof-architecture review
 - [Training-search GPU utilization root cause](research/gpu-utilization-root-cause.md) — expanded-node batch-one inference defect, controlled attribution, pooled-node fix, and the distinction between GPU utilization and end-to-end throughput.
 - [Native Rust RM+ and CFR+ integration](research/rust-rmplus-cfrplus.md) — C-ABI compatibility boundary, solver equivalence, CFR+ convergence, exact-search throughput, and V26 lineage.
 - [Persistent evaluation pool](research/persistent-evaluation-pool.md) — shared promotion/probe/campaign workers, balanced pair-preserving batches, live gate progress, GPU/VRAM scaling, and V27 lineage.
+- [V27 thirty-iteration promotion audit](research/v27-thirty-iteration-promotion-audit.md) — promotion attribution, independent confirmation, shadow-learning evidence, optimizer drift, router regression, and next controlled experiments.
 - [Variable-party tree-search performance](research/variable-party-tree-search-performance.md) — measured search bottlenecks, semantic/joint/distilled/adaptive model changes, scheduling, and quality-aware throughput conclusions.
 - [Full-link training-state audit](research/full-training-markov-audit.md) — field-by-field Markov review, the Mimic continuation alias, v3 schema fix, profile invariants, and remaining injectivity proof.
 - [Full-party training precision benchmark](research/full6v6-precision-benchmark.md) — FP32/BF16 throughput, memory, inference, numerical drift, and the BF16 production decision.
