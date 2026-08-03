@@ -261,6 +261,11 @@ def _pipeline_id(
     return "transformer-variable-party-bf16-rmplus-v27-persistent-eval"
 
 
+def _serialized_network_config(config: TransformerConfig) -> dict[str, Any]:
+    """Match the JSON representation persisted in run metadata."""
+    return json.loads(json.dumps(asdict(config)))
+
+
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
     for model in models:
         if isinstance(model, BattleTransformer):
@@ -2893,7 +2898,7 @@ def run_transformer_pipeline(
         saved_config = _normalized_saved_config(run_metadata.get("config", {}))
         if saved_config != asdict(config):
             raise ValueError("resume configuration differs from immutable run metadata")
-        if run_metadata.get("network") != asdict(model_config):
+        if run_metadata.get("network") != _serialized_network_config(model_config):
             raise ValueError("resume network shape differs from the native protocol")
         for metadata in run_metadata.get("opponents", []):
             if metadata["kind"] == "fixed-checkpoint":

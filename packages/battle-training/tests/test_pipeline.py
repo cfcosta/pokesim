@@ -126,6 +126,7 @@ from battle_training.transformer_pipeline import (
     _resumed_pooled_evidence,
     _scheduled_for_opponent,
     _select_training_opponent,
+    _serialized_network_config,
     _training_level100,
     _training_pair,
     _training_pair_leg,
@@ -1978,6 +1979,10 @@ class TransformerTests(unittest.TestCase):
             if key.startswith("leaf_value.")
         )
         self.assertEqual(leaf, 159_233)
+        self.assertEqual(
+            _serialized_network_config(network.config)["leaf_hidden_layers"],
+            [256, 128],
+        )
 
     def test_resume_loads_complete_prefix_and_archives_partial_iteration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
