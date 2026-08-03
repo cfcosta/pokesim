@@ -29,6 +29,7 @@ from . import (
 from .arena import (
     ArenaConfig,
     ArenaEvaluationPool,
+    ArenaReportJob,
     _choice_detail,
     _compact_inspection,
     _compact_turn_inspection,
@@ -37,7 +38,7 @@ from .arena import (
     run_paired_arena,
     run_traced_arena,
     skill_probe_report,
-    write_arena_report,
+    write_arena_reports_parallel,
 )
 from .artifacts import build_manifest, sha256, verify_manifest, write_json, write_new
 from .decision_quality import (
@@ -154,6 +155,11 @@ class _HeuristicNetwork:
                 "adaptive_budget_head": True,
             },
         )()
+
+    def __reduce__(self) -> tuple[Any, tuple[str]]:
+        # Rebuild the dynamic config class instead of asking multiprocessing to
+        # pickle it when final-report opponents cross a spawned-worker boundary.
+        return self.__class__, (self.style,)
 
     def evaluate(
         self, features: list[tuple[int, ...]], masks: list[int]
@@ -2637,8 +2643,8 @@ def run_transformer_pipeline(
         completed, shards, collection, training, accepted_iterations = (
             _load_completed_prefix(root)
         )
-        if completed >= config.iterations:
-            raise ValueError("all configured training iterations are already complete")
+        if completed > config.iterations:
+            raise ValueError("completed iterations exceed the configured run length")
         latest_checkpoint = root / "checkpoints" / f"policy-{completed:03d}.pt"
         incumbent_network = load_network(latest_checkpoint, device)
         if incumbent_network.config != model_config:
@@ -2763,6 +2769,7 @@ def run_transformer_pipeline(
                 "learning_lineage": "persistent-shadow-v1",
                 "deployment_lineage": "quality-gated-incumbent-v1",
                 "evaluation_topology": "persistent-process-pool-full-utilization-v1",
+                "final_evaluation_topology": "parallel-independent-arena-pool-v1",
                 "config": asdict(config),
                 "network": asdict(model_config),
                 "parameter_count": sum(
@@ -3150,19 +3157,78 @@ def run_transformer_pipeline(
         min(8, config.arena_episodes // 2),
         replay_games=min(3, config.arena_episodes),
     )
-    arena = write_arena_report(
-        root / "arena" / "final-vs-initial", incumbent_network, initial, arena_config
-    )
-    opponent_arenas = []
-    for index, (opponent, identity) in enumerate(opponents):
-        result = write_arena_report(
-            root / "arena" / f"final-vs-fixed-{index:03d}",
-            incumbent_network,
-            opponent,
-            arena_config,
+    final_arena_jobs = [
+        ArenaReportJob(root / "arena" / "final-vs-initial", initial, arena_config),
+        *[
+            ArenaReportJob(
+                root / "arena" / f"final-vs-fixed-{index:03d}",
+                opponent,
+                arena_config,
+            )
+            for index, (opponent, _) in enumerate(opponents)
+        ],
+    ]
+
+    def final_arena_progress(completed: int, total: int) -> None:
+        write_monitor_state(
+            root,
+            "final-arena",
+            iteration=config.iterations,
+            message=f"Running final model evaluations: {completed:,} / {total:,} arenas",
+            completed=completed,
+            games=total,
+            evaluation_unit="arenas",
         )
+
+    final_arena_reports: list[dict[str, Any] | None] = [None for _ in final_arena_jobs]
+    pending_final_jobs = []
+    pending_final_indexes = []
+    for index, job in enumerate(final_arena_jobs):
+        summary_path = job.output / "summary.json"
+        replay_paths = [
+            job.output / "replays" / f"game-{game:05d}.log"
+            for game in range(job.config.replay_games)
+        ]
+        if summary_path.is_file() and all(path.is_file() for path in replay_paths):
+            report = json.loads(summary_path.read_text())
+            if (
+                report.get("config") != asdict(job.config)
+                or report.get("side_swap_complete") is not True
+            ):
+                raise ValueError(
+                    f"completed final arena report is incompatible: {summary_path}"
+                )
+            final_arena_reports[index] = report
+        else:
+            pending_final_jobs.append(job)
+            pending_final_indexes.append(index)
+    reused_final_arenas = len(final_arena_jobs) - len(pending_final_jobs)
+    if reused_final_arenas:
+        final_arena_progress(reused_final_arenas, len(final_arena_jobs))
+
+    def pending_final_arena_progress(completed: int, _: int) -> None:
+        final_arena_progress(
+            reused_final_arenas + completed,
+            len(final_arena_jobs),
+        )
+
+    pending_final_reports = write_arena_reports_parallel(
+        incumbent_network,
+        pending_final_jobs,
+        config.eval_processes,
+        progress=pending_final_arena_progress,
+    )
+    for index, report in zip(pending_final_indexes, pending_final_reports, strict=True):
+        final_arena_reports[index] = report
+    if any(report is None for report in final_arena_reports):
+        raise RuntimeError("final arena report scheduling returned incomplete results")
+    complete_final_arena_reports = [
+        report for report in final_arena_reports if report is not None
+    ]
+    arena = complete_final_arena_reports[0]
+    opponent_arenas = complete_final_arena_reports[1:]
+    for result, (_, identity) in zip(opponent_arenas, opponents, strict=True):
         result["opponent_sha256"] = identity
-        opponent_arenas.append(result)
 
     with tempfile.TemporaryDirectory(prefix="battle-transformer-replay-") as temporary:
         replay_path = Path(temporary) / "replay.jsonl"
@@ -3248,6 +3314,7 @@ def run_transformer_pipeline(
         "learning_lineage": "persistent-shadow-v1",
         "deployment_lineage": "quality-gated-incumbent-v1",
         "evaluation_topology": "persistent-process-pool-full-utilization-v1",
+        "final_evaluation_topology": "parallel-independent-arena-pool-v1",
         "initial_checkpoint_sha256": sha256(initial_checkpoint),
         "final_checkpoint": f"checkpoints/policy-{config.iterations:03d}.pt",
         "final_checkpoint_sha256": sha256(

@@ -36,6 +36,26 @@ all configured workers without exceeding the previous 128-game fast-arena or
 transient monitor. The pool remains resident across promotion, probes, and
 campaign, eliminating two process/model/compile startups.
 
+Final reporting uses a separate `parallel-independent-arena-pool-v1` topology.
+The deployed candidate is loaded once in each worker, and the independent
+final-versus-initial and 49 heuristic reports are assigned as whole-arena jobs.
+Parallelism is outside each arena: game order, 64-game server batches, side
+swaps, RNG coordinates, replay generation, and floating-point reduction order
+inside a report remain unchanged. A two-report transformer/heuristic smoke test reproduced all summaries and
+replay files byte for byte between sequential and two-process execution. A
+production-size check then ran 12 existing 1,024-game reports through 12 workers
+in 1,370.43 seconds. Sequential report timestamps averaged 763.34 seconds per
+arena, or 9,160.06 seconds for the same 12 reports. Outer parallelism was thus
+6.68× faster while reproducing every summary and replay byte. Mean GPU use was
+51.6%, p95 GPU use was 89%, and peak VRAM was 9,419 MiB. This outer scheduling
+change therefore does not create a new controller or search lineage.
+
+Finalization may resume when all configured optimization iterations are already
+committed. Compatible completed reports, identified by their full serialized
+arena config and replay set, are reused; only missing reports are submitted.
+This lets an interrupted sequential finalization migrate without repeating
+valid report artifacts.
+
 ## GPU/process benchmark
 
 The benchmark used checkpoint `policy-003.pt`, compiled BF16 inference, exact
@@ -71,4 +91,5 @@ Raw benchmark reports:
 /tmp/eval-persistent-10.json
 /tmp/eval-persistent-12.json
 /tmp/eval-persistent-14.json
+/tmp/final-report-production-bench.json
 ```

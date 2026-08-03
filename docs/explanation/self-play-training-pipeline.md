@@ -259,7 +259,10 @@ restores the intended joint dual-policy evaluator at mirror children. V26 moves
 the dense solver to Rust and replaces uniform RM+ updates with CFR+ alternating
 updates and linear averaging under a new controller lineage. V27 keeps one
 balanced twelve-worker evaluation pool alive across promotion, probes, and
-campaign, retaining compiled models and publishing live gate progress. Earlier checkpoints
+campaign, retaining compiled models and publishing live gate progress. Final
+reporting uses the same process budget at the arena level: each independent
+report retains its sequential game and reduction order while workers reuse the
+deployed candidate. Earlier checkpoints
 cannot resume or warm-start into these changed architectures or controller
 semantics; v16/v17 also used different promotion and deployment controllers.
 

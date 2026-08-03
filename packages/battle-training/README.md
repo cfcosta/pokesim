@@ -37,7 +37,7 @@ The smoke command performs the complete loop:
    terminal values;
 6. optimizes policy cross-entropy plus value MSE with AdamW;
 7. publishes model and optimizer checkpoints;
-8. runs a side-swapped final-versus-initial arena;
+8. runs side-swapped final-versus-initial and fixed-opponent report arenas through a persistent outer process pool;
 9. writes SHA-256 manifests; and
 10. regenerates the first search shard byte for byte from checkpoint zero.
 
@@ -73,7 +73,9 @@ simultaneous RM+ over the complete root; adaptive routing changes only whether
 deeper refinements are requested. V27 shares one twelve-process evaluation pool
 across promotion, probes, and campaign. Pair-preserving balanced spans keep all
 workers useful, compiled models stay resident between gates, and transient
-progress reports expose completed evaluation games.
+progress reports expose completed evaluation games. Final reporting assigns
+whole independent arenas to the same process budget, preserving byte-identical
+per-arena execution while loading the deployed candidate once per worker.
 
 `transformer-train` is the production profile:
 30 iterations of 2,048 training battles, or 61,440 independently reset random
@@ -348,6 +350,9 @@ recall, precision, Brier score, and forced-calibration outcomes remain explicit.
 Promotion, campaign, probe, and final arenas use the same RM+ tree parameters
 and every-decision action selector as collection. They keep live games on one
 Lean server while batching inference, episode steps, and handle compaction.
+Promotion, campaign, and probe games are partitioned across a persistent model
+pair. Final reports instead run whole arenas concurrently so each report keeps
+its historical game order, server batches, reductions, and replay bytes.
 Probe arenas use 64-game
 batches and carry each post-step inspection into the next decision. A timed-out
 batch is discarded and the server is respawned. Arena directories contain

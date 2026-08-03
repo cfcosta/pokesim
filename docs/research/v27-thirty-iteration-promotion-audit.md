@@ -183,12 +183,17 @@ The persistent evaluator did not explain the low promotion count:
 - no candidate passed paired confidence and was then rejected only because of
   persistent-pool orchestration.
 
-The remaining final report path is a separate performance issue. It evaluates
+The remaining final report path was a separate performance issue. It evaluated
 the deployed incumbent sequentially against the initial model and 49 heuristic
 opponents, 1,024 games each. At audit time it had completed the initial arena
-and nine heuristic arenas after about two hours. This does not affect any of the
-30 promotion decisions, but future final reporting should use persistent,
-pair-preserving parallel workers and live progress.
+and nine heuristic arenas after about two hours. This did not affect any of the
+30 promotion decisions.
+
+The follow-up final-report pool loads the deployed candidate once per worker and
+assigns each independent report as a whole job. It does not repartition games
+within a report, so report summaries and replays remain byte-identical to the
+sequential path. Completed-arena counts now reach the monitor, and a fully
+optimized run can resume finalization after its last committed iteration.
 
 ## Conclusions and next experiment
 

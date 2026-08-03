@@ -17,6 +17,7 @@ import torch
 
 from battle_training.arena import (
     ArenaConfig,
+    ArenaReportJob,
     Replay,
     SkillMetrics,
     _arena_batch_spans,
@@ -26,9 +27,11 @@ from battle_training.arena import (
     _evaluation_party_sizes,
     _FastArenaEpisode,
     _load_arena_model,
+    _load_final_arena_baseline,
     _mean_ci95,
     _paired_coordinates,
     _serialized_arena_model,
+    _serialized_final_arena_baseline,
     _setup_move_name,
     _slim_arena_episode,
     _slim_traced_episode,
@@ -37,6 +40,7 @@ from battle_training.arena import (
     run_paired_arena,
     run_traced_arena,
     skill_probe_report,
+    write_arena_reports_parallel,
 )
 from battle_training.artifacts import (
     build_manifest,
@@ -96,6 +100,7 @@ from battle_training.transformer_pipeline import (
     _collection_quality,
     _gradient_report,
     _heuristic_population,
+    _HeuristicNetwork,
     _load_completed_prefix,
     _load_examples,
     _pipeline_id,
@@ -1609,6 +1614,57 @@ class TransformerTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             _serialized_arena_model(_ToyNetwork())
 
+    def test_final_arena_baselines_round_trip_without_changing_controllers(
+        self,
+    ) -> None:
+        network = BattleTransformer(
+            TransformerConfig(
+                feature_count=8,
+                action_count=2,
+                d_model=8,
+                heads=2,
+                layers=1,
+                feedforward=16,
+                precision="fp32",
+            )
+        )
+        transformer_record = _serialized_final_arena_baseline(network)
+        self.assertEqual(transformer_record["kind"], "transformer")
+        loaded = _load_final_arena_baseline(transformer_record, torch.device("cpu"))
+        self.assertIsInstance(loaded, BattleTransformer)
+        controller = _ToyNetwork()
+        controller_record = _serialized_final_arena_baseline(controller)
+        self.assertEqual(controller_record["kind"], "controller")
+        self.assertIs(
+            _load_final_arena_baseline(controller_record, torch.device("cpu")),
+            controller,
+        )
+        with self.assertRaisesRegex(ValueError, "unknown"):
+            _load_final_arena_baseline({"kind": "bad"}, torch.device("cpu"))
+
+    def test_final_arena_parallel_jobs_require_unique_outputs(self) -> None:
+        network = BattleTransformer(
+            TransformerConfig(
+                feature_count=8,
+                action_count=2,
+                d_model=8,
+                heads=2,
+                layers=1,
+                feedforward=16,
+                precision="fp32",
+            )
+        )
+        config = ArenaConfig(games=8, seed_count=2)
+        jobs = [
+            ArenaReportJob(Path("same"), _ToyNetwork(), config),
+            ArenaReportJob(Path("same"), _ToyNetwork(), config),
+        ]
+        with self.assertRaisesRegex(ValueError, "unique"):
+            write_arena_reports_parallel(network, jobs, 2)
+        for processes in (0, 17):
+            with self.assertRaisesRegex(ValueError, "processes"):
+                write_arena_reports_parallel(network, [], processes)
+
     def test_parallel_arena_episodes_travel_without_models_or_native_state(
         self,
     ) -> None:
@@ -1978,6 +2034,13 @@ class TransformerTests(unittest.TestCase):
         schedule = [_scheduled_for_opponent(episode, 0.5) for episode in range(1000)]
         self.assertEqual(sum(schedule), 500)
         self.assertEqual(schedule[:6], [False, True, False, True, False, True])
+
+    def test_heuristic_controller_round_trips_through_spawn_pickle(self) -> None:
+        controller = _HeuristicNetwork("aggressive")
+        loaded = pickle.loads(pickle.dumps(controller))
+        self.assertEqual(loaded.style, controller.style)
+        self.assertEqual(loaded.config.action_count, 13)
+        self.assertTrue(loaded.config.distilled_leaf_evaluator)
 
     def test_model_and_heuristic_opponents_receive_exact_balanced_shares(self) -> None:
         heuristics = _heuristic_population()[:3]

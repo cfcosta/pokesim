@@ -2154,3 +2154,109 @@ def write_arena_report(
     result = run_traced_arena(candidate, baseline, config, output / "replays")
     write_json(output / "summary.json", result)
     return result
+
+
+@dataclass(frozen=True)
+class ArenaReportJob:
+    """One independent final-report arena with its own output directory."""
+
+    output: Path
+    baseline: Any
+    config: ArenaConfig
+
+
+def _serialized_final_arena_baseline(baseline: Any) -> dict[str, Any]:
+    if isinstance(baseline, BattleTransformer):
+        return {"kind": "transformer", "model": _serialized_arena_model(baseline)}
+    return {"kind": "controller", "model": baseline}
+
+
+def _load_final_arena_baseline(record: dict[str, Any], device: torch.device) -> Any:
+    if record["kind"] == "transformer":
+        return _load_arena_model(record["model"], device)
+    if record["kind"] == "controller":
+        return record["model"]
+    raise ValueError(f"unknown final arena baseline kind: {record['kind']}")
+
+
+_FINAL_ARENA_PROCESS_CANDIDATE: BattleTransformer | None = None
+_FINAL_ARENA_PROCESS_DEVICE: torch.device | None = None
+
+
+def _initialize_final_arena_process(payload_path: str) -> None:
+    """Load the deployed candidate once per final-report worker."""
+    global _FINAL_ARENA_PROCESS_CANDIDATE, _FINAL_ARENA_PROCESS_DEVICE
+    torch.set_num_threads(1)
+    payload = torch.load(payload_path, map_location="cpu", weights_only=False)
+    device = choose_device(payload["device"])
+    _FINAL_ARENA_PROCESS_DEVICE = device
+    _FINAL_ARENA_PROCESS_CANDIDATE = _load_arena_model(payload["candidate"], device)
+
+
+def _final_arena_report_task(
+    output: Path,
+    baseline_record: dict[str, Any],
+    config: ArenaConfig,
+) -> dict[str, Any]:
+    if _FINAL_ARENA_PROCESS_CANDIDATE is None or _FINAL_ARENA_PROCESS_DEVICE is None:
+        raise RuntimeError("final arena process candidate was not initialized")
+    configure_determinism(config.seed)
+    baseline = _load_final_arena_baseline(baseline_record, _FINAL_ARENA_PROCESS_DEVICE)
+    return write_arena_report(output, _FINAL_ARENA_PROCESS_CANDIDATE, baseline, config)
+
+
+def write_arena_reports_parallel(
+    candidate: BattleTransformer,
+    jobs: list[ArenaReportJob],
+    processes: int,
+    progress: Callable[[int, int], None] | None = None,
+) -> list[dict[str, Any]]:
+    """Run independent reports concurrently without repartitioning any arena."""
+    if not 1 <= processes <= 16:
+        raise ValueError("final arena report processes must be in 1..16")
+    if len({job.output for job in jobs}) != len(jobs):
+        raise ValueError("final arena report output directories must be unique")
+    if not jobs:
+        return []
+    if processes == 1 or len(jobs) == 1:
+        results = []
+        for job in jobs:
+            results.append(
+                write_arena_report(job.output, candidate, job.baseline, job.config)
+            )
+            if progress is not None:
+                progress(len(results), len(jobs))
+        return results
+
+    with tempfile.TemporaryDirectory(prefix="final-arena-report-pool-") as temporary:
+        payload_path = Path(temporary) / "candidate.pt"
+        torch.save(
+            {
+                "device": str(next(candidate.parameters()).device),
+                "candidate": _serialized_arena_model(candidate),
+            },
+            payload_path,
+        )
+        results: list[dict[str, Any] | None] = [None] * len(jobs)
+        with ProcessPoolExecutor(
+            max_workers=min(processes, len(jobs)),
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=_initialize_final_arena_process,
+            initargs=(str(payload_path),),
+        ) as executor:
+            futures = {
+                executor.submit(
+                    _final_arena_report_task,
+                    job.output,
+                    _serialized_final_arena_baseline(job.baseline),
+                    job.config,
+                ): index
+                for index, job in enumerate(jobs)
+            }
+            for completed, future in enumerate(as_completed(futures), start=1):
+                results[futures[future]] = future.result()
+                if progress is not None:
+                    progress(completed, len(jobs))
+    if any(result is None for result in results):
+        raise RuntimeError("final arena report pool returned incomplete results")
+    return [result for result in results if result is not None]
