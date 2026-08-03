@@ -98,6 +98,7 @@ class TransformerPipelineConfig:
     adaptive_exploitability_threshold: float = 0.08
     adaptive_payoff_spread_threshold: float = 0.75
     adaptive_max_false_negative_rate: float = 0.10
+    adaptive_fn_pool_window: int = 1
     budget_loss_weight: float = 0.05
     budget_positive_weight: float = 4.0
     opponent_checkpoints: tuple[str, ...] = ()
@@ -2362,7 +2363,9 @@ def _parameter_distance(before: BattleTransformer, after: BattleTransformer) -> 
 
 
 def _collection_quality(
-    metrics: dict[str, Any], config: TransformerPipelineConfig
+    metrics: dict[str, Any],
+    config: TransformerPipelineConfig,
+    history: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
 ) -> dict[str, Any]:
     reasons: list[str] = []
     episodes = config.selfplay_episodes
@@ -2381,10 +2384,35 @@ def _collection_quality(
         > config.adaptive_max_false_negative_rate
     ):
         reasons.append("adaptive-router-false-negative-rate-above-limit")
+    window = config.adaptive_fn_pool_window
+    if window < 2:
+        return {
+            "version": "completion-and-router-integrity-v3",
+            "pass": not reasons,
+            "reasons": reasons,
+        }
+    # A sustained router regression can hide under the per-iteration sample
+    # floor; pooling recent iterations accumulates enough forced probes to
+    # judge it at the same rate limit.
+    recent = [*history[-(window - 1) :], metrics]
+    pooled_samples = sum(int(entry.get("forced_router_samples", 0)) for entry in recent)
+    pooled_false_negatives = sum(
+        int(entry.get("forced_router_false_negatives", 0)) for entry in recent
+    )
+    pooled_rate = pooled_false_negatives / max(1, pooled_samples)
+    if pooled_samples >= 128 and pooled_rate > config.adaptive_max_false_negative_rate:
+        reasons.append("adaptive-router-pooled-false-negative-rate-above-limit")
     return {
-        "version": "completion-and-router-integrity-v3",
+        "version": "completion-and-pooled-router-integrity-v4",
         "pass": not reasons,
         "reasons": reasons,
+        "pooled_router": {
+            "window": window,
+            "iterations": len(recent),
+            "samples": pooled_samples,
+            "false_negatives": pooled_false_negatives,
+            "rate": pooled_rate,
+        },
     }
 
 
@@ -2535,6 +2563,7 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("leaf_ema_decay", 0.0)
     normalized.setdefault("promotion_nonfinish_policy", "losses")
     normalized.setdefault("promotion_pooled_z", 0.0)
+    normalized.setdefault("adaptive_fn_pool_window", 1)
     return normalized
 
 
@@ -2711,6 +2740,8 @@ def run_transformer_pipeline(
         raise ValueError("adaptive_payoff_spread_threshold must be nonnegative")
     if not 0.0 <= config.adaptive_max_false_negative_rate <= 1.0:
         raise ValueError("adaptive_max_false_negative_rate must be in [0, 1]")
+    if config.adaptive_fn_pool_window < 1:
+        raise ValueError("adaptive_fn_pool_window must be positive")
     if not 0.0 <= config.budget_loss_weight <= 1.0:
         raise ValueError("budget_loss_weight must be in [0, 1]")
     if config.budget_positive_weight < 1.0:
@@ -3095,7 +3126,7 @@ def run_transformer_pipeline(
                 },
             )
             raise
-        collection_quality = _collection_quality(collection_metrics, config)
+        collection_quality = _collection_quality(collection_metrics, config, collection)
         collection_metrics["quality"] = collection_quality
         shards.append(shard)
         collection.append(collection_metrics)

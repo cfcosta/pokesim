@@ -1402,6 +1402,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.adaptive_deep_threshold, 0.55)
         self.assertEqual(arguments.adaptive_force_deep_fraction, 0.10)
         self.assertEqual(arguments.adaptive_max_false_negative_rate, 0.10)
+        self.assertEqual(arguments.adaptive_fn_pool_window, 1)
         self.assertEqual(arguments.budget_loss_weight, 0.05)
         self.assertEqual(arguments.budget_positive_weight, 4.0)
         self.assertEqual(arguments.precision, "bf16")
@@ -1533,11 +1534,13 @@ class TransformerTests(unittest.TestCase):
         config.pop("leaf_ema_decay")
         config.pop("promotion_nonfinish_policy")
         config.pop("promotion_pooled_z")
+        config.pop("adaptive_fn_pool_window")
         normalized = _normalized_saved_config(config)
         self.assertIsNone(normalized["leaf_hidden_layers"])
         self.assertEqual(normalized["leaf_ema_decay"], 0.0)
         self.assertEqual(normalized["promotion_nonfinish_policy"], "losses")
         self.assertEqual(normalized["promotion_pooled_z"], 0.0)
+        self.assertEqual(normalized["adaptive_fn_pool_window"], 1)
         self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
         self.assertNotIn("leaf_hidden_layers", config)
 
@@ -1782,6 +1785,18 @@ class TransformerTests(unittest.TestCase):
             ]
         )
         self.assertEqual(arguments.promotion_pooled_z, 2.25)
+
+    def test_adaptive_fn_pool_window_flows_from_the_cli(self) -> None:
+        arguments = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/fn-pool",
+                "--adaptive-fn-pool-window",
+                "3",
+            ]
+        )
+        self.assertEqual(arguments.adaptive_fn_pool_window, 3)
 
     def test_resume_loads_complete_prefix_and_archives_partial_iteration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -2318,7 +2333,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(metrics["setup_move_counts"]["Reflect"], 2)
 
     def test_collection_quality_does_not_gate_switch_rate(self) -> None:
-        config = SimpleNamespace(selfplay_episodes=100)
+        config = SimpleNamespace(selfplay_episodes=100, adaptive_fn_pool_window=1)
         report = _collection_quality(
             {
                 "truncated": 0,
@@ -2332,10 +2347,13 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(report["version"], "completion-and-router-integrity-v3")
         self.assertTrue(report["pass"])
         self.assertEqual(report["reasons"], [])
+        self.assertNotIn("pooled_router", report)
 
     def test_collection_quality_gates_witnessed_router_false_negatives(self) -> None:
         config = SimpleNamespace(
-            selfplay_episodes=100, adaptive_max_false_negative_rate=0.10
+            selfplay_episodes=100,
+            adaptive_max_false_negative_rate=0.10,
+            adaptive_fn_pool_window=1,
         )
         report = _collection_quality(
             {
@@ -2352,6 +2370,67 @@ class TransformerTests(unittest.TestCase):
         self.assertIn(
             "adaptive-router-false-negative-rate-above-limit", report["reasons"]
         )
+
+    def _router_iteration(
+        self, samples: int, false_negatives: int
+    ) -> dict[str, object]:
+        return {
+            "truncated": 0,
+            "semantic_divergences": 0,
+            "mean_decisions": 20.0,
+            "finished": 100,
+            "forced_router_samples": samples,
+            "forced_router_false_negatives": false_negatives,
+            "forced_router_false_negative_rate": false_negatives / max(1, samples),
+        }
+
+    def test_pooled_router_false_negatives_gate_across_iterations(self) -> None:
+        config = SimpleNamespace(
+            selfplay_episodes=100,
+            adaptive_max_false_negative_rate=0.10,
+            adaptive_fn_pool_window=3,
+        )
+        history = [self._router_iteration(60, 12), self._router_iteration(60, 12)]
+        report = _collection_quality(self._router_iteration(60, 12), config, history)
+        self.assertEqual(report["version"], "completion-and-pooled-router-integrity-v4")
+        self.assertFalse(report["pass"])
+        self.assertEqual(
+            report["reasons"],
+            ["adaptive-router-pooled-false-negative-rate-above-limit"],
+        )
+        self.assertEqual(
+            report["pooled_router"],
+            {
+                "window": 3,
+                "iterations": 3,
+                "samples": 180,
+                "false_negatives": 36,
+                "rate": 0.2,
+            },
+        )
+
+    def test_pooled_router_window_uses_only_recent_history(self) -> None:
+        config = SimpleNamespace(
+            selfplay_episodes=100,
+            adaptive_max_false_negative_rate=0.10,
+            adaptive_fn_pool_window=2,
+        )
+        history = [self._router_iteration(400, 200), self._router_iteration(200, 0)]
+        report = _collection_quality(self._router_iteration(200, 0), config, history)
+        self.assertTrue(report["pass"])
+        self.assertEqual(report["pooled_router"]["samples"], 400)
+        self.assertEqual(report["pooled_router"]["false_negatives"], 0)
+
+    def test_pooled_router_respects_the_sample_floor(self) -> None:
+        config = SimpleNamespace(
+            selfplay_episodes=100,
+            adaptive_max_false_negative_rate=0.10,
+            adaptive_fn_pool_window=3,
+        )
+        report = _collection_quality(self._router_iteration(20, 10), config, [])
+        self.assertTrue(report["pass"])
+        self.assertEqual(report["pooled_router"]["samples"], 20)
+        self.assertEqual(report["pooled_router"]["iterations"], 1)
 
     def test_fixed_opponent_schedule_is_exact_and_periodic(self) -> None:
         schedule = [_scheduled_for_opponent(episode, 0.5) for episode in range(1000)]
