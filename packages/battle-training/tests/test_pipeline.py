@@ -99,6 +99,7 @@ from battle_training.rmplus_native import (
 )
 from battle_training.transformer_pipeline import (
     TransformerPipelineConfig,
+    _apply_learning_rate,
     _begin_leaf_training,
     _collection_quality,
     _end_leaf_training,
@@ -107,6 +108,7 @@ from battle_training.transformer_pipeline import (
     _HeuristicNetwork,
     _initial_leaf_ema_state,
     _leaf_ema_checkpoint_state,
+    _learning_rate_for_iteration,
     _load_completed_prefix,
     _load_examples,
     _normalized_saved_config,
@@ -1397,6 +1399,9 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.leaf_loss_weight, 0.25)
         self.assertEqual(arguments.promotion_nonfinish_policy, "losses")
         self.assertEqual(arguments.promotion_pooled_z, 0.0)
+        self.assertEqual(arguments.lr_schedule, "constant")
+        self.assertEqual(arguments.lr_milestones, ())
+        self.assertEqual(arguments.lr_decay_factor, 0.1)
         self.assertTrue(arguments.adaptive_search)
         self.assertEqual(arguments.adaptive_warmup_iterations, 1)
         self.assertEqual(arguments.adaptive_deep_threshold, 0.55)
@@ -1535,12 +1540,18 @@ class TransformerTests(unittest.TestCase):
         config.pop("promotion_nonfinish_policy")
         config.pop("promotion_pooled_z")
         config.pop("adaptive_fn_pool_window")
+        config.pop("lr_schedule")
+        config.pop("lr_milestones")
+        config.pop("lr_decay_factor")
         normalized = _normalized_saved_config(config)
         self.assertIsNone(normalized["leaf_hidden_layers"])
         self.assertEqual(normalized["leaf_ema_decay"], 0.0)
         self.assertEqual(normalized["promotion_nonfinish_policy"], "losses")
         self.assertEqual(normalized["promotion_pooled_z"], 0.0)
         self.assertEqual(normalized["adaptive_fn_pool_window"], 1)
+        self.assertEqual(normalized["lr_schedule"], "constant")
+        self.assertEqual(normalized["lr_milestones"], ())
+        self.assertEqual(normalized["lr_decay_factor"], 0.1)
         self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
         self.assertNotIn("leaf_hidden_layers", config)
 
@@ -1797,6 +1808,66 @@ class TransformerTests(unittest.TestCase):
             ]
         )
         self.assertEqual(arguments.adaptive_fn_pool_window, 3)
+
+    def test_learning_rate_schedule_steps_at_milestones(self) -> None:
+        config = SimpleNamespace(
+            learning_rate=2e-4,
+            lr_schedule="step",
+            lr_milestones=(8, 16),
+            lr_decay_factor=0.1,
+        )
+        self.assertEqual(_learning_rate_for_iteration(config, 1), 2e-4)
+        self.assertEqual(_learning_rate_for_iteration(config, 7), 2e-4)
+        self.assertAlmostEqual(_learning_rate_for_iteration(config, 8), 2e-5)
+        self.assertAlmostEqual(_learning_rate_for_iteration(config, 15), 2e-5)
+        self.assertAlmostEqual(_learning_rate_for_iteration(config, 16), 2e-6)
+        self.assertAlmostEqual(_learning_rate_for_iteration(config, 40), 2e-6)
+        constant = SimpleNamespace(
+            learning_rate=2e-4,
+            lr_schedule="constant",
+            lr_milestones=(8,),
+            lr_decay_factor=0.1,
+        )
+        self.assertEqual(_learning_rate_for_iteration(constant, 40), 2e-4)
+        resumed = SimpleNamespace(
+            learning_rate=2e-4,
+            lr_schedule="step",
+            lr_milestones=[8, 16],
+            lr_decay_factor=0.5,
+        )
+        self.assertAlmostEqual(_learning_rate_for_iteration(resumed, 20), 5e-5)
+
+    def test_apply_learning_rate_updates_every_param_group(self) -> None:
+        network = self._leaf_ema_network()
+        optimizer = torch.optim.AdamW(network.parameters(), lr=2e-4)
+        _apply_learning_rate(optimizer, 5e-5)
+        self.assertEqual([group["lr"] for group in optimizer.param_groups], [5e-5])
+
+    def test_lr_schedule_flows_from_the_cli(self) -> None:
+        arguments = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/lr-schedule",
+                "--lr-schedule",
+                "step",
+                "--lr-milestones",
+                "8,16",
+                "--lr-decay-factor",
+                "0.5",
+            ]
+        )
+        self.assertEqual(arguments.lr_schedule, "step")
+        self.assertEqual(arguments.lr_milestones, (8, 16))
+        self.assertEqual(arguments.lr_decay_factor, 0.5)
+        for invalid in (
+            ["--lr-milestones", "8,zero"],
+            ["--lr-schedule", "cosine"],
+        ):
+            with self.assertRaises(SystemExit):
+                training_parser().parse_args(
+                    ["transformer-train", "--output", "/tmp/lr-schedule", *invalid]
+                )
 
     def test_resume_loads_complete_prefix_and_archives_partial_iteration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

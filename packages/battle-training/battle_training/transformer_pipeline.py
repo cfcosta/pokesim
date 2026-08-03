@@ -85,6 +85,9 @@ class TransformerPipelineConfig:
     feedforward: int
     token_group_size: int = 1
     token_layout: str = "semantic-entity-v1"
+    lr_schedule: str = "constant"
+    lr_milestones: tuple[int, ...] = ()
+    lr_decay_factor: float = 0.1
     joint_policy_heads: bool = True
     distilled_leaf_evaluator: bool = True
     leaf_hidden: int = 64
@@ -2039,6 +2042,22 @@ def _leaf_ema_checkpoint_state(
     }
 
 
+def _learning_rate_for_iteration(
+    config: TransformerPipelineConfig, iteration: int
+) -> float:
+    if config.lr_schedule == "constant":
+        return config.learning_rate
+    passed = sum(1 for milestone in config.lr_milestones if milestone <= iteration)
+    return config.learning_rate * config.lr_decay_factor**passed
+
+
+def _apply_learning_rate(
+    optimizer: torch.optim.Optimizer, learning_rate: float
+) -> None:
+    for group in optimizer.param_groups:
+        group["lr"] = learning_rate
+
+
 def _train_network(
     network: BattleTransformer,
     optimizer: torch.optim.Optimizer,
@@ -2564,6 +2583,9 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("promotion_nonfinish_policy", "losses")
     normalized.setdefault("promotion_pooled_z", 0.0)
     normalized.setdefault("adaptive_fn_pool_window", 1)
+    normalized.setdefault("lr_schedule", "constant")
+    normalized.setdefault("lr_milestones", ())
+    normalized.setdefault("lr_decay_factor", 0.1)
     return normalized
 
 
@@ -2724,6 +2746,17 @@ def run_transformer_pipeline(
         )
     if config.promotion_pooled_z < 0.0:
         raise ValueError("promotion_pooled_z must be nonnegative")
+    if config.lr_schedule not in ("constant", "step"):
+        raise ValueError("lr_schedule must be 'constant' or 'step'")
+    if not 0.0 < config.lr_decay_factor <= 1.0:
+        raise ValueError("lr_decay_factor must be in (0, 1]")
+    milestones = list(config.lr_milestones)
+    if any(milestone < 1 for milestone in milestones) or milestones != sorted(
+        set(milestones)
+    ):
+        raise ValueError(
+            "lr_milestones must be strictly increasing positive iterations"
+        )
     if config.deep_search_fraction != 1.0:
         raise ValueError(
             "random deep-search tiers are replaced by the adaptive root router"
@@ -3142,9 +3175,12 @@ def run_transformer_pipeline(
                 "transitions": collection_metrics["transitions"],
             },
         )
+        learning_rate = _learning_rate_for_iteration(config, iteration)
+        _apply_learning_rate(optimizer, learning_rate)
         training_metrics = _train_network(
             network, optimizer, training_shards, config, iteration, leaf_ema_state
         )
+        training_metrics["learning_rate"] = learning_rate
         if device.type == "cuda":
             torch.cuda.empty_cache()
         evaluation_pool = ArenaEvaluationPool(

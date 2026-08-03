@@ -30,6 +30,13 @@ def _leaf_hidden_layers(text: str) -> tuple[int, ...]:
     return sizes
 
 
+def _lr_milestones(text: str) -> tuple[int, ...]:
+    milestones = tuple(int(part) for part in text.split(","))
+    if any(milestone < 1 for milestone in milestones):
+        raise ValueError("learning-rate milestones must be positive iterations")
+    return milestones
+
+
 def _pipeline_parser(subparsers: argparse._SubParsersAction, name: str) -> None:
     smoke = name.endswith("smoke")
     parser = subparsers.add_parser(name)
@@ -57,6 +64,11 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--batch-size", type=int, default=32 if smoke else 128)
     parser.add_argument("--learning-rate", type=float, default=3e-4 if smoke else 2e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument(
+        "--lr-schedule", choices=("constant", "step"), default="constant"
+    )
+    parser.add_argument("--lr-milestones", type=_lr_milestones, default=())
+    parser.add_argument("--lr-decay-factor", type=float, default=0.1)
     parser.add_argument("--value-loss-weight", type=float, default=0.25)
     parser.add_argument("--redundant-action-prior-scale", type=float, default=0.25)
     parser.add_argument(
@@ -313,6 +325,9 @@ def main(argv: list[str] | None = None) -> int:
             batch_size=arguments.batch_size,
             learning_rate=arguments.learning_rate,
             weight_decay=arguments.weight_decay,
+            lr_schedule=arguments.lr_schedule,
+            lr_milestones=arguments.lr_milestones,
+            lr_decay_factor=arguments.lr_decay_factor,
             seed=arguments.seed,
             device=arguments.device,
             d_model=arguments.d_model,
