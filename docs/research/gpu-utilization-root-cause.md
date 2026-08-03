@@ -131,7 +131,8 @@ only repeat the same pipeline longer.
 The next limiting resources are now explicit:
 
 1. Reduce Python RM+ and generator-scheduler coordination without changing the
-   simultaneous equilibrium.
+   simultaneous equilibrium. V26 subsequently moved dense solver arithmetic to
+   Rust and enabled CFR+; see the [native solver review](rust-rmplus-cfrplus.md).
 2. Improve native mechanics throughput and overlap across independent cohorts.
 3. Only then test multiple deterministic 64-root lanes feeding one GPU. Select
    by games/second and decision quality, not by utilization percentage.

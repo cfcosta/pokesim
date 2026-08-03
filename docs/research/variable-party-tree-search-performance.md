@@ -303,6 +303,13 @@ quality-gated teacher/model alternatives:
     roots/s (1.78×) and distinct-model throughput from 8.04 to 16.35 roots/s
     (2.03×). GPU utilization fell because redundant launch work disappeared.
     See the [GPU root-cause analysis](gpu-utilization-root-cause.md).
+15. **Native RM+ and CFR+.** V26 keeps tree topology and batched orchestration in
+    Python but moves dense solver arithmetic behind a hashed Rust C ABI. On 128
+    random 13×13 matrices, uniform 2,048-step RM+ fell from 14.994 to 0.259
+    ms/matrix (57.84×) with maximum policy L1 difference `4.36e-15`. CFR+ at
+    2,048 steps took 0.304 ms and reduced mean exploitability from 0.008334 to
+    0.000127. A 64-root exact depth-four panel improved from 4.44 to 29.35
+    roots/s (6.61×). See the [native solver review](rust-rmplus-cfrplus.md).
 
 ## Conclusions
 

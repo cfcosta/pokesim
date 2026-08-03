@@ -14,6 +14,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
+
 from battle_training.arena import (
     ArenaConfig,
     Replay,
@@ -80,6 +81,14 @@ from battle_training.network import (
 from battle_training.red_ai_heuristics import (
     TRAINER_CLASS_PROFILES,
     normalized_trainer_policy,
+)
+from battle_training.rmplus_native import (
+    PYTHON_REFERENCE_BACKEND,
+    RUST_RMPLUS_BACKEND,
+    native_available,
+)
+from battle_training.rmplus_native import (
+    solve_cold as solve_cold_native,
 )
 from battle_training.transformer_pipeline import (
     TransformerPipelineConfig,
@@ -853,6 +862,132 @@ class TransformerTests(unittest.TestCase):
         self.assertAlmostEqual(value, 0.0, places=3)
         self.assertLess(exploitability, 0.005)
 
+    def test_native_uniform_rmplus_matches_the_python_reference(self) -> None:
+        payoff = [
+            [0.71, -0.42, 0.19],
+            [-0.83, 0.37, 0.54],
+            [-0.28, 0.91, -0.66],
+        ]
+        priors = [0.2, 0.3, 0.5]
+        expected = solve_zero_sum_regret(
+            payoff, priors, list(reversed(priors)), [0, 1, 2], [0, 1, 2], 2048
+        )
+        actual = solve_cold_native(
+            payoff,
+            priors,
+            list(reversed(priors)),
+            [0, 1, 2],
+            [0, 1, 2],
+            2048,
+            cfr_plus=False,
+        )
+        self.assertTrue(native_available())
+        for expected_policy, actual_policy in zip(
+            expected[:2], actual[:2], strict=True
+        ):
+            for expected_value, actual_value in zip(
+                expected_policy, actual_policy, strict=True
+            ):
+                self.assertAlmostEqual(expected_value, actual_value, places=12)
+        self.assertAlmostEqual(expected[2], actual[2], places=12)
+        self.assertAlmostEqual(expected[3], actual[3], places=12)
+        self.assertEqual(
+            actual,
+            solve_cold_native(
+                payoff,
+                priors,
+                list(reversed(priors)),
+                [0, 1, 2],
+                [0, 1, 2],
+                2048,
+                cfr_plus=False,
+            ),
+        )
+
+    def test_native_cfrplus_improves_fixed_budget_convergence(self) -> None:
+        payoff = [
+            [0.71, -0.42, 0.19],
+            [-0.83, 0.37, 0.54],
+            [-0.28, 0.91, -0.66],
+        ]
+        priors = [1 / 3] * 3
+        uniform = solve_cold_native(
+            payoff, priors, priors, [0, 1, 2], [0, 1, 2], 64, cfr_plus=False
+        )
+        accelerated = solve_cold_native(
+            payoff, priors, priors, [0, 1, 2], [0, 1, 2], 64, cfr_plus=True
+        )
+        self.assertLess(accelerated[3], uniform[3])
+
+    def test_native_uniform_warm_state_matches_python_reference(self) -> None:
+        server = _ToyServer()
+        network = _ToyNetwork()
+        searches = [
+            SimultaneousTreeSearch(
+                server,
+                network,
+                network,
+                JointSearchConfig(
+                    regret_iterations_per_update=32,
+                    rmplus_backend=backend,
+                ),
+                random.Random(1),
+                random.Random(2),
+            )
+            for backend in (PYTHON_REFERENCE_BACKEND, RUST_RMPLUS_BACKEND)
+        ]
+        nodes = [
+            search._make_node(server._snapshot(0), ([0.35, 0.65], [0.6, 0.4], 0.0))
+            for search in searches
+        ]
+        for node in nodes:
+            node.payoff = [[0.8, -0.3], [-0.6, 0.5]]
+        for search, node in zip(searches, nodes, strict=True):
+            search._solve_node(node)
+        for name in (
+            "player_policy",
+            "enemy_policy",
+            "player_regrets",
+            "enemy_regrets",
+            "player_strategy_sum",
+            "enemy_strategy_sum",
+        ):
+            for expected, actual in zip(
+                getattr(nodes[0], name), getattr(nodes[1], name), strict=True
+            ):
+                self.assertAlmostEqual(expected, actual, places=12)
+        self.assertAlmostEqual(nodes[0].root_value, nodes[1].root_value, places=12)
+        self.assertAlmostEqual(
+            nodes[0].exploitability, nodes[1].exploitability, places=12
+        )
+        self.assertEqual(nodes[0].solve_count, nodes[1].solve_count)
+
+    def test_native_cfrplus_warm_state_uses_linear_averaging(self) -> None:
+        server = _ToyServer()
+        network = _ToyNetwork()
+        search = SimultaneousTreeSearch(
+            server,
+            network,
+            network,
+            JointSearchConfig(
+                regret_iterations_per_update=16,
+                rmplus_backend=RUST_RMPLUS_BACKEND,
+                cfr_plus_solves=True,
+            ),
+            random.Random(1),
+            random.Random(2),
+        )
+        node = search._make_node(server._snapshot(0), ([0.5, 0.5], [0.5, 0.5], 0.0))
+        node.payoff = [[0.8, -0.3], [-0.6, 0.5]]
+        search._solve_node(node)
+        self.assertEqual(node.solve_count, 16)
+        self.assertAlmostEqual(sum(node.player_strategy_sum), 136.0, places=10)
+        self.assertAlmostEqual(sum(node.enemy_strategy_sum), 136.0, places=10)
+        average = search._average_policy(
+            node.player_strategy_sum, node.solve_count, node.player_policy
+        )
+        self.assertAlmostEqual(sum(average), 1.0, places=12)
+
     def test_tree_rmplus_does_not_cap_equilibrium_switch_mass(self) -> None:
         server = _ToyServer()
         network = _ThirteenActionToyNetwork()
@@ -964,14 +1099,18 @@ class TransformerTests(unittest.TestCase):
                 regret_iterations_per_update=16,
                 deeper_joint_rotations=2,
                 minimum_expansion_budget=4,
+                rmplus_backend=RUST_RMPLUS_BACKEND,
+                cfr_plus_solves=True,
             ),
             random.Random(7),
             random.Random(11),
         )
         result = search.search(server._snapshot(0), sample_actions=False)
         self.assertEqual(
-            result.solver, "simultaneous-matrix-tree-rmplus-pooled-node-v3"
+            result.solver,
+            "simultaneous-matrix-tree-rust-cfrplus-pooled-node-v4",
         )
+        self.assertEqual(result.diagnostics["root_solver"], "rust-cfrplus-f64-v1")
         self.assertGreater(result.player_policy[0], 0.8)
         self.assertEqual(result.diagnostics["tree_max_depth"], 1)
         self.assertEqual(result.diagnostics["root_joint_actions"], 4)
@@ -1829,11 +1968,11 @@ class TransformerTests(unittest.TestCase):
     def test_training_schedule_pairs_every_reset_and_side_assignment(self) -> None:
         self.assertEqual(
             _pipeline_id(),
-            "transformer-variable-party-bf16-rmplus-v24-pooled-node",
+            "transformer-variable-party-bf16-rmplus-v26-rust-cfrplus",
         )
         self.assertEqual(
             _pipeline_id(False, 2),
-            "transformer-variable-party-bf16-rmplus-v24-pooled-node",
+            "transformer-variable-party-bf16-rmplus-v26-rust-cfrplus",
         )
         for episode in range(0, 128, 2):
             self.assertEqual(_training_pair(episode), _training_pair(episode + 1))

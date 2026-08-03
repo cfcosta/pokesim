@@ -61,6 +61,7 @@ from .red_ai_heuristics import (
     normalized_trainer_policy,
     trainer_profile_for_style,
 )
+from .rmplus_native import RUST_RMPLUS_BACKEND, native_available, native_metadata
 
 
 @dataclass(frozen=True)
@@ -134,6 +135,8 @@ class TransformerPipelineConfig:
     redundant_action_prior_scale: float = 0.25
     balanced_final_species: bool = True
     generated_schedule_version: int = 3
+    rmplus_backend: str = RUST_RMPLUS_BACKEND
+    cfr_plus_solves: bool = True
 
 
 class _HeuristicNetwork:
@@ -240,7 +243,7 @@ def _pipeline_id(
     balanced_final_species: bool = True, generated_schedule_version: int = 3
 ) -> str:
     del balanced_final_species, generated_schedule_version
-    return "transformer-variable-party-bf16-rmplus-v24-pooled-node"
+    return "transformer-variable-party-bf16-rmplus-v26-rust-cfrplus"
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
@@ -407,6 +410,8 @@ def _new_search(
             config.adaptive_force_deep_fraction,
             config.adaptive_exploitability_threshold,
             config.adaptive_payoff_spread_threshold,
+            config.rmplus_backend,
+            config.cfr_plus_solves,
         ),
         selection_rng,
         chance_rng,
@@ -449,6 +454,8 @@ def _arena_config(
         seed_count=seed_count,
         balanced_final_species=config.balanced_final_species,
         generated_schedule_version=config.generated_schedule_version,
+        rmplus_backend=config.rmplus_backend,
+        cfr_plus_solves=config.cfr_plus_solves,
     )
 
 
@@ -522,13 +529,15 @@ def _collect_rows_single(
     completed_episodes = 0
     meta: dict[str, Any] = {
         "type": "meta",
-        "format": "variable-party-joint-regret-policy-value-jsonl-v3",
+        "format": "variable-party-joint-regret-policy-value-jsonl-v4",
         "profile": FULL_PROFILE,
         "schema": FULL_SCHEMA,
         "entropy": ENTROPY,
         "chance": "fresh-root-v1",
-        "solver": "simultaneous-matrix-tree-rmplus-pooled-node-v3",
-        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v3",
+        "solver": "simultaneous-matrix-tree-rust-cfrplus-pooled-node-v4",
+        "rmplus_backend": config.rmplus_backend,
+        "cfr_plus_solves": config.cfr_plus_solves,
+        "action_selector": "simultaneous-matrix-tree-rust-cfrplus-every-decision-v4",
         "iteration": iteration,
         "episodes": len(episode_indices),
         "depth": config.search_depth,
@@ -2430,6 +2439,10 @@ def run_transformer_pipeline(
         raise ValueError("selfplay_episodes must be a positive multiple of four")
     if config.search_every != 1:
         raise ValueError("RM+ action selection requires search_every = 1")
+    if config.rmplus_backend != RUST_RMPLUS_BACKEND or not config.cfr_plus_solves:
+        raise ValueError("V26 requires the native Rust CFR+ solver")
+    if not native_available():
+        raise RuntimeError("V26 native Rust CFR+ library is unavailable")
     if config.tree_expansion_budget < 1:
         raise ValueError("tree_expansion_budget must be positive")
     if not 0.0 <= config.tree_exploration <= 1.0:
@@ -2719,9 +2732,10 @@ def run_transformer_pipeline(
                     else "progression-weighted-final-species-v1"
                 ),
                 "chance": "fresh-root-v1",
-                "search_solver": "simultaneous-matrix-tree-rmplus-pooled-node-v3",
+                "rmplus": native_metadata(),
+                "search_solver": "simultaneous-matrix-tree-rust-cfrplus-pooled-node-v4",
                 "action_selector": (
-                    "simultaneous-matrix-tree-rmplus-every-decision-v3"
+                    "simultaneous-matrix-tree-rust-cfrplus-every-decision-v4"
                 ),
                 "collection_pairing": "same-reset-opposite-controller-sides-v1",
                 "learning_lineage": "persistent-shadow-v1",
@@ -3152,7 +3166,8 @@ def run_transformer_pipeline(
             config.balanced_final_species, config.generated_schedule_version
         ),
         "device": str(device),
-        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v3",
+        "rmplus": native_metadata(),
+        "action_selector": "simultaneous-matrix-tree-rust-cfrplus-every-decision-v4",
         "iterations": config.iterations,
         "selfplay_battles": config.iterations * config.selfplay_episodes,
         "mirror_battles": sum(item["mirror_episodes"] for item in collection),

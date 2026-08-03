@@ -1,0 +1,14 @@
+[package]
+name = "battle-rmplus"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Deterministic RM+/CFR+ kernels for Pokemon Red simultaneous search"
+
+[lib]
+name = "battle_rmplus"
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

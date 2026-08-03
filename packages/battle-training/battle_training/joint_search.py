@@ -14,6 +14,17 @@ import numpy as np
 from .decision_quality import shape_redundant_action_priors
 from .native import SearchServer, Snapshot
 from .network import BattleTransformer
+from .rmplus_native import (
+    PYTHON_REFERENCE_BACKEND,
+    RUST_RMPLUS_BACKEND,
+    solver_identity,
+)
+from .rmplus_native import (
+    solve_cold as solve_cold_native,
+)
+from .rmplus_native import (
+    solve_warm as solve_warm_native,
+)
 
 PayoffMatrix: TypeAlias = list[list[float]]
 
@@ -59,6 +70,8 @@ class JointSearchConfig:
     adaptive_force_deep_fraction: float = 0.10
     adaptive_exploitability_threshold: float = 0.08
     adaptive_payoff_spread_threshold: float = 0.75
+    rmplus_backend: str = PYTHON_REFERENCE_BACKEND
+    cfr_plus_solves: bool = False
 
 
 def legal_actions(mask: int, action_count: int) -> list[int]:
@@ -607,6 +620,13 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             raise ValueError("adaptive exploitability threshold must be nonnegative")
         if config.adaptive_payoff_spread_threshold < 0.0:
             raise ValueError("adaptive payoff-spread threshold must be nonnegative")
+        if config.rmplus_backend not in {
+            PYTHON_REFERENCE_BACKEND,
+            RUST_RMPLUS_BACKEND,
+        }:
+            raise ValueError(f"unsupported RM+ backend: {config.rmplus_backend!r}")
+        if config.cfr_plus_solves and config.rmplus_backend != RUST_RMPLUS_BACKEND:
+            raise ValueError("CFR+ requires the native Rust RM+ backend")
         self._evaluation_cache: dict[int, tuple[list[float], list[float], float]] = {}
         self._joint_inference_cache: dict[
             tuple[int, str, bytes | tuple[int, ...], int, int],
@@ -679,12 +699,33 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         return node
 
     def _solve_node(self, node: _TreeNode) -> None:
-        """Warm-started RM+ on the node's legal submatrix in float64 NumPy.
+        """Advance one warm-started RM+ or CFR+ node solve."""
+        if self.config.rmplus_backend == RUST_RMPLUS_BACKEND:
+            result = solve_warm_native(
+                node.payoff,
+                node.player_priors,
+                node.enemy_priors,
+                node.player_legal,
+                node.enemy_legal,
+                node.player_regrets,
+                node.enemy_regrets,
+                node.player_strategy_sum,
+                node.enemy_strategy_sum,
+                node.solve_count,
+                self.config.regret_iterations_per_update,
+                cfr_plus=self.config.cfr_plus_solves,
+            )
+            node.player_regrets = result.player_regrets
+            node.enemy_regrets = result.enemy_regrets
+            node.player_strategy_sum = result.player_strategy_sum
+            node.enemy_strategy_sum = result.enemy_strategy_sum
+            node.solve_count = result.solve_count
+            node.player_policy = tuple(result.player_policy)
+            node.enemy_policy = tuple(result.enemy_policy)
+            node.root_value = result.value
+            node.exploitability = result.exploitability
+            return
 
-        Node state stays in plain lists for cheap single-cell payoff updates;
-        each call converts once, iterates vectorized, and writes back so the
-        per-iteration cost no longer pays Python-loop dot products.
-        """
         player_legal = node.player_legal
         enemy_legal = node.enemy_legal
         matrix = np.asarray(node.payoff, dtype=np.float64)[
@@ -741,6 +782,16 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self, node: _TreeNode
     ) -> tuple[tuple[float, ...], tuple[float, ...], float, float]:
         """Solve the current root matrix without stale online-search averages."""
+        if self.config.rmplus_backend == RUST_RMPLUS_BACKEND:
+            return solve_cold_native(
+                node.payoff,
+                node.player_priors,
+                node.enemy_priors,
+                node.player_legal,
+                node.enemy_legal,
+                self.config.regret_iterations,
+                cfr_plus=self.config.cfr_plus_solves,
+            )
         return solve_zero_sum_regret(
             node.payoff,
             node.player_priors,
@@ -1423,13 +1474,13 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             self._solve_node(node)
         return value, cost, learned
 
-    @staticmethod
     def _average_policy(
-        strategy_sum: list[float], solves: int, fallback: tuple[float, ...]
+        self, strategy_sum: list[float], solves: int, fallback: tuple[float, ...]
     ) -> tuple[float, ...]:
         if solves <= 0:
             return fallback
-        return tuple(value / solves for value in strategy_sum)
+        weight = solves * (solves + 1) / 2 if self.config.cfr_plus_solves else solves
+        return tuple(value / weight for value in strategy_sum)
 
     @classmethod
     def _pooled_budget_scores(
@@ -1573,6 +1624,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             diagnostics["root_online_exploitability"] = root.online_exploitability
             diagnostics["root_final_exploitability"] = root.exploitability
             diagnostics["root_equilibrium_iterations"] = self.config.regret_iterations
+            diagnostics["root_solver"] = solver_identity(
+                self.config.rmplus_backend, self.config.cfr_plus_solves
+            )
         return diagnostics
 
     def _fallback(
@@ -1734,7 +1788,13 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             enemy_action,
             root_value,
             transitions,
-            "simultaneous-matrix-tree-rmplus-pooled-node-v3",
+            (
+                "simultaneous-matrix-tree-rust-cfrplus-pooled-node-v4"
+                if self.config.cfr_plus_solves
+                else "simultaneous-matrix-tree-rust-rmplus-pooled-node-v4"
+                if self.config.rmplus_backend == RUST_RMPLUS_BACKEND
+                else "simultaneous-matrix-tree-rmplus-pooled-node-v3"
+            ),
             exploitability,
             max(legal_payoffs) - min(legal_payoffs),
             tuple(tuple(row) for row in root.payoff),

@@ -172,3 +172,5 @@ not modified. V23 must start as a separate run and pass collection integrity,
 router calibration, paired promotion, probes, party strata, and campaign gates.
 V24 subsequently supersedes this not-yet-started lineage with pooled expanded-node
 inference; see the [GPU utilization root-cause review](gpu-utilization-root-cause.md).
+V26 then moves the solver kernel to Rust and enables CFR+ without pruning the
+complete root; see the [native solver review](rust-rmplus-cfrplus.md).

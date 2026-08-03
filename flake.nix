@@ -152,6 +152,22 @@
             pkgs.cudatoolkit
           ];
         };
+        rmplusNative = pkgs.rustPlatform.buildRustPackage {
+          pname = "battle-rmplus";
+          version = "0.1.0";
+          src = lib.cleanSource ./packages/rmplus-rs;
+          cargoLock.lockFile = ./packages/rmplus-rs/Cargo.lock;
+          doCheck = true;
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out/lib
+            find target -type f -not -path '*/deps/*' \
+              \( -name 'libbattle_rmplus.so' -o -name 'libbattle_rmplus.dylib' -o -name 'battle_rmplus.dll' \) \
+              -exec cp -v {} $out/lib/ \;
+            test -n "$(find $out/lib -type f -print -quit)"
+            runHook postInstall
+          '';
+        };
 
         formatter =
           (treefmt-nix.lib.evalModule pkgs {
@@ -190,6 +206,7 @@
         packages = {
           rgbds = rgbds-1_0_2-hotfix;
           battle-training = trainingEnvironment;
+          battle-rmplus = rmplusNative;
           default = rgbds-1_0_2-hotfix;
         };
 
@@ -201,6 +218,7 @@
             gnumake
             lean4
             rgbds-1_0_2-hotfix
+            rmplusNative
             trainingVirtualenv
             uv
           ];
@@ -210,6 +228,7 @@
             UV_PYTHON_DOWNLOADS = "never";
             CUDA_HOME = if pkgs.stdenv.isLinux then "${cuda}" else "";
             CUDA_PATH = if pkgs.stdenv.isLinux then "${cuda}" else "";
+            BATTLE_RMPLUS_LIB = "${rmplusNative}/lib";
             LD_LIBRARY_PATH =
               "${trainingPythonSet.nvidia-cudnn-cu13}/${pkgs.python312.sitePackages}/nvidia/cudnn/lib:"
               + lib.makeLibraryPath [

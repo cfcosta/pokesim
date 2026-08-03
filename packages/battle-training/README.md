@@ -2,8 +2,9 @@
 
 `battle-training` is the external actor–learner and evaluation project for the
 verified Lean battle model. Lean owns team generation, immutable search states,
-chance forks, and mechanics. Python owns the transformer, simultaneous search,
-replay shards, optimization, checkpoints, and evaluation.
+chance forks, and mechanics. Python owns the transformer, batched search
+scheduler, replay shards, optimization, checkpoints, and evaluation. A pinned
+Rust C-ABI library owns the deterministic dense RM+/CFR+ arithmetic only.
 
 The primary executable profile is `full-link-party-1to6-perfect-v2`. Training
 cycles through all 36 ordered combinations of two independently generated,
@@ -31,8 +32,9 @@ The smoke command performs the complete loop:
 3. builds a persistent simultaneous tree at every neural-model decision;
 4. couples independent `fresh-root-v1` chance samples across joint actions for
    lower-variance payoff comparisons without reading the episode RNG suffix;
-5. runs persistent regret matching+ at every expanded typed request and records
-   average-strategy targets alongside witnessed terminal values;
+5. runs native CFR+-accelerated regret matching at every expanded typed request
+   and records linearly weighted average-strategy targets alongside witnessed
+   terminal values;
 6. optimizes policy cross-entropy plus value MSE with AdamW;
 7. publishes model and optimizer checkpoints;
 8. runs a side-swapped final-versus-initial arena;
@@ -63,7 +65,10 @@ RM+ solve, chance resampling decays with evidence, and learned priors provide
 progressive deeper exploration. V24 pools the full policy/value evaluations
 needed when distilled successors become expanded nodes; mirror children now use
 the intended joint dual-policy head instead of two synchronous canonical rows.
-Each controller decision still ends in
+V26 moves the unchanged dense solver surface to a versioned Rust C ABI and
+enables CFR+'s alternating updates and linear averaging. The root still runs
+2,048 iterations; no action pruning, root noise, tolerance stop, chance, tree,
+or neural code moved into Rust. Each controller decision still ends in
 simultaneous RM+ over the complete root; adaptive routing changes only whether
 deeper refinements are requested.
 

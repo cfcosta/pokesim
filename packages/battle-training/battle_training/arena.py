@@ -34,6 +34,7 @@ from .network import (
     choose_device,
     configure_determinism,
 )
+from .rmplus_native import RUST_RMPLUS_BACKEND
 
 _FIXED_DAMAGE_MOVES = {68, 69, 82, 101, 149, 162}
 # Self-buffs, screens, and persistent defensive/utility setup. Charge turns,
@@ -110,6 +111,8 @@ class ArenaConfig:
     seed_count: int = 8
     balanced_final_species: bool = True
     generated_schedule_version: int = 3
+    rmplus_backend: str = RUST_RMPLUS_BACKEND
+    cfr_plus_solves: bool = True
 
 
 @dataclass
@@ -338,6 +341,8 @@ def _joint_search_config(config: ArenaConfig) -> JointSearchConfig:
         adaptive_force_deep_fraction=config.adaptive_force_deep_fraction,
         adaptive_exploitability_threshold=(config.adaptive_exploitability_threshold),
         adaptive_payoff_spread_threshold=config.adaptive_payoff_spread_threshold,
+        rmplus_backend=config.rmplus_backend,
+        cfr_plus_solves=config.cfr_plus_solves,
     )
 
 
@@ -1146,7 +1151,7 @@ def run_paired_arena(
         "pairs": games // 2,
         "seed_count": config.seed_count,
         "pairing": "same-reset-complete-model-side-swap-v2",
-        "action_selector": "simultaneous-matrix-tree-rmplus-every-decision-v3",
+        "action_selector": "simultaneous-matrix-tree-rust-cfrplus-every-decision-v4",
         "search": asdict(_joint_search_config(config)),
         **(
             {
@@ -1629,7 +1634,9 @@ def _run_traced_arena_batched(
         candidate_metrics,
         baseline_metrics,
     )
-    result["action_selector"] = "simultaneous-matrix-tree-rmplus-every-decision-v3"
+    result["action_selector"] = (
+        "simultaneous-matrix-tree-rust-cfrplus-every-decision-v4"
+    )
     result["search"] = asdict(_joint_search_config(config))
     return result
 
