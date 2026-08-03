@@ -8,7 +8,7 @@ import multiprocessing
 import random
 import shutil
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -28,6 +28,7 @@ from . import (
 )
 from .arena import (
     ArenaConfig,
+    ArenaEvaluationPool,
     _choice_detail,
     _compact_inspection,
     _compact_turn_inspection,
@@ -243,7 +244,7 @@ def _pipeline_id(
     balanced_final_species: bool = True, generated_schedule_version: int = 3
 ) -> str:
     del balanced_final_species, generated_schedule_version
-    return "transformer-variable-party-bf16-rmplus-v26-rust-cfrplus"
+    return "transformer-variable-party-bf16-rmplus-v27-persistent-eval"
 
 
 def _configure_inference(models: Iterable[Any], engine: str) -> None:
@@ -457,6 +458,27 @@ def _arena_config(
         rmplus_backend=config.rmplus_backend,
         cfr_plus_solves=config.cfr_plus_solves,
     )
+
+
+def _evaluation_progress(
+    root: Path,
+    stage: str,
+    iteration: int,
+    label: str,
+    **details: Any,
+) -> Callable[[int, int], None]:
+    def report(completed: int, total: int) -> None:
+        write_monitor_state(
+            root,
+            stage,
+            iteration=iteration,
+            message=f"{label}: {completed:,} / {total:,}",
+            completed=completed,
+            games=total,
+            **details,
+        )
+
+    return report
 
 
 def _sample_policy(probabilities: list[float], rng: random.Random) -> int:
@@ -2740,6 +2762,7 @@ def run_transformer_pipeline(
                 "collection_pairing": "same-reset-opposite-controller-sides-v1",
                 "learning_lineage": "persistent-shadow-v1",
                 "deployment_lineage": "quality-gated-incumbent-v1",
+                "evaluation_topology": "persistent-process-pool-full-utilization-v1",
                 "config": asdict(config),
                 "network": asdict(model_config),
                 "parameter_count": sum(
@@ -2866,6 +2889,11 @@ def run_transformer_pipeline(
         training_metrics = _train_network(
             network, optimizer, training_shards, config, iteration
         )
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+        evaluation_pool = ArenaEvaluationPool(
+            network, incumbent_network, config.eval_processes
+        )
         write_monitor_state(
             root,
             "promotion",
@@ -2874,18 +2902,30 @@ def run_transformer_pipeline(
             games=config.promotion_games,
             training_diagnostics=training_metrics["diagnostics"]["latest"],
         )
-        promotion = run_paired_arena(
-            network,
-            incumbent_network,
-            _arena_config(
-                config,
-                config.promotion_games,
-                config.seed + 70_000_000 + iteration * 10_007,
-                config.promotion_seed_count,
-            ),
-            capture_details=True,
-            processes=config.eval_processes,
-        )
+        try:
+            promotion = run_paired_arena(
+                network,
+                incumbent_network,
+                _arena_config(
+                    config,
+                    config.promotion_games,
+                    config.seed + 70_000_000 + iteration * 10_007,
+                    config.promotion_seed_count,
+                ),
+                capture_details=True,
+                processes=config.eval_processes,
+                pool=evaluation_pool,
+                progress=_evaluation_progress(
+                    root,
+                    "promotion",
+                    iteration,
+                    "Running paired promotion games",
+                    training_diagnostics=training_metrics["diagnostics"]["latest"],
+                ),
+            )
+        except BaseException:
+            evaluation_pool.close()
+            raise
         promotion_detail_dir = root / "matches" / f"promotion-{iteration:03d}"
         for battle in promotion["battles"]:
             write_json(
@@ -2934,17 +2974,30 @@ def run_transformer_pipeline(
             promotion=live_promotion,
             training_diagnostics=training_metrics["diagnostics"]["latest"],
         )
-        probe_arena = run_traced_arena(
-            network,
-            incumbent_network,
-            _arena_config(
-                config,
-                config.probe_games,
-                config.seed + 80_000_000 + iteration * 10_009,
-                config.probe_seed_count,
-            ),
-            processes=config.eval_processes,
-        )
+        try:
+            probe_arena = run_traced_arena(
+                network,
+                incumbent_network,
+                _arena_config(
+                    config,
+                    config.probe_games,
+                    config.seed + 80_000_000 + iteration * 10_009,
+                    config.probe_seed_count,
+                ),
+                processes=config.eval_processes,
+                pool=evaluation_pool,
+                progress=_evaluation_progress(
+                    root,
+                    "probes",
+                    iteration,
+                    "Running held-out skill probes",
+                    promotion=live_promotion,
+                    training_diagnostics=training_metrics["diagnostics"]["latest"],
+                ),
+            )
+        except BaseException:
+            evaluation_pool.close()
+            raise
         probes = skill_probe_report(probe_arena)
         write_monitor_state(
             root,
@@ -2956,17 +3009,30 @@ def run_transformer_pipeline(
             probes_pass=probes["pass"],
             training_diagnostics=training_metrics["diagnostics"]["latest"],
         )
-        campaign_arena = run_campaign_arena(
-            network,
-            incumbent_network,
-            _arena_config(
-                config,
-                config.campaign_games,
-                config.seed + 85_000_000 + iteration * 10_019,
-                config.campaign_seed_count,
-            ),
-            processes=config.eval_processes,
-        )
+        try:
+            campaign_arena = run_campaign_arena(
+                network,
+                incumbent_network,
+                _arena_config(
+                    config,
+                    config.campaign_games,
+                    config.seed + 85_000_000 + iteration * 10_019,
+                    config.campaign_seed_count,
+                ),
+                processes=config.eval_processes,
+                pool=evaluation_pool,
+                progress=_evaluation_progress(
+                    root,
+                    "campaign",
+                    iteration,
+                    "Running campaign battles",
+                    promotion=live_promotion,
+                    probes_pass=probes["pass"],
+                    training_diagnostics=training_metrics["diagnostics"]["latest"],
+                ),
+            )
+        finally:
+            evaluation_pool.close()
         promotion_score = promotion["score_with_nonfinishes_as_losses"]
         confidence_low = promotion["paired_score_ci95"][0]
         statistically_superior = (
@@ -3181,6 +3247,7 @@ def run_transformer_pipeline(
         "learner_parameter_l2_delta": learner_distance,
         "learning_lineage": "persistent-shadow-v1",
         "deployment_lineage": "quality-gated-incumbent-v1",
+        "evaluation_topology": "persistent-process-pool-full-utilization-v1",
         "initial_checkpoint_sha256": sha256(initial_checkpoint),
         "final_checkpoint": f"checkpoints/policy-{config.iterations:03d}.pt",
         "final_checkpoint_sha256": sha256(

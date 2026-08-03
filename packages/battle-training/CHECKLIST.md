@@ -56,6 +56,7 @@ rows remain required before the corresponding profile can be called complete.
 - [x] Schedule deeper progressive frontier expansion across independent roots.
 - [x] Validate RM+ and deeper backups on exact matrices and a stochastic toy game.
 - [x] Move dense RM+/CFR+ arithmetic to a hashed Rust C ABI while retaining complete-root coverage and batched Lean/CUDA frontiers.
+- [x] Share persistent compiled evaluation workers across promotion, probes, and campaign with balanced pair-preserving spans and live progress.
 - [ ] Keep opponent-sampled PUCT only as a named best-response baseline.
 - [x] Implement `fresh-root-v1` without access to episode future RNG.
 - [x] Report root exploitability and tree coverage diagnostics.

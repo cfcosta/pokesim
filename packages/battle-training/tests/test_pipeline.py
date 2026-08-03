@@ -20,6 +20,7 @@ from battle_training.arena import (
     Replay,
     SkillMetrics,
     _arena_batch_spans,
+    _arena_parallel_batch_size,
     _arena_span_partition,
     _evaluation_level100,
     _evaluation_party_sizes,
@@ -1357,7 +1358,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.deep_search_fraction, 1.0)
         self.assertEqual(arguments.actor_batch_size, 64)
         self.assertEqual(arguments.actor_processes, 8)
-        self.assertEqual(arguments.eval_processes, 8)
+        self.assertEqual(arguments.eval_processes, 12)
         self.assertEqual(arguments.token_group_size, 1)
         self.assertEqual(arguments.token_layout, "semantic-entity-v1")
         self.assertTrue(arguments.joint_policy_heads)
@@ -1542,6 +1543,39 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(_arena_batch_spans(4, 128), [(0, 4)])
         with self.assertRaisesRegex(ValueError, "even"):
             _arena_batch_spans(288, 127)
+
+    def test_parallel_arena_batch_size_uses_all_workers_with_complete_pairs(
+        self,
+    ) -> None:
+        self.assertEqual(_arena_parallel_batch_size(2048, 128, 8), 128)
+        self.assertEqual(_arena_parallel_batch_size(2048, 128, 10), 104)
+        self.assertEqual(_arena_parallel_batch_size(2048, 128, 12), 86)
+        self.assertEqual(_arena_parallel_batch_size(288, 128, 8), 36)
+        self.assertEqual(_arena_parallel_batch_size(256, 64, 8), 32)
+        self.assertEqual(_arena_parallel_batch_size(8, 128, 16), 2)
+        for games, maximum, processes in (
+            (2048, 128, 8),
+            (2048, 128, 12),
+            (288, 128, 12),
+            (256, 64, 12),
+        ):
+            size = _arena_parallel_batch_size(games, maximum, processes)
+            spans = _arena_batch_spans(games, size)
+            partitions = [
+                rows for rows in _arena_span_partition(spans, processes) if rows
+            ]
+            self.assertEqual(len(partitions), processes)
+            self.assertEqual(
+                sorted(span for rows in partitions for span in rows), spans
+            )
+            self.assertTrue(all((stop - start) % 2 == 0 for start, stop in spans))
+        for arguments, message in (
+            ((3, 128, 8), "even"),
+            ((8, 127, 8), "even"),
+            ((8, 128, 0), "positive"),
+        ):
+            with self.assertRaisesRegex(ValueError, message):
+                _arena_parallel_batch_size(*arguments)
 
     def test_arena_span_partition_covers_every_batch_once(self) -> None:
         spans = _arena_batch_spans(2048, 128)
@@ -1968,11 +2002,11 @@ class TransformerTests(unittest.TestCase):
     def test_training_schedule_pairs_every_reset_and_side_assignment(self) -> None:
         self.assertEqual(
             _pipeline_id(),
-            "transformer-variable-party-bf16-rmplus-v26-rust-cfrplus",
+            "transformer-variable-party-bf16-rmplus-v27-persistent-eval",
         )
         self.assertEqual(
             _pipeline_id(False, 2),
-            "transformer-variable-party-bf16-rmplus-v26-rust-cfrplus",
+            "transformer-variable-party-bf16-rmplus-v27-persistent-eval",
         )
         for episode in range(0, 128, 2):
             self.assertEqual(_training_pair(episode), _training_pair(episode + 1))

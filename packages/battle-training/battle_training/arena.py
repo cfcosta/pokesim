@@ -6,10 +6,11 @@ import math
 import multiprocessing
 import random
 import tempfile
-from concurrent.futures import ProcessPoolExecutor
+from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import torch
 
@@ -690,6 +691,21 @@ def _arena_span_partition(
     return [spans[process::processes] for process in range(processes)]
 
 
+def _arena_parallel_batch_size(games: int, maximum: int, processes: int) -> int:
+    """Keep every worker useful without exceeding the proven batch ceiling."""
+    if games < 2 or games % 2:
+        raise ValueError("parallel arena games must be a positive even number")
+    if maximum < 2 or maximum % 2:
+        raise ValueError("parallel arena maximum batch must be positive and even")
+    if processes < 1:
+        raise ValueError("parallel arena processes must be positive")
+    useful_processes = min(processes, games // 2)
+    waves = math.ceil(games / (maximum * useful_processes))
+    target_spans = useful_processes * waves
+    pairs_per_span = math.ceil((games // 2) / target_spans)
+    return min(maximum, 2 * pairs_per_span)
+
+
 def _serialized_arena_model(model: BattleTransformer) -> dict[str, Any]:
     if not isinstance(model, BattleTransformer):
         raise TypeError("parallel arena evaluation requires transformer models")
@@ -737,23 +753,165 @@ def _slim_arena_episode(episode: _FastArenaEpisode) -> _FastArenaEpisode:
     )
 
 
-def _arena_process_worker(
-    payload_path: str,
+_ARENA_PROCESS_MODELS: tuple[BattleTransformer, BattleTransformer] | None = None
+
+
+def _initialize_arena_process(payload_path: str) -> None:
+    """Load both evaluation models once for all stages in this worker."""
+    global _ARENA_PROCESS_MODELS
+    torch.set_num_threads(1)
+    payload = torch.load(payload_path, map_location="cpu", weights_only=False)
+    device = choose_device(payload["device"])
+    _ARENA_PROCESS_MODELS = (
+        _load_arena_model(payload["candidate"], device),
+        _load_arena_model(payload["baseline"], device),
+    )
+
+
+def _arena_process_task(
+    mode: str,
     config: ArenaConfig,
     campaign: bool,
     capture_details: bool,
+    replay_dir: Path | None,
     spans: list[tuple[int, int]],
-) -> list[_FastArenaEpisode]:
-    torch.set_num_threads(1)
+) -> list[_FastArenaEpisode] | list[_TracedArenaEpisode]:
+    if _ARENA_PROCESS_MODELS is None:
+        raise RuntimeError("arena process models were not initialized")
     configure_determinism(config.seed)
-    payload = torch.load(payload_path, map_location="cpu", weights_only=False)
-    device = choose_device(payload["device"])
-    candidate = _load_arena_model(payload["candidate"], device)
-    baseline = _load_arena_model(payload["baseline"], device)
-    episodes = _run_fast_arena_spans(
-        candidate, baseline, config, campaign, spans, capture_details
-    )
-    return [_slim_arena_episode(episode) for episode in episodes]
+    candidate, baseline = _ARENA_PROCESS_MODELS
+    if mode == "fast":
+        return [
+            _slim_arena_episode(episode)
+            for episode in _run_fast_arena_spans(
+                candidate, baseline, config, campaign, spans, capture_details
+            )
+        ]
+    if mode == "traced":
+        return [
+            _slim_traced_episode(episode)
+            for episode in _run_traced_arena_spans(
+                candidate, baseline, config, replay_dir, spans
+            )
+        ]
+    raise ValueError(f"unknown arena process mode: {mode}")
+
+
+class ArenaEvaluationPool:
+    """Persistent spawned workers shared by one iteration's evaluation stages."""
+
+    def __init__(
+        self,
+        candidate: BattleTransformer,
+        baseline: BattleTransformer,
+        processes: int,
+    ) -> None:
+        if not 1 <= processes <= 16:
+            raise ValueError("arena pool processes must be in 1..16")
+        self.processes = processes
+        self._temporary = tempfile.TemporaryDirectory(prefix="arena-eval-pool-")
+        payload_path = Path(self._temporary.name) / "models.pt"
+        torch.save(
+            {
+                "device": str(next(candidate.parameters()).device),
+                "candidate": _serialized_arena_model(candidate),
+                "baseline": _serialized_arena_model(baseline),
+            },
+            payload_path,
+        )
+        self._executor = ProcessPoolExecutor(
+            max_workers=processes,
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=_initialize_arena_process,
+            initargs=(str(payload_path),),
+        )
+        self._closed = False
+
+    def _run(
+        self,
+        mode: str,
+        config: ArenaConfig,
+        spans: list[tuple[int, int]],
+        *,
+        campaign: bool = False,
+        capture_details: bool = False,
+        replay_dir: Path | None = None,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> list[_FastArenaEpisode] | list[_TracedArenaEpisode]:
+        if self._closed:
+            raise RuntimeError("arena evaluation pool is closed")
+        partitions = [
+            rows for rows in _arena_span_partition(spans, self.processes) if rows
+        ]
+        futures = {
+            self._executor.submit(
+                _arena_process_task,
+                mode,
+                config,
+                campaign,
+                capture_details,
+                replay_dir,
+                rows,
+            ): sum(stop - start for start, stop in rows)
+            for rows in partitions
+        }
+        episodes: list[_FastArenaEpisode] | list[_TracedArenaEpisode] = []
+        completed = 0
+        for future in as_completed(futures):
+            episodes.extend(future.result())
+            completed += futures[future]
+            if progress is not None:
+                progress(completed, config.games)
+        return sorted(episodes, key=lambda episode: episode.game)
+
+    def run_fast(
+        self,
+        config: ArenaConfig,
+        campaign: bool,
+        spans: list[tuple[int, int]],
+        capture_details: bool,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> list[_FastArenaEpisode]:
+        return list(
+            self._run(
+                "fast",
+                config,
+                spans,
+                campaign=campaign,
+                capture_details=capture_details,
+                progress=progress,
+            )
+        )
+
+    def run_traced(
+        self,
+        config: ArenaConfig,
+        replay_dir: Path | None,
+        spans: list[tuple[int, int]],
+        progress: Callable[[int, int], None] | None = None,
+    ) -> list[_TracedArenaEpisode]:
+        return list(
+            self._run(
+                "traced",
+                config,
+                spans,
+                replay_dir=replay_dir,
+                progress=progress,
+            )
+        )
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._executor.shutdown()
+        self._temporary.cleanup()
+        self._closed = True
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
 
 
 def _run_fast_arena_parallel(
@@ -764,35 +922,12 @@ def _run_fast_arena_parallel(
     spans: list[tuple[int, int]],
     capture_details: bool,
     processes: int,
+    progress: Callable[[int, int], None] | None = None,
 ) -> list[_FastArenaEpisode]:
-    payload = {
-        "device": str(next(candidate.parameters()).device),
-        "candidate": _serialized_arena_model(candidate),
-        "baseline": _serialized_arena_model(baseline),
-    }
-    partitions = [rows for rows in _arena_span_partition(spans, processes) if rows]
-    episodes: list[_FastArenaEpisode] = []
-    with tempfile.TemporaryDirectory(prefix="arena-eval-") as temporary:
-        payload_path = Path(temporary) / "models.pt"
-        torch.save(payload, payload_path)
-        context = multiprocessing.get_context("spawn")
-        with ProcessPoolExecutor(
-            max_workers=len(partitions), mp_context=context
-        ) as pool:
-            futures = [
-                pool.submit(
-                    _arena_process_worker,
-                    str(payload_path),
-                    config,
-                    campaign,
-                    capture_details,
-                    rows,
-                )
-                for rows in partitions
-            ]
-            for future in futures:
-                episodes.extend(future.result())
-    return sorted(episodes, key=lambda episode: episode.game)
+    with ArenaEvaluationPool(candidate, baseline, processes) as pool:
+        return pool.run_fast(
+            config, campaign, spans, capture_details, progress=progress
+        )
 
 
 def _run_fast_arena_games(
@@ -803,15 +938,34 @@ def _run_fast_arena_games(
     batch_size: int = 128,
     capture_details: bool = False,
     processes: int = 1,
+    pool: ArenaEvaluationPool | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> list[_FastArenaEpisode]:
+    parallelism = pool.processes if pool is not None else processes
+    if parallelism > 1:
+        batch_size = _arena_parallel_batch_size(config.games, batch_size, parallelism)
     spans = _arena_batch_spans(config.games, batch_size)
+    if pool is not None:
+        return pool.run_fast(
+            config, campaign, spans, capture_details, progress=progress
+        )
     if processes > 1 and len(spans) > 1:
         return _run_fast_arena_parallel(
-            candidate, baseline, config, campaign, spans, capture_details, processes
+            candidate,
+            baseline,
+            config,
+            campaign,
+            spans,
+            capture_details,
+            processes,
+            progress,
         )
-    return _run_fast_arena_spans(
+    episodes = _run_fast_arena_spans(
         candidate, baseline, config, campaign, spans, capture_details
     )
+    if progress is not None:
+        progress(config.games, config.games)
+    return episodes
 
 
 def _run_fast_arena_spans(
@@ -1012,6 +1166,8 @@ def run_paired_arena(
     campaign: bool = False,
     capture_details: bool = False,
     processes: int = 1,
+    pool: ArenaEvaluationPool | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     """RM+-selected paired evaluation with nonfinishes scored as losses."""
     games = config.games
@@ -1044,6 +1200,8 @@ def run_paired_arena(
         campaign,
         capture_details=capture_details,
         processes=processes,
+        pool=pool,
+        progress=progress,
     )
     for pair in range(games // 2):
         first, second = episodes[2 * pair : 2 * pair + 2]
@@ -1192,12 +1350,20 @@ def run_campaign_arena(
     config: ArenaConfig,
     *,
     processes: int = 1,
+    pool: ArenaEvaluationPool | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     """Evaluate both model sides across the fixed patched campaign suite."""
     if config.games < 2 * len(_CAMPAIGN_NAMES):
         raise ValueError("campaign arena requires at least one pair per fixed team")
     return run_paired_arena(
-        candidate, baseline, config, campaign=True, processes=processes
+        candidate,
+        baseline,
+        config,
+        campaign=True,
+        processes=processes,
+        pool=pool,
+        progress=progress,
     )
 
 
@@ -1285,22 +1451,6 @@ def _slim_traced_episode(episode: _TracedArenaEpisode) -> _TracedArenaEpisode:
     )
 
 
-def _traced_arena_process_worker(
-    payload_path: str,
-    config: ArenaConfig,
-    replay_dir: Path | None,
-    spans: list[tuple[int, int]],
-) -> list[_TracedArenaEpisode]:
-    torch.set_num_threads(1)
-    configure_determinism(config.seed)
-    payload = torch.load(payload_path, map_location="cpu", weights_only=False)
-    device = choose_device(payload["device"])
-    candidate = _load_arena_model(payload["candidate"], device)
-    baseline = _load_arena_model(payload["baseline"], device)
-    episodes = _run_traced_arena_spans(candidate, baseline, config, replay_dir, spans)
-    return [_slim_traced_episode(episode) for episode in episodes]
-
-
 def _run_traced_arena_parallel(
     candidate: BattleTransformer,
     baseline: BattleTransformer,
@@ -1308,35 +1458,11 @@ def _run_traced_arena_parallel(
     replay_dir: Path | None,
     spans: list[tuple[int, int]],
     processes: int,
+    progress: Callable[[int, int], None] | None = None,
 ) -> list[_TracedArenaEpisode]:
     """Fan traced batches across processes; per-pair RNGs keep games identical."""
-    payload = {
-        "device": str(next(candidate.parameters()).device),
-        "candidate": _serialized_arena_model(candidate),
-        "baseline": _serialized_arena_model(baseline),
-    }
-    partitions = [rows for rows in _arena_span_partition(spans, processes) if rows]
-    episodes: list[_TracedArenaEpisode] = []
-    with tempfile.TemporaryDirectory(prefix="arena-probe-") as temporary:
-        payload_path = Path(temporary) / "models.pt"
-        torch.save(payload, payload_path)
-        context = multiprocessing.get_context("spawn")
-        with ProcessPoolExecutor(
-            max_workers=len(partitions), mp_context=context
-        ) as pool:
-            futures = [
-                pool.submit(
-                    _traced_arena_process_worker,
-                    str(payload_path),
-                    config,
-                    replay_dir,
-                    rows,
-                )
-                for rows in partitions
-            ]
-            for future in futures:
-                episodes.extend(future.result())
-    return sorted(episodes, key=lambda episode: episode.game)
+    with ArenaEvaluationPool(candidate, baseline, processes) as pool:
+        return pool.run_traced(config, replay_dir, spans, progress=progress)
 
 
 def _run_traced_arena_spans(
@@ -1567,20 +1693,32 @@ def _run_traced_arena_batched(
     config: ArenaConfig,
     replay_dir: Path | None,
     processes: int = 1,
+    pool: ArenaEvaluationPool | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     candidate_metrics = SkillMetrics()
     baseline_metrics = SkillMetrics()
     if replay_dir is not None:
         replay_dir.mkdir(parents=True, exist_ok=True)
-    spans = _arena_batch_spans(config.games, 64)
-    if processes > 1 and len(spans) > 1:
+    parallelism = pool.processes if pool is not None else processes
+    batch_size = (
+        _arena_parallel_batch_size(config.games, 64, parallelism)
+        if parallelism > 1
+        else 64
+    )
+    spans = _arena_batch_spans(config.games, batch_size)
+    if pool is not None:
+        all_episodes = pool.run_traced(config, replay_dir, spans, progress=progress)
+    elif processes > 1 and len(spans) > 1:
         all_episodes = _run_traced_arena_parallel(
-            candidate, baseline, config, replay_dir, spans, processes
+            candidate, baseline, config, replay_dir, spans, processes, progress
         )
     else:
         all_episodes = _run_traced_arena_spans(
             candidate, baseline, config, replay_dir, spans
         )
+        if progress is not None:
+            progress(config.games, config.games)
     wins = losses = draws = truncated = semantic_divergences = mechanics_timeouts = 0
     game_scores = []
     for episode in sorted(all_episodes, key=lambda item: item.game):
@@ -1648,6 +1786,8 @@ def run_traced_arena(
     replay_dir: Path | None = None,
     *,
     processes: int = 1,
+    pool: ArenaEvaluationPool | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     if not 1 <= processes <= 16:
         raise ValueError("traced arena processes must be in 1..16")
@@ -1660,7 +1800,13 @@ def run_traced_arena(
             "traced arena requires even games and at least one pair for each seed"
         )
     return _run_traced_arena_batched(
-        candidate, baseline, config, replay_dir, processes=processes
+        candidate,
+        baseline,
+        config,
+        replay_dir,
+        processes=processes,
+        pool=pool,
+        progress=progress,
     )
 
 

@@ -70,7 +70,10 @@ enables CFR+'s alternating updates and linear averaging. The root still runs
 2,048 iterations; no action pruning, root noise, tolerance stop, chance, tree,
 or neural code moved into Rust. Each controller decision still ends in
 simultaneous RM+ over the complete root; adaptive routing changes only whether
-deeper refinements are requested.
+deeper refinements are requested. V27 shares one twelve-process evaluation pool
+across promotion, probes, and campaign. Pair-preserving balanced spans keep all
+workers useful, compiled models stay resident between gates, and transient
+progress reports expose completed evaluation games.
 
 `transformer-train` is the production profile:
 30 iterations of 2,048 training battles, or 61,440 independently reset random
@@ -165,9 +168,12 @@ checkpoints without precision metadata retain their original FP32 contract.
 The v16 pipeline defaults `--inference-engine auto`: CUDA uses bucketed compiled
 inference through static batches up to 256 while CPU uses eager execution.
 `--inference-engine eager` remains available for differential checks and
-historical artifact verification. Production collection defaults to two spawned
-actor processes; `--actor-processes 1..4` controls the versioned choice, while
-smoke runs stay single-process to avoid startup overhead.
+historical artifact verification. Production defaults to eight collection
+actors and twelve persistent evaluation workers; `--actor-processes 1..16` and
+`--eval-processes 1..16` control these versioned choices, while smoke runs stay
+single-process to avoid startup overhead. Twelve evaluation workers measured
+faster than fourteen while peaking at 9.17 GiB, so VRAM occupancy is not used as
+a surrogate for decisions per second.
 `--warm-start-checkpoint PATH` copies same-schema checkpoints exactly. For the
 older 478-field v3 schema it copies every compatible parameter and the existing
 positional rows into the extended 492-field v4 model. Warm starts establish a

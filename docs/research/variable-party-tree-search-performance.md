@@ -310,6 +310,14 @@ quality-gated teacher/model alternatives:
     2,048 steps took 0.304 ms and reduced mean exploitability from 0.008334 to
     0.000127. A 64-root exact depth-four panel improved from 4.44 to 29.35
     roots/s (6.61×). See the [native solver review](rust-rmplus-cfrplus.md).
+16. **Persistent evaluation workers.** V27 loads candidate and incumbent models
+    once per worker and shares the pool across promotion, probes, and campaign.
+    Pair-preserving balanced spans use all workers even in the smaller gates and
+    expose live completion counters. On a 1,568-game exact-search suite, twelve
+    workers reduced wall time from 352.40 to 277.89 seconds (1.27×), raised mean
+    GPU use from 47.6% to 69.2%, and peaked at 9,167 MiB. Fourteen workers peaked
+    at 9,803 MiB but regressed to 293.02 seconds, so production stops at twelve.
+    See the [persistent evaluation-pool review](persistent-evaluation-pool.md).
 
 ## Conclusions
 
