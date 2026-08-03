@@ -23,6 +23,13 @@ def _failure_message(error: Exception) -> str:
     return f"{type(error).__name__}: {details[0] if details else 'no detail'}"
 
 
+def _leaf_hidden_layers(text: str) -> tuple[int, ...]:
+    sizes = tuple(int(part) for part in text.split(","))
+    if not sizes or any(size < 1 for size in sizes):
+        raise ValueError("leaf hidden sizes must be positive")
+    return sizes
+
+
 def _pipeline_parser(subparsers: argparse._SubParsersAction, name: str) -> None:
     smoke = name.endswith("smoke")
     parser = subparsers.add_parser(name)
@@ -96,6 +103,12 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     )
     parser.set_defaults(distilled_leaf_evaluator=True)
     parser.add_argument("--leaf-hidden", type=int, default=64)
+    parser.add_argument(
+        "--leaf-hidden-layers",
+        type=_leaf_hidden_layers,
+        default=None,
+        help="comma-separated hidden sizes replacing the two leaf-hidden layers",
+    )
     parser.add_argument("--leaf-loss-weight", type=float, default=0.25)
     parser.add_argument(
         "--no-adaptive-search", action="store_false", dest="adaptive_search"
@@ -298,6 +311,7 @@ def main(argv: list[str] | None = None) -> int:
             joint_policy_heads=arguments.joint_policy_heads,
             distilled_leaf_evaluator=arguments.distilled_leaf_evaluator,
             leaf_hidden=arguments.leaf_hidden,
+            leaf_hidden_layers=arguments.leaf_hidden_layers,
             leaf_loss_weight=arguments.leaf_loss_weight,
             adaptive_search=arguments.adaptive_search,
             adaptive_warmup_iterations=arguments.adaptive_warmup_iterations,

@@ -103,6 +103,7 @@ from battle_training.transformer_pipeline import (
     _HeuristicNetwork,
     _load_completed_prefix,
     _load_examples,
+    _normalized_saved_config,
     _pipeline_id,
     _resume_config,
     _scheduled_for_opponent,
@@ -1369,6 +1370,7 @@ class TransformerTests(unittest.TestCase):
         self.assertTrue(arguments.joint_policy_heads)
         self.assertTrue(arguments.distilled_leaf_evaluator)
         self.assertEqual(arguments.leaf_hidden, 64)
+        self.assertIsNone(arguments.leaf_hidden_layers)
         self.assertEqual(arguments.leaf_loss_weight, 0.25)
         self.assertTrue(arguments.adaptive_search)
         self.assertEqual(arguments.adaptive_warmup_iterations, 1)
@@ -1459,6 +1461,54 @@ class TransformerTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "resume pipeline version differs"):
                 _resume_config(root)
+
+    def test_leaf_hidden_layers_flow_from_the_cli(self) -> None:
+        arguments = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/leaf-layers",
+                "--leaf-hidden-layers",
+                "256,128",
+            ]
+        )
+        self.assertEqual(arguments.leaf_hidden_layers, (256, 128))
+        with self.assertRaises(SystemExit):
+            training_parser().parse_args(
+                [
+                    "transformer-train",
+                    "--output",
+                    "/tmp/leaf-layers",
+                    "--leaf-hidden-layers",
+                    "256,zero",
+                ]
+            )
+
+    def test_saved_config_normalization_defaults_new_fields(self) -> None:
+        config = asdict(
+            TransformerPipelineConfig(
+                iterations=1,
+                selfplay_episodes=8,
+                arena_episodes=8,
+                episode_budget=64,
+                search_depth=1,
+                epochs=1,
+                batch_size=8,
+                learning_rate=1e-3,
+                weight_decay=0.0,
+                seed=1,
+                device="cpu",
+                d_model=8,
+                heads=2,
+                layers=1,
+                feedforward=16,
+            )
+        )
+        config.pop("leaf_hidden_layers")
+        normalized = _normalized_saved_config(config)
+        self.assertIsNone(normalized["leaf_hidden_layers"])
+        self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
+        self.assertNotIn("leaf_hidden_layers", config)
 
     def test_resume_loads_complete_prefix_and_archives_partial_iteration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

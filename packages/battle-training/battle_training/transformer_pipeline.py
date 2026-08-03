@@ -88,6 +88,7 @@ class TransformerPipelineConfig:
     joint_policy_heads: bool = True
     distilled_leaf_evaluator: bool = True
     leaf_hidden: int = 64
+    leaf_hidden_layers: tuple[int, ...] | None = None
     leaf_loss_weight: float = 0.25
     adaptive_search: bool = True
     adaptive_warmup_iterations: int = 1
@@ -2421,6 +2422,23 @@ def _load_completed_prefix(
     return completed, shards, collection, training, accepted
 
 
+def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
+    """Fill run.json config fields that postdate the recorded run.
+
+    Every default here must reproduce the exact behavior the older pipeline
+    had before the field existed, so resumed runs stay bit-compatible.
+    """
+    normalized = dict(raw_config)
+    normalized.setdefault("precision", "fp32")
+    normalized.setdefault("balanced_final_species", False)
+    normalized.setdefault("generated_schedule_version", 2)
+    # V16 runs created before observational decision-quality probes used raw
+    # network priors. Preserve that exact resume behavior.
+    normalized.setdefault("redundant_action_prior_scale", 1.0)
+    normalized.setdefault("leaf_hidden_layers", None)
+    return normalized
+
+
 def _resume_config(root: Path) -> TransformerPipelineConfig:
     run_path = root / "run.json"
     if not run_path.is_file():
@@ -2428,19 +2446,13 @@ def _resume_config(root: Path) -> TransformerPipelineConfig:
     run = json.loads(run_path.read_text())
     if run.get("profile") != FULL_PROFILE or run.get("schema") != FULL_SCHEMA:
         raise ValueError("resume mechanics profile or tensor schema differs")
-    raw_config = dict(run["config"])
-    raw_config.setdefault("precision", "fp32")
-    raw_config.setdefault("balanced_final_species", False)
-    raw_config.setdefault("generated_schedule_version", 2)
+    raw_config = _normalized_saved_config(run["config"])
     if run.get("pipeline") != _pipeline_id(
         raw_config["balanced_final_species"], raw_config["generated_schedule_version"]
     ):
         raise ValueError(
             "resume pipeline version differs from the current implementation"
         )
-    # V16 runs created before observational decision-quality probes used raw
-    # network priors. Preserve that exact resume behavior.
-    raw_config.setdefault("redundant_action_prior_scale", 1.0)
     return TransformerPipelineConfig(**raw_config)
 
 
@@ -2609,6 +2621,7 @@ def run_transformer_pipeline(
         joint_policy_heads=config.joint_policy_heads,
         distilled_leaf_evaluator=config.distilled_leaf_evaluator,
         leaf_hidden=config.leaf_hidden,
+        leaf_hidden_layers=config.leaf_hidden_layers,
         adaptive_budget_head=config.adaptive_search,
     )
     opponents: list[tuple[Any, str]] = []
@@ -2617,10 +2630,7 @@ def run_transformer_pipeline(
 
     if resume:
         run_metadata = json.loads((root / "run.json").read_text())
-        saved_config = dict(run_metadata.get("config", {}))
-        saved_config.setdefault("redundant_action_prior_scale", 1.0)
-        saved_config.setdefault("balanced_final_species", False)
-        saved_config.setdefault("generated_schedule_version", 2)
+        saved_config = _normalized_saved_config(run_metadata.get("config", {}))
         if saved_config != asdict(config):
             raise ValueError("resume configuration differs from immutable run metadata")
         if run_metadata.get("network") != asdict(model_config):

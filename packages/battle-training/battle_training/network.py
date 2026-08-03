@@ -117,7 +117,25 @@ class TransformerConfig:
     joint_policy_heads: bool = False
     distilled_leaf_evaluator: bool = False
     leaf_hidden: int = 64
+    leaf_hidden_layers: tuple[int, ...] | None = None
     adaptive_budget_head: bool = False
+
+    def __post_init__(self) -> None:
+        # JSON round-trips deliver lists; normalize so config equality between a
+        # freshly built model and a loaded checkpoint stays exact.
+        if self.leaf_hidden_layers is not None:
+            object.__setattr__(
+                self,
+                "leaf_hidden_layers",
+                tuple(int(size) for size in self.leaf_hidden_layers),
+            )
+
+
+def leaf_layer_sizes(config: TransformerConfig) -> tuple[int, ...]:
+    """Resolve the hidden-layer widths of the distilled leaf evaluator."""
+    if config.leaf_hidden_layers is not None:
+        return config.leaf_hidden_layers
+    return (config.leaf_hidden, config.leaf_hidden)
 
 
 class BattleTransformer(nn.Module):
@@ -133,6 +151,11 @@ class BattleTransformer(nn.Module):
             raise ValueError("token_group_size must be one of 1, 2, 4, or 8")
         if config.leaf_hidden < 1:
             raise ValueError("leaf_hidden must be positive")
+        if config.leaf_hidden_layers is not None and (
+            not config.leaf_hidden_layers
+            or any(size < 1 for size in config.leaf_hidden_layers)
+        ):
+            raise ValueError("leaf_hidden_layers must list positive hidden sizes")
         if config.token_layout not in {"scalar-v1", "semantic-entity-v1"}:
             raise ValueError("token_layout must be scalar-v1 or semantic-entity-v1")
         if (
@@ -188,14 +211,15 @@ class BattleTransformer(nn.Module):
             nn.Tanh(),
         )
         if config.distilled_leaf_evaluator:
-            self.leaf_value = nn.Sequential(
-                nn.Linear(config.feature_count, config.leaf_hidden),
-                nn.GELU(),
-                nn.Linear(config.leaf_hidden, config.leaf_hidden),
-                nn.GELU(),
-                nn.Linear(config.leaf_hidden, 1),
-                nn.Tanh(),
-            )
+            leaf_layers: list[nn.Module] = []
+            leaf_width = config.feature_count
+            for hidden in leaf_layer_sizes(config):
+                leaf_layers.append(nn.Linear(leaf_width, hidden))
+                leaf_layers.append(nn.GELU())
+                leaf_width = hidden
+            leaf_layers.append(nn.Linear(leaf_width, 1))
+            leaf_layers.append(nn.Tanh())
+            self.leaf_value = nn.Sequential(*leaf_layers)
         if config.adaptive_budget_head:
             self.budget = nn.Linear(config.d_model, 1)
         masks = torch.arange(1 << config.action_count, dtype=torch.long).unsqueeze(1)
@@ -929,7 +953,12 @@ def load_network(path: Path, device: torch.device) -> BattleTransformer:
 def warm_start_network(
     path: Path, target_config: TransformerConfig, device: torch.device
 ) -> BattleTransformer:
-    """Copy a compatible checkpoint, extending only the positional table if needed."""
+    """Copy a compatible checkpoint, extending only the positional table if needed.
+
+    The distilled leaf evaluator may change shape between lineages: when the
+    resolved leaf layouts differ, the target keeps its fresh leaf head (whose
+    final layer is zero-initialized) and re-distills instead of copying.
+    """
     source = load_network(path, device)
     source_config = source.config
     comparable_source = asdict(source_config)
@@ -940,16 +969,24 @@ def warm_start_network(
     # the new run's explicit contract.
     comparable_source.pop("precision")
     comparable_target.pop("precision")
+    # The leaf evaluator is compared by resolved layout below, so equivalent
+    # spellings (leaf_hidden=64 versus leaf_hidden_layers=(64, 64)) still copy.
+    for comparable in (comparable_source, comparable_target):
+        comparable.pop("leaf_hidden")
+        comparable.pop("leaf_hidden_layers")
     if comparable_source != comparable_target:
         raise ValueError("warm-start checkpoint architecture is incompatible")
     if source_features > target_features:
         raise ValueError("warm-start cannot shrink the source observation schema")
+    copy_leaf = leaf_layer_sizes(source_config) == leaf_layer_sizes(target_config)
 
     target = BattleTransformer(target_config).to(device)
     source_state = source.state_dict()
     target_state = target.state_dict()
     with torch.no_grad():
         for name, source_value in source_state.items():
+            if name.startswith("leaf_value.") and not copy_leaf:
+                continue
             target_value = target_state[name]
             if name == "position.weight":
                 if source_value.shape[1:] != target_value.shape[1:]:
