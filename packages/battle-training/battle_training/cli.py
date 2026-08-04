@@ -183,7 +183,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     )
     parser.set_defaults(adaptive_search=True)
     parser.add_argument("--adaptive-warmup-iterations", type=int, default=1)
-    parser.add_argument("--adaptive-deep-threshold", type=float, default=0.55)
+    parser.add_argument("--adaptive-deep-threshold", type=float, default=0.50)
     parser.add_argument("--adaptive-force-deep-fraction", type=float, default=0.10)
     parser.add_argument("--adaptive-exploitability-threshold", type=float, default=0.08)
     parser.add_argument("--adaptive-payoff-spread-threshold", type=float, default=0.75)
@@ -293,7 +293,7 @@ def parser() -> argparse.ArgumentParser:
         "--no-adaptive-search", action="store_false", dest="adaptive_search"
     )
     arena.set_defaults(adaptive_search=True)
-    arena.add_argument("--adaptive-deep-threshold", type=float, default=0.55)
+    arena.add_argument("--adaptive-deep-threshold", type=float, default=0.50)
     arena.add_argument("--adaptive-force-deep-fraction", type=float, default=0.10)
     arena.add_argument("--adaptive-exploitability-threshold", type=float, default=0.08)
     arena.add_argument("--adaptive-payoff-spread-threshold", type=float, default=0.75)

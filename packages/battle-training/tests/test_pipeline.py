@@ -1557,7 +1557,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.replay_window, 3)
         self.assertTrue(arguments.adaptive_search)
         self.assertEqual(arguments.adaptive_warmup_iterations, 1)
-        self.assertEqual(arguments.adaptive_deep_threshold, 0.55)
+        self.assertEqual(arguments.adaptive_deep_threshold, 0.50)
         self.assertEqual(arguments.adaptive_force_deep_fraction, 0.10)
         self.assertEqual(arguments.adaptive_max_false_negative_rate, 0.10)
         self.assertEqual(arguments.adaptive_fn_pool_window, 1)
@@ -1617,7 +1617,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arena.tree_expansion_budget, 320)
         self.assertEqual(arena.redundant_action_prior_scale, 0.25)
         self.assertTrue(arena.adaptive_search)
-        self.assertEqual(arena.adaptive_deep_threshold, 0.55)
+        self.assertEqual(arena.adaptive_deep_threshold, 0.50)
         self.assertEqual(arena.adaptive_force_deep_fraction, 0.10)
 
     def test_pre_rmplus_everywhere_lineage_cannot_resume(self) -> None:
