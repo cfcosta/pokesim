@@ -247,6 +247,7 @@ class _ActorEpisode:
     episode: int
     pair: int
     pair_leg: int
+    reset_seed: int
     reset_episode: int
     pair_player_size: int
     pair_enemy_size: int
@@ -279,7 +280,7 @@ def _pipeline_id(
     balanced_final_species: bool = True, generated_schedule_version: int = 3
 ) -> str:
     del balanced_final_species, generated_schedule_version
-    return "transformer-variable-party-bf16-rmplus-v27-persistent-eval"
+    return "transformer-variable-party-bf16-rmplus-v29-domain-seeded-5m-16k"
 
 
 def _serialized_network_config(config: TransformerConfig) -> dict[str, Any]:
@@ -368,6 +369,32 @@ def _shadow_seed_iterations(completed: int, window: int) -> list[int]:
     return list(range(max(1, completed - window + 1), completed + 1))
 
 
+_UINT64_MASK = (1 << 64) - 1
+_ACTOR_ENTROPY_VERSION = "splitmix64-domain-separated-episode-v2"
+_RESET_DOMAIN = 0x7265736574
+_SELECTION_DOMAIN = 0x73656C656374
+_CHANCE_DOMAIN = 0x6368616E6365
+_OPPONENT_DOMAIN = 0x6F70706F6E656E74
+_TIER_DOMAIN = 0x74696572
+_EXPLORATION_DOMAIN = 0x6578706C6F7265
+_PRIOR_NOISE_DOMAIN = 0x7072696F72
+_FRONTIER_PLAN_DOMAIN = 0x66726F6E74696572
+
+
+def _splitmix64(value: int) -> int:
+    z = (value + 0x9E3779B97F4A7C15) & _UINT64_MASK
+    z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & _UINT64_MASK
+    z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & _UINT64_MASK
+    return (z ^ (z >> 31)) & _UINT64_MASK
+
+
+def _training_entropy_seed(root: int, iteration: int, episode: int, domain: int) -> int:
+    """Derive one replayable UInt64 seed from an explicit entropy coordinate."""
+    state = _splitmix64((root & _UINT64_MASK) ^ _splitmix64(domain & _UINT64_MASK))
+    state = _splitmix64(state ^ (iteration & _UINT64_MASK))
+    return _splitmix64(state ^ (episode & _UINT64_MASK))
+
+
 def _training_pair(episode: int) -> int:
     return episode // 2
 
@@ -407,6 +434,7 @@ def _validate_collection_pairs(
         raise RuntimeError(
             "collection does not contain exactly one row per paired game"
         )
+    reset_coordinates: set[tuple[object, object]] = set()
     for pair in range(expected_games // 2):
         first = by_episode[pair * 2]
         second = by_episode[pair * 2 + 1]
@@ -415,6 +443,7 @@ def _validate_collection_pairs(
         if first.get("pair_leg") != 0 or second.get("pair_leg") != 1:
             raise RuntimeError(f"collection pair {pair} has incorrect leg order")
         shared = (
+            "reset_seed",
             "reset_episode",
             "pair_player_party_size",
             "pair_enemy_party_size",
@@ -424,6 +453,13 @@ def _validate_collection_pairs(
         )
         if any(first.get(name) != second.get(name) for name in shared):
             raise RuntimeError(f"collection pair {pair} does not share one reset")
+        reset_coordinate = (first.get("reset_seed"), first.get("reset_episode"))
+        if not first.get("frontier_restart"):
+            if reset_coordinate in reset_coordinates:
+                raise RuntimeError(
+                    f"collection pair {pair} reused another pair's reset coordinate"
+                )
+            reset_coordinates.add(reset_coordinate)
         first_initial = first.get("initial") or {}
         second_initial = second.get("initial") or {}
         if bool(first.get("frontier_restart")) != bool(second.get("frontier_restart")):
@@ -801,7 +837,7 @@ def _frontier_entry(
             dict(actor.frontier_restart["reset"])
             if actor.frontier_restart
             else {
-                "seed": config.seed + iteration * 10_000,
+                "seed": actor.reset_seed,
                 "episode": actor.reset_episode,
                 "player_size": actor.pair_player_size,
                 "enemy_size": actor.pair_enemy_size,
@@ -903,7 +939,9 @@ def _frontier_restart_plan(
     count = min(int(fraction * config.selfplay_episodes) // 2, pairs)
     if count <= 0:
         return {}
-    rng = random.Random(config.seed + iteration * 1_000_121 + 83)
+    rng = random.Random(
+        _training_entropy_seed(config.seed, iteration, 0, _FRONTIER_PLAN_DOMAIN)
+    )
     selected = sorted(rng.sample(range(pairs), count))
     return {pair: rng.randrange(entry_count) for pair in selected}
 
@@ -994,6 +1032,7 @@ def _collect_rows_single(
         "profile": FULL_PROFILE,
         "schema": FULL_SCHEMA,
         "entropy": ENTROPY,
+        "actor_entropy": _ACTOR_ENTROPY_VERSION,
         "chance": "fresh-root-v1",
         "solver": "simultaneous-matrix-tree-rust-cfrplus-pooled-node-v4",
         "rmplus_backend": config.rmplus_backend,
@@ -1103,6 +1142,7 @@ def _collect_rows_single(
             "episode": actor.episode,
             "pair": actor.pair,
             "pair_leg": actor.pair_leg,
+            "reset_seed": actor.reset_seed,
             "reset_episode": actor.reset_episode,
             "pair_player_party_size": actor.pair_player_size,
             "pair_enemy_party_size": actor.pair_enemy_size,
@@ -1222,7 +1262,9 @@ def _collect_rows_single(
                     enemy_network = network
                     episode_kind = "mirror"
                     mirror_episodes += 1
-                reset_seed = config.seed + iteration * 10_000
+                reset_seed = _training_entropy_seed(
+                    config.seed, iteration, 0, _RESET_DOMAIN
+                )
                 pair_player_size, pair_enemy_size = _training_party_sizes(
                     iteration, episode, config.generated_schedule_version
                 )
@@ -1273,6 +1315,7 @@ def _collect_rows_single(
                         episode=episode,
                         pair=pair,
                         pair_leg=pair_leg,
+                        reset_seed=reset_seed,
                         reset_episode=reset_episode,
                         pair_player_size=pair_player_size,
                         pair_enemy_size=pair_enemy_size,
@@ -1288,22 +1331,34 @@ def _collect_rows_single(
                         snapshot=snapshot,
                         pending=[],
                         selection_rng=random.Random(
-                            config.seed + iteration * 1_000_003 + episode * 10_007
+                            _training_entropy_seed(
+                                config.seed, iteration, episode, _SELECTION_DOMAIN
+                            )
                         ),
                         chance_rng=random.Random(
-                            config.seed + iteration * 1_000_033 + episode * 10_009 + 17
+                            _training_entropy_seed(
+                                config.seed, iteration, episode, _CHANCE_DOMAIN
+                            )
                         ),
                         opponent_rng=random.Random(
-                            config.seed + iteration * 1_000_037 + episode * 10_043 + 29
+                            _training_entropy_seed(
+                                config.seed, iteration, episode, _OPPONENT_DOMAIN
+                            )
                         ),
                         tier_rng=random.Random(
-                            config.seed + iteration * 1_000_081 + episode * 10_049 + 43
+                            _training_entropy_seed(
+                                config.seed, iteration, episode, _TIER_DOMAIN
+                            )
                         ),
                         exploration_rng=random.Random(
-                            config.seed + iteration * 1_000_099 + episode * 10_061 + 59
+                            _training_entropy_seed(
+                                config.seed, iteration, episode, _EXPLORATION_DOMAIN
+                            )
                         ),
                         prior_noise_rng=random.Random(
-                            config.seed + iteration * 1_000_117 + episode * 10_067 + 71
+                            _training_entropy_seed(
+                                config.seed, iteration, episode, _PRIOR_NOISE_DOMAIN
+                            )
                         ),
                         frontier_restart=restart_entry,
                     )

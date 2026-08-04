@@ -17,7 +17,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 import torch
-
 from battle_training.arena import (
     ArenaConfig,
     ArenaReportJob,
@@ -112,6 +111,15 @@ from battle_training.rmplus_native import (
     solve_cold as solve_cold_native,
 )
 from battle_training.transformer_pipeline import (
+    _ACTOR_ENTROPY_VERSION,
+    _CHANCE_DOMAIN,
+    _EXPLORATION_DOMAIN,
+    _FRONTIER_PLAN_DOMAIN,
+    _OPPONENT_DOMAIN,
+    _PRIOR_NOISE_DOMAIN,
+    _RESET_DOMAIN,
+    _SELECTION_DOMAIN,
+    _TIER_DOMAIN,
     TransformerPipelineConfig,
     _append_shadow_opponent,
     _apply_learning_rate,
@@ -162,6 +170,7 @@ from battle_training.transformer_pipeline import (
     _shadow_seed_iterations,
     _smoothed_policy,
     _snapshot_from_serialized,
+    _training_entropy_seed,
     _training_level100,
     _training_pair,
     _training_pair_leg,
@@ -2860,11 +2869,11 @@ class TransformerTests(unittest.TestCase):
     def test_training_schedule_pairs_every_reset_and_side_assignment(self) -> None:
         self.assertEqual(
             _pipeline_id(),
-            "transformer-variable-party-bf16-rmplus-v27-persistent-eval",
+            "transformer-variable-party-bf16-rmplus-v29-domain-seeded-5m-16k",
         )
         self.assertEqual(
             _pipeline_id(False, 2),
-            "transformer-variable-party-bf16-rmplus-v27-persistent-eval",
+            "transformer-variable-party-bf16-rmplus-v29-domain-seeded-5m-16k",
         )
         for episode in range(0, 128, 2):
             self.assertEqual(_training_pair(episode), _training_pair(episode + 1))
@@ -2884,9 +2893,44 @@ class TransformerTests(unittest.TestCase):
                 _scheduled_for_opponent(_training_pair(episode + 1), 0.5),
             )
 
+    def test_training_entropy_is_domain_separated_and_episode_unique(self) -> None:
+        self.assertEqual(
+            _ACTOR_ENTROPY_VERSION, "splitmix64-domain-separated-episode-v2"
+        )
+        domains = (
+            _RESET_DOMAIN,
+            _SELECTION_DOMAIN,
+            _CHANCE_DOMAIN,
+            _OPPONENT_DOMAIN,
+            _TIER_DOMAIN,
+            _EXPLORATION_DOMAIN,
+            _PRIOR_NOISE_DOMAIN,
+        )
+        seeds = {
+            _training_entropy_seed(20260726, iteration, episode, domain)
+            for iteration in range(1, 5)
+            for episode in range(1024)
+            for domain in domains
+        }
+        self.assertEqual(len(seeds), 4 * 1024 * len(domains))
+        reset_coordinates = {
+            (
+                _training_entropy_seed(20260726, iteration, 0, _RESET_DOMAIN),
+                pair,
+            )
+            for iteration in range(1, 31)
+            for pair in range(8192)
+        }
+        self.assertEqual(len(reset_coordinates), 30 * 8192)
+        self.assertEqual(
+            _training_entropy_seed(20260726, 1, 0, _SELECTION_DOMAIN),
+            10456798846194407138,
+        )
+
     def test_collection_pair_validator_requires_same_reset_and_side_swap(self) -> None:
         common = {
             "pair": 0,
+            "reset_seed": 123,
             "reset_episode": 0,
             "pair_player_party_size": 2,
             "pair_enemy_party_size": 5,
@@ -2917,6 +2961,32 @@ class TransformerTests(unittest.TestCase):
         rows[1]["initial"] = {"player": "team-c", "enemy": "team-b"}
         with self.assertRaisesRegex(RuntimeError, "different initial teams"):
             _validate_collection_pairs(rows, 2)
+
+    def test_collection_pair_validator_rejects_cross_pair_reset_reuse(self) -> None:
+        rows = []
+        for pair in range(2):
+            for leg, side in enumerate(("player", "enemy")):
+                rows.append(
+                    {
+                        "episode": pair * 2 + leg,
+                        "pair": pair,
+                        "pair_leg": leg,
+                        "reset_seed": 123,
+                        "reset_episode": 7,
+                        "pair_player_party_size": 2,
+                        "pair_enemy_party_size": 5,
+                        "teams_swapped": False,
+                        "player_party_size": 2,
+                        "enemy_party_size": 5,
+                        "level_profile": "distributed",
+                        "episode_kind": "heuristic-opponent",
+                        "opponent": "heuristic-red-trainer-01-youngster-v1",
+                        "candidate_side": side,
+                        "initial": {"player": "team-a", "enemy": "team-b"},
+                    }
+                )
+        with self.assertRaisesRegex(RuntimeError, "reused another pair"):
+            _validate_collection_pairs(rows, 4)
 
     def test_collection_pair_validator_accepts_mirror_team_swap(self) -> None:
         common = {
@@ -4265,6 +4335,7 @@ class FrontierBufferTest(unittest.TestCase):
             episode=5,
             pair=2,
             pair_leg=1,
+            reset_seed=_training_entropy_seed(97, 3, 0, _RESET_DOMAIN),
             reset_episode=2,
             pair_player_size=3,
             pair_enemy_size=2,
@@ -4306,7 +4377,7 @@ class FrontierBufferTest(unittest.TestCase):
         self.assertEqual(
             entry["reset"],
             {
-                "seed": 97 + 3 * 10_000,
+                "seed": _training_entropy_seed(97, 3, 0, _RESET_DOMAIN),
                 "episode": 2,
                 "player_size": 3,
                 "enemy_size": 2,
@@ -4458,7 +4529,7 @@ class FrontierRestartTest(unittest.TestCase):
 
     def test_restart_plan_replays_the_documented_rng_stream(self) -> None:
         config = self._config(selfplay_episodes=8)
-        rng = random.Random(11 + 2 * 1_000_121 + 83)
+        rng = random.Random(_training_entropy_seed(11, 2, 0, _FRONTIER_PLAN_DOMAIN))
         selected = sorted(rng.sample(range(4), 1))
         expected = {pair: rng.randrange(5) for pair in selected}
         self.assertEqual(_frontier_restart_plan(config, 2, 5), expected)

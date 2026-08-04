@@ -235,8 +235,15 @@ candidate controller sides on the second leg while retaining physical team
 placement, so each controller uses both teams. In mirror self-play, where the
 same model already owns both controllers, the second leg instead swaps the exact
 two generated teams across physical sides and uses independent policy/search
-sampling. Pair identity and leg are stored in every episode and example row,
-and collection rejects missing, mismatched, or unswapped pairs. The
+sampling. The two legs intentionally share one `(reset_seed, reset_episode)`
+coordinate; every other pair receives a distinct coordinate. The reset root and
+six controller streams (selection, chance, opponent, router tier, exploration,
+and prior noise) use versioned SplitMix64 domain separation over the run seed,
+iteration, and global episode index. Actor partitioning never renumbers episodes.
+Pair identity, leg, and reset coordinates are stored in every episode, and
+collection rejects missing, mismatched, unswapped, or cross-pair-reused resets.
+Run the complete configured collision audit with
+`python tools/audit-training-seeds.py`. The
 production horizon is 512 real decisions; reaching it remains an unlabeled
 truncation rather than a fabricated
 terminal result. Truncations and semantic cycles score zero. Promotion requires a point score of at least 50%,

@@ -336,9 +336,14 @@ and fixed opponent controllers exchange physical sides while team placement
 stays fixed, preventing a favorable generated team from being credited only to
 one controller. Because mirror self-play already has one model on both
 controllers, its second leg instead installs the exact two generated teams in
-opposite physical positions and uses independent policy/search sampling.
-Artifacts retain pair and leg IDs and reject incomplete, mismatched, or
-incorrectly swapped pairs before training. V16 keeps half of generated pairs as
+opposite physical positions and uses independent policy/search sampling. Pair
+legs intentionally share one reset coordinate; different non-frontier pairs may
+not. V29 derives the reset root and each controller RNG from a versioned,
+SplitMix64-domain-separated tuple of run seed, iteration, global episode, and
+stream identity. Spawned actors receive disjoint global episode indices rather
+than local counters. Artifacts retain reset, pair, and leg IDs and reject
+incomplete, mismatched, incorrectly swapped, or cross-pair-reused coordinates
+before training. V16 keeps half of generated pairs as
 mirror self-play and half as fixed-opponent pairs. Within the latter half, an
 exact deterministic scheduler reserves 50% for deployed/recent model opponents
 and 50% for the complete 49-member heuristic population. Thus model opponents
