@@ -79,7 +79,7 @@ whole independent arenas to the same process budget, preserving byte-identical
 per-arena execution while loading the deployed candidate once per worker.
 
 `transformer-train` is the production profile:
-30 iterations of 2,048 training battles, or 61,440 independently reset random
+30 iterations of 16,384 training battles, or 491,520 independently reset random
 variable-party battles. One third of generated battles are 6v6; the remaining
 schedule cycles through every other ordered party-size matchup. V18 selects the
 displayed final species with a bounded two-byte map whose 151 fibers contain
@@ -94,8 +94,8 @@ parties retain ordered legal move histories and resource witnesses.
 `--weighted-final-species` retains the legacy distribution for differential
 runs. It uses
 depth-four simultaneous trees, the
-940,430-parameter four-layer, 128-wide model, BF16 autocast, one epoch per iteration, a
-CUDA-safe batch size of 128, and a 2,048-game final arena. The policy objective
+5,025,245-parameter six-layer, 256-wide model, BF16 autocast, one epoch per
+iteration, a CUDA-safe batch size of 128, and a 2,048-game final arena. The policy objective
 adds value MSE at weight 0.25, reducing the effective value-trunk gradient
 imbalance observed in v15. Parameters, gradients, AdamW state, policy
 normalization, losses, and reductions remain FP32. The tree

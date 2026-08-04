@@ -40,10 +40,10 @@ def _lr_milestones(text: str) -> tuple[int, ...]:
 def _capacity_defaults(smoke: bool) -> dict[str, object]:
     """Parser defaults for every flag a capacity preset may fill in."""
     return {
-        "d_model": 64 if smoke else 128,
+        "d_model": 64 if smoke else 256,
         "heads": 4 if smoke else 8,
-        "layers": 2 if smoke else 4,
-        "feedforward": 192 if smoke else 512,
+        "layers": 2 if smoke else 6,
+        "feedforward": 192 if smoke else 1024,
         "leaf_hidden_layers": None,
         "replay_window": 2,
         "lr_schedule": "constant",
@@ -98,7 +98,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser = subparsers.add_parser(name)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--iterations", type=int, default=1 if smoke else 30)
-    parser.add_argument("--episodes", type=int, default=4 if smoke else 2048)
+    parser.add_argument("--episodes", type=int, default=4 if smoke else 16384)
     parser.add_argument("--arena-episodes", type=int, default=4 if smoke else 1024)
     parser.add_argument("--budget", type=int, default=64 if smoke else 512)
     parser.add_argument("--search-depth", type=int, default=1 if smoke else 4)

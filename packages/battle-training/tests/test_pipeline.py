@@ -1474,9 +1474,9 @@ class TransformerTests(unittest.TestCase):
         arguments = training_parser().parse_args(
             ["transformer-train", "--output", "/tmp/overnight"]
         )
-        self.assertEqual(arguments.iterations * arguments.episodes, 61_440)
+        self.assertEqual(arguments.iterations * arguments.episodes, 491_520)
         self.assertEqual(arguments.iterations, 30)
-        self.assertEqual(arguments.episodes, 2048)
+        self.assertEqual(arguments.episodes, 16_384)
         self.assertEqual(arguments.arena_episodes, 1024)
         self.assertEqual(arguments.search_depth, 4)
         self.assertEqual(arguments.budget, 512)
@@ -2053,14 +2053,34 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.replay_window, 3)
         self.assertEqual(arguments.lr_schedule, "step")
 
-    def test_capacity_preset_defaults_stay_legacy_without_it(self) -> None:
+    def test_capacity_preset_leaves_production_defaults_without_it(self) -> None:
         train = _apply_capacity_preset(
             training_parser().parse_args(["transformer-train", "--output", "/tmp/run"])
         )
         self.assertIsNone(train.capacity_preset)
         self.assertEqual(
             (train.d_model, train.heads, train.layers, train.feedforward),
-            (128, 8, 4, 512),
+            (256, 8, 6, 1024),
+        )
+        network = BattleTransformer(
+            TransformerConfig(
+                feature_count=492,
+                action_count=13,
+                d_model=train.d_model,
+                heads=train.heads,
+                layers=train.layers,
+                feedforward=train.feedforward,
+                token_group_size=train.token_group_size,
+                token_layout=train.token_layout,
+                joint_policy_heads=train.joint_policy_heads,
+                distilled_leaf_evaluator=train.distilled_leaf_evaluator,
+                leaf_hidden=train.leaf_hidden,
+                leaf_hidden_layers=train.leaf_hidden_layers,
+                adaptive_budget_head=train.adaptive_search,
+            )
+        )
+        self.assertEqual(
+            sum(parameter.numel() for parameter in network.parameters()), 5_025_245
         )
         self.assertIsNone(train.leaf_hidden_layers)
         self.assertEqual(train.replay_window, 2)
