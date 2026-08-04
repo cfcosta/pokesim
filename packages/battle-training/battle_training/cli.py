@@ -45,7 +45,8 @@ def _capacity_defaults(smoke: bool) -> dict[str, object]:
         "layers": 2 if smoke else 6,
         "feedforward": 192 if smoke else 1024,
         "leaf_hidden_layers": None,
-        "replay_window": 2,
+        # Replay 3 no-ops for smoke runs, which never produce a third shard.
+        "replay_window": 3,
         # Smoke runs last 1-2 iterations and never reach the first milestone,
         # so the staged schedule is a safe shared default.
         "lr_schedule": "step",

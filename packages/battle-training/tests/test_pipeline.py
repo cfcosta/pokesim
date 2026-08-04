@@ -1554,7 +1554,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.lr_milestones, (10, 20))
         self.assertEqual(arguments.lr_decay_factor, 0.1)
         self.assertIsNone(arguments.capacity_preset)
-        self.assertEqual(arguments.replay_window, 2)
+        self.assertEqual(arguments.replay_window, 3)
         self.assertTrue(arguments.adaptive_search)
         self.assertEqual(arguments.adaptive_warmup_iterations, 1)
         self.assertEqual(arguments.adaptive_deep_threshold, 0.55)
@@ -2515,7 +2515,7 @@ class TransformerTests(unittest.TestCase):
             sum(parameter.numel() for parameter in network.parameters()), 5_025_245
         )
         self.assertIsNone(train.leaf_hidden_layers)
-        self.assertEqual(train.replay_window, 2)
+        self.assertEqual(train.replay_window, 3)
         self.assertEqual(train.lr_schedule, "step")
         self.assertEqual(train.lr_milestones, (10, 20))
         smoke = _apply_capacity_preset(
