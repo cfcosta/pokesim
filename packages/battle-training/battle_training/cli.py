@@ -242,7 +242,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
         choices=("losses", "exclude-pairs"),
         default="losses",
     )
-    parser.add_argument("--promotion-pooled-z", type=float, default=0.0)
+    parser.add_argument("--promotion-pooled-z", type=float, default=1.96)
 
 
 def parser() -> argparse.ArgumentParser:

@@ -1546,7 +1546,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.leaf_ema_decay, 0.0)
         self.assertEqual(arguments.leaf_loss_weight, 0.25)
         self.assertEqual(arguments.promotion_nonfinish_policy, "losses")
-        self.assertEqual(arguments.promotion_pooled_z, 0.0)
+        self.assertEqual(arguments.promotion_pooled_z, 1.96)
         self.assertEqual(arguments.lr_schedule, "constant")
         self.assertEqual(arguments.lr_milestones, ())
         self.assertEqual(arguments.lr_decay_factor, 0.1)
