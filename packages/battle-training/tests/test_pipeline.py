@@ -124,6 +124,7 @@ from battle_training.transformer_pipeline import (
     _normalized_saved_config,
     _pipeline_id,
     _pooled_promotion_evidence,
+    _pooled_root_only_share,
     _promotion_gate_scores,
     _resume_config,
     _resumed_pooled_evidence,
@@ -1491,6 +1492,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.adaptive_max_false_negative_rate, 0.10)
         self.assertEqual(arguments.adaptive_fn_pool_window, 1)
         self.assertEqual(arguments.shadow_opponent_window, 0)
+        self.assertEqual(arguments.router_fn_exposure_floor, 0.0)
         self.assertEqual(arguments.budget_loss_weight, 0.05)
         self.assertEqual(arguments.budget_positive_weight, 4.0)
         self.assertEqual(arguments.precision, "bf16")
@@ -1627,6 +1629,7 @@ class TransformerTests(unittest.TestCase):
         config.pop("lr_milestones")
         config.pop("lr_decay_factor")
         config.pop("shadow_opponent_window")
+        config.pop("router_fn_exposure_floor")
         normalized = _normalized_saved_config(config)
         self.assertIsNone(normalized["leaf_hidden_layers"])
         self.assertEqual(normalized["leaf_ema_decay"], 0.0)
@@ -1637,6 +1640,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["lr_milestones"], ())
         self.assertEqual(normalized["lr_decay_factor"], 0.1)
         self.assertEqual(normalized["shadow_opponent_window"], 0)
+        self.assertEqual(normalized["router_fn_exposure_floor"], 0.0)
         self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
         self.assertNotIn("leaf_hidden_layers", config)
 
@@ -2640,7 +2644,11 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(metrics["setup_move_counts"]["Reflect"], 2)
 
     def test_collection_quality_does_not_gate_switch_rate(self) -> None:
-        config = SimpleNamespace(selfplay_episodes=100, adaptive_fn_pool_window=1)
+        config = SimpleNamespace(
+            selfplay_episodes=100,
+            adaptive_fn_pool_window=1,
+            router_fn_exposure_floor=0.0,
+        )
         report = _collection_quality(
             {
                 "truncated": 0,
@@ -2661,6 +2669,7 @@ class TransformerTests(unittest.TestCase):
             selfplay_episodes=100,
             adaptive_max_false_negative_rate=0.10,
             adaptive_fn_pool_window=1,
+            router_fn_exposure_floor=0.0,
         )
         report = _collection_quality(
             {
@@ -2696,6 +2705,7 @@ class TransformerTests(unittest.TestCase):
             selfplay_episodes=100,
             adaptive_max_false_negative_rate=0.10,
             adaptive_fn_pool_window=3,
+            router_fn_exposure_floor=0.0,
         )
         history = [self._router_iteration(60, 12), self._router_iteration(60, 12)]
         report = _collection_quality(self._router_iteration(60, 12), config, history)
@@ -2721,6 +2731,7 @@ class TransformerTests(unittest.TestCase):
             selfplay_episodes=100,
             adaptive_max_false_negative_rate=0.10,
             adaptive_fn_pool_window=2,
+            router_fn_exposure_floor=0.0,
         )
         history = [self._router_iteration(400, 200), self._router_iteration(200, 0)]
         report = _collection_quality(self._router_iteration(200, 0), config, history)
@@ -2733,6 +2744,7 @@ class TransformerTests(unittest.TestCase):
             selfplay_episodes=100,
             adaptive_max_false_negative_rate=0.10,
             adaptive_fn_pool_window=3,
+            router_fn_exposure_floor=0.0,
         )
         report = _collection_quality(self._router_iteration(20, 10), config, [])
         self.assertTrue(report["pass"])
@@ -3612,6 +3624,120 @@ class ShadowOpponentPoolTest(unittest.TestCase):
             ]
         )
         self.assertEqual(arguments.shadow_opponent_window, 6)
+
+
+class ExposureAwareRouterGateTest(unittest.TestCase):
+    def _entry(
+        self,
+        samples: int,
+        false_negatives: int,
+        root_only: int = 0,
+        deep: int = 0,
+    ) -> dict[str, object]:
+        return {
+            "truncated": 0,
+            "semantic_divergences": 0,
+            "mean_decisions": 20.0,
+            "finished": 100,
+            "forced_router_samples": samples,
+            "forced_router_false_negatives": false_negatives,
+            "forced_router_false_negative_rate": false_negatives / max(1, samples),
+            "root_only_decisions": root_only,
+            "deep_search_decisions": deep,
+        }
+
+    def _config(self, window: int, floor: float) -> SimpleNamespace:
+        return SimpleNamespace(
+            selfplay_episodes=100,
+            adaptive_max_false_negative_rate=0.10,
+            adaptive_fn_pool_window=window,
+            router_fn_exposure_floor=floor,
+        )
+
+    def test_pooled_root_only_share_pools_decision_counts(self) -> None:
+        entries = [
+            {"root_only_decisions": 1, "deep_search_decisions": 399},
+            {"root_only_decisions": 3, "deep_search_decisions": 397},
+        ]
+        self.assertAlmostEqual(_pooled_root_only_share(entries), 4 / 800)
+        self.assertEqual(_pooled_root_only_share([{}]), 0.0)
+
+    def test_low_exposure_downgrades_the_pooled_breach(self) -> None:
+        history = [self._entry(60, 12, 1, 399), self._entry(60, 12, 2, 398)]
+        report = _collection_quality(
+            self._entry(60, 12, 1, 399), self._config(3, 0.02), history
+        )
+        self.assertTrue(report["pass"])
+        self.assertEqual(
+            report["reasons"],
+            ["adaptive-router-pooled-false-negative-rate-above-limit"],
+        )
+        self.assertEqual(
+            report["version"], "completion-and-exposure-aware-router-integrity-v5"
+        )
+        self.assertEqual(report["router_exposure"]["floor"], 0.02)
+        self.assertAlmostEqual(report["router_exposure"]["share"], 4 / 1200)
+        self.assertEqual(report["pooled_router"]["samples"], 180)
+
+    def test_high_exposure_keeps_the_pooled_gate_blocking(self) -> None:
+        history = [self._entry(60, 12, 30, 370), self._entry(60, 12, 30, 370)]
+        report = _collection_quality(
+            self._entry(60, 12, 30, 370), self._config(3, 0.02), history
+        )
+        self.assertFalse(report["pass"])
+        self.assertEqual(
+            report["reasons"],
+            ["adaptive-router-pooled-false-negative-rate-above-limit"],
+        )
+        self.assertEqual(
+            report["version"], "completion-and-exposure-aware-router-integrity-v5"
+        )
+        self.assertAlmostEqual(report["router_exposure"]["share"], 90 / 1200)
+
+    def test_zero_floor_preserves_the_legacy_gate(self) -> None:
+        history = [self._entry(60, 12), self._entry(60, 12)]
+        report = _collection_quality(self._entry(60, 12), self._config(3, 0.0), history)
+        self.assertFalse(report["pass"])
+        self.assertEqual(report["version"], "completion-and-pooled-router-integrity-v4")
+        self.assertNotIn("router_exposure", report)
+
+    def test_low_exposure_downgrades_the_witnessed_breach(self) -> None:
+        entry = self._entry(200, 30, 1, 399)
+        report = _collection_quality(entry, self._config(1, 0.02))
+        self.assertTrue(report["pass"])
+        self.assertEqual(
+            report["reasons"], ["adaptive-router-false-negative-rate-above-limit"]
+        )
+        self.assertEqual(
+            report["version"], "completion-and-exposure-aware-router-integrity-v5"
+        )
+        self.assertNotIn("pooled_router", report)
+
+    def test_completion_breaches_still_block_at_low_exposure(self) -> None:
+        entry = self._entry(60, 12, 1, 399)
+        entry["truncated"] = 5
+        history = [self._entry(60, 12, 1, 399), self._entry(60, 12, 2, 398)]
+        report = _collection_quality(entry, self._config(3, 0.02), history)
+        self.assertFalse(report["pass"])
+        self.assertEqual(
+            report["reasons"],
+            [
+                "horizon-truncation-rate-above-1pct",
+                "adaptive-router-pooled-false-negative-rate-above-limit",
+            ],
+        )
+
+    def test_router_fn_exposure_floor_flows_from_the_cli(self) -> None:
+        arguments = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/exposure-floor",
+                "--router-fn-exposure-floor",
+                "0.02",
+            ]
+        )
+        self.assertEqual(arguments.router_fn_exposure_floor, 0.02)
 
 
 if __name__ == "__main__":

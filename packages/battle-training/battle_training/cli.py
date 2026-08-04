@@ -186,6 +186,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--adaptive-payoff-spread-threshold", type=float, default=0.75)
     parser.add_argument("--adaptive-max-false-negative-rate", type=float, default=0.10)
     parser.add_argument("--adaptive-fn-pool-window", type=int, default=1)
+    parser.add_argument("--router-fn-exposure-floor", type=float, default=0.0)
     parser.add_argument("--budget-loss-weight", type=float, default=0.05)
     parser.add_argument("--budget-positive-weight", type=float, default=4.0)
     parser.add_argument("--chance-samples-per-joint", type=int, default=1)
@@ -404,6 +405,7 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.adaptive_max_false_negative_rate
             ),
             adaptive_fn_pool_window=arguments.adaptive_fn_pool_window,
+            router_fn_exposure_floor=arguments.router_fn_exposure_floor,
             budget_loss_weight=arguments.budget_loss_weight,
             budget_positive_weight=arguments.budget_positive_weight,
             opponent_checkpoints=tuple(

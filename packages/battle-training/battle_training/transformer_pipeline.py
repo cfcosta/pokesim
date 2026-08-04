@@ -103,6 +103,7 @@ class TransformerPipelineConfig:
     adaptive_payoff_spread_threshold: float = 0.75
     adaptive_max_false_negative_rate: float = 0.10
     adaptive_fn_pool_window: int = 1
+    router_fn_exposure_floor: float = 0.0
     budget_loss_weight: float = 0.05
     budget_positive_weight: float = 4.0
     opponent_checkpoints: tuple[str, ...] = ()
@@ -2434,12 +2435,22 @@ def _parameter_distance(before: BattleTransformer, after: BattleTransformer) -> 
     return float(torch.sqrt(total).detach().cpu())
 
 
+def _pooled_root_only_share(
+    entries: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+) -> float:
+    root_only = sum(int(entry.get("root_only_decisions", 0)) for entry in entries)
+    deep = sum(int(entry.get("deep_search_decisions", 0)) for entry in entries)
+    total = root_only + deep
+    return root_only / total if total else 0.0
+
+
 def _collection_quality(
     metrics: dict[str, Any],
     config: TransformerPipelineConfig,
     history: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
 ) -> dict[str, Any]:
     reasons: list[str] = []
+    advisory: list[str] = []
     episodes = config.selfplay_episodes
     if metrics["truncated"] / episodes > 0.01:
         reasons.append("horizon-truncation-rate-above-1pct")
@@ -2449,43 +2460,72 @@ def _collection_quality(
         reasons.append("mean-battle-length-above-96")
     if metrics["finished"] / episodes < 0.98:
         reasons.append("finished-rate-below-98pct")
+    window = config.adaptive_fn_pool_window
+    recent = [*history[-(window - 1) :], metrics] if window >= 2 else [metrics]
+    floor = config.router_fn_exposure_floor
+    exposure = _pooled_root_only_share(recent)
+    # A router false negative only harms the decisions the router actually
+    # keeps shallow; below the exposure floor a rate breach is recorded for
+    # observability but no longer fails the gate.
+    downgraded = floor > 0.0 and exposure < floor
+
+    def flag_router(reason: str) -> None:
+        reasons.append(reason)
+        if downgraded:
+            advisory.append(reason)
+
     forced_samples = metrics.get("forced_router_samples", 0)
     if (
         forced_samples >= 128
         and metrics.get("forced_router_false_negative_rate", 0.0)
         > config.adaptive_max_false_negative_rate
     ):
-        reasons.append("adaptive-router-false-negative-rate-above-limit")
-    window = config.adaptive_fn_pool_window
-    if window < 2:
-        return {
-            "version": "completion-and-router-integrity-v3",
-            "pass": not reasons,
-            "reasons": reasons,
-        }
-    # A sustained router regression can hide under the per-iteration sample
-    # floor; pooling recent iterations accumulates enough forced probes to
-    # judge it at the same rate limit.
-    recent = [*history[-(window - 1) :], metrics]
-    pooled_samples = sum(int(entry.get("forced_router_samples", 0)) for entry in recent)
-    pooled_false_negatives = sum(
-        int(entry.get("forced_router_false_negatives", 0)) for entry in recent
-    )
-    pooled_rate = pooled_false_negatives / max(1, pooled_samples)
-    if pooled_samples >= 128 and pooled_rate > config.adaptive_max_false_negative_rate:
-        reasons.append("adaptive-router-pooled-false-negative-rate-above-limit")
-    return {
-        "version": "completion-and-pooled-router-integrity-v4",
-        "pass": not reasons,
-        "reasons": reasons,
-        "pooled_router": {
+        flag_router("adaptive-router-false-negative-rate-above-limit")
+    pooled_router: dict[str, Any] | None = None
+    if window >= 2:
+        # A sustained router regression can hide under the per-iteration sample
+        # floor; pooling recent iterations accumulates enough forced probes to
+        # judge it at the same rate limit.
+        pooled_samples = sum(
+            int(entry.get("forced_router_samples", 0)) for entry in recent
+        )
+        pooled_false_negatives = sum(
+            int(entry.get("forced_router_false_negatives", 0)) for entry in recent
+        )
+        pooled_rate = pooled_false_negatives / max(1, pooled_samples)
+        if (
+            pooled_samples >= 128
+            and pooled_rate > config.adaptive_max_false_negative_rate
+        ):
+            flag_router("adaptive-router-pooled-false-negative-rate-above-limit")
+        pooled_router = {
             "window": window,
             "iterations": len(recent),
             "samples": pooled_samples,
             "false_negatives": pooled_false_negatives,
             "rate": pooled_rate,
-        },
+        }
+    blocking = [reason for reason in reasons if reason not in advisory]
+    if floor > 0.0:
+        version = "completion-and-exposure-aware-router-integrity-v5"
+    elif window >= 2:
+        version = "completion-and-pooled-router-integrity-v4"
+    else:
+        version = "completion-and-router-integrity-v3"
+    report: dict[str, Any] = {
+        "version": version,
+        "pass": not blocking,
+        "reasons": reasons,
     }
+    if floor > 0.0:
+        report["router_exposure"] = {
+            "floor": floor,
+            "share": exposure,
+            "advisory": advisory,
+        }
+    if pooled_router is not None:
+        report["pooled_router"] = pooled_router
+    return report
 
 
 def _iteration_numbers(directory: Path, prefix: str, suffix: str) -> set[int]:
@@ -2640,6 +2680,7 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("lr_milestones", ())
     normalized.setdefault("lr_decay_factor", 0.1)
     normalized.setdefault("shadow_opponent_window", 0)
+    normalized.setdefault("router_fn_exposure_floor", 0.0)
     return normalized
 
 
@@ -2829,6 +2870,8 @@ def run_transformer_pipeline(
         raise ValueError("adaptive_max_false_negative_rate must be in [0, 1]")
     if config.adaptive_fn_pool_window < 1:
         raise ValueError("adaptive_fn_pool_window must be positive")
+    if not 0.0 <= config.router_fn_exposure_floor <= 1.0:
+        raise ValueError("router_fn_exposure_floor must be in [0, 1]")
     if not 0.0 <= config.budget_loss_weight <= 1.0:
         raise ValueError("budget_loss_weight must be in [0, 1]")
     if config.budget_positive_weight < 1.0:
