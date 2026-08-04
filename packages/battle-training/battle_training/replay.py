@@ -465,9 +465,7 @@ def build_replay_manifest(
     source_match = int(detail.get("episode", detail.get("game", -1)))
     trainer_class = replay_trainer_class(coordinates, source_match)
     source_candidate_side = detail.get("candidate_side")
-    replay_candidate_side = (
-        "player" if swap_sides else source_candidate_side
-    )
+    replay_candidate_side = "player" if swap_sides else source_candidate_side
     return {
         "version": REPLAY_PROFILE,
         "source": {

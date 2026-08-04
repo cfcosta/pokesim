@@ -25,6 +25,8 @@ def generated_schedule_names(schedule_version: int = 3) -> tuple[str, str]:
     if schedule_version == 3:
         return GENERATED_PARTY_SCHEDULE, GENERATED_LEVEL_SCHEDULE
     raise ValueError("generated party schedule version must be 2 or 3")
+
+
 _NON_6V6_MATCHUPS = tuple(
     (player, enemy)
     for player in range(1, FULL_PARTY_SIZE + 1)
@@ -41,9 +43,7 @@ def generated_party_sizes(index: int, schedule_version: int = 3) -> tuple[int, i
         block, offset = divmod(index, 4)
         if offset == 0:
             return FULL_PARTY_SIZE, FULL_PARTY_SIZE
-        return _NON_6V6_MATCHUPS[
-            (block * 3 + offset - 1) % len(_NON_6V6_MATCHUPS)
-        ]
+        return _NON_6V6_MATCHUPS[(block * 3 + offset - 1) % len(_NON_6V6_MATCHUPS)]
     if schedule_version != 3:
         raise ValueError("generated party schedule version must be 2 or 3")
     block, offset = divmod(index, 3)
