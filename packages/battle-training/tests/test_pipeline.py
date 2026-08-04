@@ -118,6 +118,7 @@ from battle_training.transformer_pipeline import (
     _arena,
     _assemble_population,
     _begin_leaf_training,
+    _collect_rows_single,
     _collection_prior_noise,
     _collection_quality,
     _dirichlet_meta,
@@ -127,6 +128,9 @@ from battle_training.transformer_pipeline import (
     _finalize_frontier,
     _frontier_entry,
     _frontier_meta,
+    _frontier_restart_entries,
+    _frontier_restart_meta,
+    _frontier_restart_plan,
     _frontier_score,
     _FrontierBuffer,
     _gradient_report,
@@ -148,6 +152,7 @@ from battle_training.transformer_pipeline import (
     _pooled_promotion_evidence,
     _pooled_root_only_share,
     _promotion_gate_scores,
+    _replay_frontier_entry,
     _resume_config,
     _resumed_pooled_evidence,
     _scheduled_for_opponent,
@@ -1525,6 +1530,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.collection_dirichlet_alpha, 0.0)
         self.assertEqual(arguments.collection_dirichlet_weight, 0.25)
         self.assertEqual(arguments.frontier_buffer_size, 0)
+        self.assertEqual(arguments.frontier_restart_fraction, 0.0)
         self.assertEqual(arguments.budget_loss_weight, 0.05)
         self.assertEqual(arguments.budget_positive_weight, 4.0)
         self.assertEqual(arguments.precision, "bf16")
@@ -1668,6 +1674,7 @@ class TransformerTests(unittest.TestCase):
         config.pop("collection_dirichlet_alpha")
         config.pop("collection_dirichlet_weight")
         config.pop("frontier_buffer_size")
+        config.pop("frontier_restart_fraction")
         normalized = _normalized_saved_config(config)
         self.assertIsNone(normalized["leaf_hidden_layers"])
         self.assertEqual(normalized["leaf_ema_decay"], 0.0)
@@ -1685,6 +1692,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["collection_dirichlet_alpha"], 0.0)
         self.assertEqual(normalized["collection_dirichlet_weight"], 0.25)
         self.assertEqual(normalized["frontier_buffer_size"], 0)
+        self.assertEqual(normalized["frontier_restart_fraction"], 0.0)
         self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
         self.assertNotIn("leaf_hidden_layers", config)
 
@@ -4246,6 +4254,7 @@ class FrontierBufferTest(unittest.TestCase):
                 {"player_action": 6, "enemy_action": 1},
                 {"player_action": 2, "enemy_action": 2},
             ],
+            frontier_restart=None,
         )
         config = SimpleNamespace(seed=97, balanced_final_species=True)
         row = {
@@ -4378,6 +4387,249 @@ class FrontierBufferTest(unittest.TestCase):
             ]
         )
         self.assertEqual(arguments.frontier_buffer_size, 128)
+
+
+class FrontierRestartTest(unittest.TestCase):
+    @staticmethod
+    def _snapshot(handle: int, player_hash: str, enemy_hash: str) -> Snapshot:
+        return Snapshot(
+            handle=handle,
+            player_features=np.asarray([1, 2], dtype=np.int64),
+            enemy_features=np.asarray([3, 4], dtype=np.int64),
+            player_mask=0b101,
+            enemy_mask=0b011,
+            player_hash=player_hash,
+            enemy_hash=enemy_hash,
+            turn=3,
+            terminal=False,
+            done=False,
+            terminal_return=None,
+            request="move",
+            divergence=None,
+        )
+
+    @staticmethod
+    def _config(**overrides: float) -> SimpleNamespace:
+        values: dict[str, float] = {
+            "seed": 11,
+            "selfplay_episodes": 4096,
+            "frontier_restart_fraction": 0.25,
+        }
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    def test_restart_plan_is_empty_when_disabled_or_starved(self) -> None:
+        disabled = self._config(frontier_restart_fraction=0.0)
+        self.assertEqual(_frontier_restart_plan(disabled, 3, 64), {})
+        self.assertEqual(_frontier_restart_plan(self._config(), 3, 0), {})
+
+    def test_restart_plan_rounds_odd_budgets_down_to_whole_pairs(self) -> None:
+        config = self._config(selfplay_episodes=10, frontier_restart_fraction=0.1)
+        self.assertEqual(_frontier_restart_plan(config, 1, 4), {})
+
+    def test_restart_plan_selects_the_configured_fraction_of_pairs(self) -> None:
+        plan = _frontier_restart_plan(self._config(), 3, 64)
+        self.assertEqual(len(plan), 512)
+        self.assertTrue(all(0 <= pair < 2048 for pair in plan))
+        self.assertTrue(all(0 <= index < 64 for index in plan.values()))
+        self.assertEqual(plan, _frontier_restart_plan(self._config(), 3, 64))
+
+    def test_restart_plan_replays_the_documented_rng_stream(self) -> None:
+        config = self._config(selfplay_episodes=8)
+        rng = random.Random(11 + 2 * 1_000_121 + 83)
+        selected = sorted(rng.sample(range(4), 1))
+        expected = {pair: rng.randrange(5) for pair in selected}
+        self.assertEqual(_frontier_restart_plan(config, 2, 5), expected)
+
+    def test_restart_entries_fall_back_to_empty_without_a_source(self) -> None:
+        self.assertEqual(_frontier_restart_entries(None), [])
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "frontier-004.jsonl"
+            self.assertEqual(_frontier_restart_entries(str(missing)), [])
+
+    def test_restart_entries_load_a_prior_buffer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "iteration-005.jsonl"
+            entries = [
+                {"type": "frontier", "score": 2.0, "episode": 9},
+                {"type": "frontier", "score": 1.5, "episode": 4},
+            ]
+            config = SimpleNamespace(frontier_buffer_size=4)
+            _finalize_frontier({"frontier": list(entries)}, path, 5, config)
+            source = path.with_name("frontier-005.jsonl")
+            self.assertEqual(_frontier_restart_entries(str(source)), entries)
+
+    def test_replay_reproduces_the_recorded_state(self) -> None:
+        steps: list[tuple[int, int, int]] = []
+        scripted = [
+            self._snapshot(11, "p1", "e1"),
+            self._snapshot(12, "p2", "e2"),
+        ]
+
+        def episode_step(handle: int, player: int, enemy: int) -> Snapshot:
+            steps.append((handle, player, enemy))
+            return scripted[len(steps) - 1]
+
+        server = SimpleNamespace(episode_step=episode_step)
+        entry = {
+            "actions": [[0, 4], [6, 1]],
+            "snapshot": {"player_hash": "p2", "enemy_hash": "e2"},
+        }
+        final = _replay_frontier_entry(server, self._snapshot(10, "p0", "e0"), entry)
+        self.assertEqual(steps, [(10, 0, 4), (11, 6, 1)])
+        self.assertEqual(final.handle, 12)
+
+    def test_replay_raises_when_hashes_diverge(self) -> None:
+        def episode_step(handle: int, player: int, enemy: int) -> Snapshot:
+            return self._snapshot(21, "p1", "e1")
+
+        server = SimpleNamespace(episode_step=episode_step)
+        entry = {
+            "actions": [[2, 3]],
+            "snapshot": {"player_hash": "p1", "enemy_hash": "e-other"},
+        }
+        with self.assertRaisesRegex(RuntimeError, "frontier replay"):
+            _replay_frontier_entry(server, self._snapshot(20, "p0", "e0"), entry)
+
+    def test_pair_validator_accepts_a_replayed_frontier_pair(self) -> None:
+        common = {
+            "pair": 0,
+            "reset_episode": 4,
+            "pair_player_party_size": 3,
+            "pair_enemy_party_size": 2,
+            "teams_swapped": True,
+            "player_party_size": 2,
+            "enemy_party_size": 3,
+            "level_profile": "distributed",
+            "episode_kind": "mirror",
+            "opponent": "self-play",
+            "candidate_side": "both",
+            "frontier_restart": True,
+            "initial": {"player": "team-b", "enemy": "team-a"},
+        }
+        rows = [
+            {**common, "episode": 0, "pair_leg": 0},
+            {**common, "episode": 1, "pair_leg": 1},
+        ]
+        _validate_collection_pairs(rows, 2)
+
+    def test_pair_validator_rejects_a_diverged_frontier_replay(self) -> None:
+        common = {
+            "pair": 0,
+            "reset_episode": 4,
+            "pair_player_party_size": 3,
+            "pair_enemy_party_size": 2,
+            "teams_swapped": False,
+            "player_party_size": 3,
+            "enemy_party_size": 2,
+            "level_profile": "distributed",
+            "episode_kind": "mirror",
+            "opponent": "self-play",
+            "candidate_side": "both",
+            "frontier_restart": True,
+            "initial": {"player": "team-a", "enemy": "team-b"},
+        }
+        rows = [
+            {**common, "episode": 0, "pair_leg": 0},
+            {**common, "episode": 1, "pair_leg": 1},
+        ]
+        rows[1] = {**rows[1], "initial": {"player": "team-c", "enemy": "team-b"}}
+        with self.assertRaisesRegex(RuntimeError, "did not replay one state"):
+            _validate_collection_pairs(rows, 2)
+        rows[1] = {**rows[0], "episode": 1, "pair_leg": 1, "teams_swapped": True}
+        with self.assertRaisesRegex(RuntimeError, "diverged in team orientation"):
+            _validate_collection_pairs(rows, 2)
+
+    def test_pair_validator_rejects_a_split_frontier_restart(self) -> None:
+        common = {
+            "pair": 0,
+            "reset_episode": 4,
+            "pair_player_party_size": 3,
+            "pair_enemy_party_size": 2,
+            "teams_swapped": False,
+            "player_party_size": 3,
+            "enemy_party_size": 2,
+            "level_profile": "distributed",
+            "episode_kind": "mirror",
+            "opponent": "self-play",
+            "candidate_side": "both",
+            "initial": {"player": "team-a", "enemy": "team-b"},
+        }
+        rows = [
+            {**common, "episode": 0, "pair_leg": 0, "frontier_restart": True},
+            {**common, "episode": 1, "pair_leg": 1},
+        ]
+        with self.assertRaisesRegex(RuntimeError, "split a frontier restart"):
+            _validate_collection_pairs(rows, 2)
+
+    def test_frontier_entry_chains_replayed_provenance(self) -> None:
+        source = {
+            "reset": {
+                "seed": 55,
+                "episode": 1,
+                "player_size": 4,
+                "enemy_size": 4,
+                "level100": False,
+                "swapped": True,
+                "balanced_final_species": True,
+            },
+            "actions": [[5, 5], [1, 0]],
+        }
+        actor = SimpleNamespace(
+            episode=6,
+            pair=3,
+            pair_leg=0,
+            reset_episode=1,
+            pair_player_size=4,
+            pair_enemy_size=4,
+            level100=False,
+            teams_swapped=True,
+            episode_kind="mirror",
+            timeline=[{"player_action": 2, "enemy_action": 3}],
+            frontier_restart=source,
+        )
+        config = SimpleNamespace(seed=97, balanced_final_species=False)
+        row = {
+            "side": "player",
+            "decision": 1,
+            "target_kind": "search",
+            "search_value": 0.25,
+            "value": 1,
+        }
+        components = {"score": 0.9, "value_surprise": 0.75, "policy_kl": 0.15}
+        entry = _frontier_entry(
+            config, 4, actor, row, components, self._snapshot(3, "p", "e")
+        )
+        self.assertEqual(entry["reset"], source["reset"])
+        self.assertEqual(entry["actions"], [[5, 5], [1, 0], [2, 3]])
+
+    def test_restart_meta_tags_appear_only_when_enabled(self) -> None:
+        disabled = SimpleNamespace(frontier_restart_fraction=0.0)
+        self.assertEqual(_frontier_restart_meta(disabled), {})
+        enabled = SimpleNamespace(frontier_restart_fraction=0.25)
+        self.assertEqual(
+            _frontier_restart_meta(enabled),
+            {
+                "frontier_restarts": "prior-iteration-replay-v1",
+                "frontier_restart_fraction": 0.25,
+            },
+        )
+
+    def test_collection_worker_defaults_to_no_frontier_source(self) -> None:
+        parameters = inspect.signature(_collect_rows_single).parameters
+        self.assertIsNone(parameters["frontier_source"].default)
+
+    def test_frontier_restart_fraction_flows_from_the_cli(self) -> None:
+        arguments = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/frontier",
+                "--frontier-restart-fraction",
+                "0.2",
+            ]
+        )
+        self.assertEqual(arguments.frontier_restart_fraction, 0.2)
 
 
 if __name__ == "__main__":

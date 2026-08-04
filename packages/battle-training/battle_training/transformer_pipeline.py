@@ -117,6 +117,7 @@ class TransformerPipelineConfig:
     collection_dirichlet_alpha: float = 0.0
     collection_dirichlet_weight: float = 0.25
     frontier_buffer_size: int = 0
+    frontier_restart_fraction: float = 0.0
     budget_loss_weight: float = 0.05
     budget_positive_weight: float = 4.0
     opponent_checkpoints: tuple[str, ...] = ()
@@ -271,6 +272,7 @@ class _ActorEpisode:
     inspection: dict[str, Any] | None = None
     timeline: list[dict[str, Any]] = field(default_factory=list)
     frontier_snapshots: dict[int, Snapshot] = field(default_factory=dict)
+    frontier_restart: dict[str, Any] | None = None
 
 
 def _pipeline_id(
@@ -424,7 +426,14 @@ def _validate_collection_pairs(
             raise RuntimeError(f"collection pair {pair} does not share one reset")
         first_initial = first.get("initial") or {}
         second_initial = second.get("initial") or {}
-        if first["episode_kind"] == "mirror":
+        if bool(first.get("frontier_restart")) != bool(second.get("frontier_restart")):
+            raise RuntimeError(f"collection pair {pair} split a frontier restart")
+        if first.get("frontier_restart"):
+            if first.get("teams_swapped") != second.get("teams_swapped"):
+                raise RuntimeError(f"frontier pair {pair} diverged in team orientation")
+            if first.get("initial") != second.get("initial"):
+                raise RuntimeError(f"frontier pair {pair} did not replay one state")
+        elif first["episode_kind"] == "mirror":
             expected_sizes = (
                 first.get("pair_player_party_size"),
                 first.get("pair_enemy_party_size"),
@@ -788,18 +797,25 @@ def _frontier_entry(
         "search_value": row["search_value"],
         "value": row["value"],
         **components,
-        "reset": {
-            "seed": config.seed + iteration * 10_000,
-            "episode": actor.reset_episode,
-            "player_size": actor.pair_player_size,
-            "enemy_size": actor.pair_enemy_size,
-            "level100": actor.level100,
-            "swapped": actor.teams_swapped,
-            "balanced_final_species": config.balanced_final_species,
-        },
+        "reset": (
+            dict(actor.frontier_restart["reset"])
+            if actor.frontier_restart
+            else {
+                "seed": config.seed + iteration * 10_000,
+                "episode": actor.reset_episode,
+                "player_size": actor.pair_player_size,
+                "enemy_size": actor.pair_enemy_size,
+                "level100": actor.level100,
+                "swapped": actor.teams_swapped,
+                "balanced_final_species": config.balanced_final_species,
+            }
+        ),
         "actions": [
-            [turn["player_action"], turn["enemy_action"]]
-            for turn in actor.timeline[: row["decision"]]
+            *(actor.frontier_restart["actions"] if actor.frontier_restart else []),
+            *(
+                [turn["player_action"], turn["enemy_action"]]
+                for turn in actor.timeline[: row["decision"]]
+            ),
         ],
         "snapshot": _serialized_snapshot(snapshot),
     }
@@ -865,6 +881,56 @@ def _load_frontier_buffer(path: Path) -> list[dict[str, Any]]:
     return rows[1:]
 
 
+_FRONTIER_RESTART_VERSION = "prior-iteration-replay-v1"
+
+
+def _frontier_restart_entries(source: str | None) -> list[dict[str, Any]]:
+    if source is None:
+        return []
+    path = Path(source)
+    if not path.exists():
+        return []
+    return _load_frontier_buffer(path)
+
+
+def _frontier_restart_plan(
+    config: TransformerPipelineConfig, iteration: int, entry_count: int
+) -> dict[int, int]:
+    fraction = config.frontier_restart_fraction
+    if fraction <= 0.0 or entry_count <= 0:
+        return {}
+    pairs = config.selfplay_episodes // 2
+    count = min(int(fraction * config.selfplay_episodes) // 2, pairs)
+    if count <= 0:
+        return {}
+    rng = random.Random(config.seed + iteration * 1_000_121 + 83)
+    selected = sorted(rng.sample(range(pairs), count))
+    return {pair: rng.randrange(entry_count) for pair in selected}
+
+
+def _replay_frontier_entry(
+    server: SearchServer, snapshot: Snapshot, entry: dict[str, Any]
+) -> Snapshot:
+    for player_action, enemy_action in entry["actions"]:
+        snapshot = server.episode_step(snapshot.handle, player_action, enemy_action)
+    recorded = entry["snapshot"]
+    if (
+        snapshot.player_hash != recorded["player_hash"]
+        or snapshot.enemy_hash != recorded["enemy_hash"]
+    ):
+        raise RuntimeError("frontier replay diverged from the recorded snapshot")
+    return snapshot
+
+
+def _frontier_restart_meta(config: TransformerPipelineConfig) -> dict[str, Any]:
+    if not config.frontier_restart_fraction:
+        return {}
+    return {
+        "frontier_restarts": _FRONTIER_RESTART_VERSION,
+        "frontier_restart_fraction": config.frontier_restart_fraction,
+    }
+
+
 def _policy_entropy(policy: list[float]) -> float:
     return -sum(
         probability * math.log(probability) for probability in policy if probability
@@ -911,6 +977,7 @@ def _collect_rows_single(
     episode_indices: list[int] | None = None,
     progress_path: Path | None = None,
     process: int = 0,
+    frontier_source: str | None = None,
 ) -> dict[str, Any]:
     if episode_indices is None:
         episode_indices = list(range(config.selfplay_episodes))
@@ -979,6 +1046,7 @@ def _collect_rows_single(
         **_epsilon_meta(config),
         **_dirichlet_meta(config),
         **_frontier_meta(config),
+        **_frontier_restart_meta(config),
     }
     opponents = opponents or []
     if opponents:
@@ -1012,6 +1080,9 @@ def _collect_rows_single(
     decision_quality = DecisionQualityMetrics()
     recent_battles: list[dict[str, Any]] = []
     frontier = _FrontierBuffer(config.frontier_buffer_size)
+    restart_entries = _frontier_restart_entries(frontier_source)
+    restart_plan = _frontier_restart_plan(config, iteration, len(restart_entries))
+    frontier_restart_episodes = 0
 
     def append_episode(
         actor: _ActorEpisode,
@@ -1063,6 +1134,14 @@ def _collect_rows_single(
         }
         if reason is not None:
             record["reason"] = reason
+        if actor.frontier_restart is not None:
+            record["frontier_restart"] = True
+            record["frontier_source"] = {
+                "iteration": actor.frontier_restart["iteration"],
+                "episode": actor.frontier_restart["episode"],
+                "decision": actor.frontier_restart["decision"],
+                "score": actor.frontier_restart["score"],
+            }
         rows.append(record)
         total_decisions += decisions
         if reward == 1:
@@ -1090,8 +1169,15 @@ def _collect_rows_single(
                 pair = _training_pair(episode)
                 pair_leg = _training_pair_leg(episode)
                 reset_episode = pair
-                versus_opponent = bool(opponents) and _scheduled_for_opponent(
-                    pair, config.opponent_fraction
+                restart_entry = (
+                    restart_entries[restart_plan[pair]]
+                    if pair in restart_plan
+                    else None
+                )
+                versus_opponent = (
+                    restart_entry is None
+                    and bool(opponents)
+                    and _scheduled_for_opponent(pair, config.opponent_fraction)
                 )
                 opponent_identity: str | None = None
                 if versus_opponent:
@@ -1144,6 +1230,16 @@ def _collect_rows_single(
                     iteration, episode, config.generated_schedule_version
                 )
                 teams_swapped = episode_kind == "mirror" and pair_leg == 1
+                balanced_final_species = config.balanced_final_species
+                if restart_entry is not None:
+                    recipe = restart_entry["reset"]
+                    reset_seed = recipe["seed"]
+                    reset_episode = recipe["episode"]
+                    pair_player_size = recipe["player_size"]
+                    pair_enemy_size = recipe["enemy_size"]
+                    level100 = recipe["level100"]
+                    teams_swapped = recipe["swapped"]
+                    balanced_final_species = recipe["balanced_final_species"]
                 player_size, enemy_size = (
                     (pair_enemy_size, pair_player_size)
                     if teams_swapped
@@ -1159,7 +1255,7 @@ def _collect_rows_single(
                         pair_enemy_size,
                         level100=level100,
                         swapped=teams_swapped,
-                        balanced_final_species=config.balanced_final_species,
+                        balanced_final_species=balanced_final_species,
                     )
                     if offset == 0
                     else server.reset_append(
@@ -1169,7 +1265,7 @@ def _collect_rows_single(
                         pair_enemy_size,
                         level100=level100,
                         swapped=teams_swapped,
-                        balanced_final_species=config.balanced_final_species,
+                        balanced_final_species=balanced_final_species,
                     )
                 )
                 active.append(
@@ -1209,15 +1305,22 @@ def _collect_rows_single(
                         prior_noise_rng=random.Random(
                             config.seed + iteration * 1_000_117 + episode * 10_067 + 71
                         ),
+                        frontier_restart=restart_entry,
                     )
                 )
+            for actor in active:
+                if actor.frontier_restart is not None:
+                    actor.snapshot = _replay_frontier_entry(
+                        server, actor.snapshot, actor.frontier_restart
+                    )
+                    frontier_restart_episodes += 1
             inspections = server.inspect_many(
                 [actor.snapshot.handle for actor in active]
             )
             for actor, inspection in zip(active, inspections, strict=True):
                 actor.inspection = inspection
                 actor.initial = _compact_inspection(inspection)
-                if actor.pair_leg == 0:
+                if actor.pair_leg == 0 and actor.frontier_restart is None:
                     for side in ("player", "enemy"):
                         for mon in inspection[side]["party"]:
                             key = f"{int(mon['dex']):03d}:{mon['name']}"
@@ -1609,12 +1712,14 @@ def _collect_rows_single(
     schedule_tolerance = 2 * (schedule_denominator - 1)
     if (
         len(episode_indices) == config.selfplay_episodes
+        and not config.frontier_restart_fraction
         and abs(six_vs_six_battles * schedule_denominator - len(episode_indices))
         > schedule_tolerance
     ):
         raise RuntimeError("collection 6v6 schedule differs from its target")
     if (
         len(episode_indices) == config.selfplay_episodes
+        and not config.frontier_restart_fraction
         and abs(level100_six_vs_six_battles * schedule_denominator - six_vs_six_battles)
         > schedule_tolerance
     ):
@@ -1664,6 +1769,11 @@ def _collect_rows_single(
             forced_router_false_negatives / max(1, forced_router_samples)
         ),
         "mirror_episodes": mirror_episodes,
+        **(
+            {"frontier_restart_episodes": frontier_restart_episodes}
+            if config.frontier_restart_fraction
+            else {}
+        ),
         "opponent_episodes": opponent_episodes,
         "model_opponent_episodes": model_opponent_episodes,
         "heuristic_opponent_episodes": heuristic_opponent_episodes,
@@ -1773,6 +1883,7 @@ def _collection_process_worker(
     episode_indices: list[int],
     progress_path: str,
     process: int,
+    frontier_source: str | None = None,
 ) -> dict[str, Any]:
     torch.set_num_threads(1)
     configure_determinism(config.seed + iteration)
@@ -1796,6 +1907,7 @@ def _collection_process_worker(
         episode_indices,
         Path(progress_path),
         process,
+        frontier_source=frontier_source,
     )
 
 
@@ -1899,12 +2011,14 @@ def _merge_collection_rows(
     schedule_denominator = 4 if config.generated_schedule_version == 2 else 3
     schedule_tolerance = 2 * (schedule_denominator - 1)
     if (
-        abs(six_vs_six_battles * schedule_denominator - config.selfplay_episodes)
+        not config.frontier_restart_fraction
+        and abs(six_vs_six_battles * schedule_denominator - config.selfplay_episodes)
         > schedule_tolerance
     ):
         raise RuntimeError("collection 6v6 schedule differs from its target")
     if (
-        abs(level100_six_vs_six_battles * schedule_denominator - six_vs_six_battles)
+        not config.frontier_restart_fraction
+        and abs(level100_six_vs_six_battles * schedule_denominator - six_vs_six_battles)
         > schedule_tolerance
     ):
         raise RuntimeError("collection level-100 6v6 schedule differs from its target")
@@ -1936,6 +2050,11 @@ def _merge_collection_rows(
             / max(1, total("forced_router_samples"))
         ),
         "mirror_episodes": total("mirror_episodes"),
+        **(
+            {"frontier_restart_episodes": total("frontier_restart_episodes")}
+            if config.frontier_restart_fraction
+            else {}
+        ),
         "opponent_episodes": total("opponent_episodes"),
         "model_opponent_episodes": total("model_opponent_episodes"),
         "heuristic_opponent_episodes": total("heuristic_opponent_episodes"),
@@ -2017,6 +2136,11 @@ def _collect_rows(
     progress_dir.mkdir(parents=True, exist_ok=True)
     for old_progress in progress_dir.glob("actor-*.json"):
         old_progress.unlink()
+    frontier_source = (
+        str(path.with_name(f"frontier-{iteration - 1:03d}.jsonl"))
+        if config.frontier_restart_fraction > 0.0 and iteration > 0
+        else None
+    )
     if config.actor_processes == 1:
         return _finalize_frontier(
             _collect_rows_single(
@@ -2026,6 +2150,7 @@ def _collect_rows(
                 iteration,
                 opponents,
                 progress_path=progress_dir / "actor-00.json",
+                frontier_source=frontier_source,
             ),
             path,
             iteration,
@@ -2065,6 +2190,7 @@ def _collect_rows(
                     episodes,
                     str(progress_dir / f"actor-{process:02d}.json"),
                     process,
+                    frontier_source,
                 )
                 for process, (worker_path, episodes) in enumerate(
                     zip(worker_paths, partitions, strict=True)
@@ -3050,6 +3176,7 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("collection_dirichlet_alpha", 0.0)
     normalized.setdefault("collection_dirichlet_weight", 0.25)
     normalized.setdefault("frontier_buffer_size", 0)
+    normalized.setdefault("frontier_restart_fraction", 0.0)
     return normalized
 
 
@@ -3253,6 +3380,8 @@ def run_transformer_pipeline(
         raise ValueError("collection_dirichlet_weight must be in [0, 1]")
     if config.frontier_buffer_size < 0:
         raise ValueError("frontier_buffer_size must be nonnegative")
+    if not 0.0 <= config.frontier_restart_fraction <= 0.25:
+        raise ValueError("frontier_restart_fraction must be in [0, 0.25]")
     if not 0.0 <= config.budget_loss_weight <= 1.0:
         raise ValueError("budget_loss_weight must be in [0, 1]")
     if config.budget_positive_weight < 1.0:
