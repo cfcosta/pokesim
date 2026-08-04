@@ -1006,6 +1006,23 @@ def _jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     write_new(path, payload)
 
 
+def _frontier_priors(
+    network: Any, rows: list[dict[str, Any]], batch_size: int
+) -> list[list[float]]:
+    """Score completed-episode rows without exceeding the inference contract."""
+    if batch_size <= 0:
+        raise ValueError("frontier inference batch size must be positive")
+    priors: list[list[float]] = []
+    for start in range(0, len(rows), batch_size):
+        batch = rows[start : start + batch_size]
+        batch_priors, _ = network.evaluate(
+            [row["features"] for row in batch],
+            [row["legal_mask"] for row in batch],
+        )
+        priors.extend(batch_priors)
+    return priors
+
+
 def _collect_rows_single(
     path: Path,
     network: BattleTransformer,
@@ -1656,9 +1673,10 @@ def _collect_rows_single(
                                         setup_move_counts.get(setup_move, 0) + 1
                                     )
                         if frontier.capacity and actor.pending:
-                            priors, _ = network.evaluate(
-                                [row["features"] for row in actor.pending],
-                                [row["legal_mask"] for row in actor.pending],
+                            priors = _frontier_priors(
+                                network,
+                                actor.pending,
+                                config.inference_batch_size,
                             )
                             for row, prior in zip(actor.pending, priors, strict=True):
                                 frontier.consider(

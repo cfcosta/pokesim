@@ -136,6 +136,7 @@ from battle_training.transformer_pipeline import (
     _finalize_frontier,
     _frontier_entry,
     _frontier_meta,
+    _frontier_priors,
     _frontier_restart_entries,
     _frontier_restart_meta,
     _frontier_restart_plan,
@@ -918,6 +919,24 @@ class MonitorTests(unittest.TestCase):
 
 
 class TransformerTests(unittest.TestCase):
+    def test_frontier_priors_respect_inference_batch_limit(self) -> None:
+        class RecordingNetwork:
+            def __init__(self) -> None:
+                self.batch_sizes: list[int] = []
+
+            def evaluate(self, features, masks):
+                self.batch_sizes.append(len(features))
+                return [[float(mask)] for mask in masks], [0.0] * len(features)
+
+        network = RecordingNetwork()
+        rows = [{"features": [index], "legal_mask": index + 1} for index in range(294)]
+        priors = _frontier_priors(network, rows, 256)
+        self.assertEqual(network.batch_sizes, [256, 38])
+        self.assertEqual(priors[0], [1.0])
+        self.assertEqual(priors[-1], [294.0])
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            _frontier_priors(network, rows, 0)
+
     def test_inference_engine_auto_falls_back_to_eager_on_cpu(self) -> None:
         network = BattleTransformer(
             TransformerConfig(
