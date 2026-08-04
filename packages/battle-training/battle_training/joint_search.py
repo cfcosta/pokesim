@@ -78,6 +78,37 @@ def legal_actions(mask: int, action_count: int) -> list[int]:
     return [action for action in range(action_count) if mask & (1 << action)]
 
 
+@dataclass(frozen=True)
+class RootPriorNoise:
+    """AlphaZero-style Dirichlet mixing for root priors on collection solves."""
+
+    alpha: float
+    weight: float
+    rng: random.Random
+
+
+def _dirichlet_noised_priors(
+    priors: Sequence[float], mask: int, noise: RootPriorNoise
+) -> Sequence[float]:
+    # Mixes a Dirichlet(alpha) draw into the LEGAL support only, rescaled so
+    # the legal prior mass (and therefore the full-vector sum) is preserved;
+    # illegal entries keep their exact input values.
+    legal = legal_actions(mask, len(priors))
+    if not legal:
+        return priors
+    samples = [noise.rng.gammavariate(noise.alpha, 1.0) for _ in legal]
+    total = sum(samples)
+    if total <= 0.0:
+        return priors
+    legal_mass = sum(priors[action] for action in legal)
+    noised = list(priors)
+    for action, sample in zip(legal, samples, strict=True):
+        noised[action] = (1.0 - noise.weight) * priors[
+            action
+        ] + noise.weight * legal_mass * (sample / total)
+    return noised
+
+
 def _tactical_potential(features: Sequence[int]) -> float:
     """Dense, antisymmetric HP/faint/status potential from canonical party rows."""
 
@@ -587,6 +618,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         selection_rng: random.Random,
         chance_rng: random.Random,
         budget_rng: random.Random | None = None,
+        prior_noise: RootPriorNoise | None = None,
     ) -> None:
         super().__init__(
             server,
@@ -653,6 +685,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._deep_native_waves = 0
         self._deep_overlap_waves = 0
         self.budget_rng = budget_rng or random.Random(0)
+        self.prior_noise = prior_noise
         self._adaptive_deep_selected = True
         self._adaptive_router_score = 1.0
         self._adaptive_reason = "adaptive-disabled"
@@ -2045,6 +2078,18 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         ]
         enemy_priors = [root_evaluations[index][1][0] for index in range(len(searches))]
         prior_values = [root_evaluations[index][2][0] for index in range(len(searches))]
+        for index, (search, snapshot) in enumerate(
+            zip(searches, snapshots, strict=True)
+        ):
+            noise = search.prior_noise
+            if noise is None:
+                continue
+            player_priors[index] = _dirichlet_noised_priors(
+                player_priors[index], snapshot.player_mask, noise
+            )
+            enemy_priors[index] = _dirichlet_noised_priors(
+                enemy_priors[index], snapshot.enemy_mask, noise
+            )
         roots = [
             search._make_node(
                 snapshot,

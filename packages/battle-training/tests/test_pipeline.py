@@ -68,8 +68,10 @@ from battle_training.decision_quality import (
 )
 from battle_training.joint_search import (
     JointSearchConfig,
+    RootPriorNoise,
     SearchResult,
     SimultaneousTreeSearch,
+    _dirichlet_noised_priors,
     _tactical_potential,
     solve_zero_sum_regret,
 )
@@ -115,7 +117,9 @@ from battle_training.transformer_pipeline import (
     _arena,
     _assemble_population,
     _begin_leaf_training,
+    _collection_prior_noise,
     _collection_quality,
+    _dirichlet_meta,
     _end_leaf_training,
     _epsilon_meta,
     _explore_search_result,
@@ -127,6 +131,7 @@ from battle_training.transformer_pipeline import (
     _learning_rate_for_iteration,
     _load_completed_prefix,
     _load_examples,
+    _new_search,
     _normalized_saved_config,
     _pipeline_id,
     _play_game,
@@ -1506,6 +1511,8 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.collection_epsilon, 0.0)
         self.assertEqual(arguments.collection_epsilon_turns, 0)
         self.assertEqual(arguments.policy_target_smoothing, 0.0)
+        self.assertEqual(arguments.collection_dirichlet_alpha, 0.0)
+        self.assertEqual(arguments.collection_dirichlet_weight, 0.25)
         self.assertEqual(arguments.budget_loss_weight, 0.05)
         self.assertEqual(arguments.budget_positive_weight, 4.0)
         self.assertEqual(arguments.precision, "bf16")
@@ -1646,6 +1653,8 @@ class TransformerTests(unittest.TestCase):
         config.pop("collection_epsilon")
         config.pop("collection_epsilon_turns")
         config.pop("policy_target_smoothing")
+        config.pop("collection_dirichlet_alpha")
+        config.pop("collection_dirichlet_weight")
         normalized = _normalized_saved_config(config)
         self.assertIsNone(normalized["leaf_hidden_layers"])
         self.assertEqual(normalized["leaf_ema_decay"], 0.0)
@@ -1660,6 +1669,8 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["collection_epsilon"], 0.0)
         self.assertEqual(normalized["collection_epsilon_turns"], 0)
         self.assertEqual(normalized["policy_target_smoothing"], 0.0)
+        self.assertEqual(normalized["collection_dirichlet_alpha"], 0.0)
+        self.assertEqual(normalized["collection_dirichlet_weight"], 0.25)
         self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
         self.assertNotIn("leaf_hidden_layers", config)
 
@@ -3959,6 +3970,147 @@ class PolicyTargetSmoothingTest(unittest.TestCase):
             ]
         )
         self.assertEqual(arguments.policy_target_smoothing, 0.05)
+
+
+class DirichletRootNoiseTest(unittest.TestCase):
+    _PRIORS = (0.3, 0.05, 0.05, 0.25, 0.1, 0.25)
+    _MASK = 0b101001  # legal support {0, 3, 5}
+
+    def _noise(
+        self, alpha: float = 0.6, weight: float = 0.25, seed: int = 7
+    ) -> RootPriorNoise:
+        return RootPriorNoise(alpha=alpha, weight=weight, rng=random.Random(seed))
+
+    def _search(self, **kwargs: object) -> SimultaneousTreeSearch:
+        network = SimpleNamespace(config=SimpleNamespace(action_count=3))
+        return SimultaneousTreeSearch(
+            object(),
+            network,
+            network,
+            JointSearchConfig(),
+            random.Random(0),
+            random.Random(1),
+            **kwargs,
+        )
+
+    def test_noise_touches_only_the_legal_support(self) -> None:
+        noised = _dirichlet_noised_priors(self._PRIORS, self._MASK, self._noise())
+        for illegal in (1, 2, 4):
+            self.assertEqual(noised[illegal], self._PRIORS[illegal])
+        self.assertNotEqual(
+            [noised[action] for action in (0, 3, 5)],
+            [self._PRIORS[action] for action in (0, 3, 5)],
+        )
+
+    def test_noise_preserves_legal_and_total_prior_mass(self) -> None:
+        noised = _dirichlet_noised_priors(self._PRIORS, self._MASK, self._noise())
+        self.assertAlmostEqual(sum(noised), sum(self._PRIORS), places=12)
+        self.assertAlmostEqual(
+            sum(noised[action] for action in (0, 3, 5)),
+            sum(self._PRIORS[action] for action in (0, 3, 5)),
+            places=12,
+        )
+
+    def test_mixture_matches_a_manual_gamma_replay(self) -> None:
+        noised = _dirichlet_noised_priors(
+            self._PRIORS, self._MASK, self._noise(seed=11)
+        )
+        rng = random.Random(11)
+        samples = [rng.gammavariate(0.6, 1.0) for _ in range(3)]
+        total = sum(samples)
+        legal_mass = sum(self._PRIORS[action] for action in (0, 3, 5))
+        for action, sample in zip((0, 3, 5), samples, strict=True):
+            expected = 0.75 * self._PRIORS[action] + 0.25 * legal_mass * (
+                sample / total
+            )
+            self.assertAlmostEqual(noised[action], expected, places=12)
+
+    def test_fixed_seed_is_deterministic_and_seed_dependent(self) -> None:
+        first = _dirichlet_noised_priors(self._PRIORS, self._MASK, self._noise(seed=5))
+        second = _dirichlet_noised_priors(self._PRIORS, self._MASK, self._noise(seed=5))
+        other = _dirichlet_noised_priors(self._PRIORS, self._MASK, self._noise(seed=6))
+        self.assertEqual(first, second)
+        self.assertNotEqual(first, other)
+
+    def test_zero_weight_keeps_prior_values_exactly(self) -> None:
+        noised = _dirichlet_noised_priors(
+            self._PRIORS, self._MASK, self._noise(weight=0.0)
+        )
+        self.assertEqual(noised, list(self._PRIORS))
+
+    def test_empty_legal_mask_returns_the_input_untouched(self) -> None:
+        priors = [0.5, 0.5]
+        noise = RootPriorNoise(
+            alpha=0.6,
+            weight=0.25,
+            rng=_ExplodingRng("rng consumed with no legal actions"),
+        )
+        self.assertIs(_dirichlet_noised_priors(priors, 0, noise), priors)
+
+    def test_collection_wiring_disables_noise_at_alpha_zero(self) -> None:
+        config = SimpleNamespace(
+            collection_dirichlet_alpha=0.0, collection_dirichlet_weight=0.25
+        )
+        self.assertIsNone(
+            _collection_prior_noise(
+                config, _ExplodingRng("rng touched with alpha disabled")
+            )
+        )
+
+    def test_collection_wiring_builds_noise_from_the_config(self) -> None:
+        rng = random.Random(3)
+        config = SimpleNamespace(
+            collection_dirichlet_alpha=0.6, collection_dirichlet_weight=0.3
+        )
+        noise = _collection_prior_noise(config, rng)
+        self.assertEqual((noise.alpha, noise.weight), (0.6, 0.3))
+        self.assertIs(noise.rng, rng)
+
+    def test_search_defaults_to_no_prior_noise(self) -> None:
+        self.assertIsNone(self._search().prior_noise)
+
+    def test_search_stores_an_explicit_prior_noise(self) -> None:
+        noise = self._noise()
+        self.assertIs(self._search(prior_noise=noise).prior_noise, noise)
+
+    def test_promotion_paths_never_reference_dirichlet_noise(self) -> None:
+        source = inspect.getsource(_play_game) + inspect.getsource(_arena)
+        self.assertNotIn("prior_noise", source)
+        self.assertNotIn("dirichlet", source.lower())
+        default = inspect.signature(_new_search).parameters["prior_noise"].default
+        self.assertIsNone(default)
+
+    def test_meta_tags_appear_only_when_enabled(self) -> None:
+        disabled = SimpleNamespace(
+            collection_dirichlet_alpha=0.0, collection_dirichlet_weight=0.25
+        )
+        self.assertEqual(_dirichlet_meta(disabled), {})
+        enabled = SimpleNamespace(
+            collection_dirichlet_alpha=0.6, collection_dirichlet_weight=0.3
+        )
+        self.assertEqual(
+            _dirichlet_meta(enabled),
+            {
+                "root_prior_noise": "dirichlet-legal-support-v1",
+                "collection_dirichlet_alpha": 0.6,
+                "collection_dirichlet_weight": 0.3,
+            },
+        )
+
+    def test_collection_dirichlet_flows_from_the_cli(self) -> None:
+        arguments = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/dirichlet",
+                "--collection-dirichlet-alpha",
+                "0.6",
+                "--collection-dirichlet-weight",
+                "0.3",
+            ]
+        )
+        self.assertEqual(arguments.collection_dirichlet_alpha, 0.6)
+        self.assertEqual(arguments.collection_dirichlet_weight, 0.3)
 
 
 if __name__ == "__main__":

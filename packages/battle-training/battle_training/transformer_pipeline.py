@@ -46,7 +46,12 @@ from .decision_quality import (
     DecisionQualityMetrics,
     classify_feature_decision,
 )
-from .joint_search import JointSearchConfig, SearchResult, SimultaneousTreeSearch
+from .joint_search import (
+    JointSearchConfig,
+    RootPriorNoise,
+    SearchResult,
+    SimultaneousTreeSearch,
+)
 from .monitor import write_actor_progress, write_monitor_state
 from .native import NativeRequestTimeout, SearchServer, Snapshot, build_search_server
 from .network import (
@@ -107,6 +112,8 @@ class TransformerPipelineConfig:
     collection_epsilon: float = 0.0
     collection_epsilon_turns: int = 0
     policy_target_smoothing: float = 0.0
+    collection_dirichlet_alpha: float = 0.0
+    collection_dirichlet_weight: float = 0.25
     budget_loss_weight: float = 0.05
     budget_positive_weight: float = 4.0
     opponent_checkpoints: tuple[str, ...] = ()
@@ -255,6 +262,7 @@ class _ActorEpisode:
     opponent_rng: random.Random
     tier_rng: random.Random
     exploration_rng: random.Random
+    prior_noise_rng: random.Random
     initial: dict[str, Any] | None = None
     final: dict[str, Any] | None = None
     inspection: dict[str, Any] | None = None
@@ -458,6 +466,7 @@ def _new_search(
     deep: bool = True,
     adaptive: bool = False,
     budget_rng: random.Random | None = None,
+    prior_noise: RootPriorNoise | None = None,
 ) -> SimultaneousTreeSearch:
     return SimultaneousTreeSearch(
         server,
@@ -489,6 +498,7 @@ def _new_search(
         selection_rng,
         chance_rng,
         budget_rng,
+        prior_noise,
     )
 
 
@@ -621,6 +631,30 @@ def _epsilon_meta(config: TransformerPipelineConfig) -> dict[str, Any]:
     }
 
 
+def _collection_prior_noise(
+    config: TransformerPipelineConfig, rng: random.Random
+) -> RootPriorNoise | None:
+    # Alpha zero disables the mixer entirely: legacy runs keep pure priors and
+    # never touch the dedicated noise RNG stream.
+    if config.collection_dirichlet_alpha <= 0.0:
+        return None
+    return RootPriorNoise(
+        alpha=config.collection_dirichlet_alpha,
+        weight=config.collection_dirichlet_weight,
+        rng=rng,
+    )
+
+
+def _dirichlet_meta(config: TransformerPipelineConfig) -> dict[str, Any]:
+    if not config.collection_dirichlet_alpha:
+        return {}
+    return {
+        "root_prior_noise": "dirichlet-legal-support-v1",
+        "collection_dirichlet_alpha": config.collection_dirichlet_alpha,
+        "collection_dirichlet_weight": config.collection_dirichlet_weight,
+    }
+
+
 def _smoothed_policy(
     policy: list[float], legal_mask: int, smoothing: float
 ) -> list[float]:
@@ -750,6 +784,7 @@ def _collect_rows_single(
         "pairing": "same-reset-opposite-controller-sides-v1",
         "pairs": config.selfplay_episodes // 2,
         **_epsilon_meta(config),
+        **_dirichlet_meta(config),
     }
     opponents = opponents or []
     if opponents:
@@ -976,6 +1011,9 @@ def _collect_rows_single(
                         exploration_rng=random.Random(
                             config.seed + iteration * 1_000_099 + episode * 10_061 + 59
                         ),
+                        prior_noise_rng=random.Random(
+                            config.seed + iteration * 1_000_117 + episode * 10_067 + 71
+                        ),
                     )
                 )
             inspections = server.inspect_many(
@@ -1006,6 +1044,9 @@ def _collect_rows_single(
                                 and iteration > config.adaptive_warmup_iterations
                             ),
                             budget_rng=actor.tier_rng,
+                            prior_noise=_collection_prior_noise(
+                                config, actor.prior_noise_rng
+                            ),
                         )
                         for actor in active
                     ],
@@ -2776,6 +2817,8 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("collection_epsilon", 0.0)
     normalized.setdefault("collection_epsilon_turns", 0)
     normalized.setdefault("policy_target_smoothing", 0.0)
+    normalized.setdefault("collection_dirichlet_alpha", 0.0)
+    normalized.setdefault("collection_dirichlet_weight", 0.25)
     return normalized
 
 
@@ -2973,6 +3016,10 @@ def run_transformer_pipeline(
         raise ValueError("collection_epsilon_turns must be nonnegative")
     if not 0.0 <= config.policy_target_smoothing <= 1.0:
         raise ValueError("policy_target_smoothing must be in [0, 1]")
+    if config.collection_dirichlet_alpha < 0.0:
+        raise ValueError("collection_dirichlet_alpha must be nonnegative")
+    if not 0.0 <= config.collection_dirichlet_weight <= 1.0:
+        raise ValueError("collection_dirichlet_weight must be in [0, 1]")
     if not 0.0 <= config.budget_loss_weight <= 1.0:
         raise ValueError("budget_loss_weight must be in [0, 1]")
     if config.budget_positive_weight < 1.0:

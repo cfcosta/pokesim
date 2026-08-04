@@ -190,6 +190,8 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--collection-epsilon", type=float, default=0.0)
     parser.add_argument("--collection-epsilon-turns", type=int, default=0)
     parser.add_argument("--policy-target-smoothing", type=float, default=0.0)
+    parser.add_argument("--collection-dirichlet-alpha", type=float, default=0.0)
+    parser.add_argument("--collection-dirichlet-weight", type=float, default=0.25)
     parser.add_argument("--budget-loss-weight", type=float, default=0.05)
     parser.add_argument("--budget-positive-weight", type=float, default=4.0)
     parser.add_argument("--chance-samples-per-joint", type=int, default=1)
@@ -412,6 +414,8 @@ def main(argv: list[str] | None = None) -> int:
             collection_epsilon=arguments.collection_epsilon,
             collection_epsilon_turns=arguments.collection_epsilon_turns,
             policy_target_smoothing=arguments.policy_target_smoothing,
+            collection_dirichlet_alpha=arguments.collection_dirichlet_alpha,
+            collection_dirichlet_weight=arguments.collection_dirichlet_weight,
             budget_loss_weight=arguments.budget_loss_weight,
             budget_positive_weight=arguments.budget_positive_weight,
             opponent_checkpoints=tuple(
