@@ -7,7 +7,7 @@ import random
 from collections.abc import Generator, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, TypeAlias, cast
+from typing import Any, cast
 
 import numpy as np
 
@@ -26,7 +26,7 @@ from .rmplus_native import (
     solve_warm as solve_warm_native,
 )
 
-PayoffMatrix: TypeAlias = list[list[float]]
+type PayoffMatrix = list[list[float]]
 
 _PARTY_MON_WIDTH = 22
 _FULL_SIDE_WIDTH = 181
@@ -563,9 +563,9 @@ class _NodeInferenceFrontier:
     snapshots: list[Snapshot]
 
 
-_NodeEvaluation: TypeAlias = tuple[list[float], list[float], float]
-_Frontier: TypeAlias = _NativeFrontier | _InferenceFrontier | _NodeInferenceFrontier
-_FrontierResponse: TypeAlias = (
+type _NodeEvaluation = tuple[list[float], list[float], float]
+type _Frontier = _NativeFrontier | _InferenceFrontier | _NodeInferenceFrontier
+type _FrontierResponse = (
     list[Snapshot] | list[tuple[float, float]] | list[_NodeEvaluation]
 )
 
