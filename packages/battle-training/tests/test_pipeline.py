@@ -37,6 +37,7 @@ from battle_training.arena import (
     _mean_ci95,
     _pair_outcome_report,
     _paired_coordinates,
+    _policy_argmax_actions,
     _score_moments,
     _serialized_arena_model,
     _serialized_final_arena_baseline,
@@ -126,6 +127,7 @@ from battle_training.transformer_pipeline import (
     _append_shadow_opponent,
     _apply_learning_rate,
     _arena,
+    _arena_config,
     _assemble_population,
     _begin_leaf_training,
     _collect_rows_single,
@@ -159,6 +161,7 @@ from battle_training.transformer_pipeline import (
     _pipeline_id,
     _play_game,
     _policy_entropy,
+    _policy_gate_superior,
     _policy_kl,
     _pooled_promotion_evidence,
     _pooled_root_only_share,
@@ -1520,6 +1523,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.opponent_fraction, 0.67)
         self.assertEqual(arguments.model_opponent_share, 0.5)
         self.assertEqual(arguments.promotion_games, 2048)
+        self.assertEqual(arguments.promotion_policy_games, 2048)
         self.assertEqual(arguments.probe_games, 256)
         self.assertEqual(arguments.campaign_games, 288)
         self.assertEqual(arguments.tree_expansion_budget, 320)
@@ -1694,6 +1698,7 @@ class TransformerTests(unittest.TestCase):
         config.pop("leaf_ema_decay")
         config.pop("promotion_nonfinish_policy")
         config.pop("promotion_pooled_z")
+        config.pop("promotion_policy_games")
         config.pop("adaptive_fn_pool_window")
         config.pop("lr_schedule")
         config.pop("lr_milestones")
@@ -1712,6 +1717,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["leaf_ema_decay"], 0.0)
         self.assertEqual(normalized["promotion_nonfinish_policy"], "losses")
         self.assertEqual(normalized["promotion_pooled_z"], 0.0)
+        self.assertEqual(normalized["promotion_policy_games"], 0)
         self.assertEqual(normalized["adaptive_fn_pool_window"], 1)
         self.assertEqual(normalized["lr_schedule"], "constant")
         self.assertEqual(normalized["lr_milestones"], ())
@@ -1973,6 +1979,114 @@ class TransformerTests(unittest.TestCase):
         ]
         self.assertEqual(outcomes, _pair_outcome_report(pair_scores))
 
+    def test_policy_only_arena_selects_deterministic_network_argmax(self) -> None:
+        torch.manual_seed(1)
+
+        def tiny() -> BattleTransformer:
+            network = BattleTransformer(
+                TransformerConfig(
+                    feature_count=492,
+                    action_count=13,
+                    d_model=8,
+                    heads=2,
+                    layers=1,
+                    feedforward=16,
+                    precision="fp32",
+                )
+            )
+            network.eval()
+            return network
+
+        self.assertFalse(ArenaConfig(games=4, seed_count=2).policy_only)
+        candidate = tiny()
+        baseline = tiny()
+        config = ArenaConfig(
+            games=4,
+            budget=64,
+            inference_batch_size=64,
+            seed=4321,
+            seed_count=2,
+            policy_only=True,
+        )
+        report = run_paired_arena(candidate, baseline, config)
+        self.assertEqual(report["action_selector"], "network-policy-argmax-v1")
+        self.assertIsNone(report["search"])
+        self.assertEqual(report["games"], 4)
+        self.assertEqual(report["pair_outcomes"]["pairs"], 2)
+        repeat = run_paired_arena(candidate, baseline, config)
+        self.assertEqual(
+            [battle["score"] for battle in report["battles"]],
+            [battle["score"] for battle in repeat["battles"]],
+        )
+
+    def test_policy_argmax_actions_use_each_sides_own_priors(self) -> None:
+        class _PriorNetwork:
+            def __init__(self, priors: dict[tuple[int, ...], list[float]]) -> None:
+                self.priors = priors
+                self.calls: list[int] = []
+
+            def evaluate(
+                self, features: list[tuple[int, ...]], masks: list[int]
+            ) -> tuple[list[list[float]], list[float]]:
+                self.calls.append(len(masks))
+                policies = [list(self.priors[tuple(row)]) for row in features]
+                return policies, [0.0] * len(masks)
+
+        candidate = _PriorNetwork({(1, 0): [0.1, 0.7, 0.2], (0, 1): [0.5, 0.5, 0.0]})
+        baseline = _PriorNetwork({(2, 0): [0.9, 0.05, 0.05], (0, 2): [0.2, 0.3, 0.5]})
+
+        def snapshot(
+            player_features: tuple[int, ...],
+            player_mask: int,
+            enemy_features: tuple[int, ...],
+            enemy_mask: int,
+        ) -> SimpleNamespace:
+            return SimpleNamespace(
+                request="switch",
+                player_features=player_features,
+                player_mask=player_mask,
+                enemy_features=enemy_features,
+                enemy_mask=enemy_mask,
+            )
+
+        def episode(
+            game: int, candidate_player: bool, snap: SimpleNamespace
+        ) -> _FastArenaEpisode:
+            return _FastArenaEpisode(
+                game=game,
+                candidate_player=candidate_player,
+                player=candidate if candidate_player else baseline,
+                enemy=baseline if candidate_player else candidate,
+                selection_rng=None,
+                chance_rng=None,
+                budget_rng=None,
+                player_size=3,
+                enemy_size=3,
+                level100=False,
+                campaign_index=0,
+                snapshot=snap,
+            )
+
+        episodes = [
+            episode(0, True, snapshot((1, 0), 0b111, (0, 2), 0b110)),
+            episode(1, False, snapshot((2, 0), 0b011, (0, 1), 0b011)),
+        ]
+        results = _policy_argmax_actions(
+            episodes, ArenaConfig(games=4, seed_count=2, policy_only=True)
+        )
+        self.assertEqual([result.failure for result in results], [None, None])
+        self.assertEqual(
+            [result.solver for result in results], ["network-policy-argmax-v1"] * 2
+        )
+        self.assertEqual(results[0].player_action, 1)
+        self.assertEqual(results[0].enemy_action, 2)
+        self.assertEqual(results[1].player_action, 0)
+        # The candidate's enemy-side priors tie at 0.5; ties break to the
+        # lowest legal action so the lane stays deterministic.
+        self.assertEqual(results[1].enemy_action, 0)
+        self.assertEqual(candidate.calls, [1, 1])
+        self.assertEqual(baseline.calls, [1, 1])
+
     def test_pooled_evidence_accumulates_until_the_z_threshold(self) -> None:
         iteration = {"paired_score_moments": [530.0, 530.0, 1000]}
         first = _pooled_promotion_evidence(None, iteration, "losses", 0.50, 2.25)
@@ -2038,6 +2152,117 @@ class TransformerTests(unittest.TestCase):
             _resumed_pooled_evidence([{"promotion": {"accepted": False}}])
         )
         self.assertIsNone(_resumed_pooled_evidence([{}]))
+
+    def test_resumed_pooled_evidence_reads_the_requested_lane(self) -> None:
+        pooled = {"iterations": 3, "pairs": 3000}
+        record = [
+            {
+                "promotion": {
+                    "accepted": False,
+                    "pooled": {"iterations": 1, "pairs": 1000},
+                    "policy_gate": {"pooled": pooled},
+                }
+            }
+        ]
+        self.assertEqual(_resumed_pooled_evidence(record, "policy_gate"), pooled)
+        self.assertEqual(
+            _resumed_pooled_evidence(record), {"iterations": 1, "pairs": 1000}
+        )
+        self.assertIsNone(_resumed_pooled_evidence([], "policy_gate"))
+        accepted = [
+            {"promotion": {"accepted": True, "policy_gate": {"pooled": pooled}}}
+        ]
+        self.assertIsNone(_resumed_pooled_evidence(accepted, "policy_gate"))
+        self.assertIsNone(
+            _resumed_pooled_evidence(
+                [{"promotion": {"accepted": False}}], "policy_gate"
+            )
+        )
+        self.assertIsNone(
+            _resumed_pooled_evidence(
+                [{"promotion": {"accepted": False, "policy_gate": None}}],
+                "policy_gate",
+            )
+        )
+
+    def test_policy_gate_superior_requires_quality_and_confidence(self) -> None:
+        def lane(**overrides: object) -> dict[str, object]:
+            report: dict[str, object] = {
+                "data_quality_pass": True,
+                "quality_pass": True,
+                "score_with_nonfinishes_as_losses": 0.55,
+                "paired_score_ci95": [0.52, 0.58],
+            }
+            report.update(overrides)
+            return report
+
+        self.assertTrue(_policy_gate_superior(lane(), "losses", 0.50))
+        self.assertFalse(
+            _policy_gate_superior(lane(quality_pass=False), "losses", 0.50)
+        )
+        self.assertFalse(
+            _policy_gate_superior(lane(data_quality_pass=False), "losses", 0.50)
+        )
+        self.assertFalse(
+            _policy_gate_superior(lane(paired_score_ci95=[0.49, 0.60]), "losses", 0.50)
+        )
+        self.assertFalse(
+            _policy_gate_superior(
+                lane(score_with_nonfinishes_as_losses=0.49), "losses", 0.50
+            )
+        )
+        self.assertFalse(_policy_gate_superior(lane(), "losses", 0.56))
+        excluded = lane(
+            score_excluding_nonfinish_pairs=0.60,
+            paired_score_ci95_excluding_nonfinish_pairs=[0.55, 0.65],
+        )
+        self.assertTrue(_policy_gate_superior(excluded, "exclude-pairs", 0.50))
+        empty = lane(
+            score_excluding_nonfinish_pairs=None,
+            paired_score_ci95_excluding_nonfinish_pairs=[None, None],
+        )
+        self.assertFalse(_policy_gate_superior(empty, "exclude-pairs", 0.50))
+
+    def test_promotion_policy_games_flow_from_the_cli(self) -> None:
+        arguments = training_parser().parse_args(
+            ["transformer-train", "--output", "/tmp/policy-lane"]
+        )
+        self.assertEqual(arguments.promotion_policy_games, 2048)
+        smoke = training_parser().parse_args(
+            ["transformer-smoke", "--output", "/tmp/policy-lane"]
+        )
+        self.assertEqual(smoke.promotion_policy_games, 4)
+        disabled = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/policy-lane",
+                "--promotion-policy-games",
+                "0",
+            ]
+        )
+        self.assertEqual(disabled.promotion_policy_games, 0)
+        config = TransformerPipelineConfig(
+            iterations=1,
+            selfplay_episodes=8,
+            arena_episodes=8,
+            episode_budget=64,
+            search_depth=1,
+            epochs=1,
+            batch_size=8,
+            learning_rate=1e-3,
+            weight_decay=0.0,
+            seed=1,
+            device="cpu",
+            d_model=8,
+            heads=2,
+            layers=1,
+            feedforward=16,
+        )
+        self.assertEqual(config.promotion_policy_games, 0)
+        gate_config = _arena_config(config, 4, 99, 2, policy_only=True)
+        self.assertTrue(gate_config.policy_only)
+        self.assertFalse(_arena_config(config, 4, 99, 2).policy_only)
 
     def test_promotion_pooled_z_flows_from_the_cli(self) -> None:
         arguments = training_parser().parse_args(

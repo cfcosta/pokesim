@@ -127,6 +127,7 @@ class TransformerPipelineConfig:
     shadow_opponent_window: int = 0
     promotion_games: int = 2048
     promotion_seed_count: int = 8
+    promotion_policy_games: int = 0
     probe_games: int = 256
     probe_seed_count: int = 8
     campaign_games: int = 288
@@ -558,6 +559,7 @@ def _arena_config(
     seed_count: int,
     *,
     replay_games: int = 0,
+    policy_only: bool = False,
 ) -> ArenaConfig:
     return ArenaConfig(
         games=games,
@@ -588,6 +590,7 @@ def _arena_config(
         generated_schedule_version=config.generated_schedule_version,
         rmplus_backend=config.rmplus_backend,
         cfr_plus_solves=config.cfr_plus_solves,
+        policy_only=policy_only,
     )
 
 
@@ -3237,6 +3240,7 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("leaf_ema_decay", 0.0)
     normalized.setdefault("promotion_nonfinish_policy", "losses")
     normalized.setdefault("promotion_pooled_z", 0.0)
+    normalized.setdefault("promotion_policy_games", 0)
     normalized.setdefault("adaptive_fn_pool_window", 1)
     normalized.setdefault("lr_schedule", "constant")
     normalized.setdefault("lr_milestones", ())
@@ -3299,6 +3303,24 @@ def _promotion_gate_scores(
     raise ValueError("promotion_nonfinish_policy must be 'losses' or 'exclude-pairs'")
 
 
+def _policy_gate_superior(
+    policy_gate: dict[str, Any], policy: str, minimum_score: float
+) -> bool:
+    """Decide whether the net-only policy-argmax lane shows superiority.
+
+    The search-mediated promotion arena plays both models through the same
+    converged solver, which can equalize sides even when the raw policies
+    differ. This lane compares the networks' own argmax play, so it carries
+    its own quality gates rather than joining the enforced conjunction.
+    """
+    if not policy_gate.get("data_quality_pass") or not policy_gate.get("quality_pass"):
+        return False
+    score, ci_low = _promotion_gate_scores(policy_gate, policy)
+    if score is None or ci_low is None:
+        return False
+    return score >= minimum_score and ci_low >= 0.50
+
+
 def _pooled_promotion_evidence(
     pooled: dict[str, Any] | None,
     promotion: dict[str, Any],
@@ -3349,19 +3371,22 @@ def _pooled_promotion_evidence(
 
 def _resumed_pooled_evidence(
     training: list[dict[str, Any]],
+    lane: str = "promotion",
 ) -> dict[str, Any] | None:
     """Restore the evidence pool from the last committed iteration.
 
     Records written before pooling existed carry no pool and restart it
     empty, and an accepted promotion resets the pool because the incumbent
-    it measured is gone.
+    it measured is gone. Secondary gate lanes store their pool under their
+    own record inside the promotion dict.
     """
     if not training:
         return None
     promotion = training[-1].get("promotion") or {}
     if promotion.get("accepted"):
         return None
-    return promotion.get("pooled")
+    record = promotion if lane == "promotion" else (promotion.get(lane) or {})
+    return record.get("pooled")
 
 
 def run_transformer_pipeline(
@@ -3495,6 +3520,15 @@ def run_transformer_pipeline(
         raise ValueError("historical_window must be nonnegative")
     if config.promotion_games < 2 or config.promotion_games % 2:
         raise ValueError("promotion_games must be an even number of at least two")
+    if config.promotion_policy_games < 0:
+        raise ValueError("promotion_policy_games must be nonnegative")
+    if config.promotion_policy_games and (
+        config.promotion_policy_games % 2
+        or config.promotion_policy_games < 2 * config.promotion_seed_count
+    ):
+        raise ValueError(
+            "promotion_policy_games must be even and cover every promotion seed"
+        )
     if config.probe_games < 2 or config.probe_games % 2:
         raise ValueError("probe_games must be an even number of at least two")
     if config.campaign_games < 18 or config.campaign_games % 2:
@@ -3813,6 +3847,7 @@ def run_transformer_pipeline(
         message="Models loaded; collection is ready",
     )
     pooled_evidence = _resumed_pooled_evidence(training)
+    policy_pooled_evidence = _resumed_pooled_evidence(training, "policy_gate")
     for iteration in range(first_iteration, config.iterations + 1):
         population = _assemble_population(
             opponents,
@@ -3941,6 +3976,46 @@ def run_transformer_pipeline(
             }
             for battle in promotion["battles"]
         ]
+        policy_gate: dict[str, Any] | None = None
+        if config.promotion_policy_games > 0:
+            write_monitor_state(
+                root,
+                "promotion",
+                iteration=iteration,
+                message=(
+                    f"Running {config.promotion_policy_games:,} "
+                    "net-only policy gate games"
+                ),
+                games=config.promotion_policy_games,
+                training_diagnostics=training_metrics["diagnostics"]["latest"],
+            )
+            try:
+                policy_gate = run_paired_arena(
+                    network,
+                    incumbent_network,
+                    _arena_config(
+                        config,
+                        config.promotion_policy_games,
+                        config.seed + 75_000_000 + iteration * 10_037,
+                        config.promotion_seed_count,
+                        policy_only=True,
+                    ),
+                    processes=config.eval_processes,
+                    pool=evaluation_pool,
+                    progress=_evaluation_progress(
+                        root,
+                        "promotion",
+                        iteration,
+                        "Running net-only policy gate games",
+                        training_diagnostics=(
+                            training_metrics["diagnostics"]["latest"]
+                        ),
+                    ),
+                )
+            except BaseException:
+                evaluation_pool.close()
+                raise
+            policy_gate["battles"] = []
         live_promotion = {
             "games": promotion["games"],
             "wins": promotion["wins"],
@@ -4044,6 +4119,32 @@ def run_transformer_pipeline(
             )
         else:
             pooled_evidence = None
+        policy_superior = False
+        if policy_gate is not None:
+            policy_superior = _policy_gate_superior(
+                policy_gate,
+                config.promotion_nonfinish_policy,
+                config.minimum_promotion_score,
+            )
+            if config.promotion_pooled_z > 0.0:
+                policy_pooled_evidence = _pooled_promotion_evidence(
+                    policy_pooled_evidence,
+                    policy_gate,
+                    config.promotion_nonfinish_policy,
+                    config.minimum_promotion_score,
+                    config.promotion_pooled_z,
+                )
+                if policy_gate["data_quality_pass"] and policy_gate["quality_pass"]:
+                    policy_superior = (
+                        policy_superior or policy_pooled_evidence["triggered"]
+                    )
+            else:
+                policy_pooled_evidence = None
+            policy_gate["superior"] = policy_superior
+            policy_gate["pooled"] = policy_pooled_evidence
+            statistically_superior = statistically_superior or policy_superior
+        else:
+            policy_pooled_evidence = None
         if config.enforce_quality_gate:
             accepted = (
                 collection_quality["pass"]
@@ -4071,6 +4172,7 @@ def run_transformer_pipeline(
         promotion["minimum_score"] = config.minimum_promotion_score
         promotion["nonfinish_policy"] = config.promotion_nonfinish_policy
         promotion["pooled"] = pooled_evidence
+        promotion["policy_gate"] = policy_gate
         promotion["stratified_party_gate"] = promotion["strata"]["pass"]
         promotion["held_out_probes"] = probes
         promotion["probe_arena"] = probe_arena
@@ -4083,6 +4185,7 @@ def run_transformer_pipeline(
             incumbent_network.load_state_dict(network.state_dict())
             incumbent_network.eval()
             pooled_evidence = None
+            policy_pooled_evidence = None
         training_metrics["promotion"] = promotion
         training.append(training_metrics)
         write_monitor_state(

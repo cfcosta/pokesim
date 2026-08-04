@@ -226,6 +226,9 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--historical-window", type=int, default=4)
     parser.add_argument("--shadow-opponent-window", type=int, default=6)
     parser.add_argument("--promotion-games", type=int, default=16 if smoke else 2048)
+    parser.add_argument(
+        "--promotion-policy-games", type=int, default=4 if smoke else 2048
+    )
     parser.add_argument("--promotion-seed-count", type=int, default=2 if smoke else 8)
     parser.add_argument("--probe-games", type=int, default=16 if smoke else 256)
     parser.add_argument("--probe-seed-count", type=int, default=2 if smoke else 8)
@@ -430,6 +433,7 @@ def main(argv: list[str] | None = None) -> int:
             historical_window=arguments.historical_window,
             shadow_opponent_window=arguments.shadow_opponent_window,
             promotion_games=arguments.promotion_games,
+            promotion_policy_games=arguments.promotion_policy_games,
             promotion_seed_count=arguments.promotion_seed_count,
             probe_games=arguments.probe_games,
             probe_seed_count=arguments.probe_seed_count,

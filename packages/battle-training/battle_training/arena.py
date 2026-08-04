@@ -27,8 +27,14 @@ from .artifacts import write_json
 from .decision_quality import (
     DecisionQualityMetrics,
     classify_feature_decision,
+    shape_redundant_action_priors,
 )
-from .joint_search import JointSearchConfig, SearchResult, SimultaneousTreeSearch
+from .joint_search import (
+    JointSearchConfig,
+    SearchResult,
+    SimultaneousTreeSearch,
+    legal_actions,
+)
 from .monitor import write_actor_progress
 from .native import NativeRequestTimeout, SearchServer
 from .network import (
@@ -116,6 +122,7 @@ class ArenaConfig:
     generated_schedule_version: int = 3
     rmplus_backend: str = RUST_RMPLUS_BACKEND
     cfr_plus_solves: bool = True
+    policy_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -381,6 +388,92 @@ def _rmplus_search_many(
         [episode.snapshot for episode in episodes],
         sample_actions=True,
     )
+
+
+def _policy_priors(
+    network: Any,
+    features: list[Any],
+    masks: list[int],
+    requests: list[str],
+    config: ArenaConfig,
+) -> list[list[float]]:
+    size = config.inference_batch_size
+    policies: list[list[float]] = []
+    for start in range(0, len(features), size):
+        batch_policies, _ = network.evaluate(
+            features[start : start + size], masks[start : start + size]
+        )
+        policies.extend(batch_policies)
+    scale = (
+        config.redundant_action_prior_scale
+        if isinstance(network, BattleTransformer)
+        else 1.0
+    )
+    return [
+        shape_redundant_action_priors(policy, feature, mask, scale)
+        if request == "battle"
+        else policy
+        for policy, feature, mask, request in zip(
+            policies, features, masks, requests, strict=True
+        )
+    ]
+
+
+def _argmax_legal(policy: list[float], mask: int) -> int:
+    legal = legal_actions(mask, len(policy))
+    if not legal:
+        raise ValueError("policy argmax requires at least one legal action")
+    # Ties break to the lowest action so the lane stays deterministic.
+    return max(legal, key=lambda action: (policy[action], -action))
+
+
+def _policy_argmax_actions(
+    episodes: list[_FastArenaEpisode],
+    config: ArenaConfig,
+) -> list[SearchResult]:
+    """Play each side's own network priors greedily, without any search."""
+    priors: dict[str, list[list[float]]] = {
+        "player": [[] for _ in episodes],
+        "enemy": [[] for _ in episodes],
+    }
+    for side in ("player", "enemy"):
+        groups: dict[int, tuple[Any, list[int]]] = {}
+        for index, episode in enumerate(episodes):
+            network = getattr(episode, side)
+            entry = groups.setdefault(id(network), (network, []))
+            entry[1].append(index)
+        for network, indexes in groups.values():
+            snapshots = [episodes[index].snapshot for index in indexes]
+            shaped = _policy_priors(
+                network,
+                [getattr(snapshot, f"{side}_features") for snapshot in snapshots],
+                [getattr(snapshot, f"{side}_mask") for snapshot in snapshots],
+                [snapshot.request for snapshot in snapshots],
+                config,
+            )
+            for index, policy in zip(indexes, shaped, strict=True):
+                priors[side][index] = policy
+    results: list[SearchResult] = []
+    for index, episode in enumerate(episodes):
+        player_policy = priors["player"][index]
+        enemy_policy = priors["enemy"][index]
+        results.append(
+            SearchResult(
+                player_policy=tuple(player_policy),
+                enemy_policy=tuple(enemy_policy),
+                player_action=_argmax_legal(
+                    player_policy, episode.snapshot.player_mask
+                ),
+                enemy_action=_argmax_legal(enemy_policy, episode.snapshot.enemy_mask),
+                root_value=0.0,
+                nodes=0,
+                solver="network-policy-argmax-v1",
+                exploitability=None,
+                payoff_spread=None,
+                payoff_matrix=None,
+            )
+        )
+    return results
 
 
 def _legal(mask: int, action: int) -> bool:
@@ -1299,7 +1392,11 @@ def _run_fast_arena_spans(
                 for decision in range(budget):
                     if not active:
                         break
-                    search_results = _rmplus_search_many(server, active, config)
+                    search_results = (
+                        _policy_argmax_actions(active, config)
+                        if config.policy_only
+                        else _rmplus_search_many(server, active, config)
+                    )
                     searchable: list[_FastArenaEpisode] = []
                     available_results: list[SearchResult] = []
                     search_failures: list[_FastArenaEpisode] = []
@@ -1544,8 +1641,14 @@ def run_paired_arena(
         "pairs": games // 2,
         "seed_count": config.seed_count,
         "pairing": "same-reset-complete-model-side-swap-v2",
-        "action_selector": "simultaneous-matrix-tree-rust-cfrplus-every-decision-v4",
-        "search": asdict(_joint_search_config(config)),
+        "action_selector": (
+            "network-policy-argmax-v1"
+            if config.policy_only
+            else "simultaneous-matrix-tree-rust-cfrplus-every-decision-v4"
+        ),
+        "search": (
+            None if config.policy_only else asdict(_joint_search_config(config))
+        ),
         **(
             {
                 "side_swap_complete": True,
