@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import numpy as np
 import torch
 
 from battle_training.arena import (
@@ -123,6 +124,11 @@ from battle_training.transformer_pipeline import (
     _end_leaf_training,
     _epsilon_meta,
     _explore_search_result,
+    _finalize_frontier,
+    _frontier_entry,
+    _frontier_meta,
+    _frontier_score,
+    _FrontierBuffer,
     _gradient_report,
     _heuristic_population,
     _HeuristicNetwork,
@@ -131,11 +137,14 @@ from battle_training.transformer_pipeline import (
     _learning_rate_for_iteration,
     _load_completed_prefix,
     _load_examples,
+    _load_frontier_buffer,
+    _merged_frontier,
     _new_search,
     _normalized_saved_config,
     _pipeline_id,
     _play_game,
     _policy_entropy,
+    _policy_kl,
     _pooled_promotion_evidence,
     _pooled_root_only_share,
     _promotion_gate_scores,
@@ -144,8 +153,10 @@ from battle_training.transformer_pipeline import (
     _scheduled_for_opponent,
     _select_training_opponent,
     _serialized_network_config,
+    _serialized_snapshot,
     _shadow_seed_iterations,
     _smoothed_policy,
+    _snapshot_from_serialized,
     _training_level100,
     _training_pair,
     _training_pair_leg,
@@ -1513,6 +1524,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.policy_target_smoothing, 0.0)
         self.assertEqual(arguments.collection_dirichlet_alpha, 0.0)
         self.assertEqual(arguments.collection_dirichlet_weight, 0.25)
+        self.assertEqual(arguments.frontier_buffer_size, 0)
         self.assertEqual(arguments.budget_loss_weight, 0.05)
         self.assertEqual(arguments.budget_positive_weight, 4.0)
         self.assertEqual(arguments.precision, "bf16")
@@ -1655,6 +1667,7 @@ class TransformerTests(unittest.TestCase):
         config.pop("policy_target_smoothing")
         config.pop("collection_dirichlet_alpha")
         config.pop("collection_dirichlet_weight")
+        config.pop("frontier_buffer_size")
         normalized = _normalized_saved_config(config)
         self.assertIsNone(normalized["leaf_hidden_layers"])
         self.assertEqual(normalized["leaf_ema_decay"], 0.0)
@@ -1671,6 +1684,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["policy_target_smoothing"], 0.0)
         self.assertEqual(normalized["collection_dirichlet_alpha"], 0.0)
         self.assertEqual(normalized["collection_dirichlet_weight"], 0.25)
+        self.assertEqual(normalized["frontier_buffer_size"], 0)
         self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
         self.assertNotIn("leaf_hidden_layers", config)
 
@@ -4111,6 +4125,259 @@ class DirichletRootNoiseTest(unittest.TestCase):
         )
         self.assertEqual(arguments.collection_dirichlet_alpha, 0.6)
         self.assertEqual(arguments.collection_dirichlet_weight, 0.3)
+
+
+class FrontierBufferTest(unittest.TestCase):
+    @staticmethod
+    def _entry(score: float, tag: str) -> dict[str, float | str]:
+        return {"score": score, "tag": tag}
+
+    @staticmethod
+    def _snapshot() -> Snapshot:
+        return Snapshot(
+            handle=7,
+            player_features=np.asarray([1, 2, 3], dtype=np.int64),
+            enemy_features=np.asarray([4, 5], dtype=np.int64),
+            player_mask=0b101,
+            enemy_mask=0b011,
+            player_hash="abc",
+            enemy_hash="def",
+            turn=9,
+            terminal=False,
+            done=False,
+            terminal_return=None,
+            request="move",
+            divergence=None,
+        )
+
+    def test_zero_capacity_buffer_stores_nothing(self) -> None:
+        buffer = _FrontierBuffer(0)
+        self.assertFalse(buffer.capacity)
+        buffer.consider(self._entry(5.0, "a"))
+        self.assertEqual(buffer.entries(), [])
+
+    def test_buffer_keeps_the_top_scores(self) -> None:
+        buffer = _FrontierBuffer(3)
+        for score in [1.0, 5.0, 3.0, 4.0, 2.0]:
+            buffer.consider(self._entry(score, str(score)))
+        self.assertEqual(
+            [entry["score"] for entry in buffer.entries()], [5.0, 4.0, 3.0]
+        )
+
+    def test_tied_scores_keep_the_earliest_entry(self) -> None:
+        buffer = _FrontierBuffer(2)
+        for tag in ["first", "second", "third"]:
+            buffer.consider(self._entry(1.0, tag))
+        self.assertEqual(
+            [entry["tag"] for entry in buffer.entries()], ["first", "second"]
+        )
+
+    def test_buffer_is_bounded_at_capacity(self) -> None:
+        buffer = _FrontierBuffer(4)
+        for index in range(50):
+            buffer.consider(self._entry(float(index % 7), str(index)))
+        entries = buffer.entries()
+        self.assertEqual([entry["score"] for entry in entries], [6.0] * 4)
+        self.assertEqual([entry["tag"] for entry in entries], ["6", "13", "20", "27"])
+
+    def test_policy_kl_matches_manual_computation(self) -> None:
+        kl = _policy_kl([0.5, 0.25, 0.25, 0.7], [0.25, 0.5, 0.25, 0.9], 0b0111)
+        self.assertAlmostEqual(kl, 0.25 * math.log(2.0), places=12)
+
+    def test_policy_kl_is_zero_for_identical_distributions(self) -> None:
+        policy = [0.4, 0.6, 0.0]
+        self.assertEqual(_policy_kl(policy, policy, 0b011), 0.0)
+
+    def test_policy_kl_floors_a_zero_prior(self) -> None:
+        kl = _policy_kl([1.0, 0.0], [0.0, 1.0], 0b11)
+        self.assertAlmostEqual(kl, math.log(1e9), places=6)
+
+    def test_frontier_score_combines_surprise_and_kl(self) -> None:
+        row = {
+            "search_value": 0.6,
+            "value": -1,
+            "policy": [0.5, 0.25, 0.25, 0.7],
+            "legal_mask": 0b0111,
+        }
+        components = _frontier_score(row, [0.25, 0.5, 0.25, 0.9])
+        kl = 0.25 * math.log(2.0)
+        self.assertAlmostEqual(components["value_surprise"], 1.6, places=12)
+        self.assertAlmostEqual(components["policy_kl"], kl, places=12)
+        self.assertAlmostEqual(components["score"], 1.6 + kl, places=12)
+
+    def test_snapshot_round_trips_through_json(self) -> None:
+        snapshot = self._snapshot()
+        serialized = _serialized_snapshot(snapshot)
+        self.assertNotIn("handle", serialized)
+        restored = _snapshot_from_serialized(json.loads(json.dumps(serialized)))
+        self.assertEqual(restored.handle, -1)
+        np.testing.assert_array_equal(restored.player_features, [1, 2, 3])
+        np.testing.assert_array_equal(restored.enemy_features, [4, 5])
+        self.assertEqual(restored.player_features.dtype, np.int64)
+        self.assertFalse(restored.player_features.flags.writeable)
+        self.assertFalse(restored.enemy_features.flags.writeable)
+        for name in (
+            "player_mask",
+            "enemy_mask",
+            "player_hash",
+            "enemy_hash",
+            "turn",
+            "terminal",
+            "done",
+            "terminal_return",
+            "request",
+            "divergence",
+        ):
+            self.assertEqual(getattr(restored, name), getattr(snapshot, name))
+
+    def test_frontier_entry_assembles_recipe_actions_and_snapshot(self) -> None:
+        actor = SimpleNamespace(
+            episode=5,
+            pair=2,
+            pair_leg=1,
+            reset_episode=2,
+            pair_player_size=3,
+            pair_enemy_size=2,
+            level100=True,
+            teams_swapped=True,
+            episode_kind="mirror",
+            timeline=[
+                {"player_action": 0, "enemy_action": 4},
+                {"player_action": 6, "enemy_action": 1},
+                {"player_action": 2, "enemy_action": 2},
+            ],
+        )
+        config = SimpleNamespace(seed=97, balanced_final_species=True)
+        row = {
+            "decision": 2,
+            "side": "player",
+            "target_kind": "search",
+            "search_value": 0.25,
+            "value": -1,
+        }
+        components = {"score": 1.5, "value_surprise": 1.25, "policy_kl": 0.25}
+        snapshot = self._snapshot()
+        entry = _frontier_entry(config, 3, actor, row, components, snapshot)
+        self.assertEqual(entry["type"], "frontier")
+        self.assertEqual(entry["iteration"], 3)
+        self.assertEqual(entry["episode"], 5)
+        self.assertEqual(entry["pair"], 2)
+        self.assertEqual(entry["pair_leg"], 1)
+        self.assertEqual(entry["episode_kind"], "mirror")
+        self.assertEqual(entry["side"], "player")
+        self.assertEqual(entry["decision"], 2)
+        self.assertEqual(entry["target_kind"], "search")
+        self.assertEqual(entry["search_value"], 0.25)
+        self.assertEqual(entry["value"], -1)
+        self.assertEqual(entry["score"], 1.5)
+        self.assertEqual(entry["value_surprise"], 1.25)
+        self.assertEqual(entry["policy_kl"], 0.25)
+        self.assertEqual(
+            entry["reset"],
+            {
+                "seed": 97 + 3 * 10_000,
+                "episode": 2,
+                "player_size": 3,
+                "enemy_size": 2,
+                "level100": True,
+                "swapped": True,
+                "balanced_final_species": True,
+            },
+        )
+        self.assertEqual(entry["actions"], [[0, 4], [6, 1]])
+        self.assertEqual(entry["snapshot"], _serialized_snapshot(snapshot))
+        json.dumps(entry)
+
+    def test_finalize_frontier_writes_the_buffer_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "iteration-004.jsonl"
+            config = SimpleNamespace(frontier_buffer_size=2)
+            entries = [
+                {"type": "frontier", "score": 2.0, "tag": "hi"},
+                {"type": "frontier", "score": 1.0, "tag": "lo"},
+            ]
+            metrics = _finalize_frontier(
+                {"episodes": 8, "frontier": entries}, path, 4, config
+            )
+            self.assertEqual(metrics["episodes"], 8)
+            self.assertEqual(
+                metrics["frontier"],
+                {
+                    "version": "surprise-topn-v1",
+                    "capacity": 2,
+                    "entries": 2,
+                    "path": "frontier-004.jsonl",
+                    "max_score": 2.0,
+                    "min_score": 1.0,
+                },
+            )
+            frontier_path = path.with_name("frontier-004.jsonl")
+            lines = frontier_path.read_text().splitlines()
+            self.assertEqual(len(lines), 3)
+            header = json.loads(lines[0])
+            self.assertEqual(header["type"], "frontier-meta")
+            self.assertEqual(header["version"], "surprise-topn-v1")
+            self.assertEqual(header["iteration"], 4)
+            self.assertEqual(header["capacity"], 2)
+            self.assertEqual(header["entries"], 2)
+            self.assertEqual(_load_frontier_buffer(frontier_path), entries)
+
+    def test_finalize_frontier_without_entries_touches_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "iteration-007.jsonl"
+            config = SimpleNamespace(frontier_buffer_size=0)
+            metrics = _finalize_frontier({"episodes": 3}, path, 7, config)
+            self.assertEqual(metrics, {"episodes": 3})
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_finalize_frontier_records_an_empty_enabled_buffer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "iteration-002.jsonl"
+            config = SimpleNamespace(frontier_buffer_size=2)
+            metrics = _finalize_frontier({"frontier": []}, path, 2, config)
+            self.assertEqual(metrics["frontier"]["entries"], 0)
+            self.assertIsNone(metrics["frontier"]["max_score"])
+            self.assertIsNone(metrics["frontier"]["min_score"])
+            frontier_path = path.with_name("frontier-002.jsonl")
+            self.assertEqual(_load_frontier_buffer(frontier_path), [])
+
+    def test_merged_frontier_reselects_across_workers(self) -> None:
+        worker_a = [self._entry(3.0, "a3"), self._entry(1.0, "a1")]
+        worker_b = [self._entry(4.0, "b4"), self._entry(2.0, "b2")]
+        merged = _merged_frontier([worker_a, worker_b], 3)
+        self.assertEqual([entry["tag"] for entry in merged], ["b4", "a3", "b2"])
+
+    def test_frontier_meta_tags_appear_only_when_enabled(self) -> None:
+        self.assertEqual(_frontier_meta(SimpleNamespace(frontier_buffer_size=0)), {})
+        self.assertEqual(
+            _frontier_meta(SimpleNamespace(frontier_buffer_size=128)),
+            {"frontier_buffer": "surprise-topn-v1", "frontier_buffer_size": 128},
+        )
+
+    def test_load_frontier_buffer_rejects_unknown_versions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "frontier-001.jsonl"
+            path.write_text(
+                json.dumps({"type": "frontier-meta", "version": "other-v9"}) + "\n"
+            )
+            with self.assertRaises(ValueError):
+                _load_frontier_buffer(path)
+
+    def test_promotion_paths_never_reference_the_frontier(self) -> None:
+        source = inspect.getsource(_play_game) + inspect.getsource(_arena)
+        self.assertNotIn("frontier", source.lower())
+
+    def test_frontier_buffer_size_flows_from_the_cli(self) -> None:
+        arguments = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/frontier",
+                "--frontier-buffer-size",
+                "128",
+            ]
+        )
+        self.assertEqual(arguments.frontier_buffer_size, 128)
 
 
 if __name__ == "__main__":

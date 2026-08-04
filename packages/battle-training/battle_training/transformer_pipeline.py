@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import heapq
 import json
 import math
 import multiprocessing
@@ -14,6 +15,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 from torch import Tensor
 
@@ -114,6 +116,7 @@ class TransformerPipelineConfig:
     policy_target_smoothing: float = 0.0
     collection_dirichlet_alpha: float = 0.0
     collection_dirichlet_weight: float = 0.25
+    frontier_buffer_size: int = 0
     budget_loss_weight: float = 0.05
     budget_positive_weight: float = 4.0
     opponent_checkpoints: tuple[str, ...] = ()
@@ -267,6 +270,7 @@ class _ActorEpisode:
     final: dict[str, Any] | None = None
     inspection: dict[str, Any] | None = None
     timeline: list[dict[str, Any]] = field(default_factory=list)
+    frontier_snapshots: dict[int, Snapshot] = field(default_factory=dict)
 
 
 def _pipeline_id(
@@ -672,6 +676,195 @@ def _smoothed_policy(
     return smoothed
 
 
+_FRONTIER_VERSION = "surprise-topn-v1"
+_FRONTIER_KL_FLOOR = 1e-9
+
+
+def _policy_kl(policy: list[float], prior: list[float], legal_mask: int) -> float:
+    """KL(solve policy ‖ network prior) over the legal support only."""
+    total = 0.0
+    for action, probability in enumerate(policy):
+        if not legal_mask & (1 << action) or probability <= 0.0:
+            continue
+        floored = max(prior[action], _FRONTIER_KL_FLOOR)
+        total += probability * math.log(probability / floored)
+    return max(total, 0.0)
+
+
+def _frontier_score(row: dict[str, Any], prior: list[float]) -> dict[str, float]:
+    value_surprise = abs(row["search_value"] - row["value"])
+    policy_kl = _policy_kl(row["policy"], prior, row["legal_mask"])
+    return {
+        "score": value_surprise + policy_kl,
+        "value_surprise": value_surprise,
+        "policy_kl": policy_kl,
+    }
+
+
+class _FrontierBuffer:
+    """Bounded top-N buffer over scored entries; earlier entries win ties."""
+
+    def __init__(self, capacity: int) -> None:
+        self.capacity = max(capacity, 0)
+        self._heap: list[tuple[float, int, dict[str, Any]]] = []
+        self._counter = 0
+
+    def consider(self, entry: dict[str, Any]) -> None:
+        if not self.capacity:
+            return
+        # The unique -counter breaks score ties before tuple comparison can
+        # ever reach the (unorderable) entry dict.
+        item = (entry["score"], -self._counter, entry)
+        self._counter += 1
+        if len(self._heap) < self.capacity:
+            heapq.heappush(self._heap, item)
+        elif item[:2] > self._heap[0][:2]:
+            heapq.heapreplace(self._heap, item)
+
+    def entries(self) -> list[dict[str, Any]]:
+        ranked = sorted(self._heap, key=lambda item: item[:2], reverse=True)
+        return [entry for _, _, entry in ranked]
+
+
+def _serialized_snapshot(snapshot: Snapshot) -> dict[str, Any]:
+    # The native handle is session-local; frontier consumers re-derive a live
+    # handle by replaying the reset recipe, so it is dropped here.
+    return {
+        "player_features": snapshot.player_features.tolist(),
+        "enemy_features": snapshot.enemy_features.tolist(),
+        "player_mask": snapshot.player_mask,
+        "enemy_mask": snapshot.enemy_mask,
+        "player_hash": snapshot.player_hash,
+        "enemy_hash": snapshot.enemy_hash,
+        "turn": snapshot.turn,
+        "terminal": snapshot.terminal,
+        "done": snapshot.done,
+        "terminal_return": snapshot.terminal_return,
+        "request": snapshot.request,
+        "divergence": snapshot.divergence,
+    }
+
+
+def _snapshot_from_serialized(data: dict[str, Any]) -> Snapshot:
+    player_features = np.asarray(data["player_features"], dtype=np.int64)
+    enemy_features = np.asarray(data["enemy_features"], dtype=np.int64)
+    player_features.flags.writeable = False
+    enemy_features.flags.writeable = False
+    return Snapshot(
+        handle=-1,
+        player_features=player_features,
+        enemy_features=enemy_features,
+        player_mask=data["player_mask"],
+        enemy_mask=data["enemy_mask"],
+        player_hash=data["player_hash"],
+        enemy_hash=data["enemy_hash"],
+        turn=data["turn"],
+        terminal=data["terminal"],
+        done=data["done"],
+        terminal_return=data["terminal_return"],
+        request=data["request"],
+        divergence=data["divergence"],
+    )
+
+
+def _frontier_entry(
+    config: TransformerPipelineConfig,
+    iteration: int,
+    actor: _ActorEpisode,
+    row: dict[str, Any],
+    components: dict[str, float],
+    snapshot: Snapshot,
+) -> dict[str, Any]:
+    return {
+        "type": "frontier",
+        "iteration": iteration,
+        "episode": actor.episode,
+        "pair": actor.pair,
+        "pair_leg": actor.pair_leg,
+        "episode_kind": actor.episode_kind,
+        "side": row["side"],
+        "decision": row["decision"],
+        "target_kind": row["target_kind"],
+        "search_value": row["search_value"],
+        "value": row["value"],
+        **components,
+        "reset": {
+            "seed": config.seed + iteration * 10_000,
+            "episode": actor.reset_episode,
+            "player_size": actor.pair_player_size,
+            "enemy_size": actor.pair_enemy_size,
+            "level100": actor.level100,
+            "swapped": actor.teams_swapped,
+            "balanced_final_species": config.balanced_final_species,
+        },
+        "actions": [
+            [turn["player_action"], turn["enemy_action"]]
+            for turn in actor.timeline[: row["decision"]]
+        ],
+        "snapshot": _serialized_snapshot(snapshot),
+    }
+
+
+def _merged_frontier(
+    entry_lists: list[list[dict[str, Any]]], capacity: int
+) -> list[dict[str, Any]]:
+    merged = _FrontierBuffer(capacity)
+    for entries in entry_lists:
+        for entry in entries:
+            merged.consider(entry)
+    return merged.entries()
+
+
+def _frontier_meta(config: TransformerPipelineConfig) -> dict[str, Any]:
+    if not config.frontier_buffer_size:
+        return {}
+    return {
+        "frontier_buffer": _FRONTIER_VERSION,
+        "frontier_buffer_size": config.frontier_buffer_size,
+    }
+
+
+def _finalize_frontier(
+    metrics: dict[str, Any],
+    path: Path,
+    iteration: int,
+    config: TransformerPipelineConfig,
+) -> dict[str, Any]:
+    if "frontier" not in metrics:
+        return metrics
+    entries = metrics.pop("frontier")
+    frontier_path = path.with_name(f"frontier-{iteration:03d}.jsonl")
+    header = {
+        "type": "frontier-meta",
+        "version": _FRONTIER_VERSION,
+        "iteration": iteration,
+        "capacity": config.frontier_buffer_size,
+        "entries": len(entries),
+        "score": "value_surprise+policy_kl",
+    }
+    _jsonl(frontier_path, [header, *entries])
+    scores = [entry["score"] for entry in entries]
+    metrics["frontier"] = {
+        "version": _FRONTIER_VERSION,
+        "capacity": config.frontier_buffer_size,
+        "entries": len(entries),
+        "path": frontier_path.name,
+        "max_score": max(scores) if scores else None,
+        "min_score": min(scores) if scores else None,
+    }
+    return metrics
+
+
+def _load_frontier_buffer(path: Path) -> list[dict[str, Any]]:
+    with path.open() as handle:
+        rows = [json.loads(line) for line in handle if line.strip()]
+    if not rows or rows[0].get("type") != "frontier-meta":
+        raise ValueError(f"missing frontier-meta header in {path}")
+    if rows[0].get("version") != _FRONTIER_VERSION:
+        raise ValueError(f"unsupported frontier buffer version in {path}")
+    return rows[1:]
+
+
 def _policy_entropy(policy: list[float]) -> float:
     return -sum(
         probability * math.log(probability) for probability in policy if probability
@@ -785,6 +978,7 @@ def _collect_rows_single(
         "pairs": config.selfplay_episodes // 2,
         **_epsilon_meta(config),
         **_dirichlet_meta(config),
+        **_frontier_meta(config),
     }
     opponents = opponents or []
     if opponents:
@@ -817,6 +1011,7 @@ def _collect_rows_single(
     species_counts: dict[str, int] = {}
     decision_quality = DecisionQualityMetrics()
     recent_battles: list[dict[str, Any]] = []
+    frontier = _FrontierBuffer(config.frontier_buffer_size)
 
     def append_episode(
         actor: _ActorEpisode,
@@ -1102,6 +1297,8 @@ def _collect_rows_single(
                 for actor in active:
                     result = results[actor.episode]
                     snapshot = actor.snapshot
+                    if frontier.capacity:
+                        actor.frontier_snapshots[decision] = snapshot
                     valid_search_target = result.payoff_matrix is not None
                     search_diagnostics = result.diagnostics or {}
                     if valid_search_target:
@@ -1300,6 +1497,22 @@ def _collect_rows_single(
                                     setup_move_counts[setup_move] = (
                                         setup_move_counts.get(setup_move, 0) + 1
                                     )
+                        if frontier.capacity and actor.pending:
+                            priors, _ = network.evaluate(
+                                [row["features"] for row in actor.pending],
+                                [row["legal_mask"] for row in actor.pending],
+                            )
+                            for row, prior in zip(actor.pending, priors, strict=True):
+                                frontier.consider(
+                                    _frontier_entry(
+                                        config,
+                                        iteration,
+                                        actor,
+                                        row,
+                                        _frontier_score(row, prior),
+                                        actor.frontier_snapshots[row["decision"]],
+                                    )
+                                )
                         rows.extend(actor.pending)
                         examples += len(actor.pending)
                         append_episode(actor, "finished", decision + 1, reward)
@@ -1523,6 +1736,7 @@ def _collect_rows_single(
         / max(1, sum(row["request"] == "battle" for row in example_rows)),
         "setup_use_rate": sum("setup_move" in row for row in example_rows)
         / max(1, sum(row["request"] == "battle" for row in example_rows)),
+        **({"frontier": frontier.entries()} if frontier.capacity else {}),
         "sha256": sha256(path),
         "bytes": path.stat().st_size,
     }
@@ -1694,7 +1908,7 @@ def _merge_collection_rows(
         > schedule_tolerance
     ):
         raise RuntimeError("collection level-100 6v6 schedule differs from its target")
-    return {
+    merged = {
         "finished": total("finished"),
         "truncated": total("truncated"),
         "semantic_divergences": total("semantic_divergences"),
@@ -1781,6 +1995,12 @@ def _merge_collection_rows(
         "sha256": sha256(path),
         "bytes": path.stat().st_size,
     }
+    if config.frontier_buffer_size:
+        merged["frontier"] = _merged_frontier(
+            [metrics.get("frontier", []) for metrics in worker_metrics],
+            config.frontier_buffer_size,
+        )
+    return merged
 
 
 def _collect_rows(
@@ -1798,13 +2018,18 @@ def _collect_rows(
     for old_progress in progress_dir.glob("actor-*.json"):
         old_progress.unlink()
     if config.actor_processes == 1:
-        return _collect_rows_single(
+        return _finalize_frontier(
+            _collect_rows_single(
+                path,
+                network,
+                config,
+                iteration,
+                opponents,
+                progress_path=progress_dir / "actor-00.json",
+            ),
             path,
-            network,
-            config,
             iteration,
-            opponents,
-            progress_path=progress_dir / "actor-00.json",
+            config,
         )
     opponents = opponents or []
     payload = {
@@ -1846,7 +2071,12 @@ def _collect_rows(
                 )
             ]
             metrics = [future.result() for future in futures]
-        return _merge_collection_rows(path, worker_paths, metrics, config)
+        return _finalize_frontier(
+            _merge_collection_rows(path, worker_paths, metrics, config),
+            path,
+            iteration,
+            config,
+        )
 
 
 ExampleTensors = tuple[
@@ -2819,6 +3049,7 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("policy_target_smoothing", 0.0)
     normalized.setdefault("collection_dirichlet_alpha", 0.0)
     normalized.setdefault("collection_dirichlet_weight", 0.25)
+    normalized.setdefault("frontier_buffer_size", 0)
     return normalized
 
 
@@ -3020,6 +3251,8 @@ def run_transformer_pipeline(
         raise ValueError("collection_dirichlet_alpha must be nonnegative")
     if not 0.0 <= config.collection_dirichlet_weight <= 1.0:
         raise ValueError("collection_dirichlet_weight must be in [0, 1]")
+    if config.frontier_buffer_size < 0:
+        raise ValueError("frontier_buffer_size must be nonnegative")
     if not 0.0 <= config.budget_loss_weight <= 1.0:
         raise ValueError("budget_loss_weight must be in [0, 1]")
     if config.budget_positive_weight < 1.0:
