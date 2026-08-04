@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import math
 import pickle
 import random
 import sys
@@ -129,6 +130,7 @@ from battle_training.transformer_pipeline import (
     _normalized_saved_config,
     _pipeline_id,
     _play_game,
+    _policy_entropy,
     _pooled_promotion_evidence,
     _pooled_root_only_share,
     _promotion_gate_scores,
@@ -138,6 +140,7 @@ from battle_training.transformer_pipeline import (
     _select_training_opponent,
     _serialized_network_config,
     _shadow_seed_iterations,
+    _smoothed_policy,
     _training_level100,
     _training_pair,
     _training_pair_leg,
@@ -1502,6 +1505,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.router_fn_exposure_floor, 0.0)
         self.assertEqual(arguments.collection_epsilon, 0.0)
         self.assertEqual(arguments.collection_epsilon_turns, 0)
+        self.assertEqual(arguments.policy_target_smoothing, 0.0)
         self.assertEqual(arguments.budget_loss_weight, 0.05)
         self.assertEqual(arguments.budget_positive_weight, 4.0)
         self.assertEqual(arguments.precision, "bf16")
@@ -1641,6 +1645,7 @@ class TransformerTests(unittest.TestCase):
         config.pop("router_fn_exposure_floor")
         config.pop("collection_epsilon")
         config.pop("collection_epsilon_turns")
+        config.pop("policy_target_smoothing")
         normalized = _normalized_saved_config(config)
         self.assertIsNone(normalized["leaf_hidden_layers"])
         self.assertEqual(normalized["leaf_ema_decay"], 0.0)
@@ -1654,6 +1659,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["router_fn_exposure_floor"], 0.0)
         self.assertEqual(normalized["collection_epsilon"], 0.0)
         self.assertEqual(normalized["collection_epsilon_turns"], 0)
+        self.assertEqual(normalized["policy_target_smoothing"], 0.0)
         self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
         self.assertNotIn("leaf_hidden_layers", config)
 
@@ -3909,6 +3915,50 @@ class CollectionEpsilonTest(unittest.TestCase):
         )
         self.assertEqual(arguments.collection_epsilon, 0.05)
         self.assertEqual(arguments.collection_epsilon_turns, 12)
+
+
+class PolicyTargetSmoothingTest(unittest.TestCase):
+    def test_zero_smoothing_returns_the_same_list(self) -> None:
+        policy = [0.75, 0.25, 0.0, 0.0]
+        self.assertIs(_smoothed_policy(policy, 0b0011, 0.0), policy)
+
+    def test_mixture_math_is_exact_over_the_legal_support(self) -> None:
+        smoothed = _smoothed_policy([0.9, 0.1, 0.0, 0.0], 0b0011, 0.05)
+        self.assertAlmostEqual(smoothed[0], 0.95 * 0.9 + 0.025)
+        self.assertAlmostEqual(smoothed[1], 0.95 * 0.1 + 0.025)
+        self.assertEqual(smoothed[2:], [0.0, 0.0])
+        self.assertAlmostEqual(sum(smoothed), 1.0)
+
+    def test_illegal_actions_keep_exactly_zero_mass(self) -> None:
+        smoothed = _smoothed_policy([0.5, 0.0, 0.5, 0.0, 0.0], 0b00101, 0.2)
+        self.assertEqual(smoothed[1], 0.0)
+        self.assertEqual(smoothed[3], 0.0)
+        self.assertEqual(smoothed[4], 0.0)
+        self.assertAlmostEqual(sum(smoothed), 1.0)
+
+    def test_near_one_hot_targets_gain_the_computed_entropy_floor(self) -> None:
+        one_hot = [1.0, 0.0, 0.0, 0.0]
+        self.assertEqual(_policy_entropy(one_hot), 0.0)
+        smoothed = _smoothed_policy(one_hot, 0b1111, 0.04)
+        expected = [0.96 + 0.01, 0.01, 0.01, 0.01]
+        for actual, want in zip(smoothed, expected, strict=True):
+            self.assertAlmostEqual(actual, want)
+        self.assertAlmostEqual(
+            _policy_entropy(smoothed),
+            -(0.97 * math.log(0.97) + 3 * 0.01 * math.log(0.01)),
+        )
+
+    def test_policy_target_smoothing_flows_from_the_cli(self) -> None:
+        arguments = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/smoothing",
+                "--policy-target-smoothing",
+                "0.05",
+            ]
+        )
+        self.assertEqual(arguments.policy_target_smoothing, 0.05)
 
 
 if __name__ == "__main__":

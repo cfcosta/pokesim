@@ -106,6 +106,7 @@ class TransformerPipelineConfig:
     router_fn_exposure_floor: float = 0.0
     collection_epsilon: float = 0.0
     collection_epsilon_turns: int = 0
+    policy_target_smoothing: float = 0.0
     budget_loss_weight: float = 0.05
     budget_positive_weight: float = 4.0
     opponent_checkpoints: tuple[str, ...] = ()
@@ -620,6 +621,23 @@ def _epsilon_meta(config: TransformerPipelineConfig) -> dict[str, Any]:
     }
 
 
+def _smoothed_policy(
+    policy: list[float], legal_mask: int, smoothing: float
+) -> list[float]:
+    # Mixes the solve policy with uniform mass over the LEGAL support only;
+    # illegal actions keep exactly zero probability.
+    if smoothing <= 0.0:
+        return policy
+    legal = [action for action in range(len(policy)) if legal_mask & (1 << action)]
+    if not legal:
+        return policy
+    uniform = smoothing / len(legal)
+    smoothed = [0.0] * len(policy)
+    for action in legal:
+        smoothed[action] = (1.0 - smoothing) * policy[action] + uniform
+    return smoothed
+
+
 def _policy_entropy(policy: list[float]) -> float:
     return -sum(
         probability * math.log(probability) for probability in policy if probability
@@ -743,6 +761,7 @@ def _collect_rows_single(
             "schedule": "balanced-model-heuristic-round-robin-v2",
         }
     rows: list[dict[str, Any]] = [meta]
+    smoothing = config.policy_target_smoothing
     finished = truncated = semantic_divergences = examples = transitions = 0
     deep_search_decisions = root_only_decisions = 0
     forced_router_samples = forced_router_false_negatives = 0
@@ -1128,8 +1147,12 @@ def _collect_rows_single(
                         "side": "player",
                         "state_hash": snapshot.player_hash,
                         "features": snapshot.player_features.tolist(),
-                        "policy": list(result.player_policy),
-                        "opponent_policy": list(result.enemy_policy),
+                        "policy": _smoothed_policy(
+                            list(result.player_policy), snapshot.player_mask, smoothing
+                        ),
+                        "opponent_policy": _smoothed_policy(
+                            list(result.enemy_policy), snapshot.enemy_mask, smoothing
+                        ),
                         "opponent_legal_mask": snapshot.enemy_mask,
                         "search_value": result.root_value,
                         "action": result.player_action,
@@ -1150,8 +1173,12 @@ def _collect_rows_single(
                         "side": "enemy",
                         "state_hash": snapshot.enemy_hash,
                         "features": snapshot.enemy_features.tolist(),
-                        "policy": list(result.enemy_policy),
-                        "opponent_policy": list(result.player_policy),
+                        "policy": _smoothed_policy(
+                            list(result.enemy_policy), snapshot.enemy_mask, smoothing
+                        ),
+                        "opponent_policy": _smoothed_policy(
+                            list(result.player_policy), snapshot.player_mask, smoothing
+                        ),
                         "opponent_legal_mask": snapshot.player_mask,
                         "search_value": -result.root_value,
                         "action": result.enemy_action,
@@ -2748,6 +2775,7 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("router_fn_exposure_floor", 0.0)
     normalized.setdefault("collection_epsilon", 0.0)
     normalized.setdefault("collection_epsilon_turns", 0)
+    normalized.setdefault("policy_target_smoothing", 0.0)
     return normalized
 
 
@@ -2943,6 +2971,8 @@ def run_transformer_pipeline(
         raise ValueError("collection_epsilon must be in [0, 1]")
     if config.collection_epsilon_turns < 0:
         raise ValueError("collection_epsilon_turns must be nonnegative")
+    if not 0.0 <= config.policy_target_smoothing <= 1.0:
+        raise ValueError("policy_target_smoothing must be in [0, 1]")
     if not 0.0 <= config.budget_loss_weight <= 1.0:
         raise ValueError("budget_loss_weight must be in [0, 1]")
     if config.budget_positive_weight < 1.0:
