@@ -130,6 +130,7 @@ from battle_training.transformer_pipeline import (
     _arena_config,
     _assemble_population,
     _begin_leaf_training,
+    _bootstrap_waiver_active,
     _collect_rows_single,
     _collection_prior_noise,
     _collection_quality,
@@ -152,6 +153,7 @@ from battle_training.transformer_pipeline import (
     _initial_leaf_ema_state,
     _leaf_ema_checkpoint_state,
     _learning_rate_for_iteration,
+    _lineage_promotions,
     _load_completed_prefix,
     _load_examples,
     _load_frontier_buffer,
@@ -1547,6 +1549,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.leaf_loss_weight, 0.25)
         self.assertEqual(arguments.promotion_nonfinish_policy, "losses")
         self.assertEqual(arguments.promotion_pooled_z, 1.96)
+        self.assertTrue(arguments.bootstrap_promotion)
         self.assertEqual(arguments.lr_schedule, "constant")
         self.assertEqual(arguments.lr_milestones, ())
         self.assertEqual(arguments.lr_decay_factor, 0.1)
@@ -1699,6 +1702,7 @@ class TransformerTests(unittest.TestCase):
         config.pop("promotion_nonfinish_policy")
         config.pop("promotion_pooled_z")
         config.pop("promotion_policy_games")
+        config.pop("bootstrap_promotion")
         config.pop("adaptive_fn_pool_window")
         config.pop("lr_schedule")
         config.pop("lr_milestones")
@@ -1718,6 +1722,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["promotion_nonfinish_policy"], "losses")
         self.assertEqual(normalized["promotion_pooled_z"], 0.0)
         self.assertEqual(normalized["promotion_policy_games"], 0)
+        self.assertFalse(normalized["bootstrap_promotion"])
         self.assertEqual(normalized["adaptive_fn_pool_window"], 1)
         self.assertEqual(normalized["lr_schedule"], "constant")
         self.assertEqual(normalized["lr_milestones"], ())
@@ -2185,6 +2190,61 @@ class TransformerTests(unittest.TestCase):
             )
         )
 
+    def test_lineage_promotions_counts_accepted_records(self) -> None:
+        self.assertEqual(_lineage_promotions([]), 0)
+        records = [
+            {"promotion": {"accepted": False}},
+            {"promotion": {"accepted": True}},
+            {},
+            {"promotion": {"accepted": True}},
+        ]
+        self.assertEqual(_lineage_promotions(records), 2)
+
+    def test_bootstrap_waiver_requires_pristine_lineage(self) -> None:
+        config = TransformerPipelineConfig(
+            iterations=1,
+            selfplay_episodes=8,
+            arena_episodes=8,
+            episode_budget=64,
+            search_depth=1,
+            epochs=1,
+            batch_size=8,
+            learning_rate=1e-3,
+            weight_decay=0.0,
+            seed=1,
+            device="cpu",
+            d_model=8,
+            heads=2,
+            layers=1,
+            feedforward=16,
+            bootstrap_promotion=True,
+        )
+        self.assertTrue(_bootstrap_waiver_active(config, []))
+        self.assertTrue(
+            _bootstrap_waiver_active(config, [{"promotion": {"accepted": False}}])
+        )
+        self.assertFalse(
+            _bootstrap_waiver_active(config, [{"promotion": {"accepted": True}}])
+        )
+        self.assertFalse(
+            _bootstrap_waiver_active(
+                config,
+                [
+                    {"promotion": {"accepted": True}},
+                    {"promotion": {"accepted": False}},
+                ],
+            )
+        )
+        self.assertFalse(
+            _bootstrap_waiver_active(replace(config, bootstrap_promotion=False), [])
+        )
+        self.assertFalse(
+            _bootstrap_waiver_active(
+                replace(config, warm_start_incumbent_checkpoint="/tmp/incumbent.pt"),
+                [],
+            )
+        )
+
     def test_policy_gate_superior_requires_quality_and_confidence(self) -> None:
         def lane(**overrides: object) -> dict[str, object]:
             report: dict[str, object] = {
@@ -2263,6 +2323,39 @@ class TransformerTests(unittest.TestCase):
         gate_config = _arena_config(config, 4, 99, 2, policy_only=True)
         self.assertTrue(gate_config.policy_only)
         self.assertFalse(_arena_config(config, 4, 99, 2).policy_only)
+
+    def test_bootstrap_promotion_flows_from_the_cli(self) -> None:
+        arguments = training_parser().parse_args(
+            ["transformer-train", "--output", "/tmp/bootstrap"]
+        )
+        self.assertTrue(arguments.bootstrap_promotion)
+        disabled = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/bootstrap",
+                "--no-bootstrap-promotion",
+            ]
+        )
+        self.assertFalse(disabled.bootstrap_promotion)
+        config = TransformerPipelineConfig(
+            iterations=1,
+            selfplay_episodes=8,
+            arena_episodes=8,
+            episode_budget=64,
+            search_depth=1,
+            epochs=1,
+            batch_size=8,
+            learning_rate=1e-3,
+            weight_decay=0.0,
+            seed=1,
+            device="cpu",
+            d_model=8,
+            heads=2,
+            layers=1,
+            feedforward=16,
+        )
+        self.assertFalse(config.bootstrap_promotion)
 
     def test_promotion_pooled_z_flows_from_the_cli(self) -> None:
         arguments = training_parser().parse_args(

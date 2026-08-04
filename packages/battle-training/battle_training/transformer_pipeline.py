@@ -135,6 +135,7 @@ class TransformerPipelineConfig:
     minimum_promotion_score: float = 0.50
     promotion_nonfinish_policy: str = "losses"
     promotion_pooled_z: float = 0.0
+    bootstrap_promotion: bool = False
     enforce_quality_gate: bool = True
     chance_samples_per_joint: int = 1
     regret_iterations: int = 2048
@@ -3241,6 +3242,7 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("promotion_nonfinish_policy", "losses")
     normalized.setdefault("promotion_pooled_z", 0.0)
     normalized.setdefault("promotion_policy_games", 0)
+    normalized.setdefault("bootstrap_promotion", False)
     normalized.setdefault("adaptive_fn_pool_window", 1)
     normalized.setdefault("lr_schedule", "constant")
     normalized.setdefault("lr_milestones", ())
@@ -3387,6 +3389,29 @@ def _resumed_pooled_evidence(
         return None
     record = promotion if lane == "promotion" else (promotion.get(lane) or {})
     return record.get("pooled")
+
+
+def _lineage_promotions(training: list[dict[str, Any]]) -> int:
+    return sum(
+        1 for record in training if (record.get("promotion") or {}).get("accepted")
+    )
+
+
+def _bootstrap_waiver_active(
+    config: TransformerPipelineConfig, training: list[dict[str, Any]]
+) -> bool:
+    """Decide whether generation zero may promote without superiority proof.
+
+    Until the first promotion lands, the incumbent is the random
+    initialization, and demanding CI-low >= 0.50 against it stalls the
+    lineage when search play equalizes the sides. A warm-started incumbent
+    is a real model, so it keeps the full statistical requirement.
+    """
+    return (
+        config.bootstrap_promotion
+        and config.warm_start_incumbent_checkpoint is None
+        and _lineage_promotions(training) == 0
+    )
 
 
 def run_transformer_pipeline(
@@ -4145,6 +4170,12 @@ def run_transformer_pipeline(
             statistically_superior = statistically_superior or policy_superior
         else:
             policy_pooled_evidence = None
+        bootstrap_waiver = _bootstrap_waiver_active(config, training)
+        superiority_satisfied = statistically_superior or (
+            bootstrap_waiver
+            and promotion_score is not None
+            and promotion_score >= config.minimum_promotion_score
+        )
         if config.enforce_quality_gate:
             accepted = (
                 collection_quality["pass"]
@@ -4156,7 +4187,7 @@ def run_transformer_pipeline(
                 and campaign_arena["campaign"]["pass"]
                 and probe_arena["data_quality_pass"]
                 and probe_arena["quality_pass"]
-                and statistically_superior
+                and superiority_satisfied
                 and probes["pass"]
             )
         else:
@@ -4173,6 +4204,15 @@ def run_transformer_pipeline(
         promotion["nonfinish_policy"] = config.promotion_nonfinish_policy
         promotion["pooled"] = pooled_evidence
         promotion["policy_gate"] = policy_gate
+        promotion["bootstrap_promotion"] = {
+            "eligible": bootstrap_waiver,
+            "applied": bool(
+                config.enforce_quality_gate
+                and accepted
+                and bootstrap_waiver
+                and not statistically_superior
+            ),
+        }
         promotion["stratified_party_gate"] = promotion["strata"]["pass"]
         promotion["held_out_probes"] = probes
         promotion["probe_arena"] = probe_arena
