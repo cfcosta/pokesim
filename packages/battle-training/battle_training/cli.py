@@ -216,6 +216,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--opponent-fraction", type=float, default=0.5)
     parser.add_argument("--model-opponent-share", type=float, default=0.5)
     parser.add_argument("--historical-window", type=int, default=4)
+    parser.add_argument("--shadow-opponent-window", type=int, default=0)
     parser.add_argument("--promotion-games", type=int, default=16 if smoke else 2048)
     parser.add_argument("--promotion-seed-count", type=int, default=2 if smoke else 8)
     parser.add_argument("--probe-games", type=int, default=16 if smoke else 256)
@@ -411,6 +412,7 @@ def main(argv: list[str] | None = None) -> int:
             opponent_fraction=arguments.opponent_fraction,
             model_opponent_share=arguments.model_opponent_share,
             historical_window=arguments.historical_window,
+            shadow_opponent_window=arguments.shadow_opponent_window,
             promotion_games=arguments.promotion_games,
             promotion_seed_count=arguments.promotion_seed_count,
             probe_games=arguments.probe_games,

@@ -109,6 +109,7 @@ class TransformerPipelineConfig:
     opponent_fraction: float = 0.5
     model_opponent_share: float = 0.5
     historical_window: int = 4
+    shadow_opponent_window: int = 0
     promotion_games: int = 2048
     promotion_seed_count: int = 8
     probe_games: int = 256
@@ -300,6 +301,52 @@ def _select_training_opponent(
         local_ordinal = ordinal - selected_models
     model, identity = group[local_ordinal % len(group)]
     return model, identity, local_ordinal
+
+
+def _assemble_population(
+    opponents: list[tuple[Any, str]],
+    incumbent: tuple[Any, str],
+    initial: tuple[Any, str],
+    historical: list[tuple[Any, str]],
+    shadow_pool: list[tuple[Any, str]],
+    *,
+    historical_window: int,
+    shadow_window: int,
+) -> list[tuple[Any, str]]:
+    """Assemble the per-iteration opponent population, deduplicated by identity.
+
+    With ``shadow_window`` zero this reproduces the legacy population exactly:
+    fixed opponents, the incumbent, the initial anchor when it differs from the
+    incumbent, and the accepted lineage. A positive ``shadow_window`` extends it
+    with the most recent shadow-learner checkpoints regardless of acceptance;
+    shadows of accepted iterations deduplicate against the lineage entries.
+    """
+    population = list(opponents) + [incumbent]
+    if incumbent[1] != initial[1]:
+        population.append(initial)
+    if historical_window:
+        population.extend(historical[:-1][-historical_window:])
+    if shadow_window:
+        population.extend(shadow_pool[-shadow_window:])
+    return list(
+        {identity: (model, identity) for model, identity in population}.values()
+    )
+
+
+def _append_shadow_opponent(
+    shadow_pool: list[tuple[Any, str]], entry: tuple[Any, str], window: int
+) -> None:
+    if window <= 0:
+        return
+    shadow_pool.append(entry)
+    while len(shadow_pool) > window:
+        shadow_pool.pop(0)
+
+
+def _shadow_seed_iterations(completed: int, window: int) -> list[int]:
+    if window <= 0 or completed <= 0:
+        return []
+    return list(range(max(1, completed - window + 1), completed + 1))
 
 
 def _training_pair(episode: int) -> int:
@@ -2592,6 +2639,7 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("lr_schedule", "constant")
     normalized.setdefault("lr_milestones", ())
     normalized.setdefault("lr_decay_factor", 0.1)
+    normalized.setdefault("shadow_opponent_window", 0)
     return normalized
 
 
@@ -2856,6 +2904,8 @@ def run_transformer_pipeline(
         raise ValueError("opponent_fraction must be in [0, 1]")
     if not 0.0 <= config.model_opponent_share <= 1.0:
         raise ValueError("model_opponent_share must be in [0, 1]")
+    if config.shadow_opponent_window < 0:
+        raise ValueError("shadow_opponent_window must be nonnegative")
     build_search_server()
     with SearchServer() as protocol:
         feature_count = protocol.feature_count
@@ -3111,10 +3161,23 @@ def run_transformer_pipeline(
         )
         for iteration in accepted_iterations[-(config.historical_window + 1) :]
     ]
+    shadow_pool: list[tuple[Any, str]] = []
+    for shadow_iteration in _shadow_seed_iterations(
+        first_iteration - 1, config.shadow_opponent_window
+    ):
+        shadow_checkpoint = root / "checkpoints" / f"policy-{shadow_iteration:03d}.pt"
+        shadow_state = load_checkpoint(shadow_checkpoint, device).get("learner_model")
+        if not isinstance(shadow_state, dict):
+            continue
+        shadow_network = BattleTransformer(model_config).to(device)
+        shadow_network.load_state_dict(shadow_state)
+        shadow_network.eval()
+        shadow_pool.append((shadow_network, sha256(shadow_checkpoint)))
     _configure_inference(
         [network, incumbent_network, initial, initial_anchor]
         + [model for model, _ in opponents]
-        + [model for model, _ in historical],
+        + [model for model, _ in historical]
+        + [model for model, _ in shadow_pool],
         config.inference_engine,
     )
     write_monitor_state(
@@ -3125,13 +3188,14 @@ def run_transformer_pipeline(
     )
     pooled_evidence = _resumed_pooled_evidence(training)
     for iteration in range(first_iteration, config.iterations + 1):
-        population = opponents + [(incumbent_network, incumbent_identity)]
-        if incumbent_identity != initial_identity:
-            population.append((initial_anchor, initial_identity))
-        if config.historical_window:
-            population.extend(historical[:-1][-config.historical_window :])
-        population = list(
-            {identity: (model, identity) for model, identity in population}.values()
+        population = _assemble_population(
+            opponents,
+            (incumbent_network, incumbent_identity),
+            (initial_anchor, initial_identity),
+            historical,
+            shadow_pool,
+            historical_window=config.historical_window,
+            shadow_window=config.shadow_opponent_window,
         )
         shard = root / "shards" / f"iteration-{iteration:03d}.jsonl"
         write_monitor_state(
@@ -3437,6 +3501,12 @@ def run_transformer_pipeline(
             )
         if len(historical) > config.historical_window + 1:
             historical.pop(0)
+        if config.shadow_opponent_window:
+            _append_shadow_opponent(
+                shadow_pool,
+                (network.detached_copy(device), sha256(checkpoint)),
+                config.shadow_opponent_window,
+            )
         write_json(
             root / "metrics" / f"iteration-{iteration:03d}.json",
             {

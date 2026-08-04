@@ -107,7 +107,9 @@ from battle_training.rmplus_native import (
 )
 from battle_training.transformer_pipeline import (
     TransformerPipelineConfig,
+    _append_shadow_opponent,
     _apply_learning_rate,
+    _assemble_population,
     _begin_leaf_training,
     _collection_quality,
     _end_leaf_training,
@@ -128,6 +130,7 @@ from battle_training.transformer_pipeline import (
     _scheduled_for_opponent,
     _select_training_opponent,
     _serialized_network_config,
+    _shadow_seed_iterations,
     _training_level100,
     _training_pair,
     _training_pair_leg,
@@ -1487,6 +1490,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.adaptive_force_deep_fraction, 0.10)
         self.assertEqual(arguments.adaptive_max_false_negative_rate, 0.10)
         self.assertEqual(arguments.adaptive_fn_pool_window, 1)
+        self.assertEqual(arguments.shadow_opponent_window, 0)
         self.assertEqual(arguments.budget_loss_weight, 0.05)
         self.assertEqual(arguments.budget_positive_weight, 4.0)
         self.assertEqual(arguments.precision, "bf16")
@@ -1622,6 +1626,7 @@ class TransformerTests(unittest.TestCase):
         config.pop("lr_schedule")
         config.pop("lr_milestones")
         config.pop("lr_decay_factor")
+        config.pop("shadow_opponent_window")
         normalized = _normalized_saved_config(config)
         self.assertIsNone(normalized["leaf_hidden_layers"])
         self.assertEqual(normalized["leaf_ema_decay"], 0.0)
@@ -1631,6 +1636,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["lr_schedule"], "constant")
         self.assertEqual(normalized["lr_milestones"], ())
         self.assertEqual(normalized["lr_decay_factor"], 0.1)
+        self.assertEqual(normalized["shadow_opponent_window"], 0)
         self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
         self.assertNotIn("leaf_hidden_layers", config)
 
@@ -3503,6 +3509,109 @@ class ManifestTests(unittest.TestCase):
             self.assertEqual(verify_manifest(root), [])
             (root / "artifact.txt").write_text("changed\n")
             self.assertTrue(verify_manifest(root))
+
+
+class ShadowOpponentPoolTest(unittest.TestCase):
+    def test_assemble_population_zero_window_matches_legacy(self) -> None:
+        opponents = [("heuristic-model", "heuristic-aggressive-v1")]
+        incumbent = ("incumbent-model", "sha-004")
+        initial = ("initial-model", "sha-000")
+        historical = [("model-1", "sha-001"), ("model-4", "sha-004")]
+        shadows = [("shadow-4", "sha-004"), ("shadow-5", "sha-005")]
+        population = _assemble_population(
+            opponents,
+            incumbent,
+            initial,
+            historical,
+            shadows,
+            historical_window=4,
+            shadow_window=0,
+        )
+        legacy = list(opponents) + [incumbent, initial]
+        legacy.extend(historical[:-1][-4:])
+        legacy = list(
+            {identity: (model, identity) for model, identity in legacy}.values()
+        )
+        self.assertEqual(population, legacy)
+        self.assertNotIn("sha-005", [identity for _, identity in population])
+
+    def test_assemble_population_skips_initial_when_it_is_the_incumbent(self) -> None:
+        population = _assemble_population(
+            [],
+            ("model", "sha-000"),
+            ("model", "sha-000"),
+            [],
+            [],
+            historical_window=4,
+            shadow_window=0,
+        )
+        self.assertEqual(population, [("model", "sha-000")])
+
+    def test_assemble_population_admits_recent_shadows_deduplicated(self) -> None:
+        # Accepts {1, 4}, rejects {2, 3, 5}: the accepted lineage carries
+        # iterations 1 and 4, the shadow window carries 4 and 5, and the
+        # accepted iteration 4 appears exactly once after deduplication.
+        opponents = [("heuristic-model", "heuristic-aggressive-v1")]
+        incumbent = ("incumbent-model", "sha-004")
+        initial = ("initial-model", "sha-000")
+        historical = [("model-1", "sha-001"), ("model-4", "sha-004")]
+        shadows = [("shadow-4", "sha-004"), ("shadow-5", "sha-005")]
+        population = _assemble_population(
+            opponents,
+            incumbent,
+            initial,
+            historical,
+            shadows,
+            historical_window=4,
+            shadow_window=2,
+        )
+        self.assertEqual(
+            [identity for _, identity in population],
+            ["heuristic-aggressive-v1", "sha-004", "sha-000", "sha-001", "sha-005"],
+        )
+
+    def test_assemble_population_shadow_window_bounds_the_extension(self) -> None:
+        shadows = [(f"shadow-{index}", f"sha-{index:03d}") for index in range(1, 6)]
+        population = _assemble_population(
+            [],
+            ("incumbent-model", "sha-incumbent"),
+            ("initial-model", "sha-000"),
+            [],
+            shadows,
+            historical_window=0,
+            shadow_window=2,
+        )
+        self.assertEqual(
+            [identity for _, identity in population],
+            ["sha-incumbent", "sha-000", "sha-004", "sha-005"],
+        )
+
+    def test_append_shadow_opponent_trims_to_window(self) -> None:
+        pool: list[tuple[str, str]] = []
+        for index in range(4):
+            _append_shadow_opponent(pool, (f"model-{index}", f"sha-{index}"), 2)
+        self.assertEqual(pool, [("model-2", "sha-2"), ("model-3", "sha-3")])
+        untouched: list[tuple[str, str]] = []
+        _append_shadow_opponent(untouched, ("model", "sha"), 0)
+        self.assertEqual(untouched, [])
+
+    def test_shadow_seed_iterations_cover_the_completed_suffix(self) -> None:
+        self.assertEqual(_shadow_seed_iterations(0, 6), [])
+        self.assertEqual(_shadow_seed_iterations(5, 0), [])
+        self.assertEqual(_shadow_seed_iterations(5, 2), [4, 5])
+        self.assertEqual(_shadow_seed_iterations(3, 6), [1, 2, 3])
+
+    def test_shadow_opponent_window_flows_from_the_cli(self) -> None:
+        arguments = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/shadow-pool",
+                "--shadow-opponent-window",
+                "6",
+            ]
+        )
+        self.assertEqual(arguments.shadow_opponent_window, 6)
 
 
 if __name__ == "__main__":
