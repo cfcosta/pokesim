@@ -72,8 +72,9 @@ or neural code moved into Rust. Each controller decision still ends in
 simultaneous RM+ over the complete root; adaptive routing changes only whether
 deeper refinements are requested. V27 shares one twelve-process evaluation pool
 across promotion, probes, and campaign. Pair-preserving balanced spans keep all
-workers useful, compiled models stay resident between gates, and transient
-progress reports expose completed evaluation games. Final reporting assigns
+workers useful, compiled models stay resident between gates, and each promotion
+worker atomically streams completed-game counts, provisional paired confidence,
+and recent battle outcomes while the arena is still running. Final reporting assigns
 whole independent arenas to the same process budget, preserving byte-identical
 per-arena execution while loading the deployed candidate once per worker.
 
@@ -143,7 +144,10 @@ change the listener. The page polls local artifacts every two seconds and shows:
 - promotion strata, campaign cases, and skill probes;
 - accepted/rejected updates and every promotion quality gate.
 
-Training updates `monitor-state.json` and `.monitor/actor-*.json` atomically. The
+Training updates `monitor-state.json`, `.monitor/actor-*.json`, and live
+`.monitor/arena-promotion-*.json` telemetry atomically. Promotion workers publish
+at most once per second, so progress, provisional scores, confidence, and recent
+battle outcomes appear without changing arena batches or reduction order. The
 monitor never imports mechanics state, mutates checkpoints, or controls the
 trainer. These transient files are removed before the immutable final manifest;
 a completed dashboard is reconstructed from `summary.json` and iteration metrics.

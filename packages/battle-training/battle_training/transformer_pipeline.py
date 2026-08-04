@@ -30,6 +30,7 @@ from .arena import (
     ArenaConfig,
     ArenaEvaluationPool,
     ArenaReportJob,
+    ArenaTelemetry,
     _choice_detail,
     _compact_inspection,
     _compact_turn_inspection,
@@ -3219,6 +3220,7 @@ def run_transformer_pipeline(
                     "Running paired promotion games",
                     training_diagnostics=training_metrics["diagnostics"]["latest"],
                 ),
+                telemetry=ArenaTelemetry(root / ".monitor", "promotion", iteration),
             )
         except BaseException:
             evaluation_pool.close()

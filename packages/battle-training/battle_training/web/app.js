@@ -107,7 +107,7 @@ function element(tag, className, content) {
 }
 
 function latestPromotion(data) {
-  return data.status?.promotion || data.latest?.promotion || data.latest?.training?.promotion || null;
+  return data.evaluation || data.status?.promotion || data.latest?.promotion || data.latest?.training?.promotion || null;
 }
 
 function renderConnection(data) {
@@ -487,9 +487,14 @@ function renderGates(data) {
     gateRow("Campaign suite", promotion.campaign_gate ?? null),
   );
   const badge = $("latest-decision");
-  const accepted = promotion.accepted;
-  badge.className = `decision-badge ${accepted ? "accepted" : "rejected"}`;
-  text(badge, accepted ? "Promoted" : "Incumbent kept");
+  if (promotion.live) {
+    badge.className = "decision-badge";
+    text(badge, "Evaluation running");
+  } else {
+    const accepted = promotion.accepted;
+    badge.className = `decision-badge ${accepted ? "accepted" : "rejected"}`;
+    text(badge, accepted ? "Promoted" : "Incumbent kept");
+  }
 }
 
 function actionLabel(action) {
@@ -1021,9 +1026,16 @@ function renderPromotionBattles(data) {
   const promotion = latestPromotion(data);
   const body = $("promotion-battles");
   clear(body);
-  text($("battle-record"), promotion ? `${number(promotion.wins)}–${number(promotion.losses)} · ${number(promotion.draws)} draws` : "—");
+  const completed = promotion?.completed ?? promotion?.games;
+  const total = promotion?.total ?? promotion?.games;
+  text(
+    $("battle-record"),
+    promotion
+      ? `${number(completed)} / ${number(total)} · ${number(promotion.wins)}–${number(promotion.losses)} · ${number(promotion.draws)} draws`
+      : "—",
+  );
   const battles = promotion?.battles || [];
-  const iteration = data.status?.promotion ? data.status.iteration : data.latest?.iteration;
+  const iteration = promotion?.iteration || (data.status?.promotion ? data.status.iteration : data.latest?.iteration);
   if (!battles.length) {
     const row = element("tr");
     const cell = element("td", "empty-cell", "No battle-level records yet");
@@ -1047,7 +1059,7 @@ function renderPromotionBattles(data) {
       const cell = element("td", index === 3 ? (outcome === "Win" ? "pass" : outcome === "Loss" ? "fail" : "") : "", value);
       row.append(cell);
     });
-    makeMatchLink(row, "promotion", iteration, battle.game);
+    if (!promotion.live) makeMatchLink(row, "promotion", iteration, battle.game);
     body.append(row);
   }
 }

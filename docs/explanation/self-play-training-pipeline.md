@@ -259,8 +259,11 @@ restores the intended joint dual-policy evaluator at mirror children. V26 moves
 the dense solver to Rust and replaces uniform RM+ updates with CFR+ alternating
 updates and linear averaging under a new controller lineage. V27 keeps one
 balanced twelve-worker evaluation pool alive across promotion, probes, and
-campaign, retaining compiled models and publishing live gate progress. Final
-reporting uses the same process budget at the arena level: each independent
+campaign, retaining compiled models and publishing live gate progress. Promotion
+workers additionally publish atomic, one-second telemetry with completed games,
+provisional paired confidence, and recent outcomes; this does not repartition
+server batches or change deterministic arena reductions. Final reporting uses
+the same process budget at the arena level: each independent
 report retains its sequential game and reduction order while workers reuse the
 deployed candidate. Earlier checkpoints
 cannot resume or warm-start into these changed architectures or controller
@@ -270,10 +273,12 @@ The production PyTorch implementation uses BF16 autocast for transformer and hea
 
 ### Read-only monitoring
 
-The trainer atomically publishes a small mutable stage file and one progress file
-per actor while an iteration is open. Completed metrics, checkpoints, promotion
-battles, campaign cases, probes, and replay summaries remain the authoritative
-immutable artifacts. The `monitor` command projects both sets into a loopback web
+The trainer atomically publishes a small mutable stage file, one progress file
+per self-play actor, and one live telemetry file per active promotion worker while
+an iteration is open. Promotion telemetry is refreshed at most once per second
+and reports completed games, provisional score/confidence, and recent outcomes.
+Completed metrics, checkpoints, promotion battles, campaign cases, probes, and
+replay summaries remain the authoritative immutable artifacts. The `monitor` command projects both sets into a loopback web
 dashboard; it has no mechanics handles, trainer control endpoint, or write API.
 Transient heartbeats are removed before the final manifest, after which the
 same dashboard is reconstructed from immutable summaries and iteration metrics.

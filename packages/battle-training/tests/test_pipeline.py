@@ -28,6 +28,7 @@ from battle_training.arena import (
     _evaluation_party_sizes,
     _FastArenaEpisode,
     _finished_pair_scores,
+    _live_arena_report,
     _load_arena_model,
     _load_final_arena_baseline,
     _mean_ci95,
@@ -802,6 +803,74 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(len(collection["recent_battles"]), 2)
             self.assertNotIn("timeline", collection["recent_battles"][0])
             self.assertNotIn("recent_battles", dashboard["actors"][0])
+
+    def test_dashboard_aggregates_live_promotion_battles(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            progress = root / ".monitor"
+            progress.mkdir()
+            write_monitor_state(
+                root,
+                "promotion",
+                iteration=2,
+                message="Running paired promotion games",
+                games=4,
+            )
+            for process, wins, score, pair_score, games in (
+                (0, 2, 2.0, 1.0, (0, 1)),
+                (1, 1, 1.0, 0.5, (2, 3)),
+            ):
+                (progress / f"arena-promotion-002-{process:02d}.json").write_text(
+                    json.dumps(
+                        {
+                            "updated_at": f"9999-01-01T00:00:0{process}Z",
+                            "process": process,
+                            "stage": "promotion",
+                            "iteration": 2,
+                            "completed": 2,
+                            "total": 2,
+                            "arena_games": 4,
+                            "finished": 2,
+                            "wins": wins,
+                            "losses": 2 - wins,
+                            "draws": 0,
+                            "truncated": 0,
+                            "semantic_divergences": 0,
+                            "mechanics_timeouts": 0,
+                            "score_sum": score,
+                            "pair_score_sum": pair_score,
+                            "pair_score_sumsq": pair_score * pair_score,
+                            "pairs": 1,
+                            "recent_battles": [
+                                {
+                                    "game": game,
+                                    "candidate_side": (
+                                        "player" if game % 2 == 0 else "enemy"
+                                    ),
+                                    "candidate_return": 1 if game < 3 else -1,
+                                    "score": 1.0 if game < 3 else 0.0,
+                                    "stop": "finished",
+                                }
+                                for game in games
+                            ],
+                        }
+                    )
+                )
+            dashboard = build_dashboard_snapshot(root)
+            evaluation = dashboard["evaluation"]
+            self.assertTrue(evaluation["live"])
+            self.assertEqual(evaluation["completed"], 4)
+            self.assertEqual(evaluation["games"], 4)
+            self.assertEqual(evaluation["wins"], 3)
+            self.assertEqual(evaluation["losses"], 1)
+            self.assertEqual(evaluation["score_with_nonfinishes_as_losses"], 0.75)
+            self.assertEqual(evaluation["paired_score_ci95"], [0.26, 1.0])
+            self.assertEqual(
+                [battle["game"] for battle in evaluation["battles"]],
+                [0, 1, 2, 3],
+            )
+            self.assertEqual(dashboard["status"]["completed"], 4)
+            self.assertIn("4 / 4", dashboard["status"]["message"])
 
 
 class TransformerTests(unittest.TestCase):
@@ -2242,6 +2311,52 @@ class TransformerTests(unittest.TestCase):
         ):
             self.assertIsNone(getattr(slim, name))
         pickle.dumps(slim)
+
+    def test_live_arena_report_emits_incremental_battle_telemetry(self) -> None:
+        def episode(
+            game: int,
+            candidate_player: bool,
+            result: int | None,
+            stop: str,
+        ) -> _FastArenaEpisode:
+            return _FastArenaEpisode(
+                game=game,
+                candidate_player=candidate_player,
+                player=None,
+                enemy=None,
+                selection_rng=None,
+                chance_rng=None,
+                budget_rng=None,
+                player_size=2,
+                enemy_size=3,
+                level100=False,
+                campaign_index=0,
+                snapshot=None,
+                result=result,
+                stop=stop,
+            )
+
+        report = _live_arena_report(
+            [
+                episode(0, True, 1, "finished"),
+                episode(1, False, -1, "finished"),
+                episode(2, True, None, "semantic-divergence"),
+                episode(3, False, None, "truncated"),
+            ],
+            ArenaConfig(games=4, seed_count=2),
+            False,
+            3,
+        )
+        self.assertEqual(report["finished"], 2)
+        self.assertEqual(report["wins"], 2)
+        self.assertEqual(report["semantic_divergences"], 1)
+        self.assertEqual(report["truncated"], 1)
+        self.assertEqual(report["score_sum"], 2.0)
+        self.assertEqual(report["pairs"], 2)
+        self.assertEqual(
+            [battle["game"] for battle in report["recent_battles"]], [1, 2, 3]
+        )
+        self.assertEqual(report["recent_battles"][0]["candidate_return"], 1)
 
     def test_paired_arena_rejects_invalid_process_counts(self) -> None:
         config = ArenaConfig(games=8, seed_count=2)

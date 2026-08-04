@@ -6,6 +6,7 @@ import math
 import multiprocessing
 import random
 import tempfile
+import time
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
@@ -28,6 +29,7 @@ from .decision_quality import (
     classify_feature_decision,
 )
 from .joint_search import JointSearchConfig, SearchResult, SimultaneousTreeSearch
+from .monitor import write_actor_progress
 from .native import NativeRequestTimeout, SearchServer
 from .network import (
     BattleTransformer,
@@ -114,6 +116,16 @@ class ArenaConfig:
     generated_schedule_version: int = 3
     rmplus_backend: str = RUST_RMPLUS_BACKEND
     cfr_plus_solves: bool = True
+
+
+@dataclass(frozen=True)
+class ArenaTelemetry:
+    """Mutable, non-artifact progress emitted by independent arena workers."""
+
+    directory: Path
+    stage: str
+    iteration: int
+    recent_battles: int = 40
 
 
 @dataclass
@@ -783,6 +795,105 @@ def _slim_arena_episode(episode: _FastArenaEpisode) -> _FastArenaEpisode:
     )
 
 
+def _arena_battle_record(
+    episode: _FastArenaEpisode,
+    config: ArenaConfig,
+    campaign: bool,
+    *,
+    capture_details: bool = False,
+) -> dict[str, Any]:
+    candidate_result = (
+        episode.result
+        if episode.candidate_player or episode.result is None
+        else -episode.result
+    )
+    if episode.stop in {"mechanics-timeout", "semantic-divergence"}:
+        score = 0.0
+    elif candidate_result == 1:
+        score = 1.0
+    elif candidate_result == -1:
+        score = 0.0
+    elif candidate_result == 0:
+        score = 0.5
+    else:
+        score = 0.0
+    battle = {
+        "game": episode.game,
+        "pair": episode.game // 2,
+        "candidate_side": "player" if episode.candidate_player else "enemy",
+        "player_party_size": episode.player_size,
+        "enemy_party_size": episode.enemy_size,
+        "level_profile": "level100" if episode.level100 else "distributed",
+        "campaign": (_CAMPAIGN_NAMES[episode.campaign_index] if campaign else None),
+        "stop": episode.stop,
+        "reason": (
+            episode.reason
+            if episode.reason is not None
+            else (
+                f"decision-horizon-{config.budget}"
+                if episode.stop == "truncated"
+                else None
+            )
+        ),
+        "candidate_return": candidate_result,
+        "score": score,
+    }
+    if capture_details:
+        battle["initial"] = episode.initial
+        battle["final"] = episode.final
+        battle["timeline"] = episode.timeline
+    return battle
+
+
+def _live_arena_report(
+    episodes: list[_FastArenaEpisode],
+    config: ArenaConfig,
+    campaign: bool,
+    recent_battles: int,
+) -> dict[str, Any]:
+    battles = [
+        _arena_battle_record(episode, config, campaign)
+        for episode in sorted(episodes, key=lambda item: item.game)
+    ]
+    scored = [
+        battle
+        for battle in battles
+        if battle["stop"] not in {"semantic-divergence", "mechanics-timeout"}
+    ]
+    wins = sum(battle["candidate_return"] == 1 for battle in scored)
+    losses = sum(battle["candidate_return"] == -1 for battle in scored)
+    draws = sum(battle["candidate_return"] == 0 for battle in scored)
+    semantic_divergences = sum(
+        battle["stop"] == "semantic-divergence" for battle in battles
+    )
+    mechanics_timeouts = sum(
+        battle["stop"] == "mechanics-timeout" for battle in battles
+    )
+    truncated = (
+        len(battles) - wins - losses - draws - semantic_divergences - mechanics_timeouts
+    )
+    pair_scores: dict[int, list[float]] = {}
+    for battle in battles:
+        pair_scores.setdefault(int(battle["pair"]), []).append(float(battle["score"]))
+    complete_pair_scores = [
+        sum(values) / 2 for values in pair_scores.values() if len(values) == 2
+    ]
+    return {
+        "finished": wins + losses + draws,
+        "wins": wins,
+        "losses": losses,
+        "draws": draws,
+        "truncated": truncated,
+        "semantic_divergences": semantic_divergences,
+        "mechanics_timeouts": mechanics_timeouts,
+        "score_sum": float(sum(battle["score"] for battle in battles)),
+        "pair_score_sum": float(sum(complete_pair_scores)),
+        "pair_score_sumsq": float(sum(score * score for score in complete_pair_scores)),
+        "pairs": len(complete_pair_scores),
+        "recent_battles": battles[-recent_battles:],
+    }
+
+
 _ARENA_PROCESS_MODELS: tuple[BattleTransformer, BattleTransformer] | None = None
 
 
@@ -805,18 +916,61 @@ def _arena_process_task(
     capture_details: bool,
     replay_dir: Path | None,
     spans: list[tuple[int, int]],
+    telemetry: ArenaTelemetry | None,
+    telemetry_path: Path | None,
+    process: int,
+    assigned_games: int,
 ) -> list[_FastArenaEpisode] | list[_TracedArenaEpisode]:
     if _ARENA_PROCESS_MODELS is None:
         raise RuntimeError("arena process models were not initialized")
     configure_determinism(config.seed)
     candidate, baseline = _ARENA_PROCESS_MODELS
     if mode == "fast":
-        return [
-            _slim_arena_episode(episode)
-            for episode in _run_fast_arena_spans(
-                candidate, baseline, config, campaign, spans, capture_details
+        live_episodes: list[_FastArenaEpisode] = []
+        seen_games: set[int] = set()
+        last_publish = 0.0
+
+        def publish(force: bool = False) -> None:
+            nonlocal last_publish
+            if telemetry is None or telemetry_path is None:
+                return
+            now = time.monotonic()
+            if not force and now - last_publish < 1.0:
+                return
+            report = _live_arena_report(
+                live_episodes, config, campaign, telemetry.recent_battles
             )
-        ]
+            write_actor_progress(
+                telemetry_path,
+                process,
+                len(live_episodes),
+                assigned_games,
+                stage=telemetry.stage,
+                iteration=telemetry.iteration,
+                arena_games=config.games,
+                **report,
+            )
+            last_publish = now
+
+        def episode_progress(episodes: list[_FastArenaEpisode]) -> None:
+            fresh = [episode for episode in episodes if episode.game not in seen_games]
+            if not fresh:
+                return
+            seen_games.update(episode.game for episode in fresh)
+            live_episodes.extend(fresh)
+            publish()
+
+        episodes = _run_fast_arena_spans(
+            candidate,
+            baseline,
+            config,
+            campaign,
+            spans,
+            capture_details,
+            episode_progress=episode_progress if telemetry is not None else None,
+        )
+        publish(force=True)
+        return [_slim_arena_episode(episode) for episode in episodes]
     if mode == "traced":
         return [
             _slim_traced_episode(episode)
@@ -867,9 +1021,17 @@ class ArenaEvaluationPool:
         capture_details: bool = False,
         replay_dir: Path | None = None,
         progress: Callable[[int, int], None] | None = None,
+        telemetry: ArenaTelemetry | None = None,
     ) -> list[_FastArenaEpisode] | list[_TracedArenaEpisode]:
         if self._closed:
             raise RuntimeError("arena evaluation pool is closed")
+        if telemetry is not None:
+            if mode != "fast":
+                raise ValueError("live arena telemetry requires fast evaluation")
+            telemetry.directory.mkdir(parents=True, exist_ok=True)
+            pattern = f"arena-{telemetry.stage}-{telemetry.iteration:03d}-*.json"
+            for path in telemetry.directory.glob(pattern):
+                path.unlink()
         partitions = [
             rows for rows in _arena_span_partition(spans, self.processes) if rows
         ]
@@ -882,8 +1044,20 @@ class ArenaEvaluationPool:
                 capture_details,
                 replay_dir,
                 rows,
+                telemetry,
+                (
+                    telemetry.directory
+                    / (
+                        f"arena-{telemetry.stage}-{telemetry.iteration:03d}-"
+                        f"{process:02d}.json"
+                    )
+                    if telemetry is not None
+                    else None
+                ),
+                process,
+                sum(stop - start for start, stop in rows),
             ): sum(stop - start for start, stop in rows)
-            for rows in partitions
+            for process, rows in enumerate(partitions)
         }
         episodes: list[_FastArenaEpisode] | list[_TracedArenaEpisode] = []
         completed = 0
@@ -901,6 +1075,7 @@ class ArenaEvaluationPool:
         spans: list[tuple[int, int]],
         capture_details: bool,
         progress: Callable[[int, int], None] | None = None,
+        telemetry: ArenaTelemetry | None = None,
     ) -> list[_FastArenaEpisode]:
         return list(
             self._run(
@@ -910,6 +1085,7 @@ class ArenaEvaluationPool:
                 campaign=campaign,
                 capture_details=capture_details,
                 progress=progress,
+                telemetry=telemetry,
             )
         )
 
@@ -953,10 +1129,16 @@ def _run_fast_arena_parallel(
     capture_details: bool,
     processes: int,
     progress: Callable[[int, int], None] | None = None,
+    telemetry: ArenaTelemetry | None = None,
 ) -> list[_FastArenaEpisode]:
     with ArenaEvaluationPool(candidate, baseline, processes) as pool:
         return pool.run_fast(
-            config, campaign, spans, capture_details, progress=progress
+            config,
+            campaign,
+            spans,
+            capture_details,
+            progress=progress,
+            telemetry=telemetry,
         )
 
 
@@ -970,6 +1152,7 @@ def _run_fast_arena_games(
     processes: int = 1,
     pool: ArenaEvaluationPool | None = None,
     progress: Callable[[int, int], None] | None = None,
+    telemetry: ArenaTelemetry | None = None,
 ) -> list[_FastArenaEpisode]:
     parallelism = pool.processes if pool is not None else processes
     if parallelism > 1:
@@ -977,7 +1160,12 @@ def _run_fast_arena_games(
     spans = _arena_batch_spans(config.games, batch_size)
     if pool is not None:
         return pool.run_fast(
-            config, campaign, spans, capture_details, progress=progress
+            config,
+            campaign,
+            spans,
+            capture_details,
+            progress=progress,
+            telemetry=telemetry,
         )
     if processes > 1 and len(spans) > 1:
         return _run_fast_arena_parallel(
@@ -989,6 +1177,7 @@ def _run_fast_arena_games(
             capture_details,
             processes,
             progress,
+            telemetry,
         )
     episodes = _run_fast_arena_spans(
         candidate, baseline, config, campaign, spans, capture_details
@@ -1005,6 +1194,7 @@ def _run_fast_arena_spans(
     campaign: bool,
     spans: list[tuple[int, int]],
     capture_details: bool,
+    episode_progress: Callable[[list[_FastArenaEpisode]], None] | None = None,
 ) -> list[_FastArenaEpisode]:
     budget = config.budget
     seed = config.seed
@@ -1083,15 +1273,19 @@ def _run_fast_arena_spans(
                     search_results = _rmplus_search_many(server, active, config)
                     searchable: list[_FastArenaEpisode] = []
                     available_results: list[SearchResult] = []
+                    search_failures: list[_FastArenaEpisode] = []
                     for episode, result in zip(active, search_results, strict=True):
                         if result.failure is not None:
                             episode.stop = "semantic-divergence"
                             episode.reason = result.failure
                             if capture_details:
                                 episode.final = _compact_inspection(episode.inspection)
+                            search_failures.append(episode)
                         else:
                             searchable.append(episode)
                             available_results.append(result)
+                    if episode_progress is not None and search_failures:
+                        episode_progress(search_failures)
                     active = searchable
                     search_results = available_results
                     if not active:
@@ -1163,6 +1357,8 @@ def _run_fast_arena_spans(
                     if capture_details and stopped:
                         for episode in stopped:
                             episode.final = _compact_inspection(episode.inspection)
+                    if episode_progress is not None and stopped:
+                        episode_progress(stopped)
                     active = survivors
                     if active:
                         compacted = server.compact_many(
@@ -1182,6 +1378,8 @@ def _run_fast_arena_spans(
                         episode.stop = "mechanics-timeout"
                 server.close()
                 server = SearchServer()
+            if episode_progress is not None:
+                episode_progress(episodes)
             completed.extend(episodes)
     finally:
         server.close()
@@ -1198,6 +1396,7 @@ def run_paired_arena(
     processes: int = 1,
     pool: ArenaEvaluationPool | None = None,
     progress: Callable[[int, int], None] | None = None,
+    telemetry: ArenaTelemetry | None = None,
 ) -> dict[str, Any]:
     """RM+-selected paired evaluation with nonfinishes scored as losses."""
     games = config.games
@@ -1232,6 +1431,7 @@ def run_paired_arena(
         processes=processes,
         pool=pool,
         progress=progress,
+        telemetry=telemetry,
     )
     for pair in range(games // 2):
         first, second = episodes[2 * pair : 2 * pair + 2]
@@ -1247,55 +1447,24 @@ def run_paired_arena(
         ):
             raise RuntimeError("paired arena failed its complete model-side swap")
     for episode in episodes:
-        candidate_result = (
-            episode.result
-            if episode.candidate_player or episode.result is None
-            else -episode.result
+        battle = _arena_battle_record(
+            episode, config, campaign, capture_details=capture_details
         )
+        candidate_result = battle["candidate_return"]
+        score = battle["score"]
         if episode.stop == "mechanics-timeout":
             mechanics_timeouts += 1
-            score = 0.0
         elif episode.stop == "semantic-divergence":
             semantic_divergences += 1
-            score = 0.0
         elif candidate_result == 1:
             wins += 1
-            score = 1.0
         elif candidate_result == -1:
             losses += 1
-            score = 0.0
         elif candidate_result == 0:
             draws += 1
-            score = 0.5
         else:
             truncated += 1
-            score = 0.0
         game_scores.append(score)
-        battle = {
-            "game": episode.game,
-            "pair": episode.game // 2,
-            "candidate_side": "player" if episode.candidate_player else "enemy",
-            "player_party_size": episode.player_size,
-            "enemy_party_size": episode.enemy_size,
-            "level_profile": "level100" if episode.level100 else "distributed",
-            "campaign": (_CAMPAIGN_NAMES[episode.campaign_index] if campaign else None),
-            "stop": episode.stop,
-            "reason": (
-                episode.reason
-                if episode.reason is not None
-                else (
-                    f"decision-horizon-{config.budget}"
-                    if episode.stop == "truncated"
-                    else None
-                )
-            ),
-            "candidate_return": candidate_result,
-            "score": score,
-        }
-        if capture_details:
-            battle["initial"] = episode.initial
-            battle["final"] = episode.final
-            battle["timeline"] = episode.timeline
         battles.append(battle)
         pair_score.append(score)
         if len(pair_score) == 2:

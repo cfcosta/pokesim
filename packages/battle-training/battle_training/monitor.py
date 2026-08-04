@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 import threading
@@ -246,6 +247,70 @@ def _aggregate_actor_progress(actors: list[dict[str, Any]]) -> dict[str, Any] | 
     return result
 
 
+def _aggregate_arena_progress(
+    reports: list[dict[str, Any]], stage: object, iteration: object
+) -> dict[str, Any] | None:
+    active = [
+        report
+        for report in reports
+        if report.get("stage") == stage and report.get("iteration") == iteration
+    ]
+    if not active:
+        return None
+    summed = (
+        "completed",
+        "finished",
+        "wins",
+        "losses",
+        "draws",
+        "truncated",
+        "semantic_divergences",
+        "mechanics_timeouts",
+        "score_sum",
+        "pair_score_sum",
+        "pair_score_sumsq",
+        "pairs",
+    )
+    result = {name: sum(report.get(name, 0) for report in active) for name in summed}
+    total = max((int(report.get("arena_games", 0)) for report in active), default=0)
+    completed = int(result["completed"])
+    result.update(
+        {
+            "live": True,
+            "stage": stage,
+            "iteration": iteration,
+            "games": total,
+            "total": total,
+            "score_with_nonfinishes_as_losses": (
+                float(result["score_sum"]) / completed if completed else None
+            ),
+            "updated_at": max(
+                (str(report.get("updated_at", "")) for report in active), default=""
+            ),
+        }
+    )
+    pairs = int(result["pairs"])
+    if pairs:
+        mean = float(result["pair_score_sum"]) / pairs
+        if pairs < 2:
+            low = high = mean
+        else:
+            variance = (
+                float(result["pair_score_sumsq"])
+                - float(result["pair_score_sum"]) ** 2 / pairs
+            ) / (pairs - 1)
+            radius = 1.96 * math.sqrt(max(0.0, variance) / pairs)
+            low, high = max(0.0, mean - radius), min(1.0, mean + radius)
+        result["paired_score_ci95"] = [low, high]
+    else:
+        result["paired_score_ci95"] = [None, None]
+    recent = [
+        battle for report in active for battle in report.get("recent_battles", [])
+    ]
+    result["battles"] = sorted(recent, key=lambda battle: battle["game"])[-40:]
+    return result
+
+
 def build_dashboard_snapshot(root: Path) -> dict[str, Any]:
     """Project immutable and live artifacts into one dashboard response."""
     root = root.resolve()
@@ -295,6 +360,28 @@ def build_dashboard_snapshot(root: Path) -> dict[str, Any]:
         (root / ".monitor").glob("actor-*.json") if (root / ".monitor").is_dir() else []
     )
     actors = [value for path in actor_paths if (value := _read_json(path)) is not None]
+    arena_paths = sorted(
+        (root / ".monitor").glob("arena-*.json") if (root / ".monitor").is_dir() else []
+    )
+    arena_reports = [
+        value for path in arena_paths if (value := _read_json(path)) is not None
+    ]
+    live_arena = _aggregate_arena_progress(
+        arena_reports, status.get("stage"), status.get("iteration")
+    )
+    if live_arena is not None and live_arena["updated_at"] > str(
+        status.get("updated_at", "")
+    ):
+        status = {
+            **status,
+            "updated_at": live_arena["updated_at"],
+            "completed": live_arena["completed"],
+            "games": live_arena["games"],
+            "message": (
+                f"Running paired promotion games: "
+                f"{live_arena['completed']:,} / {live_arena['games']:,}"
+            ),
+        }
     public_actors = [
         {name: value for name, value in actor.items() if name != "recent_battles"}
         for actor in actors
@@ -321,6 +408,7 @@ def build_dashboard_snapshot(root: Path) -> dict[str, Any]:
         },
         "actors": public_actors,
         "collection": live_collection or (latest or {}).get("collection"),
+        "evaluation": live_arena,
         "iterations": iterations,
         "latest": latest,
     }
@@ -391,6 +479,7 @@ class DashboardStore:
         paths.extend(sorted((self.root / "metrics").glob("iteration-*.json")))
         paths.extend(sorted((self.root / "checkpoints").glob("policy-*.pt")))
         paths.extend(sorted((self.root / ".monitor").glob("actor-*.json")))
+        paths.extend(sorted((self.root / ".monitor").glob("arena-*.json")))
         return tuple(
             (
                 path.relative_to(self.root).as_posix(),
