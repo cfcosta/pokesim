@@ -192,6 +192,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--policy-target-smoothing", type=float, default=0.02)
     parser.add_argument("--collection-dirichlet-alpha", type=float, default=0.6)
     parser.add_argument("--collection-dirichlet-weight", type=float, default=0.25)
+    parser.add_argument("--collection-dirichlet-total", type=float, default=10.0)
     parser.add_argument("--frontier-buffer-size", type=int, default=256)
     parser.add_argument("--frontier-restart-fraction", type=float, default=0.25)
     parser.add_argument("--budget-loss-weight", type=float, default=0.05)
@@ -428,6 +429,7 @@ def main(argv: list[str] | None = None) -> int:
             policy_target_smoothing=arguments.policy_target_smoothing,
             collection_dirichlet_alpha=arguments.collection_dirichlet_alpha,
             collection_dirichlet_weight=arguments.collection_dirichlet_weight,
+            collection_dirichlet_total=arguments.collection_dirichlet_total,
             frontier_buffer_size=arguments.frontier_buffer_size,
             frontier_restart_fraction=arguments.frontier_restart_fraction,
             budget_loss_weight=arguments.budget_loss_weight,

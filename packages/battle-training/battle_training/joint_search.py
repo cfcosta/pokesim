@@ -85,6 +85,7 @@ class RootPriorNoise:
     alpha: float
     weight: float
     rng: random.Random
+    total: float = 0.0
 
 
 def _dirichlet_noised_priors(
@@ -92,11 +93,14 @@ def _dirichlet_noised_priors(
 ) -> Sequence[float]:
     # Mixes a Dirichlet(alpha) draw into the LEGAL support only, rescaled so
     # the legal prior mass (and therefore the full-vector sum) is preserved;
-    # illegal entries keep their exact input values.
+    # illegal entries keep their exact input values. A positive total spreads
+    # a fixed concentration across the legal support (alpha = total / n),
+    # matching AlphaZero's inverse scaling with the legal-move count.
     legal = legal_actions(mask, len(priors))
     if not legal:
         return priors
-    samples = [noise.rng.gammavariate(noise.alpha, 1.0) for _ in legal]
+    alpha = noise.total / len(legal) if noise.total > 0.0 else noise.alpha
+    samples = [noise.rng.gammavariate(alpha, 1.0) for _ in legal]
     total = sum(samples)
     if total <= 0.0:
         return priors

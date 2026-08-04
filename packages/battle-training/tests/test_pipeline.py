@@ -1568,6 +1568,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.policy_target_smoothing, 0.02)
         self.assertEqual(arguments.collection_dirichlet_alpha, 0.6)
         self.assertEqual(arguments.collection_dirichlet_weight, 0.25)
+        self.assertEqual(arguments.collection_dirichlet_total, 10.0)
         self.assertEqual(arguments.frontier_buffer_size, 256)
         self.assertEqual(arguments.frontier_restart_fraction, 0.25)
         self.assertEqual(arguments.budget_loss_weight, 0.05)
@@ -1714,6 +1715,7 @@ class TransformerTests(unittest.TestCase):
         config.pop("policy_target_smoothing")
         config.pop("collection_dirichlet_alpha")
         config.pop("collection_dirichlet_weight")
+        config.pop("collection_dirichlet_total")
         config.pop("frontier_buffer_size")
         config.pop("frontier_restart_fraction")
         normalized = _normalized_saved_config(config)
@@ -1734,6 +1736,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["policy_target_smoothing"], 0.0)
         self.assertEqual(normalized["collection_dirichlet_alpha"], 0.0)
         self.assertEqual(normalized["collection_dirichlet_weight"], 0.25)
+        self.assertEqual(normalized["collection_dirichlet_total"], 0.0)
         self.assertEqual(normalized["frontier_buffer_size"], 0)
         self.assertEqual(normalized["frontier_restart_fraction"], 0.0)
         self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
@@ -4511,9 +4514,15 @@ class DirichletRootNoiseTest(unittest.TestCase):
     _MASK = 0b101001  # legal support {0, 3, 5}
 
     def _noise(
-        self, alpha: float = 0.6, weight: float = 0.25, seed: int = 7
+        self,
+        alpha: float = 0.6,
+        weight: float = 0.25,
+        seed: int = 7,
+        total: float = 0.0,
     ) -> RootPriorNoise:
-        return RootPriorNoise(alpha=alpha, weight=weight, rng=random.Random(seed))
+        return RootPriorNoise(
+            alpha=alpha, weight=weight, rng=random.Random(seed), total=total
+        )
 
     def _search(self, **kwargs: object) -> SimultaneousTreeSearch:
         network = SimpleNamespace(config=SimpleNamespace(action_count=3))
@@ -4559,6 +4568,25 @@ class DirichletRootNoiseTest(unittest.TestCase):
             )
             self.assertAlmostEqual(noised[action], expected, places=12)
 
+    def test_total_concentration_scales_alpha_by_the_legal_count(self) -> None:
+        # AlphaZero scales alpha inversely with the legal-move count; a total
+        # concentration of 9 over the 3-action legal support is alpha 3.
+        scaled = _dirichlet_noised_priors(
+            self._PRIORS, self._MASK, self._noise(alpha=0.6, seed=11, total=9.0)
+        )
+        equivalent = _dirichlet_noised_priors(
+            self._PRIORS, self._MASK, self._noise(alpha=3.0, seed=11)
+        )
+        fixed = _dirichlet_noised_priors(
+            self._PRIORS, self._MASK, self._noise(alpha=0.6, seed=11)
+        )
+        self.assertEqual(scaled, equivalent)
+        self.assertNotEqual(scaled, fixed)
+
+    def test_total_defaults_to_zero_preserving_fixed_alpha(self) -> None:
+        noise = RootPriorNoise(alpha=0.6, weight=0.25, rng=random.Random(7))
+        self.assertEqual(noise.total, 0.0)
+
     def test_fixed_seed_is_deterministic_and_seed_dependent(self) -> None:
         first = _dirichlet_noised_priors(self._PRIORS, self._MASK, self._noise(seed=5))
         second = _dirichlet_noised_priors(self._PRIORS, self._MASK, self._noise(seed=5))
@@ -4583,7 +4611,9 @@ class DirichletRootNoiseTest(unittest.TestCase):
 
     def test_collection_wiring_disables_noise_at_alpha_zero(self) -> None:
         config = SimpleNamespace(
-            collection_dirichlet_alpha=0.0, collection_dirichlet_weight=0.25
+            collection_dirichlet_alpha=0.0,
+            collection_dirichlet_weight=0.25,
+            collection_dirichlet_total=0.0,
         )
         self.assertIsNone(
             _collection_prior_noise(
@@ -4594,11 +4624,24 @@ class DirichletRootNoiseTest(unittest.TestCase):
     def test_collection_wiring_builds_noise_from_the_config(self) -> None:
         rng = random.Random(3)
         config = SimpleNamespace(
-            collection_dirichlet_alpha=0.6, collection_dirichlet_weight=0.3
+            collection_dirichlet_alpha=0.6,
+            collection_dirichlet_weight=0.3,
+            collection_dirichlet_total=0.0,
         )
         noise = _collection_prior_noise(config, rng)
-        self.assertEqual((noise.alpha, noise.weight), (0.6, 0.3))
+        self.assertEqual((noise.alpha, noise.weight, noise.total), (0.6, 0.3, 0.0))
         self.assertIs(noise.rng, rng)
+
+    def test_collection_wiring_enables_noise_via_total_alone(self) -> None:
+        rng = random.Random(3)
+        config = SimpleNamespace(
+            collection_dirichlet_alpha=0.0,
+            collection_dirichlet_weight=0.25,
+            collection_dirichlet_total=10.0,
+        )
+        noise = _collection_prior_noise(config, rng)
+        self.assertIsNotNone(noise)
+        self.assertEqual(noise.total, 10.0)
 
     def test_search_defaults_to_no_prior_noise(self) -> None:
         self.assertIsNone(self._search().prior_noise)
@@ -4616,11 +4659,15 @@ class DirichletRootNoiseTest(unittest.TestCase):
 
     def test_meta_tags_appear_only_when_enabled(self) -> None:
         disabled = SimpleNamespace(
-            collection_dirichlet_alpha=0.0, collection_dirichlet_weight=0.25
+            collection_dirichlet_alpha=0.0,
+            collection_dirichlet_weight=0.25,
+            collection_dirichlet_total=0.0,
         )
         self.assertEqual(_dirichlet_meta(disabled), {})
         enabled = SimpleNamespace(
-            collection_dirichlet_alpha=0.6, collection_dirichlet_weight=0.3
+            collection_dirichlet_alpha=0.6,
+            collection_dirichlet_weight=0.3,
+            collection_dirichlet_total=0.0,
         )
         self.assertEqual(
             _dirichlet_meta(enabled),
@@ -4628,6 +4675,21 @@ class DirichletRootNoiseTest(unittest.TestCase):
                 "root_prior_noise": "dirichlet-legal-support-v1",
                 "collection_dirichlet_alpha": 0.6,
                 "collection_dirichlet_weight": 0.3,
+                "collection_dirichlet_total": 0.0,
+            },
+        )
+        scaled = SimpleNamespace(
+            collection_dirichlet_alpha=0.6,
+            collection_dirichlet_weight=0.25,
+            collection_dirichlet_total=10.0,
+        )
+        self.assertEqual(
+            _dirichlet_meta(scaled),
+            {
+                "root_prior_noise": "dirichlet-legal-scaled-v2",
+                "collection_dirichlet_alpha": 0.6,
+                "collection_dirichlet_weight": 0.25,
+                "collection_dirichlet_total": 10.0,
             },
         )
 
@@ -4641,10 +4703,13 @@ class DirichletRootNoiseTest(unittest.TestCase):
                 "0.6",
                 "--collection-dirichlet-weight",
                 "0.3",
+                "--collection-dirichlet-total",
+                "6.5",
             ]
         )
         self.assertEqual(arguments.collection_dirichlet_alpha, 0.6)
         self.assertEqual(arguments.collection_dirichlet_weight, 0.3)
+        self.assertEqual(arguments.collection_dirichlet_total, 6.5)
 
 
 class FrontierBufferTest(unittest.TestCase):

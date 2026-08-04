@@ -116,6 +116,7 @@ class TransformerPipelineConfig:
     policy_target_smoothing: float = 0.0
     collection_dirichlet_alpha: float = 0.0
     collection_dirichlet_weight: float = 0.25
+    collection_dirichlet_total: float = 0.0
     frontier_buffer_size: int = 0
     frontier_restart_fraction: float = 0.0
     budget_loss_weight: float = 0.05
@@ -687,24 +688,34 @@ def _epsilon_meta(config: TransformerPipelineConfig) -> dict[str, Any]:
 def _collection_prior_noise(
     config: TransformerPipelineConfig, rng: random.Random
 ) -> RootPriorNoise | None:
-    # Alpha zero disables the mixer entirely: legacy runs keep pure priors and
-    # never touch the dedicated noise RNG stream.
-    if config.collection_dirichlet_alpha <= 0.0:
+    # Alpha and total both zero disable the mixer entirely: legacy runs keep
+    # pure priors and never touch the dedicated noise RNG stream.
+    if (
+        config.collection_dirichlet_alpha <= 0.0
+        and config.collection_dirichlet_total <= 0.0
+    ):
         return None
     return RootPriorNoise(
         alpha=config.collection_dirichlet_alpha,
         weight=config.collection_dirichlet_weight,
         rng=rng,
+        total=config.collection_dirichlet_total,
     )
 
 
 def _dirichlet_meta(config: TransformerPipelineConfig) -> dict[str, Any]:
-    if not config.collection_dirichlet_alpha:
+    if not (config.collection_dirichlet_alpha or config.collection_dirichlet_total):
         return {}
+    tag = (
+        "dirichlet-legal-scaled-v2"
+        if config.collection_dirichlet_total > 0.0
+        else "dirichlet-legal-support-v1"
+    )
     return {
-        "root_prior_noise": "dirichlet-legal-support-v1",
+        "root_prior_noise": tag,
         "collection_dirichlet_alpha": config.collection_dirichlet_alpha,
         "collection_dirichlet_weight": config.collection_dirichlet_weight,
+        "collection_dirichlet_total": config.collection_dirichlet_total,
     }
 
 
@@ -3254,6 +3265,7 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("policy_target_smoothing", 0.0)
     normalized.setdefault("collection_dirichlet_alpha", 0.0)
     normalized.setdefault("collection_dirichlet_weight", 0.25)
+    normalized.setdefault("collection_dirichlet_total", 0.0)
     normalized.setdefault("frontier_buffer_size", 0)
     normalized.setdefault("frontier_restart_fraction", 0.0)
     return normalized
@@ -3501,6 +3513,8 @@ def run_transformer_pipeline(
         raise ValueError("collection_dirichlet_alpha must be nonnegative")
     if not 0.0 <= config.collection_dirichlet_weight <= 1.0:
         raise ValueError("collection_dirichlet_weight must be in [0, 1]")
+    if config.collection_dirichlet_total < 0.0:
+        raise ValueError("collection_dirichlet_total must be nonnegative")
     if config.frontier_buffer_size < 0:
         raise ValueError("frontier_buffer_size must be nonnegative")
     if not 0.0 <= config.frontier_restart_fraction <= 0.25:
