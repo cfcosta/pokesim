@@ -46,8 +46,10 @@ def _capacity_defaults(smoke: bool) -> dict[str, object]:
         "feedforward": 192 if smoke else 1024,
         "leaf_hidden_layers": None,
         "replay_window": 2,
-        "lr_schedule": "constant",
-        "lr_milestones": (),
+        # Smoke runs last 1-2 iterations and never reach the first milestone,
+        # so the staged schedule is a safe shared default.
+        "lr_schedule": "step",
+        "lr_milestones": (10, 20),
     }
 
 
