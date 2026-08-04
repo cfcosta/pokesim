@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 import torch
+
 from battle_training.arena import (
     ArenaConfig,
     ArenaReportJob,
@@ -34,6 +35,7 @@ from battle_training.arena import (
     _load_arena_model,
     _load_final_arena_baseline,
     _mean_ci95,
+    _pair_outcome_report,
     _paired_coordinates,
     _score_moments,
     _serialized_arena_model,
@@ -1889,6 +1891,87 @@ class TransformerTests(unittest.TestCase):
     def test_score_moments_summarize_paired_scores(self) -> None:
         self.assertEqual(_score_moments([1.0, 0.5, 0.5]), [2.0, 1.5, 3])
         self.assertEqual(_score_moments([]), [0.0, 0.0, 0])
+
+    def test_pair_outcomes_expose_gate_sensitivity(self) -> None:
+        report = _pair_outcome_report([1.0, 1.0, 0.0, 0.5, 0.5, 0.5, 0.75, 0.25, 0.25])
+        self.assertEqual(report["pairs"], 9)
+        self.assertEqual(report["candidate_sweeps"], 2)
+        self.assertEqual(report["incumbent_sweeps"], 1)
+        self.assertEqual(report["balanced"], 3)
+        self.assertEqual(report["mixed"], 3)
+        self.assertEqual(report["decisive"], 6)
+        self.assertAlmostEqual(report["decisive_fraction"], 6 / 9)
+        self.assertAlmostEqual(report["decisive_candidate_share"], 0.5)
+        self.assertAlmostEqual(report["decisive_sign_z"], 0.0)
+        lopsided = _pair_outcome_report([1.0, 1.0, 1.0, 1.0, 0.0, 0.5])
+        self.assertEqual(lopsided["decisive"], 5)
+        self.assertAlmostEqual(lopsided["decisive_candidate_share"], 0.8)
+        self.assertAlmostEqual(lopsided["decisive_sign_z"], 3 / math.sqrt(5))
+        empty = _pair_outcome_report([])
+        self.assertEqual(empty["pairs"], 0)
+        self.assertEqual(empty["decisive"], 0)
+        self.assertIsNone(empty["decisive_fraction"])
+        self.assertIsNone(empty["decisive_candidate_share"])
+        self.assertIsNone(empty["decisive_sign_z"])
+        frozen = _pair_outcome_report([0.5, 0.5])
+        self.assertEqual(frozen["decisive"], 0)
+        self.assertEqual(frozen["decisive_fraction"], 0.0)
+        self.assertIsNone(frozen["decisive_candidate_share"])
+        self.assertIsNone(frozen["decisive_sign_z"])
+
+    def test_paired_arena_report_includes_pair_outcomes(self) -> None:
+        torch.manual_seed(0)
+
+        def tiny() -> BattleTransformer:
+            network = BattleTransformer(
+                TransformerConfig(
+                    feature_count=492,
+                    action_count=13,
+                    d_model=8,
+                    heads=2,
+                    layers=1,
+                    feedforward=16,
+                    precision="fp32",
+                )
+            )
+            network.eval()
+            return network
+
+        config = ArenaConfig(
+            games=4,
+            budget=64,
+            chance_samples_per_joint=1,
+            search_depth=1,
+            regret_iterations=8,
+            inference_batch_size=64,
+            max_actions_per_side=2,
+            tree_expansion_budget=2,
+            tree_minimum_budget=1,
+            tree_regret_iterations=1,
+            tree_convergence_patience=1,
+            adaptive_search=False,
+            seed=1234,
+            seed_count=2,
+        )
+        report = run_paired_arena(tiny(), tiny(), config)
+        outcomes = report["pair_outcomes"]
+        self.assertEqual(outcomes["pairs"], 2)
+        self.assertEqual(
+            outcomes["candidate_sweeps"]
+            + outcomes["incumbent_sweeps"]
+            + outcomes["balanced"]
+            + outcomes["mixed"],
+            2,
+        )
+        pair_scores = [
+            (
+                report["battles"][2 * pair]["score"]
+                + report["battles"][2 * pair + 1]["score"]
+            )
+            / 2
+            for pair in range(2)
+        ]
+        self.assertEqual(outcomes, _pair_outcome_report(pair_scores))
 
     def test_pooled_evidence_accumulates_until_the_z_threshold(self) -> None:
         iteration = {"paired_score_moments": [530.0, 530.0, 1000]}

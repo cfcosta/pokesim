@@ -624,6 +624,35 @@ def _score_moments(values: list[float]) -> list[float | int]:
     ]
 
 
+def _pair_outcome_report(pair_scores: list[float]) -> dict[str, int | float | None]:
+    # Gate sensitivity: only pairs that deviate from 0.5 carry promotion
+    # evidence, so surface how many side-swapped pairs mirrored exactly.
+    pairs = len(pair_scores)
+    candidate_sweeps = sum(1 for score in pair_scores if score == 1.0)
+    incumbent_sweeps = sum(1 for score in pair_scores if score == 0.0)
+    balanced = sum(1 for score in pair_scores if score == 0.5)
+    candidate_leaning = sum(1 for score in pair_scores if score > 0.5)
+    incumbent_leaning = sum(1 for score in pair_scores if score < 0.5)
+    decisive = candidate_leaning + incumbent_leaning
+    return {
+        "pairs": pairs,
+        "candidate_sweeps": candidate_sweeps,
+        "incumbent_sweeps": incumbent_sweeps,
+        "balanced": balanced,
+        "mixed": pairs - candidate_sweeps - incumbent_sweeps - balanced,
+        "decisive": decisive,
+        "decisive_fraction": decisive / pairs if pairs else None,
+        "decisive_candidate_share": (
+            candidate_leaning / decisive if decisive else None
+        ),
+        "decisive_sign_z": (
+            (candidate_leaning - incumbent_leaning) / math.sqrt(decisive)
+            if decisive
+            else None
+        ),
+    }
+
+
 def _battle_finished(battle: dict[str, Any]) -> bool:
     # Mirrors the paired-arena scoring branch order: an infrastructure stop is a
     # non-finish even when the engine still reported a result for the episode.
@@ -1542,6 +1571,7 @@ def run_paired_arena(
         "score_with_nonfinishes_as_losses": robust_score,
         "paired_score_ci95": [ci_low, ci_high],
         "paired_score_moments": _score_moments(pair_scores),
+        "pair_outcomes": _pair_outcome_report(pair_scores),
         "finished_pairs": len(finished_pair_scores),
         "score_excluding_nonfinish_pairs": excluded_score,
         "paired_score_ci95_excluding_nonfinish_pairs": excluded_ci,
