@@ -175,7 +175,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument(
         "--leaf-ema-decay",
         type=float,
-        default=0.0,
+        default=0.995,
         help="per-step EMA decay for the deployed leaf evaluator; 0 disables",
     )
     parser.add_argument(
