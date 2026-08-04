@@ -104,6 +104,8 @@ class TransformerPipelineConfig:
     adaptive_max_false_negative_rate: float = 0.10
     adaptive_fn_pool_window: int = 1
     router_fn_exposure_floor: float = 0.0
+    collection_epsilon: float = 0.0
+    collection_epsilon_turns: int = 0
     budget_loss_weight: float = 0.05
     budget_positive_weight: float = 4.0
     opponent_checkpoints: tuple[str, ...] = ()
@@ -251,6 +253,7 @@ class _ActorEpisode:
     chance_rng: random.Random
     opponent_rng: random.Random
     tier_rng: random.Random
+    exploration_rng: random.Random
     initial: dict[str, Any] | None = None
     final: dict[str, Any] | None = None
     inspection: dict[str, Any] | None = None
@@ -561,6 +564,62 @@ def _sample_policy(probabilities: list[float], rng: random.Random) -> int:
     )
 
 
+def _epsilon_active(epsilon: float, turns: int, decision: int) -> bool:
+    if epsilon <= 0.0:
+        return False
+    return turns == 0 or decision < turns
+
+
+def _uniform_legal_action(legal_mask: int, rng: random.Random) -> int:
+    return rng.choice(
+        [
+            action
+            for action in range(legal_mask.bit_length())
+            if legal_mask & (1 << action)
+        ]
+    )
+
+
+def _explore_search_result(
+    result: SearchResult,
+    actor: _ActorEpisode,
+    config: TransformerPipelineConfig,
+    decision: int,
+) -> SearchResult:
+    # Epsilon mixes only the EXECUTED action; policy and value targets keep
+    # the pure solve mixture. Opponent sides never explore so checkpoint and
+    # heuristic opponents stay unperturbed references.
+    if not _epsilon_active(
+        config.collection_epsilon, config.collection_epsilon_turns, decision
+    ):
+        return result
+    epsilon = config.collection_epsilon
+    rng = actor.exploration_rng
+    player_action = result.player_action
+    enemy_action = result.enemy_action
+    if (actor.episode_kind == "mirror" or actor.candidate_player) and (
+        rng.random() < epsilon
+    ):
+        player_action = _uniform_legal_action(actor.snapshot.player_mask, rng)
+    if (actor.episode_kind == "mirror" or not actor.candidate_player) and (
+        rng.random() < epsilon
+    ):
+        enemy_action = _uniform_legal_action(actor.snapshot.enemy_mask, rng)
+    if (player_action, enemy_action) == (result.player_action, result.enemy_action):
+        return result
+    return replace(result, player_action=player_action, enemy_action=enemy_action)
+
+
+def _epsilon_meta(config: TransformerPipelineConfig) -> dict[str, Any]:
+    if not config.collection_epsilon:
+        return {}
+    return {
+        "action_exploration": "epsilon-uniform-executed-v1",
+        "collection_epsilon": config.collection_epsilon,
+        "collection_epsilon_turns": config.collection_epsilon_turns,
+    }
+
+
 def _policy_entropy(policy: list[float]) -> float:
     return -sum(
         probability * math.log(probability) for probability in policy if probability
@@ -672,6 +731,7 @@ def _collect_rows_single(
         "actor_processes": config.actor_processes,
         "pairing": "same-reset-opposite-controller-sides-v1",
         "pairs": config.selfplay_episodes // 2,
+        **_epsilon_meta(config),
     }
     opponents = opponents or []
     if opponents:
@@ -894,6 +954,9 @@ def _collect_rows_single(
                         tier_rng=random.Random(
                             config.seed + iteration * 1_000_081 + episode * 10_049 + 43
                         ),
+                        exploration_rng=random.Random(
+                            config.seed + iteration * 1_000_099 + episode * 10_061 + 59
+                        ),
                     )
                 )
             inspections = server.inspect_many(
@@ -973,7 +1036,9 @@ def _collect_rows_single(
                             if actor.candidate_player
                             else replace(result, player_action=action)
                         )
-                    results[actor.episode] = result
+                    results[actor.episode] = _explore_search_result(
+                        result, actor, config, decision
+                    )
                 for actor in active:
                     result = results[actor.episode]
                     snapshot = actor.snapshot
@@ -2681,6 +2746,8 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("lr_decay_factor", 0.1)
     normalized.setdefault("shadow_opponent_window", 0)
     normalized.setdefault("router_fn_exposure_floor", 0.0)
+    normalized.setdefault("collection_epsilon", 0.0)
+    normalized.setdefault("collection_epsilon_turns", 0)
     return normalized
 
 
@@ -2872,6 +2939,10 @@ def run_transformer_pipeline(
         raise ValueError("adaptive_fn_pool_window must be positive")
     if not 0.0 <= config.router_fn_exposure_floor <= 1.0:
         raise ValueError("router_fn_exposure_floor must be in [0, 1]")
+    if not 0.0 <= config.collection_epsilon <= 1.0:
+        raise ValueError("collection_epsilon must be in [0, 1]")
+    if config.collection_epsilon_turns < 0:
+        raise ValueError("collection_epsilon_turns must be nonnegative")
     if not 0.0 <= config.budget_loss_weight <= 1.0:
         raise ValueError("budget_loss_weight must be in [0, 1]")
     if config.budget_positive_weight < 1.0:

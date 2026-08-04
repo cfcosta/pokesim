@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import pickle
 import random
@@ -66,6 +67,7 @@ from battle_training.decision_quality import (
 )
 from battle_training.joint_search import (
     JointSearchConfig,
+    SearchResult,
     SimultaneousTreeSearch,
     _tactical_potential,
     solve_zero_sum_regret,
@@ -109,10 +111,13 @@ from battle_training.transformer_pipeline import (
     TransformerPipelineConfig,
     _append_shadow_opponent,
     _apply_learning_rate,
+    _arena,
     _assemble_population,
     _begin_leaf_training,
     _collection_quality,
     _end_leaf_training,
+    _epsilon_meta,
+    _explore_search_result,
     _gradient_report,
     _heuristic_population,
     _HeuristicNetwork,
@@ -123,6 +128,7 @@ from battle_training.transformer_pipeline import (
     _load_examples,
     _normalized_saved_config,
     _pipeline_id,
+    _play_game,
     _pooled_promotion_evidence,
     _pooled_root_only_share,
     _promotion_gate_scores,
@@ -136,6 +142,7 @@ from battle_training.transformer_pipeline import (
     _training_pair,
     _training_pair_leg,
     _training_party_sizes,
+    _uniform_legal_action,
     _update_leaf_ema,
     _validate_collection_pairs,
 )
@@ -1493,6 +1500,8 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.adaptive_fn_pool_window, 1)
         self.assertEqual(arguments.shadow_opponent_window, 0)
         self.assertEqual(arguments.router_fn_exposure_floor, 0.0)
+        self.assertEqual(arguments.collection_epsilon, 0.0)
+        self.assertEqual(arguments.collection_epsilon_turns, 0)
         self.assertEqual(arguments.budget_loss_weight, 0.05)
         self.assertEqual(arguments.budget_positive_weight, 4.0)
         self.assertEqual(arguments.precision, "bf16")
@@ -1630,6 +1639,8 @@ class TransformerTests(unittest.TestCase):
         config.pop("lr_decay_factor")
         config.pop("shadow_opponent_window")
         config.pop("router_fn_exposure_floor")
+        config.pop("collection_epsilon")
+        config.pop("collection_epsilon_turns")
         normalized = _normalized_saved_config(config)
         self.assertIsNone(normalized["leaf_hidden_layers"])
         self.assertEqual(normalized["leaf_ema_decay"], 0.0)
@@ -1641,6 +1652,8 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["lr_decay_factor"], 0.1)
         self.assertEqual(normalized["shadow_opponent_window"], 0)
         self.assertEqual(normalized["router_fn_exposure_floor"], 0.0)
+        self.assertEqual(normalized["collection_epsilon"], 0.0)
+        self.assertEqual(normalized["collection_epsilon_turns"], 0)
         self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
         self.assertNotIn("leaf_hidden_layers", config)
 
@@ -3738,6 +3751,164 @@ class ExposureAwareRouterGateTest(unittest.TestCase):
             ]
         )
         self.assertEqual(arguments.router_fn_exposure_floor, 0.02)
+
+
+class _ExplodingRng:
+    def __init__(self, complaint: str) -> None:
+        self.complaint = complaint
+
+    def random(self) -> float:
+        raise AssertionError(self.complaint)
+
+    def choice(self, sequence: list[int]) -> int:
+        raise AssertionError(self.complaint)
+
+
+class CollectionEpsilonTest(unittest.TestCase):
+    def _result(self, player_action: int = 2, enemy_action: int = 0) -> SearchResult:
+        return SearchResult(
+            player_policy=(0.25, 0.25, 0.5),
+            enemy_policy=(1.0, 0.0, 0.0),
+            player_action=player_action,
+            enemy_action=enemy_action,
+            root_value=0.125,
+            nodes=1,
+            solver="test",
+            exploitability=None,
+            payoff_spread=None,
+            payoff_matrix=((0.0,),),
+        )
+
+    def _actor(
+        self,
+        kind: str,
+        candidate_player: bool,
+        rng: object,
+        player_mask: int = 0b111,
+        enemy_mask: int = 0b111,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            snapshot=SimpleNamespace(player_mask=player_mask, enemy_mask=enemy_mask),
+            episode_kind=kind,
+            candidate_player=candidate_player,
+            exploration_rng=rng,
+        )
+
+    def _config(self, epsilon: float, turns: int = 0) -> SimpleNamespace:
+        return SimpleNamespace(
+            collection_epsilon=epsilon, collection_epsilon_turns=turns
+        )
+
+    def test_zero_epsilon_returns_the_same_result_without_rng(self) -> None:
+        result = self._result()
+        actor = self._actor(
+            "mirror", True, _ExplodingRng("rng consumed with epsilon disabled")
+        )
+        explored = _explore_search_result(result, actor, self._config(0.0), 0)
+        self.assertIs(explored, result)
+
+    def test_full_epsilon_redraws_uniformly_over_legal_actions(self) -> None:
+        rng = random.Random(2026)
+        config = self._config(1.0)
+        counts = {0: 0, 1: 0, 2: 0}
+        rounds = 3000
+        for _ in range(rounds):
+            actor = self._actor("mirror", True, rng)
+            explored = _explore_search_result(self._result(), actor, config, 0)
+            counts[explored.player_action] += 1
+        for count in counts.values():
+            self.assertAlmostEqual(count / rounds, 1 / 3, delta=0.04)
+
+    def test_intermediate_epsilon_mixes_at_the_configured_rate(self) -> None:
+        rng = random.Random(17)
+        config = self._config(0.25)
+        redrawn = 0
+        rounds = 4000
+        for _ in range(rounds):
+            actor = self._actor("checkpoint-opponent", True, rng)
+            explored = _explore_search_result(self._result(), actor, config, 0)
+            redrawn += explored.player_action != 2
+        self.assertAlmostEqual(redrawn / rounds, 0.25 * 2 / 3, delta=0.02)
+
+    def test_targets_survive_exploration_untouched(self) -> None:
+        rng = random.Random(7)
+        result = self._result()
+        actor = self._actor("mirror", True, rng)
+        explored = _explore_search_result(result, actor, self._config(1.0), 0)
+        self.assertEqual(explored.player_policy, result.player_policy)
+        self.assertEqual(explored.enemy_policy, result.enemy_policy)
+        self.assertEqual(explored.root_value, result.root_value)
+        self.assertEqual(explored.payoff_matrix, result.payoff_matrix)
+
+    def test_only_the_candidate_side_explores_against_opponents(self) -> None:
+        rng = random.Random(11)
+        config = self._config(1.0)
+        for _ in range(50):
+            explored = _explore_search_result(
+                self._result(), self._actor("checkpoint-opponent", True, rng), config, 0
+            )
+            self.assertEqual(explored.enemy_action, 0)
+        for _ in range(50):
+            explored = _explore_search_result(
+                self._result(),
+                self._actor("heuristic-opponent", False, rng),
+                config,
+                0,
+            )
+            self.assertEqual(explored.player_action, 2)
+
+    def test_epsilon_turns_caps_exploration_to_early_decisions(self) -> None:
+        config = self._config(1.0, turns=3)
+        actor = self._actor(
+            "mirror", True, random.Random(13), player_mask=0b10, enemy_mask=0b10
+        )
+        for decision in range(3):
+            explored = _explore_search_result(
+                self._result(0, 0), actor, config, decision
+            )
+            self.assertEqual((explored.player_action, explored.enemy_action), (1, 1))
+        actor.exploration_rng = _ExplodingRng("rng consumed past the epsilon turn cap")
+        for decision in (3, 4, 100):
+            result = self._result(0, 0)
+            self.assertIs(
+                _explore_search_result(result, actor, config, decision), result
+            )
+
+    def test_uniform_legal_action_only_draws_set_bits(self) -> None:
+        rng = random.Random(3)
+        draws = {_uniform_legal_action(0b101001, rng) for _ in range(200)}
+        self.assertEqual(draws, {0, 3, 5})
+
+    def test_meta_tags_appear_only_when_enabled(self) -> None:
+        self.assertEqual(_epsilon_meta(self._config(0.0)), {})
+        self.assertEqual(
+            _epsilon_meta(self._config(0.1, turns=12)),
+            {
+                "action_exploration": "epsilon-uniform-executed-v1",
+                "collection_epsilon": 0.1,
+                "collection_epsilon_turns": 12,
+            },
+        )
+
+    def test_eval_paths_never_reference_epsilon(self) -> None:
+        source = inspect.getsource(_play_game) + inspect.getsource(_arena)
+        self.assertNotIn("collection_epsilon", source)
+        self.assertNotIn("_explore_search_result", source)
+
+    def test_collection_epsilon_flows_from_the_cli(self) -> None:
+        arguments = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/epsilon",
+                "--collection-epsilon",
+                "0.05",
+                "--collection-epsilon-turns",
+                "12",
+            ]
+        )
+        self.assertEqual(arguments.collection_epsilon, 0.05)
+        self.assertEqual(arguments.collection_epsilon_turns, 12)
 
 
 if __name__ == "__main__":
