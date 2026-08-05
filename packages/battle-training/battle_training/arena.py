@@ -9,7 +9,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Self
 
@@ -123,6 +123,9 @@ class ArenaConfig:
     rmplus_backend: str = RUST_RMPLUS_BACKEND
     cfr_plus_solves: bool = True
     policy_only: bool = False
+    matchup_value_cap: float = 0.0
+    matchup_filter_attempts: int = 1
+    matchup_plan: dict[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -818,6 +821,137 @@ def _party_strata(player_size: int, enemy_size: int) -> tuple[str, ...]:
     return tuple(result)
 
 
+_MATCHUP_FILTER_VERSION = "predicted-turn-zero-value-v1"
+_MATCHUP_ATTEMPT_STRIDE = 61_000_181
+
+
+def _matchup_root_seed(root_seed: int, attempt: int) -> int:
+    """Attempt 0 replays the legacy reset stream; retries hop a prime lane."""
+    return root_seed + attempt * _MATCHUP_ATTEMPT_STRIDE
+
+
+def _abs_value_summary(values: list[float], cap: float) -> dict[str, float]:
+    if not values:
+        return {"mean": 0.0, "p50": 0.0, "p90": 0.0, "p99": 0.0, "lopsided_share": 0.0}
+    ordered = sorted(values)
+
+    def quantile(share: float) -> float:
+        return ordered[int(share * (len(ordered) - 1))]
+
+    return {
+        "mean": sum(ordered) / len(ordered),
+        "p50": quantile(0.50),
+        "p90": quantile(0.90),
+        "p99": quantile(0.99),
+        "lopsided_share": sum(value > cap for value in ordered) / len(ordered),
+    }
+
+
+def _arena_matchup_plan(
+    server: SearchServer,
+    network: Any,
+    config: ArenaConfig,
+) -> tuple[dict[int, int], dict[str, Any]]:
+    """Choose per-pair reset attempts whose predicted turn-zero value is contested.
+
+    Arena games are not training data, so lopsided pairs are rejected outright:
+    each one scores an exact 0.5 that dilutes the paired z toward null, and
+    resampling them buys gate power at fixed game count. The incumbent probes
+    every candidate reset so selection stays candidate-independent within a
+    gate; both legs of a pair share the accepted attempt.
+    """
+    started = time.perf_counter()
+    cap = config.matchup_value_cap
+    total_pairs = config.games // 2
+    chunk_size = max(1, config.inference_batch_size)
+    accepted_attempt: dict[int, int] = {}
+    accepted_value: dict[int, float] = {}
+    initial_values: dict[int, float] = {}
+    fallback = 0
+    candidate_resets = 0
+    pending = list(range(total_pairs))
+    for attempt in range(config.matchup_filter_attempts):
+        if not pending:
+            break
+        last_attempt = attempt == config.matchup_filter_attempts - 1
+        survivors: list[int] = []
+        for start in range(0, len(pending), chunk_size):
+            chunk = pending[start : start + chunk_size]
+            features = []
+            masks = []
+            for offset, pair in enumerate(chunk):
+                player_size, enemy_size = _evaluation_party_sizes(
+                    pair, config.generated_schedule_version
+                )
+                root_seed, reset_episode = _paired_coordinates(
+                    config.seed, config.seed_count, 2 * pair
+                )
+                reset = server.reset if offset == 0 else server.reset_append
+                snapshot = reset(
+                    _matchup_root_seed(root_seed, attempt),
+                    reset_episode,
+                    player_size,
+                    enemy_size,
+                    level100=_evaluation_level100(
+                        pair, config.generated_schedule_version
+                    ),
+                    balanced_final_species=config.balanced_final_species,
+                )
+                candidate_resets += 1
+                features.append(snapshot.player_features)
+                masks.append(snapshot.player_mask)
+            _, values = network.evaluate(features, masks)
+            for pair, value in zip(chunk, values, strict=True):
+                magnitude = abs(float(value))
+                if attempt == 0:
+                    initial_values[pair] = magnitude
+                if magnitude <= cap:
+                    accepted_attempt[pair] = attempt
+                    accepted_value[pair] = magnitude
+                elif last_attempt:
+                    fallback += 1
+                    accepted_attempt[pair] = attempt
+                    accepted_value[pair] = magnitude
+                else:
+                    survivors.append(pair)
+        pending = survivors
+    plan = {pair: attempt for pair, attempt in accepted_attempt.items() if attempt > 0}
+    histogram: dict[str, int] = {}
+    for attempt in accepted_attempt.values():
+        histogram[str(attempt)] = histogram.get(str(attempt), 0) + 1
+    strata: dict[str, dict[str, int]] = {}
+    for pair in range(total_pairs):
+        for stratum in _party_strata(
+            *_evaluation_party_sizes(pair, config.generated_schedule_version)
+        ):
+            bucket = strata.setdefault(stratum, {"pairs": 0, "resampled": 0})
+            bucket["pairs"] += 1
+            bucket["resampled"] += int(pair in plan)
+    stats = {
+        "enabled": True,
+        "filter": _MATCHUP_FILTER_VERSION,
+        "cap": cap,
+        "attempts": config.matchup_filter_attempts,
+        "pairs": total_pairs,
+        "resampled_pairs": len(plan),
+        "fallback_pairs": fallback,
+        "candidate_resets": candidate_resets,
+        "attempt_histogram": histogram,
+        "plan": {str(pair): attempt for pair, attempt in sorted(plan.items())},
+        "turn_zero_abs_value": {
+            "initial": _abs_value_summary(
+                [initial_values[pair] for pair in range(total_pairs)], cap
+            ),
+            "final": _abs_value_summary(
+                [accepted_value[pair] for pair in range(total_pairs)], cap
+            ),
+        },
+        "strata": strata,
+        "seconds": round(time.perf_counter() - started, 3),
+    }
+    return plan, stats
+
+
 def _stratified_report(scores: dict[str, list[float]]) -> dict[str, Any]:
     strata: dict[str, Any] = {}
     for name in ("party-1to2", "party-3to4", "party-5to6", "unequal-party"):
@@ -1372,6 +1506,10 @@ def _run_fast_arena_spans(
                             balanced_final_species=config.balanced_final_species,
                         )
                     else:
+                        root_seed = _matchup_root_seed(
+                            root_seed,
+                            (config.matchup_plan or {}).get(episode.game // 2, 0),
+                        )
                         reset = server.reset if offset == 0 else server.reset_append
                         episode.snapshot = reset(
                             root_seed,
@@ -1534,6 +1672,21 @@ def run_paired_arena(
         raise ValueError(
             "paired arena requires at least two seeds and one pair per seed"
         )
+    if not 0.0 <= config.matchup_value_cap < 1.0:
+        raise ValueError("arena matchup_value_cap must be in [0, 1)")
+    if config.matchup_filter_attempts < 1:
+        raise ValueError("arena matchup_filter_attempts must be positive")
+    matchup_stats: dict[str, Any] | None = None
+    if config.matchup_value_cap > 0.0 and not campaign:
+        # Campaign suites pin their rosters, and arena games are not training
+        # data, so the contested-matchup filter probes with the incumbent and
+        # hard-rejects lopsided generated pairs before any game is played.
+        with SearchServer() as probe_server:
+            matchup_plan, matchup_stats = _arena_matchup_plan(
+                probe_server, baseline, config
+            )
+        if matchup_plan:
+            config = replace(config, matchup_plan=matchup_plan)
     wins = losses = draws = truncated = semantic_divergences = mechanics_timeouts = 0
     game_scores: list[float] = []
     battles: list[dict[str, Any]] = []
@@ -1663,6 +1816,7 @@ def run_paired_arena(
         ),
         "strata": None if campaign else _stratified_report(stratum_scores),
         "campaign": campaign_report if campaign else None,
+        "matchup_filter": matchup_stats,
         "wins": wins,
         "losses": losses,
         "draws": draws,
@@ -1865,6 +2019,10 @@ def _run_traced_arena_spans(
                 for offset, episode in enumerate(episodes):
                     root_seed, reset_episode = _paired_coordinates(
                         config.seed, config.seed_count, episode.game
+                    )
+                    root_seed = _matchup_root_seed(
+                        root_seed,
+                        (config.matchup_plan or {}).get(episode.game // 2, 0),
                     )
                     reset = server.reset if offset == 0 else server.reset_append
                     episode.snapshot = reset(
@@ -2203,6 +2361,9 @@ def _run_traced_arena_sequential(
             with SearchServer() as server:
                 root_seed, reset_episode = _paired_coordinates(
                     config.seed, config.seed_count, episode
+                )
+                root_seed = _matchup_root_seed(
+                    root_seed, (config.matchup_plan or {}).get(pair, 0)
                 )
                 snapshot = server.reset(
                     root_seed,

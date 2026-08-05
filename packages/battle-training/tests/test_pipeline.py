@@ -5707,5 +5707,319 @@ class MatchupFilterTest(unittest.TestCase):
         self.assertIn("_matchup_filter_meta", single_source)
 
 
+class ArenaMatchupFilterTest(unittest.TestCase):
+    @staticmethod
+    def _arena_config(**overrides: object) -> ArenaConfig:
+        values: dict[str, object] = {
+            "games": 8,
+            "budget": 64,
+            "inference_batch_size": 64,
+            "seed": 20260805,
+            "seed_count": 2,
+        }
+        values.update(overrides)
+        return ArenaConfig(**values)
+
+    @staticmethod
+    def _integration_config(**overrides: object) -> ArenaConfig:
+        values: dict[str, object] = {
+            "games": 4,
+            "budget": 64,
+            "chance_samples_per_joint": 1,
+            "search_depth": 1,
+            "regret_iterations": 8,
+            "inference_batch_size": 64,
+            "max_actions_per_side": 2,
+            "tree_expansion_budget": 2,
+            "tree_minimum_budget": 1,
+            "tree_regret_iterations": 1,
+            "tree_convergence_patience": 1,
+            "adaptive_search": False,
+            "seed": 1234,
+            "seed_count": 2,
+        }
+        values.update(overrides)
+        return ArenaConfig(**values)
+
+    @staticmethod
+    def _tiny_network() -> BattleTransformer:
+        network = BattleTransformer(
+            TransformerConfig(
+                feature_count=492,
+                action_count=13,
+                d_model=8,
+                heads=2,
+                layers=1,
+                feedforward=16,
+                precision="fp32",
+            )
+        )
+        network.eval()
+        return network
+
+    @staticmethod
+    def _probe_key(config: ArenaConfig, pair: int, attempt: int) -> tuple[int, ...]:
+        from battle_training.arena import _matchup_root_seed
+
+        server = _FakeLeanServer()
+        player_size, enemy_size = _evaluation_party_sizes(
+            pair, config.generated_schedule_version
+        )
+        root_seed, reset_episode = _paired_coordinates(
+            config.seed, config.seed_count, 2 * pair
+        )
+        snapshot = server.reset(
+            _matchup_root_seed(root_seed, attempt),
+            reset_episode,
+            player_size,
+            enemy_size,
+            level100=_evaluation_level100(pair, config.generated_schedule_version),
+            balanced_final_species=config.balanced_final_species,
+        )
+        return tuple(int(part) for part in snapshot.player_features)
+
+    def test_arena_config_defaults_keep_the_filter_off(self) -> None:
+        config = ArenaConfig(games=4, seed_count=2)
+        self.assertEqual(config.matchup_value_cap, 0.0)
+        self.assertEqual(config.matchup_filter_attempts, 1)
+        self.assertIsNone(config.matchup_plan)
+
+    def test_matchup_root_seed_offsets_by_the_attempt_stride(self) -> None:
+        from battle_training.arena import _MATCHUP_ATTEMPT_STRIDE, _matchup_root_seed
+
+        self.assertEqual(_MATCHUP_ATTEMPT_STRIDE, 61_000_181)
+        self.assertEqual(_matchup_root_seed(12345, 0), 12345)
+        self.assertEqual(_matchup_root_seed(12345, 3), 12345 + 3 * 61_000_181)
+
+    def test_contested_pairs_keep_legacy_paired_coordinates(self) -> None:
+        from battle_training.arena import _arena_matchup_plan
+
+        config = self._arena_config(matchup_value_cap=0.9, matchup_filter_attempts=3)
+        network = _ScriptedValueNetwork(default=0.0)
+        server = _RecordingLeanServer()
+        plan, stats = _arena_matchup_plan(server, network, config)
+        self.assertEqual(plan, {})
+        self.assertEqual(stats["plan"], {})
+        self.assertEqual(stats["candidate_resets"], 4)
+        self.assertEqual(stats["attempt_histogram"], {"0": 4})
+        self.assertEqual(stats["resampled_pairs"], 0)
+        self.assertEqual(stats["fallback_pairs"], 0)
+        expected = []
+        for pair in range(4):
+            root_seed, reset_episode = _paired_coordinates(
+                config.seed, config.seed_count, 2 * pair
+            )
+            player_size, enemy_size = _evaluation_party_sizes(
+                pair, config.generated_schedule_version
+            )
+            expected.append(
+                {
+                    "append": pair > 0,
+                    "seed": root_seed,
+                    "episode": reset_episode,
+                    "player_size": player_size,
+                    "enemy_size": enemy_size,
+                    "level100": _evaluation_level100(
+                        pair, config.generated_schedule_version
+                    ),
+                    "swapped": False,
+                }
+            )
+        self.assertEqual(server.reset_calls, expected)
+
+    def test_lopsided_pair_resamples_on_the_attempt_stride(self) -> None:
+        from battle_training.arena import _MATCHUP_ATTEMPT_STRIDE, _arena_matchup_plan
+
+        config = self._arena_config(matchup_value_cap=0.9, matchup_filter_attempts=3)
+        network = _ScriptedValueNetwork(default=0.0)
+        network.values[self._probe_key(config, 1, 0)] = 0.95
+        network.values[self._probe_key(config, 1, 1)] = -0.2
+        server = _RecordingLeanServer()
+        plan, stats = _arena_matchup_plan(server, network, config)
+        self.assertEqual(plan, {1: 1})
+        self.assertEqual(stats["plan"], {"1": 1})
+        self.assertEqual(stats["candidate_resets"], 5)
+        self.assertEqual(stats["resampled_pairs"], 1)
+        self.assertEqual(stats["fallback_pairs"], 0)
+        self.assertEqual(stats["attempt_histogram"], {"0": 3, "1": 1})
+        retry = server.reset_calls[-1]
+        base_seed, base_episode = _paired_coordinates(config.seed, config.seed_count, 2)
+        self.assertEqual(retry["seed"], base_seed + _MATCHUP_ATTEMPT_STRIDE)
+        self.assertEqual(retry["episode"], base_episode)
+        self.assertFalse(retry["append"])
+        initial = stats["turn_zero_abs_value"]["initial"]
+        final = stats["turn_zero_abs_value"]["final"]
+        self.assertAlmostEqual(initial["mean"], 0.95 / 4)
+        self.assertAlmostEqual(initial["lopsided_share"], 0.25)
+        self.assertAlmostEqual(final["mean"], 0.2 / 4)
+        self.assertEqual(final["lopsided_share"], 0.0)
+
+    def test_exhausted_attempts_fall_back_to_the_last_resample(self) -> None:
+        from battle_training.arena import _arena_matchup_plan
+
+        config = self._arena_config(matchup_value_cap=0.9, matchup_filter_attempts=3)
+        network = _ScriptedValueNetwork(default=0.0)
+        for attempt in range(3):
+            network.values[self._probe_key(config, 0, attempt)] = 0.99
+        plan, stats = _arena_matchup_plan(_RecordingLeanServer(), network, config)
+        self.assertEqual(plan, {0: 2})
+        self.assertEqual(stats["fallback_pairs"], 1)
+        self.assertEqual(stats["attempt_histogram"], {"0": 3, "2": 1})
+        self.assertEqual(stats["candidate_resets"], 6)
+        self.assertAlmostEqual(
+            stats["turn_zero_abs_value"]["final"]["lopsided_share"], 0.25
+        )
+
+    def test_arena_filter_stats_summarize_strata_and_serialize(self) -> None:
+        from battle_training.arena import _arena_matchup_plan, _party_strata
+
+        config = self._arena_config(matchup_value_cap=0.9, matchup_filter_attempts=2)
+        network = _ScriptedValueNetwork(default=0.0)
+        network.values[self._probe_key(config, 2, 0)] = 0.95
+        plan, stats = _arena_matchup_plan(_RecordingLeanServer(), network, config)
+        self.assertEqual(plan, {2: 1})
+        expected_strata: dict[str, dict[str, int]] = {}
+        for pair in range(4):
+            for stratum in _party_strata(
+                *_evaluation_party_sizes(pair, config.generated_schedule_version)
+            ):
+                bucket = expected_strata.setdefault(
+                    stratum, {"pairs": 0, "resampled": 0}
+                )
+                bucket["pairs"] += 1
+                bucket["resampled"] += int(pair in plan)
+        self.assertEqual(stats["strata"], expected_strata)
+        self.assertTrue(all(isinstance(name, str) for name in stats["strata"]))
+        self.assertTrue(stats["enabled"])
+        self.assertEqual(stats["filter"], "predicted-turn-zero-value-v1")
+        self.assertEqual(stats["cap"], 0.9)
+        self.assertEqual(stats["attempts"], 2)
+        self.assertEqual(stats["pairs"], 4)
+        self.assertGreaterEqual(stats["seconds"], 0.0)
+        json.dumps(stats)
+
+    def test_probe_chunks_respect_the_inference_batch_size(self) -> None:
+        from battle_training.arena import _arena_matchup_plan
+
+        config = self._arena_config(
+            games=6, matchup_value_cap=0.9, inference_batch_size=2
+        )
+        network = _ScriptedValueNetwork(default=0.0)
+        server = _RecordingLeanServer()
+        plan, _ = _arena_matchup_plan(server, network, config)
+        self.assertEqual(network.batch_sizes, [2, 1])
+        self.assertEqual(
+            [call["append"] for call in server.reset_calls], [False, True, False]
+        )
+        repeat_server = _RecordingLeanServer()
+        repeat_network = _ScriptedValueNetwork(default=0.0)
+        repeat_plan, _ = _arena_matchup_plan(repeat_server, repeat_network, config)
+        self.assertEqual(repeat_plan, plan)
+        self.assertEqual(repeat_server.reset_calls, server.reset_calls)
+
+    def test_paired_arena_reports_and_applies_the_filter(self) -> None:
+        torch.manual_seed(0)
+        candidate = self._tiny_network()
+        baseline = self._tiny_network()
+        # A fresh value head is zero-initialized, which would make every pair
+        # look contested; nudge the baseline so probes see nonzero values.
+        with torch.no_grad():
+            for parameter in baseline.parameters():
+                parameter.add_(torch.randn_like(parameter) * 0.5)
+        legacy = run_paired_arena(
+            candidate, baseline, self._integration_config(), capture_details=True
+        )
+        self.assertIsNone(legacy["matchup_filter"])
+        filtered = run_paired_arena(
+            candidate,
+            baseline,
+            self._integration_config(matchup_value_cap=1e-6, matchup_filter_attempts=2),
+            capture_details=True,
+        )
+        stats = filtered["matchup_filter"]
+        self.assertTrue(stats["enabled"])
+        self.assertEqual(stats["pairs"], 2)
+        self.assertEqual(stats["resampled_pairs"], 2)
+        self.assertEqual(stats["fallback_pairs"], 2)
+        self.assertEqual(stats["attempt_histogram"], {"1": 2})
+        self.assertEqual(stats["plan"], {"0": 1, "1": 1})
+        json.dumps(stats)
+        manual = run_paired_arena(
+            candidate,
+            baseline,
+            self._integration_config(matchup_plan={0: 1, 1: 1}),
+            capture_details=True,
+        )
+        self.assertIsNone(manual["matchup_filter"])
+        self.assertEqual(
+            [battle["score"] for battle in manual["battles"]],
+            [battle["score"] for battle in filtered["battles"]],
+        )
+        self.assertEqual(
+            [battle["initial"] for battle in manual["battles"]],
+            [battle["initial"] for battle in filtered["battles"]],
+        )
+        self.assertEqual(
+            filtered["battles"][0]["initial"], filtered["battles"][1]["initial"]
+        )
+        self.assertNotEqual(
+            [battle["initial"] for battle in filtered["battles"]],
+            [battle["initial"] for battle in legacy["battles"]],
+        )
+
+    def test_paired_arena_campaign_skips_the_filter(self) -> None:
+        torch.manual_seed(0)
+        report = run_paired_arena(
+            self._tiny_network(),
+            self._tiny_network(),
+            self._integration_config(matchup_value_cap=0.5),
+            campaign=True,
+        )
+        self.assertIsNone(report["matchup_filter"])
+
+    def test_paired_arena_validates_filter_bounds(self) -> None:
+        torch.manual_seed(0)
+        candidate = self._tiny_network()
+        baseline = self._tiny_network()
+        for overrides, message in (
+            ({"matchup_value_cap": -0.1}, "matchup_value_cap"),
+            ({"matchup_value_cap": 1.0}, "matchup_value_cap"),
+            ({"matchup_filter_attempts": 0}, "matchup_filter_attempts"),
+        ):
+            with self.assertRaisesRegex(ValueError, message):
+                run_paired_arena(
+                    candidate, baseline, self._integration_config(**overrides)
+                )
+
+    def test_pipeline_arena_config_scopes_the_filter_to_gates(self) -> None:
+        from battle_training.transformer_pipeline import (
+            _arena_config,
+            run_transformer_pipeline,
+        )
+
+        config = MatchupFilterTest._config(
+            matchup_value_cap=0.8, matchup_filter_attempts=3
+        )
+        plain = _arena_config(config, 8, 1, 2)
+        self.assertEqual(plain.matchup_value_cap, 0.0)
+        self.assertEqual(plain.matchup_filter_attempts, 3)
+        self.assertIsNone(plain.matchup_plan)
+        gate = _arena_config(config, 8, 1, 2, matchup_filter=True)
+        self.assertEqual(gate.matchup_value_cap, 0.8)
+        self.assertEqual(gate.matchup_filter_attempts, 3)
+        source = inspect.getsource(run_transformer_pipeline)
+        self.assertEqual(source.count("matchup_filter=True"), 2)
+
+    def test_reset_sites_route_through_matchup_root_seed(self) -> None:
+        from battle_training import arena
+
+        for function in (
+            arena._run_fast_arena_spans,
+            arena._run_traced_arena_spans,
+            arena._run_traced_arena_sequential,
+        ):
+            self.assertIn("_matchup_root_seed(", inspect.getsource(function))
+
+
 if __name__ == "__main__":
     unittest.main()

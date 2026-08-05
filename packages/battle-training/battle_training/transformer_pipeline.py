@@ -30,10 +30,12 @@ from . import (
     generated_schedule_names,
 )
 from .arena import (
+    _MATCHUP_FILTER_VERSION,
     ArenaConfig,
     ArenaEvaluationPool,
     ArenaReportJob,
     ArenaTelemetry,
+    _abs_value_summary,
     _choice_detail,
     _compact_inspection,
     _compact_turn_inspection,
@@ -569,6 +571,7 @@ def _arena_config(
     *,
     replay_games: int = 0,
     policy_only: bool = False,
+    matchup_filter: bool = False,
 ) -> ArenaConfig:
     return ArenaConfig(
         games=games,
@@ -600,6 +603,8 @@ def _arena_config(
         rmplus_backend=config.rmplus_backend,
         cfr_plus_solves=config.cfr_plus_solves,
         policy_only=policy_only,
+        matchup_value_cap=config.matchup_value_cap if matchup_filter else 0.0,
+        matchup_filter_attempts=config.matchup_filter_attempts,
     )
 
 
@@ -991,9 +996,6 @@ def _frontier_restart_meta(config: TransformerPipelineConfig) -> dict[str, Any]:
     }
 
 
-_MATCHUP_FILTER_VERSION = "predicted-turn-zero-value-v1"
-
-
 def _matchup_attempt_seed(root_seed: int, iteration: int, attempt: int) -> int:
     """Attempt 0 replays the legacy reset stream; retries get their own domain."""
     if attempt <= 0:
@@ -1020,23 +1022,6 @@ def _matchup_filter_meta(config: TransformerPipelineConfig) -> dict[str, Any]:
         "matchup_value_cap": config.matchup_value_cap,
         "matchup_filter_attempts": config.matchup_filter_attempts,
         "matchup_lopsided_accept": config.matchup_lopsided_accept,
-    }
-
-
-def _abs_value_summary(values: list[float], cap: float) -> dict[str, float]:
-    if not values:
-        return {"mean": 0.0, "p50": 0.0, "p90": 0.0, "p99": 0.0, "lopsided_share": 0.0}
-    ordered = sorted(values)
-
-    def quantile(share: float) -> float:
-        return ordered[int(share * (len(ordered) - 1))]
-
-    return {
-        "mean": sum(ordered) / len(ordered),
-        "p50": quantile(0.50),
-        "p90": quantile(0.90),
-        "p99": quantile(0.99),
-        "lopsided_share": sum(value > cap for value in ordered) / len(ordered),
     }
 
 
@@ -4176,6 +4161,7 @@ def run_transformer_pipeline(
                     config.promotion_games,
                     config.seed + 70_000_000 + iteration * 10_007,
                     config.promotion_seed_count,
+                    matchup_filter=True,
                 ),
                 capture_details=True,
                 processes=config.eval_processes,
@@ -4241,6 +4227,7 @@ def run_transformer_pipeline(
                         config.seed + 75_000_000 + iteration * 10_037,
                         config.promotion_seed_count,
                         policy_only=True,
+                        matchup_filter=True,
                     ),
                     processes=config.eval_processes,
                     pool=evaluation_pool,
