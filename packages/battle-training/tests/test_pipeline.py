@@ -1744,6 +1744,8 @@ class TransformerTests(unittest.TestCase):
         config.pop("matchup_value_cap")
         config.pop("matchup_filter_attempts")
         config.pop("matchup_lopsided_accept")
+        config.pop("team_replay_fraction")
+        config.pop("team_replay_buffer_size")
         normalized = _normalized_saved_config(config)
         self.assertIsNone(normalized["leaf_hidden_layers"])
         self.assertEqual(normalized["leaf_ema_decay"], 0.0)
@@ -1768,6 +1770,8 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["matchup_value_cap"], 0.0)
         self.assertEqual(normalized["matchup_filter_attempts"], 1)
         self.assertEqual(normalized["matchup_lopsided_accept"], 0.0)
+        self.assertEqual(normalized["team_replay_fraction"], 0.0)
+        self.assertEqual(normalized["team_replay_buffer_size"], 0)
         self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
         self.assertNotIn("leaf_hidden_layers", config)
 
@@ -5705,6 +5709,509 @@ class MatchupFilterTest(unittest.TestCase):
         single_source = inspect.getsource(_collect_rows_single)
         self.assertIn("_pair_reset_seed", single_source)
         self.assertIn("_matchup_filter_meta", single_source)
+
+
+class TeamReplayTest(unittest.TestCase):
+    @staticmethod
+    def _config(**overrides: object) -> TransformerPipelineConfig:
+        values: dict[str, object] = {
+            "iterations": 1,
+            "selfplay_episodes": 8,
+            "arena_episodes": 8,
+            "episode_budget": 64,
+            "search_depth": 1,
+            "epochs": 1,
+            "batch_size": 8,
+            "learning_rate": 1e-3,
+            "weight_decay": 0.0,
+            "seed": 20260805,
+            "device": "cpu",
+            "d_model": 8,
+            "heads": 2,
+            "layers": 1,
+            "feedforward": 16,
+        }
+        values.update(overrides)
+        return TransformerPipelineConfig(**values)
+
+    @staticmethod
+    def _episode_record(**overrides: object) -> dict[str, object]:
+        record: dict[str, object] = {
+            "pair": 0,
+            "pair_leg": 0,
+            "episode": 0,
+            "episode_kind": "mirror",
+            "stop": "finished",
+            "return": 1,
+            "decisions": 24,
+            "teams_swapped": False,
+            "reset_seed": 777,
+            "reset_episode": 0,
+            "pair_player_party_size": 3,
+            "pair_enemy_party_size": 2,
+            "level_profile": "distributed",
+            "species_profile": "balanced-final-u16-v1",
+        }
+        record.update(overrides)
+        return record
+
+    @classmethod
+    def _mirror_pair(
+        cls, pair: int, leg0: dict[str, object], leg1: dict[str, object]
+    ) -> list[dict[str, object]]:
+        base = {"pair": pair, "reset_seed": 777 + pair, "reset_episode": pair}
+        first = cls._episode_record(
+            **{**base, "episode": 2 * pair, "pair_leg": 0, **leg0}
+        )
+        second = cls._episode_record(
+            **{
+                **base,
+                "episode": 2 * pair + 1,
+                "pair_leg": 1,
+                "teams_swapped": True,
+                **leg1,
+            }
+        )
+        return [first, second]
+
+    def test_team_replay_defaults_stay_legacy_in_the_dataclass(self) -> None:
+        config = self._config()
+        self.assertEqual(config.team_replay_fraction, 0.0)
+        self.assertEqual(config.team_replay_buffer_size, 0)
+
+    def test_team_replay_flags_flow_from_the_cli_with_on_defaults(self) -> None:
+        defaults = training_parser().parse_args(
+            ["transformer-train", "--output", "/tmp/team-replay"]
+        )
+        self.assertEqual(defaults.team_replay_fraction, 0.15)
+        self.assertEqual(defaults.team_replay_buffer_size, 256)
+        arguments = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/team-replay",
+                "--team-replay-fraction",
+                "0.3",
+                "--team-replay-buffer-size",
+                "64",
+            ]
+        )
+        self.assertEqual(arguments.team_replay_fraction, 0.3)
+        self.assertEqual(arguments.team_replay_buffer_size, 64)
+
+    def test_team_replay_bounds_are_validated(self) -> None:
+        from battle_training.transformer_pipeline import run_transformer_pipeline
+
+        cases = [
+            ({"team_replay_fraction": 1.0}, "team_replay_fraction"),
+            ({"team_replay_fraction": -0.1}, "team_replay_fraction"),
+            (
+                {"team_replay_fraction": 0.15, "team_replay_buffer_size": 0},
+                "team_replay_buffer_size",
+            ),
+        ]
+        for overrides, message in cases:
+            with (
+                tempfile.TemporaryDirectory() as tmp,
+                self.assertRaisesRegex(ValueError, message),
+            ):
+                run_transformer_pipeline(Path(tmp) / "run", self._config(**overrides))
+
+    def test_team_replay_meta_tags_appear_only_when_enabled(self) -> None:
+        from battle_training.transformer_pipeline import _team_replay_meta
+
+        disabled = SimpleNamespace(team_replay_fraction=0.0, team_replay_buffer_size=0)
+        self.assertEqual(_team_replay_meta(disabled), {})
+        enabled = SimpleNamespace(
+            team_replay_fraction=0.15, team_replay_buffer_size=256
+        )
+        self.assertEqual(
+            _team_replay_meta(enabled),
+            {
+                "team_replay": "hard-team-replay-v1",
+                "team_replay_fraction": 0.15,
+                "team_replay_buffer_size": 256,
+            },
+        )
+
+    def test_hard_team_score_marks_sweeps_uncontested(self) -> None:
+        from battle_training.transformer_pipeline import _hard_team_score
+
+        sweep = self._mirror_pair(0, {"return": 1}, {"return": -1})
+        scored = _hard_team_score(sweep[0], sweep[1], 64)
+        self.assertIsNotNone(scored)
+        self.assertFalse(scored["contested"])
+        self.assertEqual(scored["team_returns"], [1, 1])
+        self.assertAlmostEqual(scored["score"], (24 + 24) / (2 * 64))
+        split = self._mirror_pair(1, {"return": 1}, {"return": 1})
+        scored = _hard_team_score(split[0], split[1], 64)
+        self.assertTrue(scored["contested"])
+        self.assertEqual(scored["team_returns"], [1, -1])
+        self.assertAlmostEqual(scored["score"], 1.0 + (24 + 24) / (2 * 64))
+        draw = self._mirror_pair(2, {"return": 0}, {"return": -1})
+        self.assertTrue(_hard_team_score(draw[0], draw[1], 64)["contested"])
+        truncated = self._mirror_pair(
+            3,
+            {"return": None, "stop": "truncated", "decisions": 64},
+            {"return": None, "stop": "truncated", "decisions": 64},
+        )
+        scored = _hard_team_score(truncated[0], truncated[1], 64)
+        self.assertTrue(scored["contested"])
+        self.assertEqual(scored["team_returns"], [None, None])
+        self.assertAlmostEqual(scored["score"], 2.0)
+
+    def test_hard_team_score_skips_ineligible_pairs(self) -> None:
+        from battle_training.transformer_pipeline import _hard_team_score
+
+        opponent = self._mirror_pair(
+            0,
+            {"episode_kind": "checkpoint-opponent"},
+            {"episode_kind": "checkpoint-opponent"},
+        )
+        self.assertIsNone(_hard_team_score(opponent[0], opponent[1], 64))
+        restarted = self._mirror_pair(1, {"frontier_restart": True}, {})
+        self.assertIsNone(_hard_team_score(restarted[0], restarted[1], 64))
+        diverged = self._mirror_pair(
+            2, {}, {"stop": "semantic-divergence", "return": None}
+        )
+        self.assertIsNone(_hard_team_score(diverged[0], diverged[1], 64))
+
+    def test_hard_team_candidates_rank_and_fingerprint_pairs(self) -> None:
+        from battle_training.transformer_pipeline import _hard_team_candidates
+
+        config = self._config(team_replay_fraction=0.25, team_replay_buffer_size=8)
+        records = [
+            *self._mirror_pair(0, {"return": 1}, {"return": -1}),
+            *self._mirror_pair(
+                1,
+                {"return": 1, "team_replay": True, "level_profile": "level100"},
+                {"return": 1, "team_replay": True, "level_profile": "level100"},
+            ),
+            *self._mirror_pair(
+                2,
+                {"return": None, "stop": "truncated", "decisions": 64},
+                {"return": None, "stop": "truncated", "decisions": 64},
+            ),
+            *self._mirror_pair(
+                3, {"frontier_restart": True}, {"frontier_restart": True}
+            ),
+        ]
+        candidates = _hard_team_candidates(records, config, 5)
+        self.assertEqual(candidates["replayed_pairs"], 1)
+        entries = candidates["entries"]
+        self.assertEqual([entry["pair"] for entry in entries], [2, 1, 0])
+        self.assertTrue(all(entry["type"] == "hard-team" for entry in entries))
+        self.assertTrue(all(entry["iteration"] == 5 for entry in entries))
+        replayed = entries[1]
+        self.assertTrue(replayed["replayed"])
+        self.assertEqual(
+            replayed["reset"],
+            {
+                "seed": 778,
+                "episode": 1,
+                "player_size": 3,
+                "enemy_size": 2,
+                "level100": True,
+                "balanced_final_species": True,
+            },
+        )
+        self.assertFalse(entries[0]["replayed"])
+        self.assertFalse(entries[0]["reset"]["level100"])
+        json.dumps(entries)
+
+    def test_merge_hard_teams_prefers_fresh_scores_and_carries_the_rest(self) -> None:
+        from battle_training.transformer_pipeline import _merge_hard_teams
+
+        def entry(
+            seed: int, score: float, iteration: int, pair: int = 0
+        ) -> dict[str, object]:
+            return {
+                "type": "hard-team",
+                "iteration": iteration,
+                "pair": pair,
+                "score": score,
+                "contested": True,
+                "team_returns": [1, -1],
+                "decisions": [24, 24],
+                "replayed": False,
+                "reset": {
+                    "seed": seed,
+                    "episode": pair,
+                    "player_size": 3,
+                    "enemy_size": 2,
+                    "level100": False,
+                    "balanced_final_species": True,
+                },
+            }
+
+        previous = [entry(111, 1.8, 2), entry(222, 1.5, 1, pair=1), entry(333, 0.4, 0)]
+        fresh = [entry(111, 0.2, 3)]
+        merged = _merge_hard_teams(fresh, previous, 2)
+        self.assertEqual(
+            [(item["reset"]["seed"], item["score"]) for item in merged],
+            [(222, 1.5), (333, 0.4)],
+        )
+        tied = _merge_hard_teams([entry(444, 1.5, 3)], previous, 2)
+        self.assertEqual(
+            [(item["reset"]["seed"], item["iteration"]) for item in tied],
+            [(111, 2), (444, 3)],
+        )
+        self.assertEqual(_merge_hard_teams([], [], 4), [])
+
+    def test_team_replay_plan_is_empty_when_disabled_or_starved(self) -> None:
+        from battle_training.transformer_pipeline import _team_replay_plan
+
+        disabled = self._config(team_replay_fraction=0.0)
+        self.assertEqual(_team_replay_plan(disabled, 3, 64), {})
+        enabled = self._config(team_replay_fraction=0.25, team_replay_buffer_size=8)
+        self.assertEqual(_team_replay_plan(enabled, 3, 0), {})
+        self.assertEqual(_team_replay_plan(enabled, 3, 64, exclude=set(range(4))), {})
+
+    def test_team_replay_plan_replays_the_documented_rng_stream(self) -> None:
+        from battle_training.transformer_pipeline import (
+            _TEAM_REPLAY_PLAN_DOMAIN,
+            _team_replay_plan,
+        )
+
+        config = self._config(team_replay_fraction=0.5, team_replay_buffer_size=8)
+        rng = random.Random(
+            _training_entropy_seed(config.seed, 4, 0, _TEAM_REPLAY_PLAN_DOMAIN)
+        )
+        selected = sorted(rng.sample([0, 2, 3], 2))
+        indices = rng.sample(range(3), 2)
+        expected = dict(zip(selected, indices, strict=True))
+        self.assertEqual(_team_replay_plan(config, 4, 3, exclude={1}), expected)
+
+    def test_team_replay_plan_avoids_exclusions_and_reuses_no_entry(self) -> None:
+        from battle_training.transformer_pipeline import _team_replay_plan
+
+        config = self._config(
+            selfplay_episodes=4096,
+            team_replay_fraction=0.15,
+            team_replay_buffer_size=64,
+        )
+        exclude = set(range(10))
+        plan = _team_replay_plan(config, 7, 32, exclude=exclude)
+        self.assertEqual(len(plan), 32)
+        self.assertFalse(set(plan) & exclude)
+        self.assertTrue(all(0 <= pair < 2048 for pair in plan))
+        self.assertEqual(len(set(plan.values())), len(plan))
+        self.assertTrue(all(0 <= index < 32 for index in plan.values()))
+        self.assertEqual(plan, _team_replay_plan(config, 7, 32, exclude=exclude))
+        capped = _team_replay_plan(config, 7, 4096)
+        self.assertEqual(len(capped), int(0.15 * 4096) // 2)
+
+    def test_team_replay_entries_fall_back_to_empty_without_a_source(self) -> None:
+        from battle_training.transformer_pipeline import _team_replay_entries
+
+        self.assertEqual(_team_replay_entries(None), [])
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "hard-teams-004.jsonl"
+            self.assertEqual(_team_replay_entries(str(missing)), [])
+
+    def test_load_hard_team_buffer_rejects_unknown_versions(self) -> None:
+        from battle_training.transformer_pipeline import _load_hard_team_buffer
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "hard-teams-001.jsonl"
+            path.write_text(
+                json.dumps({"type": "hard-team-meta", "version": "other-v9"}) + "\n"
+            )
+            with self.assertRaises(ValueError):
+                _load_hard_team_buffer(path)
+            path.write_text(json.dumps({"type": "episode"}) + "\n")
+            with self.assertRaises(ValueError):
+                _load_hard_team_buffer(path)
+
+    def test_finalize_hard_teams_writes_carries_and_summarizes(self) -> None:
+        from battle_training.transformer_pipeline import (
+            _finalize_hard_teams,
+            _jsonl,
+            _team_replay_entries,
+        )
+
+        config = self._config(team_replay_fraction=0.25, team_replay_buffer_size=2)
+        base = {
+            "type": "hard-team",
+            "contested": True,
+            "team_returns": [1, -1],
+            "decisions": [24, 24],
+            "replayed": False,
+        }
+
+        def reset(seed: int) -> dict[str, object]:
+            return {
+                "seed": seed,
+                "episode": 0,
+                "player_size": 3,
+                "enemy_size": 2,
+                "level100": False,
+                "balanced_final_species": True,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "iteration-001.jsonl"
+            previous = [
+                {**base, "iteration": 0, "pair": 0, "score": 1.5, "reset": reset(111)},
+                {**base, "iteration": 0, "pair": 1, "score": 1.9, "reset": reset(222)},
+            ]
+            _jsonl(
+                path.with_name("hard-teams-000.jsonl"),
+                [
+                    {
+                        "type": "hard-team-meta",
+                        "version": "hard-team-replay-v1",
+                        "iteration": 0,
+                        "capacity": 2,
+                        "entries": len(previous),
+                        "score": "contested-outcome+length",
+                    },
+                    *previous,
+                ],
+            )
+            fresh = [
+                {
+                    **base,
+                    "iteration": 1,
+                    "pair": 4,
+                    "score": 0.3,
+                    "contested": False,
+                    "replayed": True,
+                    "reset": reset(222),
+                }
+            ]
+            metrics = _finalize_hard_teams(
+                {"hard_team_candidates": {"entries": fresh, "replayed_pairs": 1}},
+                path,
+                1,
+                config,
+            )
+            self.assertNotIn("hard_team_candidates", metrics)
+            summary = metrics["team_replay"]
+            self.assertEqual(summary["version"], "hard-team-replay-v1")
+            self.assertEqual(summary["fraction"], 0.25)
+            self.assertEqual(summary["capacity"], 2)
+            self.assertEqual(summary["entries"], 2)
+            self.assertEqual(summary["path"], "hard-teams-001.jsonl")
+            self.assertEqual(summary["scored_pairs"], 1)
+            self.assertEqual(summary["contested_pairs"], 0)
+            self.assertEqual(summary["replayed_pairs"], 1)
+            self.assertEqual(summary["fresh_entries"], 1)
+            self.assertEqual(summary["carried_entries"], 1)
+            self.assertEqual(summary["max_score"], 1.5)
+            self.assertEqual(summary["min_score"], 0.3)
+            written = _team_replay_entries(str(path.with_name("hard-teams-001.jsonl")))
+            self.assertEqual(
+                [(entry["reset"]["seed"], entry["score"]) for entry in written],
+                [(111, 1.5), (222, 0.3)],
+            )
+            header = json.loads(
+                path.with_name("hard-teams-001.jsonl").read_text().splitlines()[0]
+            )
+            self.assertEqual(header["type"], "hard-team-meta")
+            self.assertEqual(header["iteration"], 1)
+            self.assertEqual(header["entries"], 2)
+            json.dumps(summary)
+
+    def test_finalize_hard_teams_is_inert_when_disabled(self) -> None:
+        from battle_training.transformer_pipeline import _finalize_hard_teams
+
+        config = self._config()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "iteration-003.jsonl"
+            metrics = _finalize_hard_teams({"episodes": 3}, path, 3, config)
+            self.assertEqual(metrics, {"episodes": 3})
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_collection_wiring_threads_the_team_source(self) -> None:
+        from battle_training.transformer_pipeline import (
+            _collect_rows,
+            _collection_process_worker,
+            _merge_collection_rows,
+        )
+
+        single = inspect.signature(_collect_rows_single).parameters
+        self.assertIsNone(single["team_source"].default)
+        worker = inspect.signature(_collection_process_worker).parameters
+        self.assertIn("team_source", worker)
+        collect_source = inspect.getsource(_collect_rows)
+        self.assertIn("hard-teams-", collect_source)
+        self.assertIn("_team_replay_plan", collect_source)
+        self.assertIn("_finalize_hard_teams", collect_source)
+        single_source = inspect.getsource(_collect_rows_single)
+        self.assertIn("_team_replay_entries", single_source)
+        self.assertIn("_team_replay_plan", single_source)
+        self.assertIn("_hard_team_candidates", single_source)
+        self.assertIn("_team_replay_meta", single_source)
+        merge_source = inspect.getsource(_merge_collection_rows)
+        self.assertIn("_hard_team_candidates", merge_source)
+
+    def test_pair_validator_rejects_a_split_team_replay(self) -> None:
+        common = {
+            "pair": 0,
+            "reset_seed": 55,
+            "reset_episode": 4,
+            "pair_player_party_size": 3,
+            "pair_enemy_party_size": 2,
+            "level_profile": "distributed",
+            "episode_kind": "mirror",
+            "opponent": "self-play",
+            "candidate_side": "both",
+        }
+        rows = [
+            {
+                **common,
+                "episode": 0,
+                "pair_leg": 0,
+                "teams_swapped": False,
+                "player_party_size": 3,
+                "enemy_party_size": 2,
+                "initial": {"player": "team-a", "enemy": "team-b"},
+                "team_replay": True,
+            },
+            {
+                **common,
+                "episode": 1,
+                "pair_leg": 1,
+                "teams_swapped": True,
+                "player_party_size": 2,
+                "enemy_party_size": 3,
+                "initial": {"player": "team-b", "enemy": "team-a"},
+            },
+        ]
+        with self.assertRaisesRegex(RuntimeError, "split a team replay"):
+            _validate_collection_pairs(rows, 2)
+
+    def test_schedule_mix_enforcement_pauses_for_recipe_pairs(self) -> None:
+        from battle_training.transformer_pipeline import (
+            _merge_collection_rows,
+            _scheduled_size_mix_enforced,
+        )
+
+        baseline = SimpleNamespace(
+            frontier_restart_fraction=0.0, team_replay_fraction=0.0
+        )
+        self.assertTrue(_scheduled_size_mix_enforced(baseline))
+        self.assertFalse(
+            _scheduled_size_mix_enforced(
+                SimpleNamespace(
+                    frontier_restart_fraction=0.25, team_replay_fraction=0.0
+                )
+            )
+        )
+        self.assertFalse(
+            _scheduled_size_mix_enforced(
+                SimpleNamespace(
+                    frontier_restart_fraction=0.0, team_replay_fraction=0.15
+                )
+            )
+        )
+        self.assertIn(
+            "_scheduled_size_mix_enforced", inspect.getsource(_collect_rows_single)
+        )
+        self.assertIn(
+            "_scheduled_size_mix_enforced", inspect.getsource(_merge_collection_rows)
+        )
 
 
 class ArenaMatchupFilterTest(unittest.TestCase):

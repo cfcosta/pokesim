@@ -126,6 +126,8 @@ class TransformerPipelineConfig:
     matchup_value_cap: float = 0.0
     matchup_filter_attempts: int = 1
     matchup_lopsided_accept: float = 0.0
+    team_replay_fraction: float = 0.0
+    team_replay_buffer_size: int = 0
     budget_loss_weight: float = 0.05
     budget_positive_weight: float = 4.0
     opponent_checkpoints: tuple[str, ...] = ()
@@ -284,6 +286,7 @@ class _ActorEpisode:
     timeline: list[dict[str, Any]] = field(default_factory=list)
     frontier_snapshots: dict[int, Snapshot] = field(default_factory=dict)
     frontier_restart: dict[str, Any] | None = None
+    team_replay: dict[str, Any] | None = None
 
 
 def _pipeline_id(
@@ -391,6 +394,7 @@ _PRIOR_NOISE_DOMAIN = 0x7072696F72
 _FRONTIER_PLAN_DOMAIN = 0x66726F6E74696572
 _MATCHUP_DOMAIN = 0x6D61746368
 _MATCHUP_ACCEPT_DOMAIN = 0x616363657074
+_TEAM_REPLAY_PLAN_DOMAIN = 0x7465616D
 
 
 def _splitmix64(value: int) -> int:
@@ -476,6 +480,8 @@ def _validate_collection_pairs(
         second_initial = second.get("initial") or {}
         if bool(first.get("frontier_restart")) != bool(second.get("frontier_restart")):
             raise RuntimeError(f"collection pair {pair} split a frontier restart")
+        if bool(first.get("team_replay")) != bool(second.get("team_replay")):
+            raise RuntimeError(f"collection pair {pair} split a team replay")
         if first.get("frontier_restart"):
             if first.get("teams_swapped") != second.get("teams_swapped"):
                 raise RuntimeError(f"frontier pair {pair} diverged in team orientation")
@@ -996,6 +1002,216 @@ def _frontier_restart_meta(config: TransformerPipelineConfig) -> dict[str, Any]:
     }
 
 
+_TEAM_REPLAY_VERSION = "hard-team-replay-v1"
+
+
+def _scheduled_size_mix_enforced(config: TransformerPipelineConfig) -> bool:
+    """Recipe-driven resets replace scheduled size combos, skewing the mix."""
+    return not (config.frontier_restart_fraction or config.team_replay_fraction)
+
+
+def _hard_team_score(
+    first: dict[str, Any], second: dict[str, Any], episode_budget: int
+) -> dict[str, Any] | None:
+    """Score one mirror pair's team matchup by how contested it stayed.
+
+    Sweeps (the same team wins both orientations) score below any contested
+    pair; within each class longer battles score higher, so truncated pairs
+    that exhaust the budget without a verdict rank as the hardest matchups.
+    Opponent pairs, frontier restarts, and semantic divergences are not
+    comparable team evidence and yield no score.
+    """
+    if first.get("episode_kind") != "mirror" or second.get("episode_kind") != "mirror":
+        return None
+    if first.get("frontier_restart") or second.get("frontier_restart"):
+        return None
+    if any(leg["stop"] not in ("finished", "truncated") for leg in (first, second)):
+        return None
+    team_returns = [
+        first["return"],
+        -second["return"] if second["return"] is not None else None,
+    ]
+    contested = not (team_returns[0] == team_returns[1] and team_returns[0] in (1, -1))
+    length = (first["decisions"] + second["decisions"]) / (2 * episode_budget)
+    return {
+        "score": (1.0 if contested else 0.0) + length,
+        "contested": contested,
+        "team_returns": team_returns,
+        "decisions": [first["decisions"], second["decisions"]],
+    }
+
+
+def _hard_team_candidates(
+    episode_records: list[dict[str, Any]],
+    config: TransformerPipelineConfig,
+    iteration: int,
+) -> dict[str, Any]:
+    """Fingerprint every scorable pair's reset recipe, hardest first."""
+    legs: dict[int, dict[int, dict[str, Any]]] = {}
+    for record in episode_records:
+        legs.setdefault(int(record["pair"]), {})[int(record["pair_leg"])] = record
+    entries: list[dict[str, Any]] = []
+    for pair, sides in sorted(legs.items()):
+        first, second = sides.get(0), sides.get(1)
+        if first is None or second is None:
+            continue
+        scored = _hard_team_score(first, second, config.episode_budget)
+        if scored is None:
+            continue
+        entries.append(
+            {
+                "type": "hard-team",
+                "iteration": iteration,
+                "pair": pair,
+                **scored,
+                "replayed": bool(first.get("team_replay")),
+                "reset": {
+                    "seed": first["reset_seed"],
+                    "episode": first["reset_episode"],
+                    "player_size": first["pair_player_party_size"],
+                    "enemy_size": first["pair_enemy_party_size"],
+                    "level100": first["level_profile"] == "level100",
+                    "balanced_final_species": (
+                        first["species_profile"] == "balanced-final-u16-v1"
+                    ),
+                },
+            }
+        )
+    entries.sort(key=lambda entry: -entry["score"])
+    return {
+        "entries": entries,
+        "replayed_pairs": sum(entry["replayed"] for entry in entries),
+    }
+
+
+def _merge_hard_teams(
+    fresh: list[dict[str, Any]],
+    previous: list[dict[str, Any]],
+    capacity: int,
+) -> list[dict[str, Any]]:
+    """Keep the hardest recipes; a replayed matchup's fresh score supersedes.
+
+    Deduplication runs on the full reset recipe, so a hard team that the
+    candidate has since learned to beat re-enters with its new low score and
+    falls out of the buffer instead of looping forever.
+    """
+
+    def fingerprint(entry: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
+        return tuple(sorted(entry["reset"].items()))
+
+    merged = {fingerprint(entry): entry for entry in previous}
+    merged.update((fingerprint(entry), entry) for entry in fresh)
+    ranked = sorted(
+        merged.values(),
+        key=lambda entry: (-entry["score"], -entry["iteration"], entry["pair"]),
+    )
+    return ranked[:capacity]
+
+
+def _team_replay_meta(config: TransformerPipelineConfig) -> dict[str, Any]:
+    if not config.team_replay_fraction or not config.team_replay_buffer_size:
+        return {}
+    return {
+        "team_replay": _TEAM_REPLAY_VERSION,
+        "team_replay_fraction": config.team_replay_fraction,
+        "team_replay_buffer_size": config.team_replay_buffer_size,
+    }
+
+
+def _finalize_hard_teams(
+    metrics: dict[str, Any],
+    path: Path,
+    iteration: int,
+    config: TransformerPipelineConfig,
+) -> dict[str, Any]:
+    candidates = metrics.pop("hard_team_candidates", None)
+    if not config.team_replay_fraction or not config.team_replay_buffer_size:
+        return metrics
+    fresh = candidates["entries"] if candidates else []
+    previous = _team_replay_entries(
+        str(path.with_name(f"hard-teams-{iteration - 1:03d}.jsonl"))
+    )
+    entries = _merge_hard_teams(fresh, previous, config.team_replay_buffer_size)
+    buffer_path = path.with_name(f"hard-teams-{iteration:03d}.jsonl")
+    header = {
+        "type": "hard-team-meta",
+        "version": _TEAM_REPLAY_VERSION,
+        "iteration": iteration,
+        "capacity": config.team_replay_buffer_size,
+        "entries": len(entries),
+        "score": "contested-outcome+length",
+    }
+    _jsonl(buffer_path, [header, *entries])
+    scores = [entry["score"] for entry in entries]
+    fresh_entries = sum(entry["iteration"] == iteration for entry in entries)
+    metrics["team_replay"] = {
+        "version": _TEAM_REPLAY_VERSION,
+        "fraction": config.team_replay_fraction,
+        "capacity": config.team_replay_buffer_size,
+        "entries": len(entries),
+        "path": buffer_path.name,
+        "scored_pairs": len(fresh),
+        "contested_pairs": sum(entry["contested"] for entry in fresh),
+        "replayed_pairs": candidates["replayed_pairs"] if candidates else 0,
+        "fresh_entries": fresh_entries,
+        "carried_entries": len(entries) - fresh_entries,
+        "max_score": max(scores) if scores else None,
+        "min_score": min(scores) if scores else None,
+    }
+    return metrics
+
+
+def _load_hard_team_buffer(path: Path) -> list[dict[str, Any]]:
+    with path.open() as handle:
+        rows = [json.loads(line) for line in handle if line.strip()]
+    if not rows or rows[0].get("type") != "hard-team-meta":
+        raise ValueError(f"missing hard-team-meta header in {path}")
+    if rows[0].get("version") != _TEAM_REPLAY_VERSION:
+        raise ValueError(f"unsupported hard-team buffer version in {path}")
+    return rows[1:]
+
+
+def _team_replay_entries(source: str | None) -> list[dict[str, Any]]:
+    if source is None:
+        return []
+    path = Path(source)
+    if not path.exists():
+        return []
+    return _load_hard_team_buffer(path)
+
+
+def _team_replay_plan(
+    config: TransformerPipelineConfig,
+    iteration: int,
+    entry_count: int,
+    exclude: Iterable[int] = (),
+) -> dict[int, int]:
+    """Assign buffered hard-team recipes to fresh turn-zero pairs.
+
+    Unlike frontier restarts this replays no actions: the recipe only pins the
+    teams, and the pair fights from turn zero in both orientations so the
+    matchup gets re-scored. Entries are drawn without replacement to keep the
+    replayed slice of the curriculum diverse.
+    """
+    fraction = config.team_replay_fraction
+    if fraction <= 0.0 or entry_count <= 0:
+        return {}
+    pairs = config.selfplay_episodes // 2
+    excluded = set(exclude)
+    candidates = [pair for pair in range(pairs) if pair not in excluded]
+    count = min(
+        int(fraction * config.selfplay_episodes) // 2, len(candidates), entry_count
+    )
+    if count <= 0:
+        return {}
+    rng = random.Random(
+        _training_entropy_seed(config.seed, iteration, 0, _TEAM_REPLAY_PLAN_DOMAIN)
+    )
+    selected = sorted(rng.sample(candidates, count))
+    indices = rng.sample(range(entry_count), count)
+    return dict(zip(selected, indices, strict=True))
+
+
 def _matchup_attempt_seed(root_seed: int, iteration: int, attempt: int) -> int:
     """Attempt 0 replays the legacy reset stream; retries get their own domain."""
     if attempt <= 0:
@@ -1211,6 +1427,7 @@ def _collect_rows_single(
     process: int = 0,
     frontier_source: str | None = None,
     matchup_plan: dict[int, int] | None = None,
+    team_source: str | None = None,
 ) -> dict[str, Any]:
     if episode_indices is None:
         episode_indices = list(range(config.selfplay_episodes))
@@ -1282,6 +1499,7 @@ def _collect_rows_single(
         **_frontier_meta(config),
         **_frontier_restart_meta(config),
         **_matchup_filter_meta(config),
+        **_team_replay_meta(config),
     }
     opponents = opponents or []
     if opponents:
@@ -1318,6 +1536,11 @@ def _collect_rows_single(
     restart_entries = _frontier_restart_entries(frontier_source)
     restart_plan = _frontier_restart_plan(config, iteration, len(restart_entries))
     frontier_restart_episodes = 0
+    replay_entries = _team_replay_entries(team_source)
+    replay_plan = _team_replay_plan(
+        config, iteration, len(replay_entries), exclude=restart_plan
+    )
+    team_replay_episodes = 0
 
     def append_episode(
         actor: _ActorEpisode,
@@ -1378,6 +1601,13 @@ def _collect_rows_single(
                 "decision": actor.frontier_restart["decision"],
                 "score": actor.frontier_restart["score"],
             }
+        if actor.team_replay is not None:
+            record["team_replay"] = True
+            record["team_replay_source"] = {
+                "iteration": actor.team_replay["iteration"],
+                "pair": actor.team_replay["pair"],
+                "score": actor.team_replay["score"],
+            }
         rows.append(record)
         total_decisions += decisions
         if reward == 1:
@@ -1410,8 +1640,12 @@ def _collect_rows_single(
                     if pair in restart_plan
                     else None
                 )
+                replay_entry = (
+                    replay_entries[replay_plan[pair]] if pair in replay_plan else None
+                )
                 versus_opponent = (
                     restart_entry is None
+                    and replay_entry is None
                     and bool(opponents)
                     and _scheduled_for_opponent(pair, config.opponent_fraction)
                 )
@@ -1475,6 +1709,16 @@ def _collect_rows_single(
                     pair_enemy_size = recipe["enemy_size"]
                     level100 = recipe["level100"]
                     teams_swapped = recipe["swapped"]
+                    balanced_final_species = recipe["balanced_final_species"]
+                if replay_entry is not None:
+                    # Pin the recorded teams but fight from turn zero, leaving
+                    # teams_swapped to leg parity so both orientations rescore.
+                    recipe = replay_entry["reset"]
+                    reset_seed = recipe["seed"]
+                    reset_episode = recipe["episode"]
+                    pair_player_size = recipe["player_size"]
+                    pair_enemy_size = recipe["enemy_size"]
+                    level100 = recipe["level100"]
                     balanced_final_species = recipe["balanced_final_species"]
                 player_size, enemy_size = (
                     (pair_enemy_size, pair_player_size)
@@ -1555,6 +1799,7 @@ def _collect_rows_single(
                             )
                         ),
                         frontier_restart=restart_entry,
+                        team_replay=replay_entry,
                     )
                 )
             for actor in active:
@@ -1563,6 +1808,8 @@ def _collect_rows_single(
                         server, actor.snapshot, actor.frontier_restart
                     )
                     frontier_restart_episodes += 1
+                if actor.team_replay is not None:
+                    team_replay_episodes += 1
             inspections = server.inspect_many(
                 [actor.snapshot.handle for actor in active]
             )
@@ -1962,14 +2209,14 @@ def _collect_rows_single(
     schedule_tolerance = 2 * (schedule_denominator - 1)
     if (
         len(episode_indices) == config.selfplay_episodes
-        and not config.frontier_restart_fraction
+        and _scheduled_size_mix_enforced(config)
         and abs(six_vs_six_battles * schedule_denominator - len(episode_indices))
         > schedule_tolerance
     ):
         raise RuntimeError("collection 6v6 schedule differs from its target")
     if (
         len(episode_indices) == config.selfplay_episodes
-        and not config.frontier_restart_fraction
+        and _scheduled_size_mix_enforced(config)
         and abs(level100_six_vs_six_battles * schedule_denominator - six_vs_six_battles)
         > schedule_tolerance
     ):
@@ -2022,6 +2269,11 @@ def _collect_rows_single(
         **(
             {"frontier_restart_episodes": frontier_restart_episodes}
             if config.frontier_restart_fraction
+            else {}
+        ),
+        **(
+            {"team_replay_episodes": team_replay_episodes}
+            if config.team_replay_fraction
             else {}
         ),
         "opponent_episodes": opponent_episodes,
@@ -2097,6 +2349,15 @@ def _collect_rows_single(
         "setup_use_rate": sum("setup_move" in row for row in example_rows)
         / max(1, sum(row["request"] == "battle" for row in example_rows)),
         **({"frontier": frontier.entries()} if frontier.capacity else {}),
+        **(
+            {
+                "hard_team_candidates": _hard_team_candidates(
+                    episode_rows, config, iteration
+                )
+            }
+            if config.team_replay_fraction and config.team_replay_buffer_size
+            else {}
+        ),
         "sha256": sha256(path),
         "bytes": path.stat().st_size,
     }
@@ -2135,6 +2396,7 @@ def _collection_process_worker(
     process: int,
     frontier_source: str | None = None,
     matchup_plan: dict[int, int] | None = None,
+    team_source: str | None = None,
 ) -> dict[str, Any]:
     torch.set_num_threads(1)
     configure_determinism(config.seed + iteration)
@@ -2160,6 +2422,7 @@ def _collection_process_worker(
         process,
         frontier_source=frontier_source,
         matchup_plan=matchup_plan,
+        team_source=team_source,
     )
 
 
@@ -2168,6 +2431,7 @@ def _merge_collection_rows(
     worker_paths: list[Path],
     worker_metrics: list[dict[str, Any]],
     config: TransformerPipelineConfig,
+    iteration: int,
 ) -> dict[str, Any]:
     rows = []
     actor_shards = []
@@ -2263,13 +2527,13 @@ def _merge_collection_rows(
     schedule_denominator = 4 if config.generated_schedule_version == 2 else 3
     schedule_tolerance = 2 * (schedule_denominator - 1)
     if (
-        not config.frontier_restart_fraction
+        _scheduled_size_mix_enforced(config)
         and abs(six_vs_six_battles * schedule_denominator - config.selfplay_episodes)
         > schedule_tolerance
     ):
         raise RuntimeError("collection 6v6 schedule differs from its target")
     if (
-        not config.frontier_restart_fraction
+        _scheduled_size_mix_enforced(config)
         and abs(level100_six_vs_six_battles * schedule_denominator - six_vs_six_battles)
         > schedule_tolerance
     ):
@@ -2305,6 +2569,11 @@ def _merge_collection_rows(
         **(
             {"frontier_restart_episodes": total("frontier_restart_episodes")}
             if config.frontier_restart_fraction
+            else {}
+        ),
+        **(
+            {"team_replay_episodes": total("team_replay_episodes")}
+            if config.team_replay_fraction
             else {}
         ),
         "opponent_episodes": total("opponent_episodes"),
@@ -2371,6 +2640,13 @@ def _merge_collection_rows(
             [metrics.get("frontier", []) for metrics in worker_metrics],
             config.frontier_buffer_size,
         )
+    if config.team_replay_fraction and config.team_replay_buffer_size:
+        # Round-robin episode partitioning puts a pair's two legs on different
+        # workers, so per-worker candidate lists are structurally incomplete;
+        # rescore the merged rows instead of concatenating them.
+        merged["hard_team_candidates"] = _hard_team_candidates(
+            episode_rows, config, iteration
+        )
     return merged
 
 
@@ -2393,13 +2669,27 @@ def _collect_rows(
         if config.frontier_restart_fraction > 0.0 and iteration > 0
         else None
     )
+    team_source = (
+        str(path.with_name(f"hard-teams-{iteration - 1:03d}.jsonl"))
+        if config.team_replay_fraction > 0.0
+        and config.team_replay_buffer_size > 0
+        and iteration > 0
+        else None
+    )
     matchup_plan: dict[int, int] | None = None
     matchup_stats: dict[str, Any] | None = None
     if config.matchup_value_cap > 0.0:
-        # Frontier restart pairs replay recorded resets, so probing them would
-        # waste incumbent evaluations on seeds the recipes override anyway.
+        # Frontier restart and team replay pairs replay recorded resets, so
+        # probing them would waste incumbent evaluations on seeds the recipes
+        # override anyway.
         restart_pairs = _frontier_restart_plan(
             config, iteration, len(_frontier_restart_entries(frontier_source))
+        )
+        replay_pairs = _team_replay_plan(
+            config,
+            iteration,
+            len(_team_replay_entries(team_source)),
+            exclude=restart_pairs,
         )
         with SearchServer() as probe_server:
             matchup_plan, matchup_stats = _matchup_filter_plan(
@@ -2407,7 +2697,7 @@ def _collect_rows(
                 network,
                 config,
                 iteration,
-                exclude=restart_pairs,
+                exclude={**restart_pairs, **replay_pairs},
                 chunk_size=config.inference_batch_size,
             )
     if config.actor_processes == 1:
@@ -2420,10 +2710,16 @@ def _collect_rows(
             progress_path=progress_dir / "actor-00.json",
             frontier_source=frontier_source,
             matchup_plan=matchup_plan,
+            team_source=team_source,
         )
         if matchup_stats is not None:
             metrics["matchup_filter"] = matchup_stats
-        return _finalize_frontier(metrics, path, iteration, config)
+        return _finalize_hard_teams(
+            _finalize_frontier(metrics, path, iteration, config),
+            path,
+            iteration,
+            config,
+        )
     opponents = opponents or []
     payload = {
         "candidate": _serialized_model(network),
@@ -2460,16 +2756,22 @@ def _collect_rows(
                     process,
                     frontier_source,
                     matchup_plan,
+                    team_source,
                 )
                 for process, (worker_path, episodes) in enumerate(
                     zip(worker_paths, partitions, strict=True)
                 )
             ]
             metrics = [future.result() for future in futures]
-        merged = _merge_collection_rows(path, worker_paths, metrics, config)
+        merged = _merge_collection_rows(path, worker_paths, metrics, config, iteration)
         if matchup_stats is not None:
             merged["matchup_filter"] = matchup_stats
-        return _finalize_frontier(merged, path, iteration, config)
+        return _finalize_hard_teams(
+            _finalize_frontier(merged, path, iteration, config),
+            path,
+            iteration,
+            config,
+        )
 
 
 ExampleTensors = tuple[
@@ -3450,6 +3752,8 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("matchup_value_cap", 0.0)
     normalized.setdefault("matchup_filter_attempts", 1)
     normalized.setdefault("matchup_lopsided_accept", 0.0)
+    normalized.setdefault("team_replay_fraction", 0.0)
+    normalized.setdefault("team_replay_buffer_size", 0)
     return normalized
 
 
@@ -3707,6 +4011,12 @@ def run_transformer_pipeline(
         raise ValueError("matchup_filter_attempts must be positive")
     if not 0.0 <= config.matchup_lopsided_accept <= 1.0:
         raise ValueError("matchup_lopsided_accept must be in [0, 1]")
+    if config.team_replay_buffer_size < 0:
+        raise ValueError("team_replay_buffer_size must be nonnegative")
+    if not 0.0 <= config.team_replay_fraction <= 0.25:
+        raise ValueError("team_replay_fraction must be in [0, 0.25]")
+    if config.team_replay_fraction and not config.team_replay_buffer_size:
+        raise ValueError("team_replay_buffer_size must be positive with team replay")
     if not 0.0 <= config.budget_loss_weight <= 1.0:
         raise ValueError("budget_loss_weight must be in [0, 1]")
     if config.budget_positive_weight < 1.0:
