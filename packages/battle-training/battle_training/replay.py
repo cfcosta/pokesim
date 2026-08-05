@@ -58,6 +58,7 @@ class ReplayCoordinates:
     level100: bool
     swapped: bool
     balanced_final_species: bool
+    popular_gate: int = 26
 
 
 def _u16(value: object) -> tuple[int, int]:
@@ -329,6 +330,7 @@ def replay_coordinates(
             level100=detail["level_profile"] == "level100",
             swapped=bool(detail["teams_swapped"]),
             balanced_final_species=bool(config.get("balanced_final_species", False)),
+            popular_gate=int(config.get("popular_gate", 26)),
         )
     if kind == "promotion":
         arena_seed = seed + 70_000_000 + iteration * 10_007
@@ -345,6 +347,7 @@ def replay_coordinates(
             level100=detail["level_profile"] == "level100",
             swapped=False,
             balanced_final_species=bool(config.get("balanced_final_species", False)),
+            popular_gate=int(config.get("popular_gate", 26)),
         )
     raise ValueError("recorded replay kind must be selfplay or promotion")
 
@@ -362,7 +365,9 @@ def _reconstruct_replay(
 ]:
     """Replay one orientation and fail unless every recorded boundary agrees."""
     coordinates = _coordinates_for_replay(recorded_coordinates, swap_sides)
-    with SearchServer(request_timeout=30.0) as server:
+    with SearchServer(
+        request_timeout=30.0, popular_gate=coordinates.popular_gate
+    ) as server:
         snapshot = server.reset(
             coordinates.root_seed,
             coordinates.reset_episode,

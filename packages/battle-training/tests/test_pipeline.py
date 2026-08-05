@@ -417,6 +417,7 @@ class _FakeLeanServer(SearchServer):
 
     def __init__(self) -> None:
         self.request_timeout = 60.0
+        self.popular_gate = 26
         self.feature_count = 4
         self.action_count = 13
         self.campaign_count = 2
@@ -1574,6 +1575,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.matchup_value_cap, 0.9)
         self.assertEqual(arguments.matchup_filter_attempts, 4)
         self.assertEqual(arguments.matchup_lopsided_accept, 0.15)
+        self.assertEqual(arguments.popular_gate, 64)
         self.assertEqual(arguments.budget_loss_weight, 0.05)
         self.assertEqual(arguments.budget_positive_weight, 4.0)
         self.assertEqual(arguments.precision, "bf16")
@@ -1746,6 +1748,7 @@ class TransformerTests(unittest.TestCase):
         config.pop("matchup_lopsided_accept")
         config.pop("team_replay_fraction")
         config.pop("team_replay_buffer_size")
+        config.pop("popular_gate")
         normalized = _normalized_saved_config(config)
         self.assertIsNone(normalized["leaf_hidden_layers"])
         self.assertEqual(normalized["leaf_ema_decay"], 0.0)
@@ -1772,6 +1775,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["matchup_lopsided_accept"], 0.0)
         self.assertEqual(normalized["team_replay_fraction"], 0.0)
         self.assertEqual(normalized["team_replay_buffer_size"], 0)
+        self.assertEqual(normalized["popular_gate"], 26)
         self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
         self.assertNotIn("leaf_hidden_layers", config)
 
@@ -6212,6 +6216,252 @@ class TeamReplayTest(unittest.TestCase):
         self.assertIn(
             "_scheduled_size_mix_enforced", inspect.getsource(_merge_collection_rows)
         )
+
+
+class PopularGateTest(unittest.TestCase):
+    @staticmethod
+    def _config(**overrides: object) -> TransformerPipelineConfig:
+        values: dict[str, object] = {
+            "iterations": 1,
+            "selfplay_episodes": 8,
+            "arena_episodes": 8,
+            "episode_budget": 64,
+            "search_depth": 1,
+            "epochs": 1,
+            "batch_size": 8,
+            "learning_rate": 1e-3,
+            "weight_decay": 0.0,
+            "seed": 20260805,
+            "device": "cpu",
+            "d_model": 8,
+            "heads": 2,
+            "layers": 1,
+            "feedforward": 16,
+        }
+        values.update(overrides)
+        return TransformerPipelineConfig(**values)
+
+    @staticmethod
+    def _reset_response(**overrides: object) -> dict[str, object]:
+        response: dict[str, object] = {
+            "handle": 0,
+            "feature_encoding": "json-nat-array",
+            "player_features": [1, 2],
+            "enemy_features": [3, 4],
+            "player_mask": 3,
+            "enemy_mask": 3,
+            "player_hash": "aa",
+            "enemy_hash": "bb",
+            "turn": 0,
+            "request": "battle",
+            "divergence": None,
+            "terminal": False,
+            "done": False,
+            "return": None,
+        }
+        response.update(overrides)
+        return response
+
+    def test_popular_gate_defaults_stay_legacy_in_the_dataclasses(self) -> None:
+        self.assertEqual(self._config().popular_gate, 26)
+        self.assertEqual(ArenaConfig(games=4, seed_count=2).popular_gate, 26)
+
+    def test_popular_gate_flows_from_the_cli_with_a_raised_default(self) -> None:
+        defaults = training_parser().parse_args(
+            ["transformer-train", "--output", "/tmp/popular-gate"]
+        )
+        self.assertEqual(defaults.popular_gate, 64)
+        arguments = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/popular-gate",
+                "--popular-gate",
+                "32",
+            ]
+        )
+        self.assertEqual(arguments.popular_gate, 32)
+
+    def test_popular_gate_bounds_are_validated(self) -> None:
+        from battle_training.transformer_pipeline import run_transformer_pipeline
+
+        for gate in (-1, 65):
+            with (
+                tempfile.TemporaryDirectory() as tmp,
+                self.assertRaisesRegex(
+                    ValueError, r"popular_gate must be in \[0, 64\]"
+                ),
+            ):
+                run_transformer_pipeline(
+                    Path(tmp) / "run", self._config(popular_gate=gate)
+                )
+
+    def test_search_server_rejects_bad_gates_before_spawning(self) -> None:
+        import battle_training.native as native_module
+
+        original = native_module.subprocess.Popen
+
+        def _forbidden(*args: object, **kwargs: object) -> object:
+            raise AssertionError("gate validation must precede the process spawn")
+
+        native_module.subprocess.Popen = _forbidden  # type: ignore[assignment]
+        try:
+            for gate in (-1, 257):
+                with self.assertRaisesRegex(
+                    ValueError, r"popular_gate must be in \[0, 256\]"
+                ):
+                    SearchServer(popular_gate=gate)
+        finally:
+            native_module.subprocess.Popen = original  # type: ignore[assignment]
+
+    def test_stale_binaries_are_rejected_when_the_gate_is_raised(self) -> None:
+        from battle_training.native import _require_popular_gate_support
+
+        _require_popular_gate_support(26, {})
+        _require_popular_gate_support(64, {"popular_gate": "parametrized-v1"})
+        for gate in (0, 64):
+            with self.assertRaisesRegex(ValueError, "popular_gate"):
+                _require_popular_gate_support(gate, {"profile": "stale"})
+
+    def test_reset_commands_append_the_gate_token_only_when_raised(self) -> None:
+        captured: list[tuple[str, str, bool]] = []
+
+        class _CommandCapture(SearchServer):
+            def __init__(self, popular_gate: int) -> None:
+                self.popular_gate = popular_gate
+
+            def _reset_snapshot(
+                self, operation: str, arguments: str, append: bool
+            ) -> None:
+                captured.append((operation, arguments, append))
+
+        legacy = _CommandCapture(26)
+        legacy.reset(11, 7, 6, 6, level100=True, balanced_final_species=True)
+        raised = _CommandCapture(64)
+        raised.reset(11, 7, 6, 6, level100=True, balanced_final_species=True)
+        raised.reset(11, 7, 6, 6, level100=True, balanced_final_species=False)
+        raised.reset(11, 7, 6, 6, level100=False, balanced_final_species=True)
+        raised.reset_append(
+            11, 7, 6, 6, level100=True, swapped=True, balanced_final_species=True
+        )
+        self.assertEqual(
+            captured,
+            [
+                ("reset-level100", "11|7|6|6|1", False),
+                ("reset-level100", "11|7|6|6|1|64", False),
+                ("reset-level100", "11|7|6|6|0", False),
+                ("reset", "11|7|6|6|1", False),
+                ("reset-level100-swapped", "11|7|6|6|1|64", True),
+            ],
+        )
+
+    def test_snapshot_popular_flags_default_off_and_survive_rehandling(self) -> None:
+        legacy = Snapshot.from_response(self._reset_response())
+        self.assertFalse(legacy.player_popular)
+        self.assertFalse(legacy.enemy_popular)
+        flagged = Snapshot.from_response(
+            self._reset_response(player_popular=True, enemy_popular=True)
+        )
+        self.assertTrue(flagged.player_popular)
+        self.assertTrue(flagged.enemy_popular)
+        moved = flagged.with_handle(9)
+        self.assertEqual(moved.handle, 9)
+        self.assertTrue(moved.player_popular)
+        self.assertTrue(moved.enemy_popular)
+
+    def test_arena_config_carries_the_gate_from_the_pipeline(self) -> None:
+        arena = _arena_config(self._config(popular_gate=48), 4, 1, 2)
+        self.assertEqual(arena.popular_gate, 48)
+
+    def test_arena_bounds_are_validated(self) -> None:
+        network = BattleTransformer(
+            TransformerConfig(
+                feature_count=492,
+                action_count=13,
+                d_model=8,
+                heads=2,
+                layers=1,
+                feedforward=16,
+                precision="fp32",
+            )
+        )
+        network.eval()
+        for gate in (-1, 257):
+            with self.assertRaisesRegex(
+                ValueError, r"popular_gate must be in \[0, 256\]"
+            ):
+                run_paired_arena(
+                    network,
+                    network,
+                    ArenaConfig(games=4, seed_count=2, popular_gate=gate),
+                )
+
+    def test_every_server_construction_site_wires_the_gate(self) -> None:
+        import battle_training.arena as arena_module
+        from battle_training.replay import _reconstruct_replay
+        from battle_training.transformer_pipeline import _collect_rows
+
+        wiring = "popular_gate=config.popular_gate"
+        self.assertIn(wiring, inspect.getsource(_collect_rows_single))
+        self.assertIn(wiring, inspect.getsource(_collect_rows))
+        self.assertIn(wiring, inspect.getsource(_arena))
+        for name in (
+            "_run_fast_arena_spans",
+            "run_paired_arena",
+            "_run_traced_arena_spans",
+            "_run_traced_arena_sequential",
+        ):
+            self.assertIn(
+                wiring,
+                inspect.getsource(getattr(arena_module, name)),
+                name,
+            )
+        self.assertIn(
+            "popular_gate=coordinates.popular_gate",
+            inspect.getsource(_reconstruct_replay),
+        )
+
+    def test_collection_metrics_expose_the_gate_and_popular_exposure(self) -> None:
+        from battle_training.transformer_pipeline import _merge_collection_rows
+
+        single = inspect.getsource(_collect_rows_single)
+        self.assertIn('"popular_gate": config.popular_gate', single)
+        self.assertIn("popular_player_episodes", single)
+        self.assertIn("popular_enemy_episodes", single)
+        merged = inspect.getsource(_merge_collection_rows)
+        self.assertIn("popular_player_episodes", merged)
+        self.assertIn("popular_enemy_episodes", merged)
+
+    def test_replay_coordinates_carry_the_gate(self) -> None:
+        from battle_training.replay import replay_coordinates
+
+        selfplay_detail = {
+            "iteration": 2,
+            "kind": "selfplay",
+            "reset_episode": 5,
+            "pair_player_party_size": 6,
+            "pair_enemy_party_size": 6,
+            "level_profile": "level100",
+            "teams_swapped": False,
+        }
+        raised = replay_coordinates(
+            {"config": {"seed": 1, "popular_gate": 64}}, selfplay_detail
+        )
+        self.assertEqual(raised.popular_gate, 64)
+        legacy = replay_coordinates({"config": {"seed": 1}}, selfplay_detail)
+        self.assertEqual(legacy.popular_gate, 26)
+        promotion = replay_coordinates(
+            {"config": {"seed": 1, "popular_gate": 32}},
+            {
+                "iteration": 2,
+                "kind": "promotion",
+                "game": 4,
+                "player_party_size": 6,
+                "enemy_party_size": 6,
+                "level_profile": "level100",
+            },
+        )
+        self.assertEqual(promotion.popular_gate, 32)
 
 
 class ArenaMatchupFilterTest(unittest.TestCase):

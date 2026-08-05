@@ -27,6 +27,8 @@ structure State where
   playerReset : RL.DynamicGenerator.CanonicalTeam
   enemyReset : RL.DynamicGenerator.CanonicalTeam
   repairedReset : Bool
+  playerPopular : Bool := false
+  enemyPopular : Bool := false
   playerHistory : RL.MoveHistory.TeamHistory
   enemyHistory : RL.MoveHistory.TeamHistory
   playerRemainingLedger : RL.MoveHistory.ResourceLedger
@@ -104,6 +106,8 @@ private def resetFromSamples (player enemy : RL.DynamicGenerator.Sample)
     playerReset := player.team
     enemyReset := enemy.team
     repairedReset := player.repaired || enemy.repaired
+    playerPopular := player.popular
+    enemyPopular := enemy.popular
     playerHistory := player.history
     enemyHistory := enemy.history
     playerRemainingLedger := player.remainingLedger
@@ -324,6 +328,61 @@ theorem resetSizedPair_swaps_exact_samples (playerRequested enemyRequested : Nat
       swapped.enemyReset = ordinary.playerReset := by
   simp [resetSizedPairBalancedLevel100, resetSizedPairBalancedLevel100Swapped,
     resetFromSamples]
+
+/-- Balanced level-100 reset with a server-parametrized popular-team gate.
+Threshold 26 reproduces the legacy sampler exactly. -/
+def resetSizedPairBalancedLevel100Gated (gate : Nat)
+    (playerRequested enemyRequested : Nat)
+    (generatorRng battleRng : Rng.LinkRng)
+    (mode : BattleMode := .link) (playerBag enemyBag : Items.Bag := [])
+    (trainerClass : UInt8 := 1) : State :=
+  let player := RL.DynamicGenerator.sampleSizedBalancedLevel100Gated gate
+    playerRequested generatorRng
+  let enemy := RL.DynamicGenerator.sampleSizedBalancedLevel100Gated gate
+    enemyRequested player.rng
+  resetFromSamples player enemy battleRng mode playerBag enemyBag trainerClass
+
+/-- Swapped counterpart of the gated balanced level-100 reset. -/
+def resetSizedPairBalancedLevel100GatedSwapped (gate : Nat)
+    (playerRequested enemyRequested : Nat)
+    (generatorRng battleRng : Rng.LinkRng) : State :=
+  let player := RL.DynamicGenerator.sampleSizedBalancedLevel100Gated gate
+    playerRequested generatorRng
+  let enemy := RL.DynamicGenerator.sampleSizedBalancedLevel100Gated gate
+    enemyRequested player.rng
+  resetFromSamples enemy player battleRng .link [] [] 1
+
+/-- Threshold 26 is definitionally the legacy balanced level-100 reset, so
+command streams without an explicit gate keep byte-identical semantics. -/
+theorem resetSizedPairBalancedLevel100Gated_legacy
+    (playerRequested enemyRequested : Nat) (generatorRng battleRng : Rng.LinkRng) :
+    resetSizedPairBalancedLevel100Gated 26 playerRequested enemyRequested
+        generatorRng battleRng =
+      resetSizedPairBalancedLevel100 playerRequested enemyRequested
+        generatorRng battleRng := rfl
+
+theorem resetSizedPairBalancedLevel100GatedSwapped_legacy
+    (playerRequested enemyRequested : Nat) (generatorRng battleRng : Rng.LinkRng) :
+    resetSizedPairBalancedLevel100GatedSwapped 26 playerRequested enemyRequested
+        generatorRng battleRng =
+      resetSizedPairBalancedLevel100Swapped playerRequested enemyRequested
+        generatorRng battleRng := rfl
+
+/-- The gated swap installs the same two samples in opposite physical
+positions and mirrors their popular-team provenance flags with them. -/
+@[simp] theorem resetSizedPairBalancedLevel100Gated_swaps_exact_samples
+    (gate playerRequested enemyRequested : Nat)
+    (generatorRng battleRng : Rng.LinkRng) :
+    let ordinary := resetSizedPairBalancedLevel100Gated gate playerRequested
+      enemyRequested generatorRng battleRng
+    let swapped := resetSizedPairBalancedLevel100GatedSwapped gate playerRequested
+      enemyRequested generatorRng battleRng
+    swapped.playerReset = ordinary.enemyReset ∧
+      swapped.enemyReset = ordinary.playerReset ∧
+      swapped.playerPopular = ordinary.enemyPopular ∧
+      swapped.enemyPopular = ordinary.playerPopular := by
+  simp [resetSizedPairBalancedLevel100Gated,
+    resetSizedPairBalancedLevel100GatedSwapped, resetFromSamples]
 
 /-- Equal-size compatibility wrapper around `resetSizedPair`. -/
 def resetSized (requested : Nat) (generatorRng battleRng : Rng.LinkRng)

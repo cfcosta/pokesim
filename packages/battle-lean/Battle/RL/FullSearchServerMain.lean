@@ -157,8 +157,13 @@ private def snapshotJson (handle : Nat) (state : SearchState)
   "{" ++ s!"\"handle\":{handle},{snapshotFields state withHashes}" ++ "}"
 
 private def success (request : String) (handle : Nat) (state : SearchState)
-    (withHashes : Bool := true) : String :=
-  "{" ++ s!"\"id\":\"{request}\",\"ok\":true,\"handle\":{handle},{snapshotFields state withHashes}" ++ "}"
+    (withHashes : Bool := true) (extra : String := "") : String :=
+  "{" ++ s!"\"id\":\"{request}\",\"ok\":true,\"handle\":{handle},{snapshotFields state withHashes}{extra}" ++ "}"
+
+/-- Reset responses expose popular-team provenance so trainers can account for
+realized structured-team exposure instead of assuming the scheduled share. -/
+private def popularFields (state : SearchState) : String :=
+  s!",\"player_popular\":{boolJson state.base.playerPopular},\"enemy_popular\":{boolJson state.base.enemyPopular}"
 
 private def simpleSuccess (request fields : String) : String :=
   "{" ++ s!"\"id\":\"{request}\",\"ok\":true{fields}" ++ "}"
@@ -531,7 +536,7 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
     match token tokens 0 with
     | some "ping" =>
         emit output (simpleSuccess request
-          s!",\"profile\":\"{FullTraining.profileVersion}\",\"schema\":\"{FullTraining.schemaVersion}\",\"chance\":\"fresh-root-v1\",\"feature_count\":{FullTraining.featureCount},\"action_count\":{FullTraining.actionCount},\"party_size\":{Wram.partyLength},\"campaign_count\":{CampaignTeams.count}")
+          s!",\"profile\":\"{FullTraining.profileVersion}\",\"schema\":\"{FullTraining.schemaVersion}\",\"chance\":\"fresh-root-v1\",\"feature_count\":{FullTraining.featureCount},\"action_count\":{FullTraining.actionCount},\"party_size\":{Wram.partyLength},\"campaign_count\":{CampaignTeams.count},\"popular_gate\":\"parametrized-v1\"")
         serve input output states
     | some "reset-campaign" | some "reset-campaign-append" =>
         match tokenNat tokens 2, tokenNat tokens 3, tokenNat tokens 4 with
@@ -547,11 +552,11 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
             let state := Full.Environment.linkResetFromSamples player enemy battleRng
             let state := SearchState.battle state []
             if token tokens 0 == some "reset-campaign" then
-              emit output (success request 0 state)
+              emit output (success request 0 state (extra := popularFields state))
               serve input output #[state]
             else
               let handle := states.size
-              emit output (success request handle state)
+              emit output (success request handle state (extra := popularFields state))
               serve input output (states.push state)
         | _, _, _ =>
             emit output (failure request "invalid-reset-campaign")
@@ -566,17 +571,18 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
             let battleRng :=
               Training.linkRng root.toUInt64 episode.toUInt64 Training.battleStream
             let balanced := tokenNat tokens 6 == some 1
+            let popularGate := (tokenNat tokens 7).getD 26
             let state := if balanced then
                 match token tokens 0 with
                 | some "reset-level100" =>
-                    Full.Environment.resetSizedPairBalancedLevel100 playerSize enemySize
-                      generatorRng battleRng
+                    Full.Environment.resetSizedPairBalancedLevel100Gated popularGate
+                      playerSize enemySize generatorRng battleRng
                 | some "reset-swapped" =>
                     Full.Environment.resetSizedPairBalancedSwapped playerSize enemySize
                       generatorRng battleRng
                 | some "reset-level100-swapped" =>
-                    Full.Environment.resetSizedPairBalancedLevel100Swapped playerSize enemySize
-                      generatorRng battleRng
+                    Full.Environment.resetSizedPairBalancedLevel100GatedSwapped popularGate
+                      playerSize enemySize generatorRng battleRng
                 | _ =>
                     Full.Environment.resetSizedPairBalanced playerSize enemySize
                       generatorRng battleRng
@@ -593,7 +599,7 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
                 | _ =>
                     Full.Environment.resetSizedPair playerSize enemySize generatorRng battleRng
             let state := SearchState.battle state []
-            emit output (success request 0 state)
+            emit output (success request 0 state (extra := popularFields state))
             serve input output #[state]
         | _, _, _, _ =>
             emit output (failure request "invalid-reset")
@@ -608,17 +614,18 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
             let battleRng :=
               Training.linkRng root.toUInt64 episode.toUInt64 Training.battleStream
             let balanced := tokenNat tokens 6 == some 1
+            let popularGate := (tokenNat tokens 7).getD 26
             let state := if balanced then
                 match token tokens 0 with
                 | some "reset-level100-append" =>
-                    Full.Environment.resetSizedPairBalancedLevel100 playerSize enemySize
-                      generatorRng battleRng
+                    Full.Environment.resetSizedPairBalancedLevel100Gated popularGate
+                      playerSize enemySize generatorRng battleRng
                 | some "reset-swapped-append" =>
                     Full.Environment.resetSizedPairBalancedSwapped playerSize enemySize
                       generatorRng battleRng
                 | some "reset-level100-swapped-append" =>
-                    Full.Environment.resetSizedPairBalancedLevel100Swapped playerSize enemySize
-                      generatorRng battleRng
+                    Full.Environment.resetSizedPairBalancedLevel100GatedSwapped popularGate
+                      playerSize enemySize generatorRng battleRng
                 | _ =>
                     Full.Environment.resetSizedPairBalanced playerSize enemySize
                       generatorRng battleRng
@@ -636,7 +643,7 @@ partial def serve (input output : IO.FS.Stream) (states : Array SearchState) : I
                     Full.Environment.resetSizedPair playerSize enemySize generatorRng battleRng
             let state := SearchState.battle state []
             let handle := states.size
-            emit output (success request handle state)
+            emit output (success request handle state (extra := popularFields state))
             serve input output (states.push state)
         | _, _, _, _ =>
             emit output (failure request "invalid-reset-append")

@@ -126,6 +126,7 @@ class ArenaConfig:
     matchup_value_cap: float = 0.0
     matchup_filter_attempts: int = 1
     matchup_plan: dict[int, int] | None = None
+    popular_gate: int = 26
 
 
 @dataclass(frozen=True)
@@ -1456,7 +1457,7 @@ def _run_fast_arena_spans(
     seed = config.seed
     seed_count = config.seed_count
     completed: list[_FastArenaEpisode] = []
-    server = SearchServer()
+    server = SearchServer(popular_gate=config.popular_gate)
     try:
         for batch_start, batch_stop in spans:
             episodes = []
@@ -1641,7 +1642,7 @@ def _run_fast_arena_spans(
                     if episode.stop == "truncated":
                         episode.stop = "mechanics-timeout"
                 server.close()
-                server = SearchServer()
+                server = SearchServer(popular_gate=config.popular_gate)
             if episode_progress is not None:
                 episode_progress(episodes)
             completed.extend(episodes)
@@ -1676,12 +1677,14 @@ def run_paired_arena(
         raise ValueError("arena matchup_value_cap must be in [0, 1)")
     if config.matchup_filter_attempts < 1:
         raise ValueError("arena matchup_filter_attempts must be positive")
+    if not 0 <= config.popular_gate <= 256:
+        raise ValueError("arena popular_gate must be in [0, 256]")
     matchup_stats: dict[str, Any] | None = None
     if config.matchup_value_cap > 0.0 and not campaign:
         # Campaign suites pin their rosters, and arena games are not training
         # data, so the contested-matchup filter probes with the incumbent and
         # hard-rejects lopsided generated pairs before any game is played.
-        with SearchServer() as probe_server:
+        with SearchServer(popular_gate=config.popular_gate) as probe_server:
             matchup_plan, matchup_stats = _arena_matchup_plan(
                 probe_server, baseline, config
             )
@@ -1974,7 +1977,7 @@ def _run_traced_arena_spans(
 ) -> list[_TracedArenaEpisode]:
     """Play the given server-level batches on one native search server."""
     all_episodes: list[_TracedArenaEpisode] = []
-    server = SearchServer()
+    server = SearchServer(popular_gate=config.popular_gate)
     try:
         for batch_start, batch_stop in spans:
             episodes = []
@@ -2184,7 +2187,7 @@ def _run_traced_arena_spans(
                         if episode.replay_path is not None:
                             episode.replay_path.write_text(episode.replay.text())
                 server.close()
-                server = SearchServer()
+                server = SearchServer(popular_gate=config.popular_gate)
             all_episodes.extend(episodes)
     finally:
         server.close()
@@ -2358,7 +2361,7 @@ def _run_traced_arena_sequential(
         try:
             # A fresh process makes a timed-out mechanics state disposable; no
             # opaque native handle is ever reconstructed or mislabeled.
-            with SearchServer() as server:
+            with SearchServer(popular_gate=config.popular_gate) as server:
                 root_seed, reset_episode = _paired_coordinates(
                     config.seed, config.seed_count, episode
                 )

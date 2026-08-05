@@ -445,22 +445,56 @@ def samplePopularLevel100 (rng : Rng.LinkRng) : Sample :=
     else fallbackSample defaultLedger rng
   else fallbackSample defaultLedger rng
 
-def popularGateCount : Nat :=
-  (List.range 256).countP fun value => value < 26
+/-- Number of byte residues that pass a popular-team gate threshold. -/
+def popularGateCountAt (gate : Nat) : Nat :=
+  (List.range 256).countP fun value => value < gate
+
+def popularGateCount : Nat := popularGateCountAt 26
 
 @[simp] theorem popular_gate_count : popularGateCount = 26 := by
   native_decide
 
-/-- A byte gate uses residues `0..25`, yielding 26/256 = 10.15625%. Only full
-level-100 balanced parties enter this branch; all other sizes retain the
-near-uniform generated-species profile. -/
-def sampleSizedBalancedLevel100 (requested : Nat) (rng : Rng.LinkRng) : Sample :=
+/-- Every threshold up to 256 admits exactly `gate` of the 256 byte residues,
+so a server-supplied gate yields a popular-team share of exactly `gate/256`
+(saturating at certainty for larger thresholds). -/
+theorem popular_gate_count_at_saturates :
+    ((List.range 257).all fun gate =>
+      popularGateCountAt gate == min gate 256) = true := by
+  native_decide
+
+/-- A byte gate uses residues `0..gate-1`, yielding a `gate/256` popular-team
+share. The byte is drawn for every full party regardless of threshold, so the
+downstream entropy stream is identical across gate settings; only full
+level-100 balanced parties consult the gate at all. -/
+def sampleSizedBalancedLevel100Gated (gate : Nat) (requested : Nat)
+    (rng : Rng.LinkRng) : Sample :=
   let count := max 1 (min maxPartySize requested)
   if count == maxPartySize then
     let (popularGate, rng) := draw rng
-    if popularGate.toNat < 26 then samplePopularLevel100 rng
+    if popularGate.toNat < gate then samplePopularLevel100 rng
     else sampleSizedProfile requested (some 100) true rng
   else sampleSizedProfile requested (some 100) true rng
+
+/-- The legacy 26/256 sampler is the gated sampler at threshold 26, so
+existing replay recordings and seed streams are preserved byte-for-byte. -/
+def sampleSizedBalancedLevel100 (requested : Nat) (rng : Rng.LinkRng) : Sample :=
+  sampleSizedBalancedLevel100Gated 26 requested rng
+
+/-- The gated sampler remains learnset-legal for every threshold and seed. -/
+theorem sampleSizedBalancedLevel100Gated_sound (gate requested : Nat)
+    (rng : Rng.LinkRng) :
+    teamLegal genDex .canonical
+      (sampleSizedBalancedLevel100Gated gate requested rng).team.1 = true :=
+  (sampleSizedBalancedLevel100Gated gate requested rng).team.2
+
+/-- The gated sampler retains the exact reconstruction witness for every
+threshold, including when it selects a canonical competitive preset. -/
+theorem sampleSizedBalancedLevel100Gated_progression_witnessed
+    (gate requested : Nat) (rng : Rng.LinkRng) :
+    replayTeam (sampleSizedBalancedLevel100Gated gate requested rng).history =
+      some ((sampleSizedBalancedLevel100Gated gate requested rng).team.1,
+        (sampleSizedBalancedLevel100Gated gate requested rng).remainingLedger) :=
+  (sampleSizedBalancedLevel100Gated gate requested rng).historyReplays
 
 /-- Level-100 generation retains canonical learnset legality for every seed. -/
 theorem sampleSizedLevel100_sound (requested : Nat) (rng : Rng.LinkRng) :
@@ -551,5 +585,14 @@ private def sample0 : Sample := sample Rng.seed0
 #guard (samplePopularLevel100 Rng.seed0).team.1.size == 6
 #guard (samplePopularLevel100 Rng.seed0).team.1.all (fun mon => mon.level == 100)
 #guard !(sampleSizedBalancedLevel100 5 Rng.seed0).popular
+#guard popularGateCountAt 64 == 64
+#guard popularGateCountAt 300 == 256
+#guard !(sampleSizedBalancedLevel100Gated 0 6 Rng.seed0).popular
+#guard (sampleSizedBalancedLevel100Gated 256 6 Rng.seed0).popular
+#guard !(sampleSizedBalancedLevel100Gated 256 5 Rng.seed0).popular
+#guard (sampleSizedBalancedLevel100Gated 0 6 Rng.seed0).team.1.all
+  (fun mon => mon.level == 100)
+#guard (sampleSizedBalancedLevel100Gated 256 6 Rng.seed0).team.1.all
+  (fun mon => mon.level == 100)
 
 end Battle.RL.DynamicGenerator

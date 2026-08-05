@@ -92,6 +92,8 @@ class Snapshot:
     terminal_return: int | None
     request: str
     divergence: str | None
+    player_popular: bool = False
+    enemy_popular: bool = False
 
     def with_handle(self, handle: int) -> Snapshot:
         return Snapshot(
@@ -108,6 +110,8 @@ class Snapshot:
             terminal_return=self.terminal_return,
             request=self.request,
             divergence=self.divergence,
+            player_popular=self.player_popular,
+            enemy_popular=self.enemy_popular,
         )
 
     @classmethod
@@ -126,6 +130,8 @@ class Snapshot:
             terminal_return=response["return"],
             request=response["request"],
             divergence=response.get("divergence"),
+            player_popular=bool(response.get("player_popular", False)),
+            enemy_popular=bool(response.get("enemy_popular", False)),
         )
 
 
@@ -145,13 +151,29 @@ def build_search_server() -> None:
         raise RuntimeError(f"search server missing after build: {SEARCH_SERVER}")
 
 
+def _require_popular_gate_support(popular_gate: int, hello: dict[str, Any]) -> None:
+    """Reject stale binaries that would silently ignore a non-legacy gate.
+
+    Old servers never read the optional gate token, so without this check a
+    raised gate degrades to the legacy 26/256 share with no error anywhere.
+    """
+    if popular_gate != 26 and hello.get("popular_gate") != "parametrized-v1":
+        raise ValueError(
+            "the Lean search server predates popular_gate parametrization; "
+            "rebuild battleSearchServer before changing the gate from 26"
+        )
+
+
 class SearchServer:
     """Owns one Lean process and addresses immutable states by integer handle."""
 
-    def __init__(self, request_timeout: float = 60.0) -> None:
+    def __init__(self, request_timeout: float = 60.0, popular_gate: int = 26) -> None:
         if request_timeout <= 0:
             raise ValueError("request_timeout must be positive")
+        if not 0 <= popular_gate <= 256:
+            raise ValueError("popular_gate must be in [0, 256]")
         self.request_timeout = request_timeout
+        self.popular_gate = popular_gate
         # Deterministic engine: states with equal construction lineage are
         # identical, so duplicate search rows inside one decision (mirrored
         # evaluation legs) can share a single native transition.
@@ -181,6 +203,11 @@ class SearchServer:
         ):
             self.close()
             raise ValueError(f"native search protocol mismatch: {hello}")
+        try:
+            _require_popular_gate_support(popular_gate, hello)
+        except ValueError:
+            self.close()
+            raise
         self.feature_count = int(hello["feature_count"])
         self.action_count = int(hello["action_count"])
         self.campaign_count = int(hello["campaign_count"])
@@ -288,11 +315,15 @@ class SearchServer:
             operation = "reset-level100-swapped" if swapped else "reset-level100"
         else:
             operation = "reset-swapped" if swapped else "reset"
-        return self._reset_snapshot(
-            operation,
-            f"{root_seed}|{episode}|{player_size}|{enemy_size}|{int(balanced_final_species)}",
-            append,
+        arguments = (
+            f"{root_seed}|{episode}|{player_size}|{enemy_size}"
+            f"|{int(balanced_final_species)}"
         )
+        # The optional gate token rides only on commands where it is meaningful
+        # and non-legacy, keeping historical wire strings byte-identical.
+        if level100 and balanced_final_species and self.popular_gate != 26:
+            arguments = f"{arguments}|{self.popular_gate}"
+        return self._reset_snapshot(operation, arguments, append)
 
     def reset_campaign(
         self,

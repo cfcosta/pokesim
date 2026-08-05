@@ -203,6 +203,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--matchup-lopsided-accept", type=float, default=0.15)
     parser.add_argument("--team-replay-fraction", type=float, default=0.15)
     parser.add_argument("--team-replay-buffer-size", type=int, default=256)
+    parser.add_argument("--popular-gate", type=int, default=64)
     parser.add_argument("--budget-loss-weight", type=float, default=0.05)
     parser.add_argument("--budget-positive-weight", type=float, default=4.0)
     parser.add_argument("--chance-samples-per-joint", type=int, default=2)
@@ -445,6 +446,7 @@ def main(argv: list[str] | None = None) -> int:
             matchup_lopsided_accept=arguments.matchup_lopsided_accept,
             team_replay_fraction=arguments.team_replay_fraction,
             team_replay_buffer_size=arguments.team_replay_buffer_size,
+            popular_gate=arguments.popular_gate,
             budget_loss_weight=arguments.budget_loss_weight,
             budget_positive_weight=arguments.budget_positive_weight,
             opponent_checkpoints=tuple(

@@ -128,6 +128,7 @@ class TransformerPipelineConfig:
     matchup_lopsided_accept: float = 0.0
     team_replay_fraction: float = 0.0
     team_replay_buffer_size: int = 0
+    popular_gate: int = 26
     budget_loss_weight: float = 0.05
     budget_positive_weight: float = 4.0
     opponent_checkpoints: tuple[str, ...] = ()
@@ -611,6 +612,7 @@ def _arena_config(
         policy_only=policy_only,
         matchup_value_cap=config.matchup_value_cap if matchup_filter else 0.0,
         matchup_filter_attempts=config.matchup_filter_attempts,
+        popular_gate=config.popular_gate,
     )
 
 
@@ -1518,6 +1520,7 @@ def _collect_rows_single(
     mirror_episodes = opponent_episodes = 0
     model_opponent_episodes = heuristic_opponent_episodes = 0
     candidate_player_episodes = candidate_enemy_episodes = 0
+    popular_player_episodes = popular_enemy_episodes = 0
     opponent_counts = {identity: 0 for _, identity in opponents}
     party_size_counts = {
         f"{player}v{enemy}": 0
@@ -1627,7 +1630,7 @@ def _collect_rows_single(
         )
         del recent_battles[:-64]
 
-    with SearchServer() as server:
+    with SearchServer(popular_gate=config.popular_gate) as server:
         for batch_start in range(0, len(episode_indices), config.actor_batch_size):
             batch = episode_indices[batch_start : batch_start + config.actor_batch_size]
             active: list[_ActorEpisode] = []
@@ -1748,6 +1751,8 @@ def _collect_rows_single(
                         balanced_final_species=balanced_final_species,
                     )
                 )
+                popular_player_episodes += int(snapshot.player_popular)
+                popular_enemy_episodes += int(snapshot.enemy_popular)
                 active.append(
                     _ActorEpisode(
                         episode=episode,
@@ -2281,6 +2286,9 @@ def _collect_rows_single(
         "heuristic_opponent_episodes": heuristic_opponent_episodes,
         "candidate_player_episodes": candidate_player_episodes,
         "candidate_enemy_episodes": candidate_enemy_episodes,
+        "popular_gate": config.popular_gate,
+        "popular_player_episodes": popular_player_episodes,
+        "popular_enemy_episodes": popular_enemy_episodes,
         "opponent_counts": opponent_counts,
         "party_size_counts": party_size_counts,
         "mean_target_entropy": sum(
@@ -2581,6 +2589,9 @@ def _merge_collection_rows(
         "heuristic_opponent_episodes": total("heuristic_opponent_episodes"),
         "candidate_player_episodes": total("candidate_player_episodes"),
         "candidate_enemy_episodes": total("candidate_enemy_episodes"),
+        "popular_gate": config.popular_gate,
+        "popular_player_episodes": total("popular_player_episodes"),
+        "popular_enemy_episodes": total("popular_enemy_episodes"),
         "opponent_counts": opponent_counts,
         "party_size_counts": party_size_counts,
         "party_size_schedule": generated_schedule_names(
@@ -2691,7 +2702,7 @@ def _collect_rows(
             len(_team_replay_entries(team_source)),
             exclude=restart_pairs,
         )
-        with SearchServer() as probe_server:
+        with SearchServer(popular_gate=config.popular_gate) as probe_server:
             matchup_plan, matchup_stats = _matchup_filter_plan(
                 probe_server,
                 network,
@@ -3446,7 +3457,7 @@ def _arena(
     chance_rng = random.Random(config.seed + 0xA7E9B)
     wins = losses = draws = truncated = 0
     games: list[dict[str, Any]] = []
-    with SearchServer() as server:
+    with SearchServer(popular_gate=config.popular_gate) as server:
         for episode in range(config.arena_episodes):
             candidate_player = episode % 2 == 0
             result = _play_game(
@@ -3754,6 +3765,7 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("matchup_lopsided_accept", 0.0)
     normalized.setdefault("team_replay_fraction", 0.0)
     normalized.setdefault("team_replay_buffer_size", 0)
+    normalized.setdefault("popular_gate", 26)
     return normalized
 
 
@@ -4017,6 +4029,8 @@ def run_transformer_pipeline(
         raise ValueError("team_replay_fraction must be in [0, 0.25]")
     if config.team_replay_fraction and not config.team_replay_buffer_size:
         raise ValueError("team_replay_buffer_size must be positive with team replay")
+    if not 0 <= config.popular_gate <= 64:
+        raise ValueError("popular_gate must be in [0, 64]")
     if not 0.0 <= config.budget_loss_weight <= 1.0:
         raise ValueError("budget_loss_weight must be in [0, 1]")
     if config.budget_positive_weight < 1.0:
@@ -4104,7 +4118,7 @@ def run_transformer_pipeline(
     if config.shadow_opponent_window < 0:
         raise ValueError("shadow_opponent_window must be nonnegative")
     build_search_server()
-    with SearchServer() as protocol:
+    with SearchServer(popular_gate=config.popular_gate) as protocol:
         feature_count = protocol.feature_count
         action_count = protocol.action_count
     configure_determinism(config.seed)
