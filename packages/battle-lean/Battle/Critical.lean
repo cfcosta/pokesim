@@ -15,9 +15,19 @@ separate so effect execution and compatibility proofs share one primitive.
 
 namespace Battle.Critical
 
-/-- Gen-I's hardcoded high-critical move list. -/
+/-- Gen-I's four data entries before the `$ff` terminator. -/
 def highCriticalMove (id : MoveId) : Bool :=
   id == 2 || id == 75 || id == 152 || id == 163
+
+/-- The ROM compares the selected move against each byte before checking whether
+that byte was the `$ff` terminator. A malformed selected move `$ff` therefore
+takes the high-critical branch too, even though it is not a table entry. -/
+def highCriticalLookupMatch (id : MoveId) : Bool :=
+  highCriticalMove id || id == 0xFF
+
+@[simp] theorem terminator_collision_is_high_critical :
+    highCriticalLookupMatch 0xFF = true ∧ highCriticalMove 0xFF = false := by
+  native_decide
 
 /-- `sla b` followed by `ld b,$ff` on carry. -/
 def saturatingDouble (value : UInt8) : UInt8 :=
@@ -37,7 +47,8 @@ def thresholdFromSpeed (baseSpeed : UInt8) (highCritical focusEnergy : Bool) : U
 
 /-- Species/move-facing threshold used by battle execution. -/
 def threshold (species : SpeciesId) (move : MoveId) (focusEnergy : Bool := false) : UInt8 :=
-  thresholdFromSpeed (Data.speciesData species).baseSpd (highCriticalMove move) focusEnergy
+  thresholdFromSpeed (Data.speciesData species).baseSpd
+    (highCriticalLookupMatch move) focusEnergy
 
 /-- Three `rlc a` instructions. -/
 def rotateRandom (raw : UInt8) : UInt8 :=

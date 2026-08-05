@@ -280,7 +280,7 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [x] `rrca` of each damage-random byte before rejection (`Battle.Ordinary.rotateRight`, `damageFactorAccepted`)
 - [x] random factor rejection and accepted `217..255` multiplier (`Battle.Ordinary.regen_accepts_within`, `drawDamageFactor`, `Battle.Damage.randomizeDamage`)
 - [x] accuracy/evasion two-pass flooring, per-pass minimum 1, and final cap 255 (`Battle.Accuracy.calcHitChance`, `neutral_stages_exact`, `order_observable`); destructive loaded-accuracy WRAM write remains a routine-level obligation
-- [x] raw accuracy 0 hits on byte 0; threshold 255 misses on byte 255 (`Battle.Accuracy.zero_accuracy_hits_only_zero`, `one_in_256_witness`)
+- [x] raw accuracy 0 hits on byte 0; threshold 255 misses on byte 255, with exact functional and fetched-IR execution of the ROM's final `cp b; jr nc` branch for all 65,536 byte pairs (`Battle.Accuracy.zero_accuracy_hits_only_zero`, `Battle.Rom.AccuracyRoutine.one_in_256_machine_witness`, `canonical_accuracy_comparator_exact`)
 - [x] stage intermediate flooring/truncation (`Battle.Accuracy.applyRatio`, `equal_stage_profile_exact`)
 - [x] Mist, Substitute, and Dream Eater pre-accuracy checks (`Battle.Full.Engine.substitute_mist_dream_gates`)
 - [x] X Accuracy bypasses stage/final accuracy only after Fly/Dig invulnerability (`Battle.Full.Engine.invulnerability_precedes_x_accuracy`, `x_accuracy_bypasses_stages_and_random`); handler-specific Dream Eater/Substitute/Mist gates precede this call
@@ -291,7 +291,7 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [x] final `random < accuracy` comparison (`Battle.Accuracy.strict_boundary_iff`)
 - [x] critical threshold from base Speed (`Battle.Critical.thresholdFromSpeed`)
 - [x] high-critical move list: Karate Chop, Razor Leaf, Crabhammer, Slash (`Battle.Critical.highCriticalMove`, `Battle.Rom.CombatTables.RequiredCombatBytes.highCriticalExact`)
-- [x] Focus Energy right-shift bug (`Battle.Critical.focus_branch_is_second_right_shift`, `focus_never_improves`, `focus_energy_witness`)
+- [x] Focus Energy right-shift bug and strict rotated-random comparison, with exact ROM threshold/tail execution; malformed selected move `$ff` collides with the high-critical table terminator because comparison happens first (`Battle.Critical.focus_branch_is_second_right_shift`, `focus_never_improves`, `terminator_collision_is_high_critical`, `Battle.Rom.CriticalHitRoutine.canonical_critical_hit_exact`)
 - [x] critical random-byte rotations (`Battle.Critical.rotateRandom_inverse`, `strict_boundary_iff`)
 - [x] HP subtraction, overkill cap, and shared damage update (`Battle.Step.saturatingSub_overkill`, `saturatingSub_exact`, `Battle.Full.Engine.applyDamage`)
 - [x] bounded decoded-ROM transition from `ApplyDamageToEnemyPokemon` `$0f:$6142` to the `$617b` HP-animation checkpoint agrees with `Battle.Full.Engine.applyDamage` on enemy HP and actual `wDamage` for every nonzero HP/damage word below 1000 on the no-Substitute path (`Battle.Rom.DamageApplyRoutine.canonical_player_damage_transition_refines`; Transition-verified checkpoint slice, not a whole-turn theorem)
@@ -706,11 +706,11 @@ The exact 83-entry source disposition is in [Item dispatch](item-dispatch.md); p
 
 Each item needs at least one source-linked test; mechanics-affecting items need a theorem or fall out of a broader refinement theorem.
 
-- [x] Focus Energy right shift (`Battle.BugWitnesses.focus_energy_occurs`)
+- [x] Focus Energy right shift (`Battle.BugWitnesses.focus_energy_occurs`, `Battle.Rom.CriticalHitRoutine.threshold_exact`)
 - [x] [exact percent-macro thresholds](probability-thresholds.md), comparison polarities, and boundary bytes
 - [x] Fly/Dig attack-turn interruption asymmetry: full paralysis and selected Disable clear charge while preserving invulnerability; self-confusion keeps only `CONFUSED` and clears invulnerability (`Battle.Full.Status.full_paralysis_status1_exact`, `selected_disabled_status1_exact`, `self_confusion_status1_exact`)
 - [x] generated charge reloads selected wrapper/original move rather than retaining generated move identity (`Battle.Full.Engine.generated_charge_reloads_wrapper`)
-- [x] threshold equality failure in accuracy/critical checks (`accuracy_boundary_occurs`, `critical_boundary_occurs`)
+- [x] threshold equality failure in accuracy/critical checks (`accuracy_boundary_occurs`, `critical_boundary_occurs`, `Battle.Rom.AccuracyRoutine.comparator_exact`, `Battle.Rom.CriticalHitRoutine.random_tail_exact`)
 - [x] Toxic + Leech Seed counter interaction (`Battle.Full.Status.toxic_leech_seed_ticks_twice`)
 - [x] player/enemy Psywave zero asymmetry (`Battle.BugWitnesses.psywave_link_desync_occurs`)
 - [x] Bide high-byte-only clear (`Battle.BugWitnesses.bide_link_desync_occurs`)

@@ -206,6 +206,21 @@ existing `HyperBeamEffect` leaf (which sets recharge only when reached). Thus
 skipping recharge on a KO follows from ROM control flow rather than an
 unconnected exception in the model.
 
+`Battle.Rom.AccuracyRoutine` retains the final `cp b; jr nc` branch at
+`0f:6605` and proves, functionally and through fetched IR for all 65,536 byte
+pairs, that a move hits exactly when the random byte is strictly below effective
+accuracy. This is the ROM-linked proof that effective accuracy `$ff` still
+misses on random `$ff`.
+
+`Battle.Rom.CriticalHitRoutine` retains the call-free threshold kernel at
+`0f:604f`, the exact high-critical table at `0f:608e`, and the post-random tail
+at `0f:6080`. Universal execution agrees with the clean-room threshold and
+three-bit-rotation comparison, including Focus Energy's wrong right shift,
+saturating high-critical doubles, and strict equality failure. The proof also
+exposes the raw `$ff` move-ID terminator collision: the loop compares before
+recognizing the terminator, so malformed move `$ff` takes the high-critical
+branch.
+
 `Battle.Rom.EffectPrefixes` adds exact banked windows for `FocusEnergyEffect_`
 (`09:7f86`) and `MistEffect_` (`0c:7f2b`). Universal execution reaches either
 the exact post-mutation presentation boundary or the already-active failure
