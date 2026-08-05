@@ -551,6 +551,16 @@ def applyDamage (state : State) (who : Side) (damage : UInt16) : DamageApplied :
       actualDamage := actual, targetFainted := hp == 0,
       events := [.damage targetWho actual hp] }
 
+/-- On the ordinary no-Substitute path, the faint signal passed to remaining
+effects is exactly the zero test of post-damage HP. Hyper Beam therefore sees
+`targetFainted = true` precisely on a real KO, not on a large but nonlethal hit. -/
+@[simp] theorem apply_damage_no_substitute_target_fainted (state : State)
+    (who : Side) (damage : UInt16)
+    (noSubstitute : (side state who.other).active.volatile.hasSubstitute = false) :
+    (applyDamage state who damage).targetFainted =
+      (Step.saturatingSub (side state who.other).active.active.hp damage == 0) := by
+  simp [applyDamage, noSubstitute]
+
 /-- On the ordinary no-Substitute path, HP uses saturating subtraction and the
 shared damage word records exactly the HP actually removed. -/
 theorem apply_damage_no_substitute_words (state : State) (who : Side)

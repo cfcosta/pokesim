@@ -142,6 +142,13 @@ def plan (effect : UInt8) : Plan :=
   | 0x56 => ⟨.disable, [.remaining]⟩
   | _ => ⟨.malformed, []⟩
 
+/-- Hyper Beam is deliberately a remaining effect, not an always-happen side
+effect. The post-damage HP guard can therefore return before its recharge tail. -/
+@[simp] theorem hyperBeam_is_remaining_not_always :
+    (plan Data.Effect.hyperBeam).phases = [.remaining] ∧
+      (plan Data.Effect.hyperBeam).phases.contains .always = false := by
+  native_decide
+
 /-- All 87 effect IDs are classified, universally over the indexed domain. -/
 theorem effect_domain_total (effect : UInt8) (bounded : effect.toNat ≤ 0x56) :
     (plan effect).mechanic ≠ .malformed := by

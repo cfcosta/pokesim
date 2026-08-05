@@ -3,6 +3,7 @@ Copyright 2026 Cainã Costa
 Licensed under the Apache License, Version 2.0 (the "License").
 -/
 import Battle.Rom.HazeDispatchRoutine
+import Battle.Rom.HyperBeamRoutine
 import Battle.Rom.FlyRoutine
 import Battle.Rom.StruggleRoutine
 import Battle.Rom.DamageApplyRoutine
@@ -49,6 +50,7 @@ def retainedLayoutMatches (rom : CanonicalRom) : Bool :=
     Effects.agreesWithPlan rom.bytes &&
     CombatTables.agreesWithModel rom.bytes &&
     EffectRoutines.leafWindowsAgree rom.bytes &&
+    HyperBeamRoutine.windowAgrees rom.bytes &&
     EffectPrefixes.prefixWindowsAgree rom.bytes &&
     ExplodeRoutine.windowAgrees rom.bytes &&
     ConversionRoutine.windowAgrees rom.bytes &&

@@ -250,7 +250,7 @@ Two handlers mutate the loaded effect byte:
 - Twineedle initializes exactly two hits by replacing its current effect with `POISON_SIDE_EFFECT1`; after multi-hit completion the poison handler is reached as the remaining effect.
 - Rage appears in `AlwaysHappenSideEffects` and is then reached again as a remaining effect; the second set is behaviorally redundant but part of control flow.
 
-Hyper Beam is not in `AlwaysHappenSideEffects`. Because target HP is checked before the remaining-effect call, a Hyper Beam that faints its target does not set recharge. This must emerge from the phase proof rather than be encoded as an unrelated exception.
+Hyper Beam is not in `AlwaysHappenSideEffects`. Because target HP is checked before the remaining-effect call, a Hyper Beam that faints its target does not set recharge. `Battle.Rom.HyperBeamRoutine.canonical_hyperBeam_faint_skip_exact` now proves that composition from the decoded phase table, exact player/enemy zero-HP conditional-return windows, and exact `HyperBeamEffect` leaf. The model theorem `Battle.Full.Effects.hyperBeam_recharge_exact` states the corresponding hit/survival rule, while `Battle.Full.Engine.apply_damage_no_substitute_target_fainted` proves that ordinary damage supplies the exact post-damage zero-HP signal.
 
 ## Decoded leaf-routine proofs
 

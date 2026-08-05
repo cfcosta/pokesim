@@ -337,7 +337,7 @@ The proof must preserve this player/enemy control-flow order, including random c
 - [x] Mist/Guard Spec (`Battle.Full.Effects.applyBefore`, `Battle.Full.Items.canonical_item_effect_witnesses`)
 - [x] Focus Energy/Dire Hit (`Battle.Critical.focus_energy_witness`, `Battle.Full.Items.canonical_item_effect_witnesses`)
 - [x] Substitute HP and zero-HP-user behavior (`Battle.Rom.SubstituteRoutine.decoded_affordability_exact`)
-- [x] Hyper Beam recharge and target-faint skip because effect is not always-happen (`Battle.Full.Effects.hyperBeam_faint_skips_recharge`)
+- [x] Hyper Beam recharge iff a hit leaves the target alive, with exact post-damage faint signaling and ROM-proved player/enemy zero-HP returns before remaining-effect dispatch (`Battle.Full.Effects.hyperBeam_recharge_exact`, `Battle.Full.Engine.apply_damage_no_substitute_target_fainted`, `Battle.Rom.HyperBeamRoutine.canonical_hyperBeam_faint_skip_exact`)
 - [x] Leech Seed and Toxic-counter interaction (`Battle.Full.Status.toxic_leech_seed_ticks_twice`)
 - [x] Reflect (`Battle.Rom.ScreenRoutine.screens_exact`)
 - [x] Light Screen (`Battle.Rom.ScreenRoutine.screens_exact`)

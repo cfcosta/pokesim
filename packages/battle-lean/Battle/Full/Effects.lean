@@ -102,6 +102,17 @@ private theorem seeded_clear_bit (byte : UInt8) :
     (List.mem_range.mpr (UInt8.toNat_lt byte))
   simpa using atByte
 
+private theorem recharge_set_bit (byte : UInt8) :
+    bitSet (setBit byte Wram.BattleStatus2.needsToRecharge)
+      Wram.BattleStatus2.needsToRecharge = true := by
+  have checked : (List.range 256).all (fun n =>
+      bitSet (setBit n.toUInt8 Wram.BattleStatus2.needsToRecharge)
+        Wram.BattleStatus2.needsToRecharge = true) = true := by
+    native_decide
+  have atByte := (List.all_eq_true.mp checked) byte.toNat
+    (List.mem_range.mpr (UInt8.toNat_lt byte))
+  simpa using atByte
+
 private theorem recharge_clear_bit (byte : UInt8) :
     bitSet (clearBit byte Wram.BattleStatus2.needsToRecharge)
       Wram.BattleStatus2.needsToRecharge = false := by
@@ -1253,8 +1264,32 @@ theorem drain_ignores_substitute_gate (context : Context) (damage : UInt16) :
   simp
   rw [Nat.mod_eq_of_lt amountBound]
 
-/-- Hyper Beam recharge is skipped when its hit faints the target. -/
-theorem hyperBeam_faint_skips_recharge (context : Context) (damage : UInt16) :
+/-- Hyper Beam's model-side recharge bit is exact for every hit/faint pair:
+it is set precisely when the move hit and the target survived, and otherwise
+retains its incoming value. -/
+theorem hyperBeam_recharge_exact (context : Context) (hit targetFainted : Bool)
+    (damage : UInt16) :
+    (applyAfter Data.Effect.hyperBeam TypeChart.normal hit targetFainted damage context).context.attacker.volatile.recharging =
+      if hit && !targetFainted then true else context.attacker.volatile.recharging := by
+  cases hit
+  · rfl
+  · cases targetFainted
+    · change bitSet (setBit context.attacker.volatile.status2
+        Wram.BattleStatus2.needsToRecharge)
+          Wram.BattleStatus2.needsToRecharge = true
+      exact recharge_set_bit context.attacker.volatile.status2
+    · rfl
+
+/-- A successful Hyper Beam against a surviving target always schedules recharge. -/
+@[simp] theorem hyperBeam_survival_sets_recharge (context : Context)
+    (damage : UInt16) :
+    (applyAfter Data.Effect.hyperBeam TypeChart.normal true false damage context).context.attacker.volatile.recharging =
+      true := by
+  simpa using hyperBeam_recharge_exact context true false damage
+
+/-- Hyper Beam recharge is skipped when its hit faints the target; the entire
+effect context, including any incoming recharge bit, is left unchanged. -/
+@[simp] theorem hyperBeam_faint_skips_recharge (context : Context) (damage : UInt16) :
     (applyAfter Data.Effect.hyperBeam TypeChart.normal true true damage context).context =
       context := by
   change context = context

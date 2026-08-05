@@ -195,6 +195,17 @@ the flat fetched-IR adapter: each physical trace equals the functional trace
 plus one successor-fetch overlap and projects to the same registers/WRAM. Full
 Game Boy device-adapter reachability remains separate.
 
+`Battle.Rom.HyperBeamRoutine.CanonicalHyperBeamBytes` closes the post-damage
+control-flow gap for Hyper Beam's Generation-I KO rule. It retains the exact
+player target-HP guard at `0f:57c8` and enemy target-HP guard at `0f:684d`,
+proves both zero-HP paths return before remaining-effect dispatch while
+preserving both status-2 bytes, and lifts both traces through continuous fetched
+IR. `canonical_hyperBeam_faint_skip_exact` composes those guards with the
+decoded `AlwaysHappenSideEffects` table (which excludes effect `$50`) and the
+existing `HyperBeamEffect` leaf (which sets recharge only when reached). Thus
+skipping recharge on a KO follows from ROM control flow rather than an
+unconnected exception in the model.
+
 `Battle.Rom.EffectPrefixes` adds exact banked windows for `FocusEnergyEffect_`
 (`09:7f86`) and `MistEffect_` (`0c:7f2b`). Universal execution reaches either
 the exact post-mutation presentation boundary or the already-active failure
