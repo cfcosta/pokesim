@@ -9,6 +9,7 @@ import multiprocessing
 import random
 import shutil
 import tempfile
+import time
 from collections.abc import Callable, Iterable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
@@ -36,6 +37,7 @@ from .arena import (
     _choice_detail,
     _compact_inspection,
     _compact_turn_inspection,
+    _party_strata,
     _setup_move_name,
     run_campaign_arena,
     run_paired_arena,
@@ -119,6 +121,9 @@ class TransformerPipelineConfig:
     collection_dirichlet_total: float = 0.0
     frontier_buffer_size: int = 0
     frontier_restart_fraction: float = 0.0
+    matchup_value_cap: float = 0.0
+    matchup_filter_attempts: int = 1
+    matchup_lopsided_accept: float = 0.0
     budget_loss_weight: float = 0.05
     budget_positive_weight: float = 4.0
     opponent_checkpoints: tuple[str, ...] = ()
@@ -382,6 +387,8 @@ _TIER_DOMAIN = 0x74696572
 _EXPLORATION_DOMAIN = 0x6578706C6F7265
 _PRIOR_NOISE_DOMAIN = 0x7072696F72
 _FRONTIER_PLAN_DOMAIN = 0x66726F6E74696572
+_MATCHUP_DOMAIN = 0x6D61746368
+_MATCHUP_ACCEPT_DOMAIN = 0x616363657074
 
 
 def _splitmix64(value: int) -> int:
@@ -984,6 +991,176 @@ def _frontier_restart_meta(config: TransformerPipelineConfig) -> dict[str, Any]:
     }
 
 
+_MATCHUP_FILTER_VERSION = "predicted-turn-zero-value-v1"
+
+
+def _matchup_attempt_seed(root_seed: int, iteration: int, attempt: int) -> int:
+    """Attempt 0 replays the legacy reset stream; retries get their own domain."""
+    if attempt <= 0:
+        return _training_entropy_seed(root_seed, iteration, 0, _RESET_DOMAIN)
+    return _training_entropy_seed(root_seed, iteration, attempt, _MATCHUP_DOMAIN)
+
+
+def _pair_reset_seed(
+    config: TransformerPipelineConfig,
+    iteration: int,
+    matchup_plan: dict[int, int] | None,
+    pair: int,
+) -> int:
+    return _matchup_attempt_seed(
+        config.seed, iteration, (matchup_plan or {}).get(pair, 0)
+    )
+
+
+def _matchup_filter_meta(config: TransformerPipelineConfig) -> dict[str, Any]:
+    if not config.matchup_value_cap:
+        return {}
+    return {
+        "matchup_filter": _MATCHUP_FILTER_VERSION,
+        "matchup_value_cap": config.matchup_value_cap,
+        "matchup_filter_attempts": config.matchup_filter_attempts,
+        "matchup_lopsided_accept": config.matchup_lopsided_accept,
+    }
+
+
+def _abs_value_summary(values: list[float], cap: float) -> dict[str, float]:
+    if not values:
+        return {"mean": 0.0, "p50": 0.0, "p90": 0.0, "p99": 0.0, "lopsided_share": 0.0}
+    ordered = sorted(values)
+
+    def quantile(share: float) -> float:
+        return ordered[int(share * (len(ordered) - 1))]
+
+    return {
+        "mean": sum(ordered) / len(ordered),
+        "p50": quantile(0.50),
+        "p90": quantile(0.90),
+        "p99": quantile(0.99),
+        "lopsided_share": sum(value > cap for value in ordered) / len(ordered),
+    }
+
+
+def _matchup_filter_plan(
+    server: SearchServer,
+    network: Any,
+    config: TransformerPipelineConfig,
+    iteration: int,
+    *,
+    exclude: Iterable[int] = (),
+    chunk_size: int = 512,
+) -> tuple[dict[int, int], dict[str, Any]]:
+    """Choose per-pair reset attempts whose predicted turn-zero value is contested.
+
+    Selection happens on the incumbent network's pre-game state value, never on
+    realized outcomes, so retained training targets stay conditionally
+    unbiased. Rejected pairs resample teams while holding the scheduled size
+    combo fixed; a calibration coin keeps a share of lopsided pairs so the
+    value head never loses its extreme anchors.
+    """
+    started = time.perf_counter()
+    cap = config.matchup_value_cap
+    total_pairs = config.selfplay_episodes // 2
+    excluded = {pair for pair in exclude if 0 <= pair < total_pairs}
+    probed = [pair for pair in range(total_pairs) if pair not in excluded]
+    coins = {
+        pair: random.Random(
+            _training_entropy_seed(config.seed, iteration, pair, _MATCHUP_ACCEPT_DOMAIN)
+        )
+        for pair in probed
+    }
+    accepted_attempt: dict[int, int] = {}
+    accepted_value: dict[int, float] = {}
+    initial_values: dict[int, float] = {}
+    soft_accepted = 0
+    fallback = 0
+    candidate_resets = 0
+    pending = list(probed)
+    for attempt in range(config.matchup_filter_attempts):
+        if not pending:
+            break
+        last_attempt = attempt == config.matchup_filter_attempts - 1
+        seed = _matchup_attempt_seed(config.seed, iteration, attempt)
+        survivors: list[int] = []
+        for start in range(0, len(pending), chunk_size):
+            chunk = pending[start : start + chunk_size]
+            features = []
+            masks = []
+            for offset, pair in enumerate(chunk):
+                player_size, enemy_size = _training_party_sizes(
+                    iteration, 2 * pair, config.generated_schedule_version
+                )
+                reset = server.reset if offset == 0 else server.reset_append
+                snapshot = reset(
+                    seed,
+                    pair,
+                    player_size,
+                    enemy_size,
+                    level100=_training_level100(
+                        iteration, 2 * pair, config.generated_schedule_version
+                    ),
+                    swapped=False,
+                    balanced_final_species=config.balanced_final_species,
+                )
+                candidate_resets += 1
+                features.append(snapshot.player_features)
+                masks.append(snapshot.player_mask)
+            _, values = network.evaluate(features, masks)
+            for pair, value in zip(chunk, values, strict=True):
+                magnitude = abs(float(value))
+                if attempt == 0:
+                    initial_values[pair] = magnitude
+                if magnitude <= cap:
+                    accepted_attempt[pair] = attempt
+                    accepted_value[pair] = magnitude
+                elif coins[pair].random() < config.matchup_lopsided_accept:
+                    soft_accepted += 1
+                    accepted_attempt[pair] = attempt
+                    accepted_value[pair] = magnitude
+                elif last_attempt:
+                    fallback += 1
+                    accepted_attempt[pair] = attempt
+                    accepted_value[pair] = magnitude
+                else:
+                    survivors.append(pair)
+        pending = survivors
+    plan = {pair: attempt for pair, attempt in accepted_attempt.items() if attempt > 0}
+    histogram: dict[str, int] = {}
+    for attempt in accepted_attempt.values():
+        histogram[str(attempt)] = histogram.get(str(attempt), 0) + 1
+    strata: dict[str, dict[str, int]] = {}
+    for pair in probed:
+        for stratum in _party_strata(
+            *_training_party_sizes(
+                iteration, 2 * pair, config.generated_schedule_version
+            )
+        ):
+            bucket = strata.setdefault(stratum, {"pairs": 0, "resampled": 0})
+            bucket["pairs"] += 1
+            bucket["resampled"] += int(pair in plan)
+    stats = {
+        "enabled": True,
+        "cap": cap,
+        "attempts": config.matchup_filter_attempts,
+        "lopsided_accept": config.matchup_lopsided_accept,
+        "pairs": total_pairs,
+        "excluded_pairs": len(excluded),
+        "resampled_pairs": len(plan),
+        "soft_accepted_pairs": soft_accepted,
+        "fallback_pairs": fallback,
+        "candidate_resets": candidate_resets,
+        "attempt_histogram": histogram,
+        "turn_zero_abs_value": {
+            "initial": _abs_value_summary(
+                [initial_values[pair] for pair in probed], cap
+            ),
+            "final": _abs_value_summary([accepted_value[pair] for pair in probed], cap),
+        },
+        "strata": strata,
+        "seconds": round(time.perf_counter() - started, 3),
+    }
+    return plan, stats
+
+
 def _policy_entropy(policy: list[float]) -> float:
     return -sum(
         probability * math.log(probability) for probability in policy if probability
@@ -1048,6 +1225,7 @@ def _collect_rows_single(
     progress_path: Path | None = None,
     process: int = 0,
     frontier_source: str | None = None,
+    matchup_plan: dict[int, int] | None = None,
 ) -> dict[str, Any]:
     if episode_indices is None:
         episode_indices = list(range(config.selfplay_episodes))
@@ -1118,6 +1296,7 @@ def _collect_rows_single(
         **_dirichlet_meta(config),
         **_frontier_meta(config),
         **_frontier_restart_meta(config),
+        **_matchup_filter_meta(config),
     }
     opponents = opponents or []
     if opponents:
@@ -1294,9 +1473,7 @@ def _collect_rows_single(
                     enemy_network = network
                     episode_kind = "mirror"
                     mirror_episodes += 1
-                reset_seed = _training_entropy_seed(
-                    config.seed, iteration, 0, _RESET_DOMAIN
-                )
+                reset_seed = _pair_reset_seed(config, iteration, matchup_plan, pair)
                 pair_player_size, pair_enemy_size = _training_party_sizes(
                     iteration, episode, config.generated_schedule_version
                 )
@@ -1972,6 +2149,7 @@ def _collection_process_worker(
     progress_path: str,
     process: int,
     frontier_source: str | None = None,
+    matchup_plan: dict[int, int] | None = None,
 ) -> dict[str, Any]:
     torch.set_num_threads(1)
     configure_determinism(config.seed + iteration)
@@ -1996,6 +2174,7 @@ def _collection_process_worker(
         Path(progress_path),
         process,
         frontier_source=frontier_source,
+        matchup_plan=matchup_plan,
     )
 
 
@@ -2229,21 +2408,37 @@ def _collect_rows(
         if config.frontier_restart_fraction > 0.0 and iteration > 0
         else None
     )
-    if config.actor_processes == 1:
-        return _finalize_frontier(
-            _collect_rows_single(
-                path,
+    matchup_plan: dict[int, int] | None = None
+    matchup_stats: dict[str, Any] | None = None
+    if config.matchup_value_cap > 0.0:
+        # Frontier restart pairs replay recorded resets, so probing them would
+        # waste incumbent evaluations on seeds the recipes override anyway.
+        restart_pairs = _frontier_restart_plan(
+            config, iteration, len(_frontier_restart_entries(frontier_source))
+        )
+        with SearchServer() as probe_server:
+            matchup_plan, matchup_stats = _matchup_filter_plan(
+                probe_server,
                 network,
                 config,
                 iteration,
-                opponents,
-                progress_path=progress_dir / "actor-00.json",
-                frontier_source=frontier_source,
-            ),
+                exclude=restart_pairs,
+                chunk_size=config.inference_batch_size,
+            )
+    if config.actor_processes == 1:
+        metrics = _collect_rows_single(
             path,
-            iteration,
+            network,
             config,
+            iteration,
+            opponents,
+            progress_path=progress_dir / "actor-00.json",
+            frontier_source=frontier_source,
+            matchup_plan=matchup_plan,
         )
+        if matchup_stats is not None:
+            metrics["matchup_filter"] = matchup_stats
+        return _finalize_frontier(metrics, path, iteration, config)
     opponents = opponents or []
     payload = {
         "candidate": _serialized_model(network),
@@ -2279,18 +2474,17 @@ def _collect_rows(
                     str(progress_dir / f"actor-{process:02d}.json"),
                     process,
                     frontier_source,
+                    matchup_plan,
                 )
                 for process, (worker_path, episodes) in enumerate(
                     zip(worker_paths, partitions, strict=True)
                 )
             ]
             metrics = [future.result() for future in futures]
-        return _finalize_frontier(
-            _merge_collection_rows(path, worker_paths, metrics, config),
-            path,
-            iteration,
-            config,
-        )
+        merged = _merge_collection_rows(path, worker_paths, metrics, config)
+        if matchup_stats is not None:
+            merged["matchup_filter"] = matchup_stats
+        return _finalize_frontier(merged, path, iteration, config)
 
 
 ExampleTensors = tuple[
@@ -3268,6 +3462,9 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("collection_dirichlet_total", 0.0)
     normalized.setdefault("frontier_buffer_size", 0)
     normalized.setdefault("frontier_restart_fraction", 0.0)
+    normalized.setdefault("matchup_value_cap", 0.0)
+    normalized.setdefault("matchup_filter_attempts", 1)
+    normalized.setdefault("matchup_lopsided_accept", 0.0)
     return normalized
 
 
@@ -3519,6 +3716,12 @@ def run_transformer_pipeline(
         raise ValueError("frontier_buffer_size must be nonnegative")
     if not 0.0 <= config.frontier_restart_fraction <= 0.25:
         raise ValueError("frontier_restart_fraction must be in [0, 0.25]")
+    if not 0.0 <= config.matchup_value_cap < 1.0:
+        raise ValueError("matchup_value_cap must be in [0, 1)")
+    if config.matchup_filter_attempts < 1:
+        raise ValueError("matchup_filter_attempts must be positive")
+    if not 0.0 <= config.matchup_lopsided_accept <= 1.0:
+        raise ValueError("matchup_lopsided_accept must be in [0, 1]")
     if not 0.0 <= config.budget_loss_weight <= 1.0:
         raise ValueError("budget_loss_weight must be in [0, 1]")
     if config.budget_positive_weight < 1.0:

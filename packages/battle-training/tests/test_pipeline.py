@@ -1571,6 +1571,9 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.collection_dirichlet_total, 10.0)
         self.assertEqual(arguments.frontier_buffer_size, 256)
         self.assertEqual(arguments.frontier_restart_fraction, 0.25)
+        self.assertEqual(arguments.matchup_value_cap, 0.9)
+        self.assertEqual(arguments.matchup_filter_attempts, 4)
+        self.assertEqual(arguments.matchup_lopsided_accept, 0.15)
         self.assertEqual(arguments.budget_loss_weight, 0.05)
         self.assertEqual(arguments.budget_positive_weight, 4.0)
         self.assertEqual(arguments.precision, "bf16")
@@ -1738,6 +1741,9 @@ class TransformerTests(unittest.TestCase):
         config.pop("collection_dirichlet_total")
         config.pop("frontier_buffer_size")
         config.pop("frontier_restart_fraction")
+        config.pop("matchup_value_cap")
+        config.pop("matchup_filter_attempts")
+        config.pop("matchup_lopsided_accept")
         normalized = _normalized_saved_config(config)
         self.assertIsNone(normalized["leaf_hidden_layers"])
         self.assertEqual(normalized["leaf_ema_decay"], 0.0)
@@ -1759,6 +1765,9 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["collection_dirichlet_total"], 0.0)
         self.assertEqual(normalized["frontier_buffer_size"], 0)
         self.assertEqual(normalized["frontier_restart_fraction"], 0.0)
+        self.assertEqual(normalized["matchup_value_cap"], 0.0)
+        self.assertEqual(normalized["matchup_filter_attempts"], 1)
+        self.assertEqual(normalized["matchup_lopsided_accept"], 0.0)
         self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
         self.assertNotIn("leaf_hidden_layers", config)
 
@@ -5228,6 +5237,474 @@ class FrontierRestartTest(unittest.TestCase):
             ]
         )
         self.assertEqual(arguments.frontier_restart_fraction, 0.2)
+
+
+class _ScriptedValueNetwork:
+    """Turn-zero value oracle keyed on fake-server features."""
+
+    def __init__(self, default: float = 0.0) -> None:
+        self.default = default
+        self.values: dict[tuple[int, ...], float] = {}
+        self.batch_sizes: list[int] = []
+
+    def evaluate(
+        self, features: list[object], masks: list[int]
+    ) -> tuple[list[list[float]], list[float]]:
+        keys = [tuple(int(part) for part in row) for row in features]
+        self.batch_sizes.append(len(keys))
+        return (
+            [[1.0 / 13] * 13 for _ in keys],
+            [self.values.get(key, self.default) for key in keys],
+        )
+
+
+class _RecordingLeanServer(_FakeLeanServer):
+    """Fake server that journals every probe reset it serves."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reset_calls: list[dict[str, object]] = []
+
+    def _record(self, append: bool, arguments: dict[str, object]) -> None:
+        self.reset_calls.append({"append": append, **arguments})
+
+    def reset(
+        self,
+        root_seed: int,
+        episode: int,
+        player_size: int = 6,
+        enemy_size: int = 6,
+        *,
+        level100: bool = False,
+        swapped: bool = False,
+        balanced_final_species: bool = False,
+    ) -> Snapshot:
+        self._record(
+            False,
+            {
+                "seed": root_seed,
+                "episode": episode,
+                "player_size": player_size,
+                "enemy_size": enemy_size,
+                "level100": level100,
+                "swapped": swapped,
+            },
+        )
+        return super().reset(
+            root_seed,
+            episode,
+            player_size,
+            enemy_size,
+            level100=level100,
+            swapped=swapped,
+            balanced_final_species=balanced_final_species,
+        )
+
+    def reset_append(
+        self,
+        root_seed: int,
+        episode: int,
+        player_size: int = 6,
+        enemy_size: int = 6,
+        *,
+        level100: bool = False,
+        swapped: bool = False,
+        balanced_final_species: bool = False,
+    ) -> Snapshot:
+        self._record(
+            True,
+            {
+                "seed": root_seed,
+                "episode": episode,
+                "player_size": player_size,
+                "enemy_size": enemy_size,
+                "level100": level100,
+                "swapped": swapped,
+            },
+        )
+        return super().reset_append(
+            root_seed,
+            episode,
+            player_size,
+            enemy_size,
+            level100=level100,
+            swapped=swapped,
+            balanced_final_species=balanced_final_species,
+        )
+
+
+class MatchupFilterTest(unittest.TestCase):
+    @staticmethod
+    def _config(**overrides: object) -> TransformerPipelineConfig:
+        values: dict[str, object] = {
+            "iterations": 1,
+            "selfplay_episodes": 8,
+            "arena_episodes": 8,
+            "episode_budget": 64,
+            "search_depth": 1,
+            "epochs": 1,
+            "batch_size": 8,
+            "learning_rate": 1e-3,
+            "weight_decay": 0.0,
+            "seed": 20260805,
+            "device": "cpu",
+            "d_model": 8,
+            "heads": 2,
+            "layers": 1,
+            "feedforward": 16,
+        }
+        values.update(overrides)
+        return TransformerPipelineConfig(**values)
+
+    @staticmethod
+    def _probe_key(
+        config: TransformerPipelineConfig, iteration: int, pair: int, attempt: int
+    ) -> tuple[int, ...]:
+        from battle_training.transformer_pipeline import _matchup_attempt_seed
+
+        server = _FakeLeanServer()
+        player_size, enemy_size = _training_party_sizes(
+            iteration, 2 * pair, config.generated_schedule_version
+        )
+        snapshot = server.reset(
+            _matchup_attempt_seed(config.seed, iteration, attempt),
+            pair,
+            player_size,
+            enemy_size,
+            level100=_training_level100(
+                iteration, 2 * pair, config.generated_schedule_version
+            ),
+            swapped=False,
+            balanced_final_species=config.balanced_final_species,
+        )
+        return tuple(int(part) for part in snapshot.player_features)
+
+    def test_matchup_defaults_stay_legacy_in_the_dataclass(self) -> None:
+        config = self._config()
+        self.assertEqual(config.matchup_value_cap, 0.0)
+        self.assertEqual(config.matchup_filter_attempts, 1)
+        self.assertEqual(config.matchup_lopsided_accept, 0.0)
+
+    def test_matchup_flags_flow_from_the_cli(self) -> None:
+        arguments = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/matchup",
+                "--matchup-value-cap",
+                "0.8",
+                "--matchup-filter-attempts",
+                "3",
+                "--matchup-lopsided-accept",
+                "0.2",
+            ]
+        )
+        self.assertEqual(arguments.matchup_value_cap, 0.8)
+        self.assertEqual(arguments.matchup_filter_attempts, 3)
+        self.assertEqual(arguments.matchup_lopsided_accept, 0.2)
+
+    def test_matchup_bounds_are_validated(self) -> None:
+        from battle_training.transformer_pipeline import run_transformer_pipeline
+
+        cases = [
+            ({"matchup_value_cap": 1.0}, "matchup_value_cap"),
+            ({"matchup_value_cap": -0.1}, "matchup_value_cap"),
+            (
+                {"matchup_value_cap": 0.9, "matchup_filter_attempts": 0},
+                "matchup_filter_attempts",
+            ),
+            (
+                {"matchup_value_cap": 0.9, "matchup_lopsided_accept": 1.5},
+                "matchup_lopsided_accept",
+            ),
+        ]
+        for overrides, message in cases:
+            with (
+                tempfile.TemporaryDirectory() as tmp,
+                self.assertRaisesRegex(ValueError, message),
+            ):
+                run_transformer_pipeline(Path(tmp) / "run", self._config(**overrides))
+
+    def test_matchup_attempt_seed_matches_documented_streams(self) -> None:
+        from battle_training.transformer_pipeline import (
+            _MATCHUP_DOMAIN,
+            _matchup_attempt_seed,
+        )
+
+        self.assertEqual(
+            _matchup_attempt_seed(11, 3, 0),
+            _training_entropy_seed(11, 3, 0, _RESET_DOMAIN),
+        )
+        self.assertEqual(
+            _matchup_attempt_seed(11, 3, 2),
+            _training_entropy_seed(11, 3, 2, _MATCHUP_DOMAIN),
+        )
+        self.assertNotEqual(
+            _matchup_attempt_seed(11, 3, 1), _matchup_attempt_seed(11, 3, 2)
+        )
+        self.assertNotEqual(
+            _matchup_attempt_seed(11, 3, 1),
+            _training_entropy_seed(11, 3, 1, _RESET_DOMAIN),
+        )
+
+    def test_pair_reset_seed_honors_the_plan(self) -> None:
+        from battle_training.transformer_pipeline import (
+            _matchup_attempt_seed,
+            _pair_reset_seed,
+        )
+
+        config = self._config()
+        legacy = _training_entropy_seed(config.seed, 4, 0, _RESET_DOMAIN)
+        self.assertEqual(_pair_reset_seed(config, 4, None, 7), legacy)
+        self.assertEqual(_pair_reset_seed(config, 4, {}, 7), legacy)
+        plan = {7: 2}
+        self.assertEqual(
+            _pair_reset_seed(config, 4, plan, 7),
+            _matchup_attempt_seed(config.seed, 4, 2),
+        )
+        self.assertEqual(_pair_reset_seed(config, 4, plan, 6), legacy)
+
+    def test_matchup_meta_tags_appear_only_when_enabled(self) -> None:
+        from battle_training.transformer_pipeline import _matchup_filter_meta
+
+        disabled = SimpleNamespace(
+            matchup_value_cap=0.0,
+            matchup_filter_attempts=1,
+            matchup_lopsided_accept=0.0,
+        )
+        self.assertEqual(_matchup_filter_meta(disabled), {})
+        enabled = SimpleNamespace(
+            matchup_value_cap=0.9,
+            matchup_filter_attempts=4,
+            matchup_lopsided_accept=0.15,
+        )
+        self.assertEqual(
+            _matchup_filter_meta(enabled),
+            {
+                "matchup_filter": "predicted-turn-zero-value-v1",
+                "matchup_value_cap": 0.9,
+                "matchup_filter_attempts": 4,
+                "matchup_lopsided_accept": 0.15,
+            },
+        )
+
+    def test_contested_pairs_keep_the_legacy_reset(self) -> None:
+        from battle_training.transformer_pipeline import _matchup_filter_plan
+
+        config = self._config(matchup_value_cap=0.9, matchup_filter_attempts=4)
+        network = _ScriptedValueNetwork(default=0.0)
+        plan, stats = _matchup_filter_plan(_RecordingLeanServer(), network, config, 1)
+        self.assertEqual(plan, {})
+        self.assertTrue(stats["enabled"])
+        self.assertEqual(stats["cap"], 0.9)
+        self.assertEqual(stats["attempts"], 4)
+        self.assertEqual(stats["lopsided_accept"], 0.0)
+        self.assertEqual(stats["pairs"], 4)
+        self.assertEqual(stats["resampled_pairs"], 0)
+        self.assertEqual(stats["soft_accepted_pairs"], 0)
+        self.assertEqual(stats["fallback_pairs"], 0)
+        self.assertEqual(stats["candidate_resets"], 4)
+        self.assertEqual(stats["attempt_histogram"], {"0": 4})
+        self.assertEqual(stats["turn_zero_abs_value"]["initial"]["mean"], 0.0)
+        self.assertEqual(
+            stats["turn_zero_abs_value"]["initial"],
+            stats["turn_zero_abs_value"]["final"],
+        )
+
+    def test_lopsided_pairs_resample_with_fresh_seeds_and_fixed_sizes(self) -> None:
+        from battle_training.transformer_pipeline import (
+            _MATCHUP_DOMAIN,
+            _matchup_filter_plan,
+        )
+
+        config = self._config(matchup_value_cap=0.9, matchup_filter_attempts=3)
+        network = _ScriptedValueNetwork(default=0.0)
+        network.values[self._probe_key(config, 1, 1, 0)] = 0.95
+        network.values[self._probe_key(config, 1, 1, 1)] = 0.1
+        server = _RecordingLeanServer()
+        plan, stats = _matchup_filter_plan(server, network, config, 1)
+        self.assertEqual(plan, {1: 1})
+        self.assertEqual(stats["resampled_pairs"], 1)
+        self.assertEqual(stats["soft_accepted_pairs"], 0)
+        self.assertEqual(stats["fallback_pairs"], 0)
+        self.assertEqual(stats["candidate_resets"], 5)
+        self.assertEqual(stats["attempt_histogram"], {"0": 3, "1": 1})
+        probes = [call for call in server.reset_calls if call["episode"] == 1]
+        self.assertEqual(len(probes), 2)
+        self.assertEqual(probes[0]["player_size"], probes[1]["player_size"])
+        self.assertEqual(probes[0]["enemy_size"], probes[1]["enemy_size"])
+        self.assertEqual(probes[0]["level100"], probes[1]["level100"])
+        self.assertFalse(probes[0]["swapped"] or probes[1]["swapped"])
+        self.assertEqual(
+            probes[0]["seed"],
+            _training_entropy_seed(config.seed, 1, 0, _RESET_DOMAIN),
+        )
+        self.assertEqual(
+            probes[1]["seed"],
+            _training_entropy_seed(config.seed, 1, 1, _MATCHUP_DOMAIN),
+        )
+
+    def test_exhausted_attempts_accept_the_final_candidate(self) -> None:
+        from battle_training.transformer_pipeline import _matchup_filter_plan
+
+        config = self._config(
+            selfplay_episodes=2, matchup_value_cap=0.9, matchup_filter_attempts=3
+        )
+        network = _ScriptedValueNetwork(default=0.95)
+        plan, stats = _matchup_filter_plan(_RecordingLeanServer(), network, config, 1)
+        self.assertEqual(plan, {0: 2})
+        self.assertEqual(stats["resampled_pairs"], 1)
+        self.assertEqual(stats["fallback_pairs"], 1)
+        self.assertEqual(stats["soft_accepted_pairs"], 0)
+        self.assertEqual(stats["candidate_resets"], 3)
+        self.assertEqual(stats["attempt_histogram"], {"2": 1})
+        self.assertEqual(stats["turn_zero_abs_value"]["final"]["lopsided_share"], 1.0)
+
+    def test_soft_acceptance_keeps_a_calibration_share(self) -> None:
+        from battle_training.transformer_pipeline import _matchup_filter_plan
+
+        config = self._config(
+            matchup_value_cap=0.9,
+            matchup_filter_attempts=4,
+            matchup_lopsided_accept=1.0,
+        )
+        network = _ScriptedValueNetwork(default=0.95)
+        plan, stats = _matchup_filter_plan(_RecordingLeanServer(), network, config, 1)
+        self.assertEqual(plan, {})
+        self.assertEqual(stats["soft_accepted_pairs"], 4)
+        self.assertEqual(stats["resampled_pairs"], 0)
+        self.assertEqual(stats["fallback_pairs"], 0)
+        self.assertEqual(stats["candidate_resets"], 4)
+        self.assertEqual(stats["turn_zero_abs_value"]["final"]["lopsided_share"], 1.0)
+
+    def test_soft_accept_replays_the_documented_rng_stream(self) -> None:
+        from battle_training.transformer_pipeline import (
+            _MATCHUP_ACCEPT_DOMAIN,
+            _matchup_filter_plan,
+        )
+
+        config = self._config(
+            matchup_value_cap=0.9,
+            matchup_filter_attempts=2,
+            matchup_lopsided_accept=0.5,
+        )
+        expected_plan: dict[int, int] = {}
+        expected_soft = 0
+        expected_fallback = 0
+        for pair in range(4):
+            rng = random.Random(
+                _training_entropy_seed(config.seed, 1, pair, _MATCHUP_ACCEPT_DOMAIN)
+            )
+            if rng.random() < 0.5:
+                expected_soft += 1
+                continue
+            expected_plan[pair] = 1
+            if rng.random() < 0.5:
+                expected_soft += 1
+            else:
+                expected_fallback += 1
+        network = _ScriptedValueNetwork(default=0.95)
+        plan, stats = _matchup_filter_plan(_RecordingLeanServer(), network, config, 1)
+        self.assertEqual(plan, expected_plan)
+        self.assertEqual(stats["soft_accepted_pairs"], expected_soft)
+        self.assertEqual(stats["fallback_pairs"], expected_fallback)
+        self.assertEqual(stats["resampled_pairs"], len(expected_plan))
+
+    def test_filter_plan_is_deterministic_and_chunk_invariant(self) -> None:
+        from battle_training.transformer_pipeline import _matchup_filter_plan
+
+        config = self._config(matchup_value_cap=0.9, matchup_filter_attempts=3)
+        lopsided = self._probe_key(config, 1, 1, 0)
+
+        def run(chunk_size: int) -> tuple[dict[int, int], dict[str, object], object]:
+            network = _ScriptedValueNetwork(default=0.0)
+            network.values[lopsided] = 0.95
+            server = _RecordingLeanServer()
+            plan, stats = _matchup_filter_plan(
+                server, network, config, 1, chunk_size=chunk_size
+            )
+            return plan, stats, (network, server)
+
+        first_plan, first_stats, _ = run(512)
+        second_plan, second_stats, _ = run(512)
+        chunked_plan, chunked_stats, (network, server) = run(2)
+        self.assertEqual(first_plan, {1: 1})
+        self.assertEqual(first_plan, second_plan)
+        self.assertEqual(first_plan, chunked_plan)
+        for key in ("resampled_pairs", "candidate_resets", "attempt_histogram"):
+            self.assertEqual(first_stats[key], second_stats[key])
+            self.assertEqual(first_stats[key], chunked_stats[key])
+        self.assertEqual(network.batch_sizes, [2, 2, 1])
+        self.assertEqual(
+            [call["append"] for call in server.reset_calls],
+            [False, True, False, True, False],
+        )
+
+    def test_filter_stats_summarize_turn_zero_values_and_strata(self) -> None:
+        from battle_training.arena import _party_strata
+        from battle_training.transformer_pipeline import _matchup_filter_plan
+
+        config = self._config(matchup_value_cap=0.9, matchup_filter_attempts=3)
+        network = _ScriptedValueNetwork(default=0.0)
+        network.values[self._probe_key(config, 1, 1, 0)] = 0.95
+        network.values[self._probe_key(config, 1, 1, 1)] = 0.1
+        plan, stats = _matchup_filter_plan(_RecordingLeanServer(), network, config, 1)
+        self.assertEqual(plan, {1: 1})
+        initial = stats["turn_zero_abs_value"]["initial"]
+        final = stats["turn_zero_abs_value"]["final"]
+        self.assertAlmostEqual(initial["mean"], 0.95 / 4)
+        self.assertAlmostEqual(initial["lopsided_share"], 0.25)
+        self.assertAlmostEqual(final["mean"], 0.1 / 4)
+        self.assertEqual(final["lopsided_share"], 0.0)
+        for summary in (initial, final):
+            self.assertLessEqual(summary["p50"], summary["p90"])
+            self.assertLessEqual(summary["p90"], summary["p99"])
+        expected_strata: dict[str, dict[str, int]] = {}
+        for pair in range(4):
+            for stratum in _party_strata(
+                *_training_party_sizes(1, 2 * pair, config.generated_schedule_version)
+            ):
+                bucket = expected_strata.setdefault(
+                    stratum, {"pairs": 0, "resampled": 0}
+                )
+                bucket["pairs"] += 1
+                bucket["resampled"] += int(pair in plan)
+        self.assertEqual(stats["strata"], expected_strata)
+        self.assertTrue(all(isinstance(name, str) for name in stats["strata"]))
+        self.assertGreaterEqual(stats["seconds"], 0.0)
+        json.dumps(stats)
+
+    def test_excluded_pairs_are_never_probed(self) -> None:
+        from battle_training.transformer_pipeline import _matchup_filter_plan
+
+        config = self._config(matchup_value_cap=0.9, matchup_filter_attempts=2)
+        network = _ScriptedValueNetwork(default=0.95)
+        server = _RecordingLeanServer()
+        plan, stats = _matchup_filter_plan(server, network, config, 1, exclude={1})
+        self.assertEqual(plan, {0: 1, 2: 1, 3: 1})
+        self.assertEqual(stats["pairs"], 4)
+        self.assertEqual(stats["excluded_pairs"], 1)
+        self.assertEqual(stats["candidate_resets"], 6)
+        self.assertEqual(stats["fallback_pairs"], 3)
+        self.assertNotIn(1, {call["episode"] for call in server.reset_calls})
+
+    def test_collection_wiring_threads_the_matchup_plan(self) -> None:
+        from battle_training.transformer_pipeline import (
+            _collect_rows,
+            _collection_process_worker,
+        )
+
+        single = inspect.signature(_collect_rows_single).parameters
+        self.assertIsNone(single["matchup_plan"].default)
+        worker = inspect.signature(_collection_process_worker).parameters
+        self.assertIn("matchup_plan", worker)
+        collect_source = inspect.getsource(_collect_rows)
+        self.assertIn("_matchup_filter_plan", collect_source)
+        self.assertIn("matchup_filter", collect_source)
+        self.assertIn("_frontier_restart_plan", collect_source)
+        single_source = inspect.getsource(_collect_rows_single)
+        self.assertIn("_pair_reset_seed", single_source)
+        self.assertIn("_matchup_filter_meta", single_source)
 
 
 if __name__ == "__main__":
