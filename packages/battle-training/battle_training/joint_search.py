@@ -842,6 +842,10 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._leaf_inference_cache: dict[
             tuple[int, str, bytes | tuple[int, ...]], float
         ] = {}
+        self._leaf_joint_inference_cache: dict[
+            tuple[int, str, bytes | tuple[int, ...], int, int],
+            tuple[list[float], list[float], float],
+        ] = {}
         self._expanded_nodes = 0
         self._chance_outcomes = 0
         self._sampled_joint_pairs = 0
@@ -1460,6 +1464,204 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         rows = sum(len(batch) for _, batch in [*batches, *joint_batches])
         return results, calls, rows
 
+    @staticmethod
+    def _place_leaf_joint(
+        outputs: dict[tuple[int, int, int], tuple[list[float], float]],
+        consumer: tuple[int, int, int, bool, SimultaneousTreeSearch],
+        evaluated: tuple[list[float], list[float], float],
+    ) -> None:
+        """Route one distilled forward to the side or sides that asked for it."""
+        group_id, position, side, mirror, _ = consumer
+        own, opponent, value = evaluated
+        outputs[(group_id, position, side)] = (own, value)
+        if mirror:
+            outputs[(group_id, position, 1)] = (opponent, -value)
+
+    @classmethod
+    def _pooled_leaf_evaluate(
+        cls,
+        groups: list[tuple[int, SimultaneousTreeSearch, list[Snapshot]]],
+    ) -> tuple[
+        dict[int, tuple[list[list[float]], list[list[float]], list[float]]],
+        int,
+        int,
+    ]:
+        """Price nodes off the distilled trunk instead of the encoder.
+
+        A mirror pays one distilled forward per node and reads both sides out
+        of it, exactly as the encoder's joint head does; distinct controllers
+        pay one each and keep only their own side.  Either way the trunk is a
+        small MLP over raw features, which is what makes interior priors cheap
+        enough to ask for at every cell of every matrix.
+        """
+        outputs: dict[tuple[int, int, int], tuple[list[float], float]] = {}
+        known: dict[
+            tuple[int, str, bytes | tuple[int, ...], int, int],
+            tuple[list[float], list[float], float],
+        ] = {}
+        missing: dict[
+            tuple[int, str, bytes | tuple[int, ...], int, int], dict[str, Any]
+        ] = {}
+        for group_id, search, snapshots in groups:
+            mirror = search.player_network is search.enemy_network
+            sides = (
+                ((0, search.player_network),)
+                if mirror
+                else (
+                    (0, search.player_network),
+                    (1, search.enemy_network),
+                )
+            )
+            for side, network in sides:
+                for position, snapshot in enumerate(snapshots):
+                    own_first = side == 0
+                    feature = (
+                        snapshot.player_features
+                        if own_first
+                        else snapshot.enemy_features
+                    )
+                    opponent_feature = (
+                        snapshot.enemy_features
+                        if own_first
+                        else snapshot.player_features
+                    )
+                    own_mask = (
+                        snapshot.player_mask if own_first else snapshot.enemy_mask
+                    )
+                    opponent_mask = (
+                        snapshot.enemy_mask if own_first else snapshot.player_mask
+                    )
+                    if own_mask == 0 or opponent_mask == 0:
+                        inspection = search.server.inspect(snapshot.handle)
+                        raise ValueError(
+                            "search reached a nonterminal state with an empty legal mask: "
+                            f"side={side} handle={snapshot.handle} turn={snapshot.turn} "
+                            f"request={snapshot.request} player_mask={snapshot.player_mask} "
+                            f"enemy_mask={snapshot.enemy_mask} inspection={inspection!r}"
+                        )
+                    key = (
+                        id(network),
+                        *search._feature_identity(feature),
+                        own_mask,
+                        opponent_mask,
+                    )
+                    cached = search._leaf_joint_inference_cache.get(key) or known.get(
+                        key
+                    )
+                    consumer = (group_id, position, side, mirror, search)
+                    if cached is not None:
+                        search._inference_cache_stats["hits"] += 1
+                        search._leaf_joint_inference_cache[key] = cached
+                        known[key] = cached
+                        cls._place_leaf_joint(outputs, consumer, cached)
+                    elif key in missing:
+                        search._inference_cache_stats["hits"] += 1
+                        missing[key]["consumers"].append(consumer)
+                    else:
+                        search._inference_cache_stats["misses"] += 1
+                        missing[key] = {
+                            "network": network,
+                            "feature": feature,
+                            "opponent_feature": opponent_feature,
+                            "own_mask": own_mask,
+                            "opponent_mask": opponent_mask,
+                            "consumers": [consumer],
+                        }
+
+        by_network: dict[int, list[tuple[Any, dict[str, Any]]]] = {}
+        for key, item in missing.items():
+            by_network.setdefault(id(item["network"]), []).append((key, item))
+        batches: list[tuple[Any, list[tuple[Any, dict[str, Any]]]]] = []
+        for items in by_network.values():
+            network = items[0][1]["network"]
+            batch_size = max(
+                consumer[4].config.inference_batch_size
+                for _, item in items
+                for consumer in item["consumers"]
+            )
+            for start in range(0, len(items), batch_size):
+                batches.append((network, items[start : start + batch_size]))
+
+        pending: list[tuple[list[tuple[Any, dict[str, Any]]], Any]] = []
+        synchronous: list[tuple[Any, list[tuple[Any, dict[str, Any]]]]] = []
+        for network, batch in batches:
+            begin = getattr(network, "begin_evaluate_leaf_joint", None)
+            can_defer = getattr(network, "supports_deferred_evaluation", True)
+            if begin is None or not can_defer:
+                synchronous.append((network, batch))
+            else:
+                pending.append(
+                    (
+                        batch,
+                        begin(
+                            [item[1]["feature"] for item in batch],
+                            [item[1]["own_mask"] for item in batch],
+                            [item[1]["opponent_mask"] for item in batch],
+                        ),
+                    )
+                )
+
+        completed = []
+        for network, batch in synchronous:
+            own, opponent, values = network.evaluate_leaf_joint(
+                [item[1]["feature"] for item in batch],
+                [item[1]["own_mask"] for item in batch],
+                [item[1]["opponent_mask"] for item in batch],
+            )
+            completed.append((batch, own, opponent, values))
+        for batch, ticket in pending:
+            own, opponent, values = ticket.result()
+            completed.append((batch, own, opponent, values))
+        for batch, own, opponent, values in completed:
+            for (key, item), player, enemy, value in zip(
+                batch, own, opponent, values, strict=True
+            ):
+                network = item["network"]
+                if isinstance(network, BattleTransformer):
+                    scale = item["consumers"][0][4].config.redundant_action_prior_scale
+                    player = shape_redundant_action_priors(
+                        player, item["feature"], item["own_mask"], scale
+                    )
+                    enemy = shape_redundant_action_priors(
+                        enemy,
+                        item["opponent_feature"],
+                        item["opponent_mask"],
+                        scale,
+                    )
+                cached = (player, enemy, value)
+                known[key] = cached
+                for consumer in item["consumers"]:
+                    consumer[4]._leaf_joint_inference_cache[key] = cached
+                    cls._place_leaf_joint(outputs, consumer, cached)
+
+        results = {}
+        for group_id, _, snapshots in groups:
+            results[group_id] = (
+                [
+                    outputs[(group_id, position, 0)][0]
+                    for position in range(len(snapshots))
+                ],
+                [
+                    outputs[(group_id, position, 1)][0]
+                    for position in range(len(snapshots))
+                ],
+                [
+                    max(
+                        -1.0,
+                        min(
+                            1.0,
+                            (
+                                outputs[(group_id, position, 0)][1]
+                                - outputs[(group_id, position, 1)][1]
+                            )
+                            / 2.0,
+                        ),
+                    )
+                    for position in range(len(snapshots))
+                ],
+            )
+        return results, len(batches), sum(len(batch) for _, batch in batches)
+
     @classmethod
     def _pooled_leaf_values(
         cls,
@@ -1971,12 +2173,23 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 frontier_snapshots.setdefault(expansion.root, []).append(successor)
         if not opening:
             return []
-        evaluations, _, _ = cls._pooled_evaluate(
-            [
-                (root, searches[root], snapshots)
-                for root, snapshots in frontier_snapshots.items()
-            ]
+        frontier_groups = [
+            (root, searches[root], snapshots)
+            for root, snapshots in frontier_snapshots.items()
+        ]
+        # The root keeps its encoder priors -- it is the answer we hand back --
+        # but every node below it is priced by the distilled trunk, and the
+        # choice is made for the whole level so no cell is refined further than
+        # the neighbours it will be compared against.
+        distilled = all(
+            bool(getattr(network.config, "distilled_leaf_policy", False))
+            for _, search, _ in frontier_groups
+            for network in (search.player_network, search.enemy_network)
         )
+        if distilled:
+            evaluations, _, _ = cls._pooled_leaf_evaluate(frontier_groups)
+        else:
+            evaluations, _, _ = cls._pooled_evaluate(frontier_groups)
         slots = dict.fromkeys(frontier_snapshots, 0)
         seeds = {
             root: searches[root]._chance_seeds(

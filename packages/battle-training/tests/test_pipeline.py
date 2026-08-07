@@ -306,6 +306,117 @@ class _LeafToyNetwork(_JointToyNetwork):
         return [0.5 for _ in features]  # type: ignore[union-attr]
 
 
+class _DistilledPolicyToyNetwork(_LeafToyNetwork):
+    """A distilled head that disagrees with the encoder about both priors.
+
+    The encoder is pure on player action 0 and enemy action 1; the distilled
+    head is pure on the opposite pair. Whichever head an interior matrix
+    consulted is then legible in the actions it opens.
+    """
+
+    config = SimpleNamespace(
+        action_count=2,
+        joint_policy_heads=True,
+        distilled_leaf_evaluator=True,
+        distilled_leaf_policy=True,
+    )
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.joint_rows = 0
+        self.leaf_joint_rows = 0
+
+    def evaluate_joint(
+        self,
+        features: object,
+        player_masks: list[int],
+        enemy_masks: list[int],
+    ) -> tuple[list[list[float]], list[list[float]], list[float]]:
+        self.joint_rows += len(player_masks)
+        return super().evaluate_joint(features, player_masks, enemy_masks)
+
+    def evaluate_leaf_joint(
+        self,
+        features: object,
+        own_masks: list[int],
+        opponent_masks: list[int],
+    ) -> tuple[list[list[float]], list[list[float]], list[float]]:
+        del features, opponent_masks
+        self.leaf_joint_rows += len(own_masks)
+        return (
+            [[0.0, 1.0] for _ in own_masks],
+            [[1.0, 0.0] for _ in own_masks],
+            [0.25 for _ in own_masks],
+        )
+
+
+class _DeferredJointEvaluation:
+    def __init__(
+        self, output: tuple[list[list[float]], list[list[float]], list[float]]
+    ) -> None:
+        self.output = output
+
+    def result(self) -> tuple[list[list[float]], list[list[float]], list[float]]:
+        return self.output
+
+
+class _DeferredDistilledToyNetwork(_DistilledPolicyToyNetwork):
+    """Launches the distilled batch and settles it later, like the real head."""
+
+    def begin_evaluate_leaf_joint(
+        self,
+        features: object,
+        own_masks: list[int],
+        opponent_masks: list[int],
+    ) -> _DeferredJointEvaluation:
+        return _DeferredJointEvaluation(
+            _DistilledPolicyToyNetwork.evaluate_leaf_joint(
+                self, features, own_masks, opponent_masks
+            )
+        )
+
+    def evaluate_leaf_joint(
+        self,
+        features: object,
+        own_masks: list[int],
+        opponent_masks: list[int],
+    ) -> tuple[list[list[float]], list[list[float]], list[float]]:
+        raise AssertionError("pooled interior inference serialized a deferred network")
+
+
+class _DistilledSideToyNetwork(_ToyNetwork):
+    """One controller of a two-network search, with its own distilled head."""
+
+    config = SimpleNamespace(
+        action_count=2,
+        joint_policy_heads=True,
+        distilled_leaf_evaluator=True,
+        distilled_leaf_policy=True,
+    )
+
+    def __init__(self, own: list[float]) -> None:
+        super().__init__()
+        self.own = own
+        self.leaf_joint_rows = 0
+
+    def evaluate_leaf(self, features: object) -> list[float]:
+        return [0.0 for _ in features]  # type: ignore[union-attr]
+
+    def evaluate_leaf_joint(
+        self,
+        features: object,
+        own_masks: list[int],
+        opponent_masks: list[int],
+    ) -> tuple[list[list[float]], list[list[float]], list[float]]:
+        del features, opponent_masks
+        self.leaf_joint_rows += len(own_masks)
+        return (
+            [list(self.own) for _ in own_masks],
+            [[0.5, 0.5] for _ in own_masks],
+            [0.0 for _ in own_masks],
+        )
+
+
 class _RefusingBudgetNetwork(_LeafToyNetwork):
     """Offers a search-budget head and fails if anything ever consults it."""
 
@@ -404,6 +515,20 @@ class _DistinctFeatureToyServer(_ToyServer):
             player_features=tuple(player),
             enemy_features=tuple(enemy),
         )
+
+
+class _ActionLogToyServer(_DistinctFeatureToyServer):
+    """Distinct features per handle, plus a log of the actions each step opened."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.actions: list[tuple[int, int]] = []
+
+    def search_step(
+        self, handle: int, player_action: int, enemy_action: int, chance_seed: int
+    ) -> Snapshot:
+        self.actions.append((player_action, enemy_action))
+        return super().search_step(handle, player_action, enemy_action, chance_seed)
 
 
 class _PriorRegretToyServer(_ToyServer):
@@ -5064,6 +5189,80 @@ class SolvedInteriorMatrixTest(unittest.TestCase):
         # Two rungs of chip, not one: a parent-relative leaf would score 0.25.
         self.assertAlmostEqual(rise, 0.5, places=6)
         self.assertAlmostEqual(result.root_value, rise, places=3)
+
+
+class DistilledInteriorPriorsTest(unittest.TestCase):
+    """Interior nodes take their priors from the distilled trunk, not the encoder.
+
+    A second solved ply asks the network for priors at every cell of every root
+    matrix, and paying a full encoder forward for each is what made depth 2
+    expensive. The toy heads are wired to disagree, so whichever one an interior
+    matrix consulted shows up in the actions that matrix opens: the root's own
+    four cells come from the encoder either way, and everything after them is
+    the head under test.
+    """
+
+    @staticmethod
+    def _search(
+        server: _ActionLogToyServer,
+        player: object,
+        enemy: object,
+        **overrides: object,
+    ) -> SearchResult:
+        settings: dict[str, object] = {
+            "chance_samples_per_joint": 1,
+            "max_depth": 2,
+            "max_actions_per_side": 2,
+            "interior_actions_per_side": 1,
+        }
+        settings.update(overrides)
+        return SimultaneousTreeSearch(
+            server,  # type: ignore[arg-type]
+            player,  # type: ignore[arg-type]
+            enemy,  # type: ignore[arg-type]
+            JointSearchConfig(**settings),  # type: ignore[arg-type]
+            random.Random(1),
+            random.Random(2),
+        ).search(server._snapshot(0), sample_actions=False)
+
+    def test_interior_matrices_open_the_distilled_heads_actions(self) -> None:
+        server = _ActionLogToyServer()
+        network = _DistilledPolicyToyNetwork()
+        self._search(server, network, network)
+        # The root's own cells are the encoder's, ordered by its priors.
+        self.assertEqual(server.actions[:4], [(0, 1), (0, 0), (1, 1), (1, 0)])
+        self.assertEqual(server.actions[4:], [(1, 0)] * 4)
+
+    def test_the_encoder_answers_the_root_and_the_distilled_head_the_rest(self) -> None:
+        server = _ActionLogToyServer()
+        network = _DistilledPolicyToyNetwork()
+        self._search(server, network, network)
+        self.assertEqual(network.joint_rows, 1)
+        # Four interior nodes, one distilled forward each: a mirror reads both
+        # sides out of the same row rather than paying for each separately.
+        self.assertEqual(network.leaf_joint_rows, 4)
+
+    def test_a_network_without_the_distilled_head_still_pays_the_encoder(self) -> None:
+        server = _ActionLogToyServer()
+        network = _LeafToyNetwork()
+        self._search(server, network, network)
+        self.assertEqual(server.actions[4:], [(0, 1)] * 4)
+
+    def test_distinct_controllers_each_read_their_own_distilled_head(self) -> None:
+        server = _ActionLogToyServer()
+        player = _DistilledSideToyNetwork([0.0, 1.0])
+        enemy = _DistilledSideToyNetwork([1.0, 0.0])
+        self._search(server, player, enemy)
+        self.assertEqual(server.actions[4:], [(1, 0)] * 4)
+        self.assertEqual(player.leaf_joint_rows, 4)
+        self.assertEqual(enemy.leaf_joint_rows, 4)
+
+    def test_the_distilled_batch_is_launched_before_it_is_settled(self) -> None:
+        server = _ActionLogToyServer()
+        network = _DeferredDistilledToyNetwork()
+        self._search(server, network, network)
+        self.assertEqual(network.leaf_joint_rows, 4)
+        self.assertEqual(server.actions[4:], [(1, 0)] * 4)
 
 
 class PriorRegretTest(unittest.TestCase):
