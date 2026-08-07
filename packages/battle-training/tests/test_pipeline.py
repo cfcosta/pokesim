@@ -1512,7 +1512,7 @@ class TransformerTests(unittest.TestCase):
         result = search.search(server._snapshot(0), sample_actions=False)
         self.assertEqual(
             result.solver,
-            "simultaneous-matrix-tree-rust-cfrplus-pooled-node-v4",
+            "simultaneous-matrix-tree-rust-cfrplus-pooled-node-split-half-v5",
         )
         self.assertEqual(result.diagnostics["root_solver"], "rust-cfrplus-f64-v1")
         self.assertGreater(result.player_policy[0], 0.8)
@@ -1797,9 +1797,16 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.collection_dirichlet_total, 10.0)
         self.assertEqual(arguments.frontier_buffer_size, 256)
         self.assertEqual(arguments.frontier_restart_fraction, 0.25)
+        self.assertEqual(arguments.frontier_reset_cap, 8)
+        self.assertEqual(arguments.frontier_episode_cap, 2)
+        self.assertTrue(arguments.split_half_reliability)
+        self.assertTrue(arguments.prior_regret)
+        self.assertEqual(arguments.policy_reliability_floor, 0.25)
         self.assertEqual(arguments.matchup_value_cap, 0.9)
         self.assertEqual(arguments.matchup_filter_attempts, 4)
         self.assertEqual(arguments.matchup_lopsided_accept, 0.15)
+        self.assertEqual(arguments.team_replay_fraction, 0.15)
+        self.assertEqual(arguments.team_replay_buffer_size, 256)
         self.assertEqual(arguments.popular_gate, 64)
         self.assertEqual(arguments.budget_loss_weight, 0.05)
         self.assertEqual(arguments.budget_positive_weight, 4.0)
@@ -1972,6 +1979,7 @@ class TransformerTests(unittest.TestCase):
         config.pop("frontier_episode_cap")
         config.pop("split_half_reliability")
         config.pop("prior_regret")
+        config.pop("policy_reliability_floor")
         config.pop("matchup_value_cap")
         config.pop("matchup_filter_attempts")
         config.pop("matchup_lopsided_accept")
@@ -2003,6 +2011,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["frontier_episode_cap"], 0)
         self.assertFalse(normalized["split_half_reliability"])
         self.assertFalse(normalized["prior_regret"])
+        self.assertEqual(normalized["policy_reliability_floor"], 1.0)
         self.assertEqual(normalized["matchup_value_cap"], 0.0)
         self.assertEqual(normalized["matchup_filter_attempts"], 1)
         self.assertEqual(normalized["matchup_lopsided_accept"], 0.0)
@@ -3562,11 +3571,11 @@ class TransformerTests(unittest.TestCase):
     def test_training_schedule_pairs_every_reset_and_side_assignment(self) -> None:
         self.assertEqual(
             _pipeline_id(),
-            "transformer-variable-party-bf16-rmplus-v29-domain-seeded-5m-16k",
+            "transformer-variable-party-bf16-rmplus-v30-prior-regret-frontier-5m-16k",
         )
         self.assertEqual(
             _pipeline_id(False, 2),
-            "transformer-variable-party-bf16-rmplus-v29-domain-seeded-5m-16k",
+            "transformer-variable-party-bf16-rmplus-v30-prior-regret-frontier-5m-16k",
         )
         for episode in range(0, 128, 2):
             self.assertEqual(_training_pair(episode), _training_pair(episode + 1))
@@ -5356,7 +5365,7 @@ class FrontierBufferTest(unittest.TestCase):
             self.assertEqual(
                 metrics["frontier"],
                 {
-                    "version": "surprise-topn-v1",
+                    "version": "prior-regret-capped-v2",
                     "capacity": 2,
                     "entries": 2,
                     "path": "frontier-004.jsonl",
@@ -5369,7 +5378,7 @@ class FrontierBufferTest(unittest.TestCase):
             self.assertEqual(len(lines), 3)
             header = json.loads(lines[0])
             self.assertEqual(header["type"], "frontier-meta")
-            self.assertEqual(header["version"], "surprise-topn-v1")
+            self.assertEqual(header["version"], "prior-regret-capped-v2")
             self.assertEqual(header["iteration"], 4)
             self.assertEqual(header["capacity"], 2)
             self.assertEqual(header["entries"], 2)
@@ -5410,7 +5419,7 @@ class FrontierBufferTest(unittest.TestCase):
         )
         self.assertEqual(
             _frontier_meta(enabled),
-            {"frontier_buffer": "surprise-topn-v1", "frontier_buffer_size": 128},
+            {"frontier_buffer": "prior-regret-capped-v2", "frontier_buffer_size": 128},
         )
 
     def test_load_frontier_buffer_rejects_unknown_versions(self) -> None:
@@ -5747,7 +5756,7 @@ class FrontierCapTest(unittest.TestCase):
         self.assertEqual(
             _frontier_meta(capped),
             {
-                "frontier_buffer": "surprise-topn-v1",
+                "frontier_buffer": "prior-regret-capped-v2",
                 "frontier_buffer_size": 128,
                 "frontier_reset_cap": 8,
                 "frontier_episode_cap": 2,

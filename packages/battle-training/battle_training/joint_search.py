@@ -2110,7 +2110,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             root_value,
             transitions,
             (
-                "simultaneous-matrix-tree-rust-cfrplus-pooled-node-v4"
+                "simultaneous-matrix-tree-rust-cfrplus-pooled-node-split-half-v5"
                 if self.config.cfr_plus_solves
                 else "simultaneous-matrix-tree-rust-rmplus-pooled-node-v4"
                 if self.config.rmplus_backend == RUST_RMPLUS_BACKEND

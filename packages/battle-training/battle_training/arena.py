@@ -1800,7 +1800,7 @@ def run_paired_arena(
         "action_selector": (
             "network-policy-argmax-v1"
             if config.policy_only
-            else "simultaneous-matrix-tree-rust-cfrplus-every-decision-v4"
+            else "simultaneous-matrix-tree-rust-cfrplus-every-decision-split-half-v5"
         ),
         "search": (
             None if config.policy_only else asdict(_joint_search_config(config))
@@ -2280,7 +2280,7 @@ def _run_traced_arena_batched(
         baseline_metrics,
     )
     result["action_selector"] = (
-        "simultaneous-matrix-tree-rust-cfrplus-every-decision-v4"
+        "simultaneous-matrix-tree-rust-cfrplus-every-decision-split-half-v5"
     )
     result["search"] = asdict(_joint_search_config(config))
     return result

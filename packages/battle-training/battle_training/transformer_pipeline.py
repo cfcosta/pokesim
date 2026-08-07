@@ -299,7 +299,7 @@ def _pipeline_id(
     balanced_final_species: bool = True, generated_schedule_version: int = 3
 ) -> str:
     del balanced_final_species, generated_schedule_version
-    return "transformer-variable-party-bf16-rmplus-v29-domain-seeded-5m-16k"
+    return "transformer-variable-party-bf16-rmplus-v30-prior-regret-frontier-5m-16k"
 
 
 def _serialized_network_config(config: TransformerConfig) -> dict[str, Any]:
@@ -763,7 +763,7 @@ def _smoothed_policy(
     return smoothed
 
 
-_FRONTIER_VERSION = "surprise-topn-v1"
+_FRONTIER_VERSION = "prior-regret-capped-v2"
 _FRONTIER_KL_FLOOR = 1e-9
 _FRONTIER_COMPACT_SLACK = 16
 
@@ -1067,7 +1067,11 @@ def _finalize_frontier(
         "iteration": iteration,
         "capacity": config.frontier_buffer_size,
         "entries": len(entries),
-        "score": "value_surprise+policy_kl",
+        "score": (
+            "prior-regret-minus-split-half-noise"
+            if getattr(config, "prior_regret", False)
+            else "value-surprise-plus-policy-kl"
+        ),
     }
     _jsonl(frontier_path, [header, *entries])
     scores = [entry["score"] for entry in entries]
@@ -1588,10 +1592,12 @@ def _collect_rows_single(
         "entropy": ENTROPY,
         "actor_entropy": _ACTOR_ENTROPY_VERSION,
         "chance": "fresh-root-v1",
-        "solver": "simultaneous-matrix-tree-rust-cfrplus-pooled-node-v4",
+        "solver": "simultaneous-matrix-tree-rust-cfrplus-pooled-node-split-half-v5",
         "rmplus_backend": config.rmplus_backend,
         "cfr_plus_solves": config.cfr_plus_solves,
-        "action_selector": "simultaneous-matrix-tree-rust-cfrplus-every-decision-v4",
+        "action_selector": (
+            "simultaneous-matrix-tree-rust-cfrplus-every-decision-split-half-v5"
+        ),
         "iteration": iteration,
         "episodes": len(episode_indices),
         "depth": config.search_depth,
@@ -4494,9 +4500,11 @@ def run_transformer_pipeline(
                 ),
                 "chance": "fresh-root-v1",
                 "rmplus": native_metadata(),
-                "search_solver": "simultaneous-matrix-tree-rust-cfrplus-pooled-node-v4",
+                "search_solver": (
+                    "simultaneous-matrix-tree-rust-cfrplus-pooled-node-split-half-v5"
+                ),
                 "action_selector": (
-                    "simultaneous-matrix-tree-rust-cfrplus-every-decision-v4"
+                    "simultaneous-matrix-tree-rust-cfrplus-every-decision-split-half-v5"
                 ),
                 "collection_pairing": "same-reset-opposite-controller-sides-v1",
                 "learning_lineage": "persistent-shadow-v1",
@@ -5171,7 +5179,9 @@ def run_transformer_pipeline(
         ),
         "device": str(device),
         "rmplus": native_metadata(),
-        "action_selector": "simultaneous-matrix-tree-rust-cfrplus-every-decision-v4",
+        "action_selector": (
+            "simultaneous-matrix-tree-rust-cfrplus-every-decision-split-half-v5"
+        ),
         "iterations": config.iterations,
         "selfplay_battles": config.iterations * config.selfplay_episodes,
         "mirror_battles": sum(item["mirror_episodes"] for item in collection),
