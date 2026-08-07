@@ -31,6 +31,7 @@ type PayoffMatrix = list[list[float]]
 _PARTY_MON_WIDTH = 22
 _FULL_SIDE_WIDTH = 181
 _PARTY_SIZE = 6
+_SPLIT_HALVES = 2
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,7 @@ class JointSearchConfig:
     adaptive_payoff_spread_threshold: float = 0.75
     rmplus_backend: str = PYTHON_REFERENCE_BACKEND
     cfr_plus_solves: bool = False
+    split_half_reliability: bool = False
 
 
 def legal_actions(mask: int, action_count: int) -> list[int]:
@@ -581,6 +583,9 @@ class _TreeNode:
     player_regrets: list[float] = field(default_factory=list)
     enemy_regrets: list[float] = field(default_factory=list)
     sampled_pairs: set[tuple[int, int]] = field(default_factory=set)
+    half_payoff: list[PayoffMatrix] = field(default_factory=list)
+    half_counts: list[list[list[int]]] = field(default_factory=list)
+    half_cursor: int = 0
 
 
 @dataclass(frozen=True)
@@ -696,6 +701,10 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._deep_policy_change = 0.0
         self._deep_action_changed = 0
         self._deep_search_needed = -1
+        self._split_half_available = 0
+        self._split_half_player_distance = 0.0
+        self._split_half_enemy_distance = 0.0
+        self._split_half_value_gap = 0.0
 
     def _legal_from_priors(self, mask: int, priors: list[float]) -> list[int]:
         actions = legal_actions(mask, self.action_count)
@@ -733,6 +742,16 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         for player_action in player_legal:
             for enemy_action in enemy_legal:
                 node.payoff[player_action][enemy_action] = leaf_value
+        if self.config.split_half_reliability:
+            for _ in range(_SPLIT_HALVES):
+                half = [[0.0] * self.action_count for _ in range(self.action_count)]
+                for player_action in player_legal:
+                    for enemy_action in enemy_legal:
+                        half[player_action][enemy_action] = leaf_value
+                node.half_payoff.append(half)
+                node.half_counts.append(
+                    [[0] * self.action_count for _ in range(self.action_count)]
+                )
         return node
 
     def _solve_node(self, node: _TreeNode) -> None:
@@ -815,13 +834,12 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         node.root_value = float(player @ row_values)
         node.exploitability = float(row_values.max() - (player @ matrix).min())
 
-    def _root_equilibrium(
-        self, node: _TreeNode
+    def _solve_matrix(
+        self, node: _TreeNode, payoff: PayoffMatrix
     ) -> tuple[tuple[float, ...], tuple[float, ...], float, float]:
-        """Solve the current root matrix without stale online-search averages."""
         if self.config.rmplus_backend == RUST_RMPLUS_BACKEND:
             return solve_cold_native(
-                node.payoff,
+                payoff,
                 node.player_priors,
                 node.enemy_priors,
                 node.player_legal,
@@ -830,7 +848,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 cfr_plus=self.config.cfr_plus_solves,
             )
         return solve_zero_sum_regret(
-            node.payoff,
+            payoff,
             node.player_priors,
             node.enemy_priors,
             node.player_legal,
@@ -838,9 +856,100 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             self.config.regret_iterations,
         )
 
+    def _half_is_covered(self, node: _TreeNode, half: int) -> bool:
+        counts = node.half_counts[half]
+        return all(
+            counts[player][enemy] > 0
+            for player in node.player_legal
+            for enemy in node.enemy_legal
+        )
+
+    def _matrix_metrics(
+        self,
+        node: _TreeNode,
+        payoff: PayoffMatrix,
+        player_policy: Sequence[float],
+        enemy_policy: Sequence[float],
+    ) -> tuple[float, float]:
+        """Value and exploitability of an arbitrary pair against the mean matrix."""
+        matrix = np.asarray(payoff, dtype=np.float64)[
+            np.ix_(node.player_legal, node.enemy_legal)
+        ]
+        player = np.asarray(
+            [player_policy[action] for action in node.player_legal], dtype=np.float64
+        )
+        enemy = np.asarray(
+            [enemy_policy[action] for action in node.enemy_legal], dtype=np.float64
+        )
+        row_values = matrix @ enemy
+        column_values = player @ matrix
+        return (
+            float(player @ row_values),
+            float(row_values.max() - column_values.min()),
+        )
+
+    def _root_equilibrium(
+        self, node: _TreeNode
+    ) -> tuple[tuple[float, ...], tuple[float, ...], float, float]:
+        """Solve the current root matrix without stale online-search averages.
+
+        Under split-half reliability the same expansion is also solved once per
+        common-random-number world. The published policy averages the three
+        solves, which bags a discontinuous estimator, and the total-variation
+        distance between the two world solves is recorded as the per-decision
+        noise floor. Both halves reuse values already sampled, so this costs two
+        matrix solves and no extra native steps or inference.
+        """
+        player_policy, enemy_policy, value, exploitability = self._solve_matrix(
+            node, node.payoff
+        )
+        if not self.config.split_half_reliability or not node.half_payoff:
+            return player_policy, enemy_policy, value, exploitability
+        self._split_half_available = 0
+        self._split_half_player_distance = 0.0
+        self._split_half_enemy_distance = 0.0
+        self._split_half_value_gap = 0.0
+        if not all(
+            self._half_is_covered(node, half) for half in range(len(node.half_payoff))
+        ):
+            return player_policy, enemy_policy, value, exploitability
+        halves = [
+            self._solve_matrix(node, payoff)
+            for payoff in node.half_payoff[:_SPLIT_HALVES]
+        ]
+        first, second = halves[0], halves[1]
+        self._split_half_available = 1
+        self._split_half_player_distance = 0.5 * sum(
+            abs(left - right) for left, right in zip(first[0], second[0], strict=True)
+        )
+        self._split_half_enemy_distance = 0.5 * sum(
+            abs(left - right) for left, right in zip(first[1], second[1], strict=True)
+        )
+        self._split_half_value_gap = abs(first[2] - second[2])
+        solves = (player_policy, first[0], second[0])
+        averaged_player = tuple(
+            sum(solve[action] for solve in solves) / len(solves)
+            for action in range(self.action_count)
+        )
+        solves = (enemy_policy, first[1], second[1])
+        averaged_enemy = tuple(
+            sum(solve[action] for solve in solves) / len(solves)
+            for action in range(self.action_count)
+        )
+        # The hedge is no longer the equilibrium of the mean matrix, so its
+        # value and exploitability are remeasured rather than inherited.
+        value, exploitability = self._matrix_metrics(
+            node, node.payoff, averaged_player, averaged_enemy
+        )
+        return averaged_player, averaged_enemy, value, exploitability
+
     @staticmethod
     def _record_value(
-        node: _TreeNode, player_action: int, enemy_action: int, value: float
+        node: _TreeNode,
+        player_action: int,
+        enemy_action: int,
+        value: float,
+        half: int | None = None,
     ) -> None:
         count = node.counts[player_action][enemy_action]
         current = node.payoff[player_action][enemy_action]
@@ -848,6 +957,15 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             count + 1
         )
         node.counts[player_action][enemy_action] = count + 1
+        if half is None or not node.half_payoff:
+            return
+        index = half % len(node.half_payoff)
+        half_count = node.half_counts[index][player_action][enemy_action]
+        half_current = node.half_payoff[index][player_action][enemy_action]
+        node.half_payoff[index][player_action][enemy_action] = (
+            half_current * half_count + value
+        ) / (half_count + 1)
+        node.half_counts[index][player_action][enemy_action] = half_count + 1
 
     @classmethod
     def _pooled_evaluate(
@@ -1327,7 +1445,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         for sample, successor, evaluation in zip(
             samples, successors, evaluated, strict=True
         ):
-            player, enemy, _ = sample
+            player, enemy, chance_world = sample
             leaf_value = evaluation[0]
             if successor.done:
                 delta = 0.0
@@ -1340,7 +1458,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             node.outcomes.setdefault((player, enemy), []).append(
                 _TreeOutcome(successor, delta, leaf_value)
             )
-            self._record_value(node, player, enemy, shaped)
+            self._record_value(node, player, enemy, shaped, chance_world)
         node.sampled_pairs.update(pairs)
         node.expanded = True
         self._expanded_nodes += 1
@@ -1507,7 +1625,12 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     min(1.0, outcome.tactical_delta + child_value),
                 )
         if learned:
-            self._record_value(node, player_action, enemy_action, value)
+            # Resampled outcomes carry no chance-world label, so they are dealt
+            # alternately: still two disjoint sub-samples of the same estimator.
+            self._record_value(
+                node, player_action, enemy_action, value, node.half_cursor
+            )
+            node.half_cursor += 1
             self._solve_node(node)
         return value, cost, learned
 
@@ -1664,6 +1787,15 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             diagnostics["root_solver"] = solver_identity(
                 self.config.rmplus_backend, self.config.cfr_plus_solves
             )
+            if self.config.split_half_reliability:
+                diagnostics["root_split_half_available"] = self._split_half_available
+                diagnostics["root_split_half_distance"] = (
+                    self._split_half_player_distance
+                )
+                diagnostics["root_split_half_enemy_distance"] = (
+                    self._split_half_enemy_distance
+                )
+                diagnostics["root_split_half_value_gap"] = self._split_half_value_gap
         return diagnostics
 
     def _fallback(

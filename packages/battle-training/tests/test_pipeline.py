@@ -398,6 +398,47 @@ class _DistinctFeatureToyServer(_ToyServer):
         )
 
 
+class _ChanceSplitToyServer(_ToyServer):
+    """Terminal payoffs flip between the two common-random-number worlds.
+
+    Worlds are numbered by first appearance of their chance seed, so world
+    ``s`` is exactly the seed reused by chance sample index ``s``.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.worlds: list[int] = []
+
+    def _world(self, chance_seed: int) -> int:
+        if chance_seed not in self.worlds:
+            self.worlds.append(chance_seed)
+        return self.worlds.index(chance_seed)
+
+    def _preferred(self, chance_seed: int) -> int:
+        return self._world(chance_seed) % 2
+
+    def search_step(
+        self, handle: int, player_action: int, enemy_action: int, chance_seed: int
+    ) -> Snapshot:
+        del handle, enemy_action
+        child = self.next_handle
+        self.next_handle += 1
+        self.states[child] = (2, player_action)
+        return self._snapshot(
+            child,
+            done=True,
+            result=1 if player_action == self._preferred(chance_seed) else -1,
+        )
+
+
+class _ChanceStableToyServer(_ChanceSplitToyServer):
+    """Same shape, but the payoff ignores which chance world was drawn."""
+
+    def _preferred(self, chance_seed: int) -> int:
+        del chance_seed
+        return 0
+
+
 class _DivergentToyServer(_ToyServer):
     def search_steps(self, requests: list[tuple[int, int, int, int]]) -> list[Snapshot]:
         return [
@@ -4747,6 +4788,109 @@ class DirichletRootNoiseTest(unittest.TestCase):
         self.assertEqual(arguments.collection_dirichlet_alpha, 0.6)
         self.assertEqual(arguments.collection_dirichlet_weight, 0.3)
         self.assertEqual(arguments.collection_dirichlet_total, 6.5)
+
+
+class SplitHalfReliabilityTest(unittest.TestCase):
+    """The root matrix is a mean over CRN worlds; solving the halves separately
+    measures how much of the published policy is estimation noise."""
+
+    # CFR+ averages in the prior-seeded first iterations, so a "pure" solve
+    # lands a hair under one; assertions carry that slack explicitly.
+    _AVERAGING_SLACK = 1e-3
+
+    @staticmethod
+    def _search(server: _ToyServer, **overrides: object) -> SearchResult:
+        network = _JointToyNetwork()
+        settings: dict[str, object] = {
+            "chance_samples_per_joint": 2,
+            "max_depth": 1,
+            "expansion_budget": 8,
+            "minimum_expansion_budget": 8,
+            "split_half_reliability": True,
+        }
+        settings.update(overrides)
+        return SimultaneousTreeSearch(
+            server,
+            network,
+            network,
+            JointSearchConfig(**settings),  # type: ignore[arg-type]
+            random.Random(1),
+            random.Random(2),
+        ).search(server._snapshot(0), sample_actions=False)
+
+    def test_split_half_measures_disagreement_between_chance_worlds(self) -> None:
+        result = self._search(_ChanceSplitToyServer())
+        diagnostics = result.diagnostics or {}
+        self.assertEqual(diagnostics["root_split_half_available"], 1)
+        self.assertAlmostEqual(
+            float(diagnostics["root_split_half_distance"]),
+            1.0,
+            delta=self._AVERAGING_SLACK,
+        )
+        self.assertAlmostEqual(
+            float(diagnostics["root_split_half_enemy_distance"]),
+            0.0,
+            delta=self._AVERAGING_SLACK,
+        )
+
+    def test_split_half_hedges_the_published_policy(self) -> None:
+        result = self._search(_ChanceSplitToyServer())
+        # Prior is pure on action 0 and the mean matrix is flat, so the plain
+        # solve republishes the prior; the two halves are pure on opposite
+        # actions, leaving a two-thirds/one-third hedge.
+        self.assertAlmostEqual(
+            result.player_policy[0], 2.0 / 3.0, delta=self._AVERAGING_SLACK
+        )
+        self.assertAlmostEqual(
+            result.player_policy[1], 1.0 / 3.0, delta=self._AVERAGING_SLACK
+        )
+
+    def test_agreeing_chance_worlds_report_no_disagreement(self) -> None:
+        result = self._search(_ChanceStableToyServer())
+        diagnostics = result.diagnostics or {}
+        self.assertEqual(diagnostics["root_split_half_available"], 1)
+        self.assertAlmostEqual(
+            float(diagnostics["root_split_half_distance"]),
+            0.0,
+            delta=self._AVERAGING_SLACK,
+        )
+        self.assertAlmostEqual(
+            result.player_policy[0], 1.0, delta=self._AVERAGING_SLACK
+        )
+
+    def test_a_single_chance_world_leaves_the_estimate_unmeasurable(self) -> None:
+        result = self._search(
+            _ChanceSplitToyServer(),
+            chance_samples_per_joint=1,
+            expansion_budget=4,
+            minimum_expansion_budget=4,
+        )
+        diagnostics = result.diagnostics or {}
+        self.assertEqual(diagnostics["root_split_half_available"], 0)
+        self.assertAlmostEqual(
+            result.player_policy[0], 1.0, delta=self._AVERAGING_SLACK
+        )
+
+    def test_split_half_is_off_by_default_and_reports_nothing(self) -> None:
+        server = _ChanceSplitToyServer()
+        network = _JointToyNetwork()
+        result = SimultaneousTreeSearch(
+            server,
+            network,
+            network,
+            JointSearchConfig(
+                chance_samples_per_joint=2,
+                max_depth=1,
+                expansion_budget=8,
+                minimum_expansion_budget=8,
+            ),
+            random.Random(1),
+            random.Random(2),
+        ).search(server._snapshot(0), sample_actions=False)
+        diagnostics = result.diagnostics or {}
+        self.assertNotIn("root_split_half_available", diagnostics)
+        self.assertNotIn("root_split_half_distance", diagnostics)
+        self.assertAlmostEqual(result.player_policy[0], 1.0, places=6)
 
 
 class FrontierBufferTest(unittest.TestCase):
