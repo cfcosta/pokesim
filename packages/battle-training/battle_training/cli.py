@@ -224,7 +224,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument(
         "--policy-reliability-floor",
         type=float,
-        default=0.25,
+        default=1.0,
         help="weight of a policy target the two chance worlds fully disagreed on; "
         "1 weights every target the same",
     )

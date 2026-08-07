@@ -118,7 +118,7 @@ class TransformerPipelineConfig:
     frontier_episode_cap: int = 2
     split_half_reliability: bool = True
     prior_regret: bool = True
-    policy_reliability_floor: float = 0.25
+    policy_reliability_floor: float = 1.0
     matchup_value_cap: float = 0.9
     matchup_filter_attempts: int = 4
     matchup_lopsided_accept: float = 0.15
@@ -3623,7 +3623,7 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("frontier_episode_cap", 2)
     normalized.setdefault("split_half_reliability", True)
     normalized.setdefault("prior_regret", True)
-    normalized.setdefault("policy_reliability_floor", 0.25)
+    normalized.setdefault("policy_reliability_floor", 1.0)
     normalized.setdefault("matchup_value_cap", 0.9)
     normalized.setdefault("matchup_filter_attempts", 4)
     normalized.setdefault("matchup_lopsided_accept", 0.15)

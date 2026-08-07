@@ -1799,7 +1799,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.frontier_episode_cap, 2)
         self.assertTrue(arguments.split_half_reliability)
         self.assertTrue(arguments.prior_regret)
-        self.assertEqual(arguments.policy_reliability_floor, 0.25)
+        self.assertEqual(arguments.policy_reliability_floor, 1.0)
         self.assertEqual(arguments.matchup_value_cap, 0.9)
         self.assertEqual(arguments.matchup_filter_attempts, 4)
         self.assertEqual(arguments.matchup_lopsided_accept, 0.15)
@@ -1994,7 +1994,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["frontier_episode_cap"], 2)
         self.assertTrue(normalized["split_half_reliability"])
         self.assertTrue(normalized["prior_regret"])
-        self.assertEqual(normalized["policy_reliability_floor"], 0.25)
+        self.assertEqual(normalized["policy_reliability_floor"], 1.0)
         self.assertEqual(normalized["matchup_value_cap"], 0.9)
         self.assertEqual(normalized["matchup_filter_attempts"], 4)
         self.assertEqual(normalized["matchup_lopsided_accept"], 0.15)
@@ -5232,10 +5232,11 @@ class PolicyReliabilityTest(unittest.TestCase):
     """Down-weighting policy targets the two chance worlds disagreed about.
 
     Search publishes the total-variation distance between its two
-    common-random-number solves of the same root matrix. Measured on a real
-    run that distance had a median of 0.33 and a p90 of 0.98, so a tenth of
-    the policy targets were effectively drawn at random and the loss weighted
-    them exactly as much as the targets both worlds agreed on.
+    common-random-number solves of the same root matrix. The mechanism below
+    interpolates a policy weight between a floor at total disagreement and one
+    at total agreement, and it stays available at any floor a caller asks for.
+    It is off by default: the distance is a property of how much chance swings
+    the position, not of how wrong the target is.
     """
 
     @staticmethod
@@ -5296,12 +5297,28 @@ class PolicyReliabilityTest(unittest.TestCase):
             self.assertAlmostEqual(weights.tolist()[0], 0.25, places=6)
             self.assertEqual(_load_examples([shard])[6].tolist(), [1.0])
 
+    def test_training_discounts_no_target_by_default(self) -> None:
+        # The distance measures how much chance swings the position, not how
+        # wrong the target is -- and after common-random-number pairing at the
+        # root both worlds already solve the same matrix from equal sample
+        # counts.  Discounting them trains hardest against exactly the
+        # positions search has the least to teach about, so the shipped floor
+        # is one and the mechanism stays available to anyone who asks for it.
+        rows = [
+            self._row(root_split_half_distance=0.0),
+            self._row(root_split_half_distance=1.0),
+        ]
+        floor = TransformerPipelineConfig.__dataclass_fields__[
+            "policy_reliability_floor"
+        ].default
+        self.assertEqual(self._weights(rows, floor), [1.0, 1.0])
+
     def test_the_cli_and_the_dataclass_agree_on_the_training_floor(self) -> None:
         arguments = training_parser().parse_args(
             ["transformer-train", "--output", "/tmp/reliability"]
         )
-        self.assertEqual(arguments.policy_reliability_floor, 0.25)
-        self.assertEqual(FrontierCapTest._config().policy_reliability_floor, 0.25)
+        self.assertEqual(arguments.policy_reliability_floor, 1.0)
+        self.assertEqual(FrontierCapTest._config().policy_reliability_floor, 1.0)
 
 
 class FrontierPriorRegretTest(unittest.TestCase):
