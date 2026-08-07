@@ -274,6 +274,31 @@ theorem legal_fight_not_exhausted (context : ActionContext) (slot : Fin 4)
     contradiction
   · cases mode : context.mode <;> simp_all
 
+/-- Once every slot is drained of current PP, `AnyMoveToSelect` finds nothing and
+an undisabled mon is forced into Struggle. This closes the PP race: the losing
+side cannot keep choosing moves. -/
+theorem drained_slots_force_struggle (side : Full.SideState)
+    (noDisable : side.active.volatile.disabledMove >>> 4 = 0)
+    (drained :
+      (side.active.active.pp.getD 0 0 ||| side.active.active.pp.getD 1 0 |||
+        side.active.active.pp.getD 2 0 ||| side.active.active.pp.getD 3 0) &&&
+        Wram.ppMask = 0) :
+    mustStruggle side = true := by
+  simpa [mustStruggle, anyMovePpAvailable, noDisable] using drained
+
+/-- With Struggle required at an ordinary menu, every fight slot is illegal and
+Struggle is the only move option, whatever PP-Up residue the bytes carry. -/
+theorem struggle_replaces_every_fight_slot (context : ActionContext)
+    (ordinary : context.mode = .wild ∨ context.mode = .trainer ∨ context.mode = .link)
+    (notForced : context.forcedReplacement = false)
+    (menu : fullMenuBypass context.side = false)
+    (required : mustStruggle context.side = true) :
+    (∀ slot : Fin 4, legal context (.fight slot) = false) ∧
+      legal context .struggle = true := by
+  refine ⟨fun slot => ?_, struggle_legal_when_required context ordinary notForced menu required⟩
+  rw [ordinary_fight_exact context slot ordinary notForced menu, required]
+  simp
+
 /-- Link mode never admits an item. -/
 theorem link_item_illegal (side : Full.SideState) (bag : Items.Bag)
     (request : Items.Request) :

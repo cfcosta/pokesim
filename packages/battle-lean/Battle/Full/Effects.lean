@@ -204,7 +204,7 @@ private def setStage (stages : StatStages) (stat : Nat) (value : UInt8) : StatSt
   | 4 => { stages with accuracy := value }
   | _ => { stages with evasion := value }
 
-private def getStage (stages : StatStages) (stat : Nat) : UInt8 :=
+def getStage (stages : StatStages) (stat : Nat) : UInt8 :=
   match stat with
   | 0 => stages.attack
   | 1 => stages.defense
@@ -337,6 +337,24 @@ def lowerStage (context : Context) (stat amount : Nat)
         let defender := reapplyStatusPenalties defender
         let context := withDefender context defender
         ⟨context, .continue, [.stageChanged context.attackerSide.other stat amount]⟩
+
+/-- The stage band is absorbing at the top: raising a maxed stat is inert. -/
+@[simp] theorem raiseStage_maxed_is_inert (context : Context) (stat amount : Nat)
+    (maxed : (getStage context.attacker.stages stat).toNat ≥ 13) :
+    raiseStage context stat amount = ⟨context, .failed, []⟩ := by
+  simp [raiseStage, maxed]
+
+/-- And absorbing at the bottom: dropping a minimum stat is inert. Together with
+`raiseStage_maxed_is_inert` this pins the reachable band to 1..13, which is what
+lets a search potential read a stage as a bounded quantity. -/
+@[simp] theorem lowerStage_minimum_is_inert (context : Context) (stat amount : Nat)
+    (respectMist : Bool)
+    (noSubstitute : context.defender.volatile.hasSubstitute = false)
+    (unprotected : (respectMist && bitSet context.defender.volatile.status2
+      Wram.BattleStatus2.protectedByMist) = false)
+    (minimum : (getStage context.defender.stages stat).toNat ≤ 1) :
+    lowerStage context stat amount respectMist = ⟨context, .failed, []⟩ := by
+  simp [lowerStage, noSubstitute, unprotected, minimum]
 
 def enemyStatDownSideDraws (first second : UInt8) : Bool × Nat :=
   if first < 64 then (false, 1) else (second < 85, 2)

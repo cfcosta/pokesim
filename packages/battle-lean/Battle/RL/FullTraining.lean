@@ -361,6 +361,41 @@ private def faintedReserveSampleState : Full.Environment.State :=
   { state with engine := { state.engine with battle :=
       { state.engine.battle with player := { player with party := { mons } } } } }
 
+/-- A probe carrying distinguishable PP and stat-stage bytes in every position
+the search potential reads. Party slot zero, the active mon, and all six stages
+get pairwise distinct values so a reordered encoder cannot pass by accident. -/
+private def layoutProbeState : Full.Environment.State :=
+  let state := Full.Environment.resetSized Wram.partyLength
+    (Training.linkRng 4 1 Training.generatorStream)
+    (Training.linkRng 4 1 Training.battleStream)
+  let stamp (fullSide : Full.SideState) (partyPp activePp : Array UInt8)
+      (stages : StatStages) : Full.SideState :=
+    let mons := fullSide.party.mons.modify 0 fun mon => { mon with pp := partyPp }
+    let active := { fullSide.active with
+      active := { fullSide.active.active with pp := activePp }, stages }
+    { fullSide with party := { mons }, active }
+  let player := stamp state.engine.battle.player #[41, 42, 43, 44] #[45, 46, 47, 48]
+    { attack := 11, defense := 3, speed := 9, special := 5, accuracy := 13,
+      evasion := 1, padding0 := 0, padding1 := 0 }
+  let enemy := stamp state.engine.battle.enemy #[51, 52, 53, 54] #[55, 56, 57, 58]
+    { attack := 2, defense := 12, speed := 4, special := 10, accuracy := 1,
+      evasion := 13, padding0 := 0, padding1 := 0 }
+  { state with engine := { state.engine with
+      battle := { state.engine.battle with player, enemy } } }
+
+/-! ## Encoder layout
+
+The search potential and the decision-quality reporter index this tensor by
+hand. These offsets are the contract; the guards below pin each one against the
+encoder itself rather than against a comment. -/
+
+def monFeatureWidth : Nat := 22
+def ppFeatureOffset : Nat := 18
+def activeMonOffset : Nat := monFeatureWidth * Wram.partyLength + 1
+def activeStageOffset : Nat := activeMonOffset + monFeatureWidth + 4
+def stageCount : Nat := 6
+def fullSideWidth : Nat := 181
+
 def featureCount : Nat := (featureVector sampleState .player).size
 
 @[simp] theorem sampled_link_reset_satisfies_profile
@@ -389,5 +424,30 @@ def featureCount : Nat := (featureVector sampleState .player).size
   List.replicate 22 0
 #guard ((featureVector faintedReserveSampleState .player).toList.drop 478).getD 3 0 == 1
 #guard featureCount == 492
+
+/-! ### Layout guards
+
+Every guard reads the probe through the offset defs, so a field reordered inside
+`appendMonFeatures` or `appendActiveFeatures` fails the build instead of
+silently feeding the potential the wrong bytes. -/
+
+#guard activeMonOffset == 133
+#guard activeStageOffset == 159
+#guard fullSideWidth == activeStageOffset + 8 + 14
+#guard 2 * fullSideWidth == 362
+
+private def probe : List Nat := (featureVector layoutProbeState .player).toList
+
+#guard probe.extract ppFeatureOffset (ppFeatureOffset + 4) == [41, 42, 43, 44]
+#guard probe.extract (activeMonOffset + ppFeatureOffset)
+  (activeMonOffset + ppFeatureOffset + 4) == [45, 46, 47, 48]
+#guard probe.extract activeStageOffset (activeStageOffset + stageCount) ==
+  [11, 3, 9, 5, 13, 1]
+#guard probe.extract (fullSideWidth + ppFeatureOffset)
+  (fullSideWidth + ppFeatureOffset + 4) == [51, 52, 53, 54]
+#guard probe.extract (fullSideWidth + activeMonOffset + ppFeatureOffset)
+  (fullSideWidth + activeMonOffset + ppFeatureOffset + 4) == [55, 56, 57, 58]
+#guard probe.extract (fullSideWidth + activeStageOffset)
+  (fullSideWidth + activeStageOffset + stageCount) == [2, 12, 4, 10, 1, 13]
 
 end Battle.RL.FullTraining

@@ -270,6 +270,42 @@ theorem link_enemy_pp_decrements (state : State) (slot : Fin 4)
     Full.State.side, Full.State.setSide, Array.getD, inBounds,
     Array.getElem_modify_self]
 
+/-- Apply `count` cartridge PP decrements to one packed byte. -/
+def drainPp : Nat → UInt8 → UInt8
+  | 0, packed => packed
+  | count + 1, packed => drainPp count (decrementPp packed)
+
+/-- While a slot still carries current PP the `dec [hl]` borrow cannot reach the
+PP-Up bits, so one use costs exactly one PP and nothing else. Universal over all
+256 packed bytes, not a fixture. -/
+theorem pp_use_costs_exactly_one :
+    (List.range 256).all (fun value =>
+      let packed := UInt8.ofNat value
+      currentPp packed == 0 ||
+        (currentPp (decrementPp packed) == currentPp packed - 1 &&
+          decrementPp packed &&& Wram.ppUpMask == packed &&& Wram.ppUpMask)) = true := by
+  native_decide
+
+/-- A PP race terminates: spending a slot exactly its current-PP many times
+empties it and leaves the PP-Up bits intact. Without this a stalling policy
+could burn turns forever without approaching Struggle. -/
+theorem pp_drains_to_empty :
+    (List.range 256).all (fun value =>
+      let packed := UInt8.ofNat value
+      let drained := drainPp (currentPp packed).toNat packed
+      currentPp drained == 0 &&
+        drained &&& Wram.ppUpMask == packed &&& Wram.ppUpMask) = true := by
+  native_decide
+
+/-- The race is not shorter than the PP count either: one use short of the
+count, the slot is still selectable. -/
+theorem pp_survives_one_use_short :
+    (List.range 256).all (fun value =>
+      let packed := UInt8.ofNat value
+      let steps := (currentPp packed).toNat
+      steps == 0 || currentPp (drainPp (steps - 1) packed) != 0) = true := by
+  native_decide
+
 private def effectiveSpeed (fullSide : Full.SideState) : UInt16 :=
   fullSide.active.active.speed
 
