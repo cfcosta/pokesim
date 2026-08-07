@@ -967,6 +967,163 @@ class MonitorTests(unittest.TestCase):
             self.assertIn("4 / 4", dashboard["status"]["message"])
 
 
+class TacticalPotentialTest(unittest.TestCase):
+    """The dense shaping potential search adds to truncated leaf values.
+
+    Offsets mirror the constants pinned in ``Battle/RL/FullTraining.lean``. The
+    six party rows are cartridge *storage*: the engine refreshes the active
+    slot from the battle copy only on switch-out and faint, so anything about
+    the mon that is currently fighting has to be read from the active block.
+    """
+
+    FEATURES = 492
+    SIDE = 181
+    MON = 22
+    ACTIVE_INDEX = 132
+    ACTIVE_MON = 133
+    STAGES = 159
+    HP = 1
+    STATUS = 3
+    MOVES = 7
+    MAX_HP = 13
+    PP = 18
+
+    def _mon(self, features: list[int], base: int, pp: int = 20) -> None:
+        features[base + self.HP] = 100
+        features[base + self.MAX_HP] = 100
+        for move in range(4):
+            features[base + self.MOVES + move] = 33
+            features[base + self.PP + move] = pp
+
+    def _row(self) -> list[int]:
+        """A perfectly mirrored, undamaged 6v6 position: potential is zero."""
+        features = [0] * self.FEATURES
+        for side in (0, self.SIDE):
+            for slot in range(6):
+                self._mon(features, side + slot * self.MON)
+            self._mon(features, side + self.ACTIVE_MON)
+            for stat in range(6):
+                features[side + self.STAGES + stat] = 7
+        return features
+
+    def _potential(self, features: list[int]) -> float:
+        return _tactical_potential(tuple(features))
+
+    def test_mirrored_position_is_neutral(self) -> None:
+        self.assertAlmostEqual(self._potential(self._row()), 0.0, places=9)
+
+    def test_rewards_hp_and_status_advantage(self) -> None:
+        neutral = self._potential(self._row())
+        features = self._row()
+        features[self.SIDE + self.ACTIVE_MON + self.HP] = 50
+        damaged = self._potential(features)
+        features[self.SIDE + self.ACTIVE_MON + self.STATUS] = 4
+        statused = self._potential(features)
+        self.assertGreater(damaged, neutral)
+        self.assertGreater(statused, damaged)
+
+    def test_live_hp_comes_from_the_active_block_not_the_stale_party_row(self) -> None:
+        stale = self._row()
+        stale[self.SIDE + self.HP] = 1
+        self.assertAlmostEqual(self._potential(stale), 0.0, places=9)
+        live = self._row()
+        live[self.SIDE + self.ACTIVE_MON + self.HP] = 1
+        self.assertGreater(self._potential(live), 0.1)
+
+    def test_the_active_block_replaces_the_slot_named_by_active_index(self) -> None:
+        features = self._row()
+        for side in (0, self.SIDE):
+            features[side + self.ACTIVE_INDEX] = 3
+        self.assertAlmostEqual(self._potential(features), 0.0, places=9)
+        storage = list(features)
+        storage[self.SIDE + 3 * self.MON + self.HP] = 1
+        self.assertAlmostEqual(self._potential(storage), 0.0, places=9)
+        benched = list(features)
+        benched[self.SIDE + 0 * self.MON + self.HP] = 1
+        self.assertGreater(self._potential(benched), 0.1)
+
+    def test_rewards_a_deeper_pp_reserve(self) -> None:
+        drained = self._row()
+        for move in range(4):
+            drained[self.SIDE + self.ACTIVE_MON + self.PP + move] = 4
+        self.assertGreater(self._potential(drained), 0.0)
+        mirrored = self._row()
+        for move in range(4):
+            mirrored[self.ACTIVE_MON + self.PP + move] = 4
+        self.assertLess(self._potential(mirrored), 0.0)
+
+    def test_running_a_mon_dry_costs_more_than_the_last_pp_point(self) -> None:
+        def own_active_pp(value: int) -> list[int]:
+            features = self._row()
+            for move in range(4):
+                features[self.ACTIVE_MON + self.PP + move] = value
+            return features
+
+        cliff = self._potential(own_active_pp(1)) - self._potential(own_active_pp(0))
+        interior = self._potential(own_active_pp(2)) - self._potential(own_active_pp(1))
+        self.assertGreater(interior, 0.0)
+        self.assertGreater(cliff, 10.0 * interior)
+
+    def test_pp_up_bits_do_not_move_the_potential(self) -> None:
+        with_ups = self._row()
+        for move in range(4):
+            with_ups[self.ACTIVE_MON + self.PP + move] = 20 | 0xC0
+        self.assertAlmostEqual(self._potential(with_ups), 0.0, places=9)
+
+    def test_empty_move_slots_are_not_counted_as_drained(self) -> None:
+        features = self._row()
+        for side in (0, self.SIDE):
+            for move in range(4):
+                features[side + self.ACTIVE_MON + self.PP + move] = 8
+        self.assertAlmostEqual(self._potential(features), 0.0, places=9)
+        for move in range(1, 4):
+            features[self.ACTIVE_MON + self.MOVES + move] = 0
+            features[self.ACTIVE_MON + self.PP + move] = 0
+        self.assertAlmostEqual(self._potential(features), 0.0, places=9)
+
+    def test_a_fainted_mon_contributes_no_pp(self) -> None:
+        fainted = self._row()
+        fainted[self.SIDE + 5 * self.MON + self.HP] = 0
+        drained = list(fainted)
+        for move in range(4):
+            drained[self.SIDE + 5 * self.MON + self.PP + move] = 0
+        self.assertAlmostEqual(self._potential(drained), self._potential(fainted))
+
+    def test_every_active_stat_stage_is_read(self) -> None:
+        for stat in range(6):
+            boosted = self._row()
+            boosted[self.STAGES + stat] = 13
+            self.assertGreater(self._potential(boosted), 0.0, f"stage {stat}")
+            opposed = self._row()
+            opposed[self.SIDE + self.STAGES + stat] = 13
+            self.assertAlmostEqual(
+                self._potential(boosted), -self._potential(opposed), places=9
+            )
+
+    def test_stage_padding_bytes_are_not_read(self) -> None:
+        for padding in (6, 7):
+            features = self._row()
+            features[self.STAGES + padding] = 13
+            self.assertAlmostEqual(self._potential(features), 0.0, places=9)
+
+    def test_is_antisymmetric_under_a_side_swap(self) -> None:
+        features = self._row()
+        features[self.ACTIVE_MON + self.HP] = 40
+        features[self.STAGES + 2] = 11
+        features[self.SIDE + 4 * self.MON + self.STATUS] = 8
+        for move in range(4):
+            features[self.SIDE + self.ACTIVE_MON + self.PP + move] = 3
+        swapped = (
+            features[self.SIDE : 2 * self.SIDE]
+            + features[: self.SIDE]
+            + features[2 * self.SIDE :]
+        )
+        self.assertNotAlmostEqual(self._potential(features), 0.0)
+        self.assertAlmostEqual(
+            self._potential(swapped), -self._potential(features), places=9
+        )
+
+
 class TransformerTests(unittest.TestCase):
     def test_frontier_priors_respect_inference_batch_limit(self) -> None:
         class RecordingNetwork:
@@ -3724,21 +3881,6 @@ class TransformerTests(unittest.TestCase):
         self.assertTrue(
             all(count <= 1_000_000 for count in [*counts, semantic_count, joint_count])
         )
-
-    def test_tactical_potential_rewards_hp_and_status_advantage(self) -> None:
-        features = [0] * 492
-        for side in (0, 181):
-            for slot in range(6):
-                base = side + slot * 22
-                features[base + 1] = 100
-                features[base + 13] = 100
-        neutral = _tactical_potential(tuple(features))
-        features[182] = 50
-        damaged = _tactical_potential(tuple(features))
-        features[184] = 4
-        statused = _tactical_potential(tuple(features))
-        self.assertGreater(damaged, neutral)
-        self.assertGreater(statused, damaged)
 
     def test_adaptive_router_skips_stable_roots_but_retains_rmplus(self) -> None:
         server = _ToyServer()

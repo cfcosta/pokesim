@@ -33,6 +33,34 @@ _FULL_SIDE_WIDTH = 181
 _PARTY_SIZE = 6
 _SPLIT_HALVES = 2
 
+# Canonical row offsets, pinned against the encoder itself by the layout
+# guards in `Battle/RL/FullTraining.lean`.
+_MON_HP = 1
+_MON_STATUS = 3
+_MON_MOVES = 7
+_MON_MAX_HP = 13
+_MON_PP = 18
+_MOVE_SLOTS = 4
+_ACTIVE_INDEX_OFFSET = _PARTY_MON_WIDTH * _PARTY_SIZE
+_ACTIVE_MON_OFFSET = _ACTIVE_INDEX_OFFSET + 1
+_ACTIVE_STAGE_OFFSET = _ACTIVE_MON_OFFSET + _PARTY_MON_WIDTH + 4
+_STAGE_COUNT = 6
+_NEUTRAL_STAGE = 7
+_STAGE_BAND = 6
+
+# Cartridge PP packing: the low six bits are the remaining uses and the top
+# two are the mon's PP Ups, which are roster trivia rather than battle state.
+_PP_MASK = 0x3F
+# A move slot at or above this many remaining uses is treated as unconstrained;
+# below it the reserve term supplies a per-use gradient into the Struggle cliff.
+_PP_REFERENCE = 16
+
+_ALIVE_WEIGHT = 0.10
+_STATUS_WEIGHT = 0.05
+_USABLE_MOVE_WEIGHT = 0.10
+_PP_RESERVE_WEIGHT = 0.05
+_STAGE_WEIGHT = 0.02
+
 
 @dataclass(frozen=True)
 class SearchResult:
@@ -115,30 +143,94 @@ def _dirichlet_noised_priors(
     return noised
 
 
-def _tactical_potential(features: Sequence[int]) -> float:
-    """Dense, antisymmetric HP/faint/status potential from canonical party rows."""
+@dataclass(frozen=True)
+class _SidePotential:
+    """The per-side quantities the tactical potential differences."""
 
-    def side(offset: int) -> tuple[float, int, int]:
-        hp_fraction = 0.0
-        alive = 0
-        statused = 0
-        for slot in range(_PARTY_SIZE):
+    hp: float
+    alive: int
+    statused: int
+    usable_moves: float
+    pp_reserve: float
+    stages: float
+
+
+def _side_potential(features: Sequence[int], offset: int) -> _SidePotential:
+    # The six party rows are cartridge storage. `SideState.syncOutgoing` copies
+    # the battle mon back into its row only on switch-out and faint, so the
+    # row belonging to `activeIndex` still holds pre-battle HP, status and PP
+    # for the whole time that mon is fighting. Read it from the active block
+    # instead, which is the authoritative live copy.
+    active_index = int(features[offset + _ACTIVE_INDEX_OFFSET])
+    hp_fraction = 0.0
+    alive = 0
+    statused = 0
+    usable_moves = 0.0
+    pp_reserve = 0.0
+    for slot in range(_PARTY_SIZE):
+        if slot == active_index:
+            base = offset + _ACTIVE_MON_OFFSET
+        else:
             base = offset + slot * _PARTY_MON_WIDTH
-            hp = int(features[base + 1])
-            status = int(features[base + 3])
-            max_hp = int(features[base + 13])
-            hp_fraction += hp / max(1, max_hp)
-            alive += int(hp > 0)
-            statused += int(hp > 0 and status != 0)
-        return hp_fraction / _PARTY_SIZE, alive, statused
+        hp = int(features[base + _MON_HP])
+        max_hp = int(features[base + _MON_MAX_HP])
+        hp_fraction += hp / max(1, max_hp)
+        if hp <= 0:
+            continue
+        alive += 1
+        statused += int(features[base + _MON_STATUS] != 0)
+        known = 0
+        with_pp = 0
+        remaining = 0
+        for move in range(_MOVE_SLOTS):
+            if int(features[base + _MON_MOVES + move]) == 0:
+                continue
+            known += 1
+            pp = int(features[base + _MON_PP + move]) & _PP_MASK
+            with_pp += int(pp > 0)
+            remaining += pp
+        if known == 0:
+            continue
+        usable_moves += with_pp / known
+        pp_reserve += min(1.0, remaining / (known * _PP_REFERENCE))
+    stages = 0.0
+    for stat in range(_STAGE_COUNT):
+        stage = int(features[offset + _ACTIVE_STAGE_OFFSET + stat])
+        stage = min(
+            _NEUTRAL_STAGE + _STAGE_BAND, max(_NEUTRAL_STAGE - _STAGE_BAND, stage)
+        )
+        stages += (stage - _NEUTRAL_STAGE) / _STAGE_BAND
+    return _SidePotential(
+        hp=hp_fraction / _PARTY_SIZE,
+        alive=alive,
+        statused=statused,
+        usable_moves=usable_moves / _PARTY_SIZE,
+        pp_reserve=pp_reserve / _PARTY_SIZE,
+        stages=stages,
+    )
 
-    own_hp, own_alive, own_status = side(0)
-    foe_hp, foe_alive, foe_status = side(_FULL_SIDE_WIDTH)
+
+def _tactical_potential(features: Sequence[int]) -> float:
+    """Dense, antisymmetric potential over HP, faints, status, PP and stages.
+
+    PP earns two terms because it fails in two ways. `usable_moves` is the
+    fraction of a mon's real move slots that still have a use left, so it
+    reaches zero exactly when that mon is forced to Struggle -- the cliff
+    `Battle/Full/Action.lean` proves. `pp_reserve` grades the approach to that
+    cliff, so a long attrition race has a per-turn gradient instead of a flat
+    landscape terminated by one discontinuity.
+    """
+
+    own = _side_potential(features, 0)
+    foe = _side_potential(features, _FULL_SIDE_WIDTH)
     return (
-        own_hp
-        - foe_hp
-        + 0.10 * (own_alive - foe_alive) / _PARTY_SIZE
-        + 0.05 * (foe_status - own_status) / _PARTY_SIZE
+        own.hp
+        - foe.hp
+        + _ALIVE_WEIGHT * (own.alive - foe.alive) / _PARTY_SIZE
+        + _STATUS_WEIGHT * (foe.statused - own.statused) / _PARTY_SIZE
+        + _USABLE_MOVE_WEIGHT * (own.usable_moves - foe.usable_moves)
+        + _PP_RESERVE_WEIGHT * (own.pp_reserve - foe.pp_reserve)
+        + _STAGE_WEIGHT * (own.stages - foe.stages)
     )
 
 
