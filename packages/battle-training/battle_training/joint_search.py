@@ -94,6 +94,8 @@ class JointSearchConfig:
     regret_iterations: int = 2048
     inference_batch_size: int = 256
     max_actions_per_side: int = 13
+    interior_actions_per_side: int = 3
+    interior_chance_samples: int = 1
     regret_iterations_per_update: int = 16
     redundant_action_prior_scale: float = 1.0
     prior_anchor_temperature: float = 0.02
@@ -734,13 +736,6 @@ class _TreeDivergence(RuntimeError):
 
 
 @dataclass
-class _TreeOutcome:
-    snapshot: Snapshot
-    tactical_delta: float
-    leaf_value: float
-
-
-@dataclass
 class _TreeNode:
     snapshot: Snapshot
     player_priors: list[float]
@@ -750,7 +745,6 @@ class _TreeNode:
     enemy_legal: list[int]
     payoff: PayoffMatrix
     counts: list[list[int]]
-    outcomes: dict[tuple[int, int], list[_TreeOutcome]] = field(default_factory=dict)
     player_policy: tuple[float, ...] = ()
     enemy_policy: tuple[float, ...] = ()
     root_value: float = 0.0
@@ -767,15 +761,46 @@ class _TreeNode:
     half_counts: list[list[list[int]]] = field(default_factory=list)
 
 
-class SimultaneousTreeSearch(BatchedJointRegretSearch):
-    """One exhaustive matrix at the root, solved to a prior-anchored equilibrium.
+@dataclass
+class _Expansion:
+    """One node's sampled successors, held open until the values arrive.
 
-    Every legal joint pair is stepped and evaluated, so each cell of the payoff
-    matrix rests on the same number of chance samples as every other.  Search
-    stops there on purpose: the descendants a deeper pass would visit are the
-    ones the current policy already likes, so refining them replaces balanced
-    estimates with lopsided ones and moves the root solve for reasons that have
-    nothing to do with the position.
+    `children[i]` is the subgame opened on successor `i`, or None when that
+    successor ended the battle, sat at the depth limit, or came back from a
+    step the engine flagged as divergent. `values[i]` is what the successor is
+    worth to the root once it settles, whichever way it got there.
+    """
+
+    root: int
+    node: _TreeNode
+    samples: list[tuple[int, int, int]]
+    successors: list[Snapshot]
+    children: list[_TreeNode | None] = field(default_factory=list)
+    values: list[float | None] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.children = [None] * len(self.successors)
+        self.values = [None] * len(self.successors)
+
+
+class SimultaneousTreeSearch(BatchedJointRegretSearch):
+    """A regular tree of exhaustive matrices, each solved to an equilibrium.
+
+    Every legal joint pair at the root is stepped and evaluated, so each cell of
+    the payoff matrix rests on the same number of chance samples as every other.
+    Past the root the rule stays uniform rather than selective: `max_depth`
+    levels down, *every* cell of *every* matrix opens its own subgame at
+    `interior_actions_per_side` wide, and the equilibrium value of that subgame
+    is what the parent cell is worth.  The regularity is the whole point -- an
+    expansion that refined only the cells the current policy already likes would
+    replace balanced estimates with lopsided ones and move the root solve for
+    reasons that have nothing to do with the position.
+
+    Depth is what lets the search price a plan.  Boosting a stat, laying spikes
+    or landing a status costs a turn and pays on the turns after, and at one ply
+    the payment is invisible: the leaf evaluator sees the same position whether
+    the opponent is about to punish the setup or not.  A second solved ply puts
+    that punishment inside the matrix.
     """
 
     def __init__(
@@ -798,6 +823,10 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         )
         if config.regret_iterations_per_update < 1:
             raise ValueError("tree regret iterations per update must be positive")
+        if config.interior_actions_per_side < 1:
+            raise ValueError("interior actions per side must be positive")
+        if config.interior_chance_samples < 1:
+            raise ValueError("interior chance samples must be positive")
         if config.rmplus_backend not in {
             PYTHON_REFERENCE_BACKEND,
             RUST_RMPLUS_BACKEND,
@@ -826,26 +855,33 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._split_half_value_gap = 0.0
         self._prior_regret_noise = 0.0
         self._enemy_prior_regret_noise = 0.0
+        self._interior_nodes = 0
+        self._interior_divergences = 0
 
-    def _legal_from_priors(self, mask: int, priors: list[float]) -> list[int]:
+    def _legal_from_priors(
+        self, mask: int, priors: list[float], width: int
+    ) -> list[int]:
         actions = legal_actions(mask, self.action_count)
-        return sorted(actions, key=lambda action: (-priors[action], action))[
-            : self.config.max_actions_per_side
-        ]
+        return sorted(actions, key=lambda action: (-priors[action], action))[:width]
 
     def _make_node(
         self,
         snapshot: Snapshot,
         evaluation: tuple[list[float], list[float], float] | None = None,
+        width: int | None = None,
     ) -> _TreeNode:
         if evaluation is None:
             evaluation = self._evaluation_cache.get(snapshot.handle)
         if evaluation is None:
             raise RuntimeError("tree node construction requires pooled full evaluation")
+        if width is None:
+            width = self.config.max_actions_per_side
         player_priors, enemy_priors, leaf_value = evaluation
         self._evaluation_cache[snapshot.handle] = evaluation
-        player_legal = self._legal_from_priors(snapshot.player_mask, player_priors)
-        enemy_legal = self._legal_from_priors(snapshot.enemy_mask, enemy_priors)
+        player_legal = self._legal_from_priors(
+            snapshot.player_mask, player_priors, width
+        )
+        enemy_legal = self._legal_from_priors(snapshot.enemy_mask, enemy_priors, width)
         node = _TreeNode(
             snapshot=snapshot,
             player_priors=player_priors,
@@ -1587,63 +1623,73 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             for enemy in node.enemy_legal
         ]
 
+    def _chance_seeds(self, count: int) -> list[int]:
+        """Draw the chance worlds one whole level of the tree will share.
+
+        Every matrix at a given depth is stepped through the same seeds, so
+        sibling subgames differ by the actions that reached them and by nothing
+        else.  Redrawing per node would leave each cell priced against its own
+        private world, and the differences between cells would be noise.
+        """
+        return [self.chance_rng.getrandbits(63) for _ in range(count)]
+
     def _expansion_spec(
-        self, node: _TreeNode
+        self, node: _TreeNode, chance_seeds: list[int] | None = None
     ) -> tuple[list[tuple[int, int, int]], list[tuple[int, int, int, int]]]:
+        if chance_seeds is None:
+            chance_seeds = self._chance_seeds(self.config.chance_samples_per_joint)
         pairs = self._expansion_pairs(node)
         samples = [
             (player, enemy, sample)
             for player, enemy in pairs
-            for sample in range(self.config.chance_samples_per_joint)
-        ]
-        chance = [
-            self.chance_rng.getrandbits(63)
-            for _ in range(self.config.chance_samples_per_joint)
+            for sample in range(len(chance_seeds))
         ]
         requests = [
-            (node.snapshot.handle, player, enemy, chance[sample])
+            (node.snapshot.handle, player, enemy, chance_seeds[sample])
             for player, enemy, sample in samples
         ]
         return samples, requests
+
+    def _shaped_leaf_value(
+        self, root_potential: float, successor: Snapshot, leaf_value: float
+    ) -> float:
+        """Score a leaf against the root, not against whatever reached it.
+
+        Potential shaping telescopes only when every leaf of a search is
+        measured from the same origin.  Charging each level the difference
+        against its own parent would clamp the value once per level and pay the
+        search for a plan's first turn while hiding the rest of it, which is
+        exactly the multi-turn payoff depth was bought to see.
+        """
+        if successor.done:
+            return leaf_value
+        delta = _tactical_potential(successor.player_features) - root_potential
+        return max(-1.0, min(1.0, leaf_value + delta))
 
     def _install_expansion(
         self,
         node: _TreeNode,
         samples: list[tuple[int, int, int]],
-        successors: list[Snapshot],
-        evaluated: list[tuple[float, float]],
+        values: list[float],
     ) -> int:
+        """Record one root-relative value per sampled successor of `node`."""
         pairs = list(dict.fromkeys((player, enemy) for player, enemy, _ in samples))
-        parent_potential = _tactical_potential(node.snapshot.player_features)
-        for sample, successor, evaluation in zip(
-            samples, successors, evaluated, strict=True
-        ):
-            player, enemy, chance_world = sample
-            leaf_value = evaluation[0]
-            if successor.done:
-                delta = 0.0
-                shaped = leaf_value
-            else:
-                delta = (
-                    _tactical_potential(successor.player_features) - parent_potential
-                )
-                shaped = max(-1.0, min(1.0, leaf_value + delta))
-            node.outcomes.setdefault((player, enemy), []).append(
-                _TreeOutcome(successor, delta, leaf_value)
-            )
-            self._record_value(node, player, enemy, shaped, chance_world)
+        for (player, enemy, chance_world), value in zip(samples, values, strict=True):
+            self._record_value(node, player, enemy, value, chance_world)
         node.sampled_pairs.update(pairs)
         node.expanded = True
         self._expanded_nodes += 1
         self._possible_joint_pairs += len(node.player_legal) * len(node.enemy_legal)
         self._sampled_joint_pairs += len(pairs)
-        self._chance_outcomes += len(successors)
-        self._solve_node(node)
-        return len(successors)
+        self._chance_outcomes += len(values)
+        return len(values)
 
     def _diagnostics(self, root: _TreeNode | None) -> dict[str, float | int | str]:
         diagnostics: dict[str, float | int | str] = {
             "tree_nodes": self._expanded_nodes,
+            "tree_depth": self.config.max_depth,
+            "tree_interior_nodes": self._interior_nodes,
+            "tree_interior_divergences": self._interior_divergences,
             "chance_outcomes": self._chance_outcomes,
             "sampled_joint_coverage": (
                 self._sampled_joint_pairs / self._possible_joint_pairs
@@ -1756,13 +1802,13 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             root.root_value,
             transitions,
             (
-                "simultaneous-matrix-root-anchored-qre-v7"
+                "simultaneous-tree-anchored-qre-v8"
                 if self.config.prior_anchor_temperature > 0.0
-                else "simultaneous-matrix-root-rust-cfrplus-split-half-v7"
+                else "simultaneous-tree-rust-cfrplus-v8"
                 if self.config.cfr_plus_solves
-                else "simultaneous-matrix-root-rust-rmplus-v7"
+                else "simultaneous-tree-rust-rmplus-v8"
                 if self.config.rmplus_backend == RUST_RMPLUS_BACKEND
-                else "simultaneous-matrix-root-rmplus-v7"
+                else "simultaneous-tree-rmplus-v8"
             ),
             exploitability,
             max(legal_payoffs) - min(legal_payoffs),
@@ -1826,9 +1872,13 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 zip(searches, snapshots, strict=True)
             )
         ]
+        root_seeds = [
+            search._chance_seeds(search.config.chance_samples_per_joint)
+            for search in searches
+        ]
         specs = [
-            search._expansion_spec(root)
-            for search, root in zip(searches, roots, strict=True)
+            search._expansion_spec(root, seeds)
+            for search, root, seeds in zip(searches, roots, root_seeds, strict=True)
         ]
         requests = [request for _, root_requests in specs for request in root_requests]
         successors = first.server.search_steps(requests)
@@ -1844,34 +1894,41 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             )
             for left, right in offsets
         ]
-        root_groups = [
-            (index, searches[index], successors[left:right])
-            for index, ((left, right), is_good) in enumerate(
-                zip(offsets, good, strict=True)
-            )
-            if is_good
+        levels = [
+            [
+                _Expansion(index, roots[index], specs[index][0], successors[left:right])
+                for index, ((left, right), is_good) in enumerate(
+                    zip(offsets, good, strict=True)
+                )
+                if is_good
+            ]
         ]
-        root_values, _, _ = cls._pooled_successor_values(root_groups)
+        deepest = max(search.config.max_depth for search in searches)
+        for depth in range(2, deepest + 1):
+            frontier = cls._open_subgames(searches, levels[-1], depth)
+            if not frontier:
+                break
+            levels.append(frontier)
+        root_potentials = [
+            _tactical_potential(snapshot.player_features) for snapshot in snapshots
+        ]
+        transitions = cls._settle(searches, levels, root_potentials)
         results: list[SearchResult | None] = [None] * len(searches)
         batch_size = len(searches)
-        for index, (search, root, spec, bounds, is_good) in enumerate(
-            zip(searches, roots, specs, offsets, good, strict=True)
+        for index, (search, root, bounds, is_good) in enumerate(
+            zip(searches, roots, offsets, good, strict=True)
         ):
             left, right = bounds
-            root_successors = successors[left:right]
             search._cross_root_batch_size = batch_size
-            search._cross_root_root_leaves = len(root_successors)
+            search._cross_root_root_leaves = right - left
             if not is_good:
                 results[index] = search._fallback(
                     player_priors[index],
                     enemy_priors[index],
                     prior_values[index],
-                    len(root_successors),
+                    right - left,
                 )
                 continue
-            transitions = search._install_expansion(
-                root, spec[0], root_successors, root_values[index]
-            )
             root.online_exploitability = root.exploitability
             player_policy, enemy_policy, value, exploitability = (
                 search._root_equilibrium(root)
@@ -1880,7 +1937,149 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             root.enemy_policy = list(enemy_policy)
             root.root_value = value
             root.exploitability = exploitability
-            results[index] = search._finish_root(root, transitions, sample_actions)
+            results[index] = search._finish_root(
+                root, transitions[index], sample_actions
+            )
         if any(result is None for result in results):
             raise RuntimeError("cross-root scheduler left an unfinished search")
         return cast(list[SearchResult], results)
+
+    @classmethod
+    def _open_subgames(
+        cls,
+        searches: list[SimultaneousTreeSearch],
+        level: list[_Expansion],
+        depth: int,
+    ) -> list[_Expansion]:
+        """Open one subgame under every live successor of `level`, in one batch.
+
+        The rule is the same for every cell: a successor that is still playable
+        gets a matrix `interior_actions_per_side` wide, stepped through the
+        chance worlds its whole level shares.  Nothing here consults a policy
+        about which cells deserve the work, because a cell refined more than its
+        neighbours is no longer comparable to them.
+        """
+        opening: list[tuple[_Expansion, int]] = []
+        frontier_snapshots: dict[int, list[Snapshot]] = {}
+        for expansion in level:
+            if searches[expansion.root].config.max_depth < depth:
+                continue
+            for position, successor in enumerate(expansion.successors):
+                if successor.done:
+                    continue
+                opening.append((expansion, position))
+                frontier_snapshots.setdefault(expansion.root, []).append(successor)
+        if not opening:
+            return []
+        evaluations, _, _ = cls._pooled_evaluate(
+            [
+                (root, searches[root], snapshots)
+                for root, snapshots in frontier_snapshots.items()
+            ]
+        )
+        slots = dict.fromkeys(frontier_snapshots, 0)
+        seeds = {
+            root: searches[root]._chance_seeds(
+                searches[root].config.interior_chance_samples
+            )
+            for root in frontier_snapshots
+        }
+        staged: list[tuple[_Expansion, int, _TreeNode, list[tuple[int, int, int]]]] = []
+        requests: list[tuple[int, int, int, int]] = []
+        bounds: list[tuple[int, int]] = []
+        for expansion, position in opening:
+            search = searches[expansion.root]
+            slot = slots[expansion.root]
+            slots[expansion.root] = slot + 1
+            player, enemy, values = evaluations[expansion.root]
+            node = search._make_node(
+                expansion.successors[position],
+                (player[slot], enemy[slot], values[slot]),
+                width=search.config.interior_actions_per_side,
+            )
+            samples, node_requests = search._expansion_spec(node, seeds[expansion.root])
+            staged.append((expansion, position, node, samples))
+            bounds.append((len(requests), len(requests) + len(node_requests)))
+            requests.extend(node_requests)
+        successors = searches[0].server.search_steps(requests)
+        frontier: list[_Expansion] = []
+        for (expansion, position, node, samples), (left, right) in zip(
+            staged, bounds, strict=True
+        ):
+            search = searches[expansion.root]
+            opened = successors[left:right]
+            if any(successor.divergence is not None for successor in opened):
+                search._interior_divergences += 1
+                continue
+            search._interior_nodes += 1
+            expansion.children[position] = node
+            frontier.append(_Expansion(expansion.root, node, samples, opened))
+        return frontier
+
+    @classmethod
+    def _settle(
+        cls,
+        searches: list[SimultaneousTreeSearch],
+        levels: list[list[_Expansion]],
+        root_potentials: list[float],
+    ) -> dict[int, int]:
+        """Price every leaf against its root, then fold the tree upwards.
+
+        Leaves are gathered from every level at once -- a terminal two plies
+        down and a depth-limited leaf are the same kind of thing to the batch --
+        so the whole tree costs one pooled evaluation regardless of its shape.
+        """
+        leaves: list[tuple[_Expansion, int]] = []
+        leaf_snapshots: dict[int, list[Snapshot]] = {}
+        for level in levels:
+            for expansion in level:
+                for position, successor in enumerate(expansion.successors):
+                    if expansion.children[position] is not None:
+                        continue
+                    leaves.append((expansion, position))
+                    leaf_snapshots.setdefault(expansion.root, []).append(successor)
+        if leaves:
+            evaluated, _, _ = cls._pooled_successor_values(
+                [
+                    (root, searches[root], snapshots)
+                    for root, snapshots in leaf_snapshots.items()
+                ]
+            )
+            slots = dict.fromkeys(leaf_snapshots, 0)
+            for expansion, position in leaves:
+                slot = slots[expansion.root]
+                slots[expansion.root] = slot + 1
+                expansion.values[position] = searches[
+                    expansion.root
+                ]._shaped_leaf_value(
+                    root_potentials[expansion.root],
+                    expansion.successors[position],
+                    evaluated[expansion.root][slot][0],
+                )
+        transitions: dict[int, int] = {}
+        for depth, level in reversed(list(enumerate(levels))):
+            for expansion in level:
+                search = searches[expansion.root]
+                for position, child in enumerate(expansion.children):
+                    if child is not None:
+                        expansion.values[position] = child.root_value
+                if any(value is None for value in expansion.values):
+                    raise RuntimeError("tree backup left a payoff cell unpriced")
+                transitions[expansion.root] = transitions.get(
+                    expansion.root, 0
+                ) + search._install_expansion(
+                    expansion.node,
+                    expansion.samples,
+                    cast(list[float], expansion.values),
+                )
+                if depth == 0:
+                    # The root keeps its warm online solve so `_finish_root` can
+                    # publish how far that fell short of the full one.
+                    search._solve_node(expansion.node)
+                    continue
+                _, _, value, exploitability = search._solve_matrix(
+                    expansion.node, expansion.node.payoff
+                )
+                expansion.node.root_value = value
+                expansion.node.exploitability = exploitability
+        return transitions

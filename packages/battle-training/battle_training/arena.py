@@ -1788,7 +1788,7 @@ def run_paired_arena(
         "action_selector": (
             "network-policy-argmax-v1"
             if config.policy_only
-            else "simultaneous-matrix-root-anchored-qre-every-decision-v7"
+            else "simultaneous-tree-anchored-qre-every-decision-v8"
         ),
         "search": (
             None if config.policy_only else asdict(_joint_search_config(config))
@@ -2264,9 +2264,7 @@ def _run_traced_arena_batched(
         candidate_metrics,
         baseline_metrics,
     )
-    result["action_selector"] = (
-        "simultaneous-matrix-root-anchored-qre-every-decision-v7"
-    )
+    result["action_selector"] = "simultaneous-tree-anchored-qre-every-decision-v8"
     result["search"] = asdict(_joint_search_config(config))
     return result
 

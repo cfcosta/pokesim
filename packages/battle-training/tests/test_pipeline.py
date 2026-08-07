@@ -471,6 +471,49 @@ class _ChanceStableToyServer(_ChanceSplitToyServer):
         return 0
 
 
+class _ChanceSeedToyServer(_ToyServer):
+    """Records the chance seed every ply was stepped with, keyed by that ply."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seeds: dict[int, list[int]] = {}
+
+    def search_step(
+        self, handle: int, player_action: int, enemy_action: int, chance_seed: int
+    ) -> Snapshot:
+        self.seeds.setdefault(self.states[handle][0], []).append(chance_seed)
+        return super().search_step(handle, player_action, enemy_action, chance_seed)
+
+
+class _PotentialLadderToyServer(_ToyServer):
+    """Every ply chips the same slice off the enemy party, and nothing ends.
+
+    Two plies of chip are worth twice one ply, so a leaf scored against the
+    root beats the same leaf scored against its own parent by exactly one
+    rung. That gap is the only thing this ladder exists to expose.
+    """
+
+    RUNG = 30
+
+    def _snapshot(
+        self, handle: int, done: bool = False, result: int | None = None
+    ) -> Snapshot:
+        snapshot = super()._snapshot(handle, done, result)
+        features = list(snapshot.player_features)
+        for slot in range(6):
+            features[181 + slot * 22 + 1] = 100 - self.RUNG * self.states[handle][0]
+        return replace(snapshot, player_features=tuple(features))
+
+    def search_step(
+        self, handle: int, player_action: int, enemy_action: int, chance_seed: int
+    ) -> Snapshot:
+        del player_action, enemy_action, chance_seed
+        child = self.next_handle
+        self.next_handle += 1
+        self.states[child] = (self.states[handle][0] + 1, 0)
+        return self._snapshot(child)
+
+
 class _DivergentToyServer(_ToyServer):
     def search_steps(self, requests: list[tuple[int, int, int, int]]) -> list[Snapshot]:
         return [
@@ -1567,11 +1610,12 @@ class TransformerTests(unittest.TestCase):
         self.assertGreaterEqual(node.player_policy[4], first_dominant_mass - 0.01)
         self.assertAlmostEqual(sum(node.player_strategy_sum), 128.0, places=6)
 
-    def test_the_search_tree_is_one_node_at_any_depth(self) -> None:
-        # Past the root the loop resampled only the cells the current policy
-        # already liked, overwriting exhaustive CRN-paired estimates with lone
-        # rollouts.  Depth now feeds the leaf rollouts alone and must never
-        # grow that frontier back.
+    def test_the_tree_shape_follows_the_config_not_the_policy(self) -> None:
+        # Past the root an earlier loop resampled only the cells the current
+        # policy already liked, overwriting exhaustive CRN-paired estimates with
+        # lone rollouts.  Depth grows the tree by a rule now: either every cell
+        # opens a subgame or none does, so the node count follows the config and
+        # where the battle ends, never what the policy prefers.
         def run(max_depth: int) -> SearchResult:
             server = _ToyServer()
             network = _ToyNetwork()
@@ -1587,9 +1631,12 @@ class TransformerTests(unittest.TestCase):
                 random.Random(11),
             ).search(server._snapshot(0), sample_actions=False)
 
-        for max_depth in (1, 4, 32):
+        self.assertEqual(run(1).diagnostics["tree_nodes"], 1)
+        # The toy battle ends on its second ply, so asking for more than two
+        # buys nothing and the tree stops of its own accord.
+        for max_depth in (2, 4, 32):
             result = run(max_depth)
-            self.assertEqual(result.diagnostics["tree_nodes"], 1)
+            self.assertEqual(result.diagnostics["tree_nodes"], 5)
             self.assertEqual(result.diagnostics["chance_outcomes"], result.nodes)
 
     def test_the_root_matrix_covers_every_legal_joint_pair(self) -> None:
@@ -1612,7 +1659,7 @@ class TransformerTests(unittest.TestCase):
             random.Random(11),
         )
         result = search.search(server._snapshot(0), sample_actions=False)
-        self.assertEqual(result.solver, "simultaneous-matrix-root-anchored-qre-v7")
+        self.assertEqual(result.solver, "simultaneous-tree-anchored-qre-v8")
         self.assertEqual(
             result.diagnostics["root_solver"], "rust-anchored-f64-v1-t0.02"
         )
@@ -3842,8 +3889,9 @@ class TransformerTests(unittest.TestCase):
 
     def test_search_never_asks_a_network_for_a_budget_score(self) -> None:
         # The router bought one extra network forward per root to decide how
-        # deep to go.  Search stops at the root now, so the score decides
-        # nothing and must not be paid for -- even by a network offering it.
+        # deep to go.  Depth is a config constant now, uniform over every root
+        # and every cell, so the score decides nothing and must not be paid for
+        # -- even by a network offering it.
         server = _ToyServer()
         network = _RefusingBudgetNetwork()
         result = SimultaneousTreeSearch(
@@ -3854,8 +3902,8 @@ class TransformerTests(unittest.TestCase):
             random.Random(1),
             random.Random(2),
         ).search(server._snapshot(0), sample_actions=False)
-        self.assertEqual(result.nodes, 4)
-        self.assertEqual(result.solver, "simultaneous-matrix-root-anchored-qre-v7")
+        self.assertEqual(result.nodes, 20)
+        self.assertEqual(result.solver, "simultaneous-tree-anchored-qre-v8")
         self.assertIsNotNone(result.payoff_matrix)
         for key in (
             "adaptive_deep_selected",
@@ -4762,6 +4810,76 @@ class DirichletRootNoiseTest(unittest.TestCase):
         self.assertEqual(arguments.collection_dirichlet_alpha, 0.6)
         self.assertEqual(arguments.collection_dirichlet_weight, 0.3)
         self.assertEqual(arguments.collection_dirichlet_total, 6.5)
+
+
+class SolvedInteriorMatrixTest(unittest.TestCase):
+    """A root cell is worth whatever its own subgame solves to.
+
+    ``_ToyServer`` is a two-ply game whose opening move picks which subgame
+    gets played: matching pennies after player action 0, a forced loss after
+    action 1. Both look identical to a leaf evaluator, which is the point --
+    setting up only pays off on the turn after the setup, so only a search
+    that solves the interior matrix can price the opening.
+    """
+
+    @staticmethod
+    def _result(server: _ToyServer, **overrides: object) -> SearchResult:
+        network = _ToyNetwork()
+        settings: dict[str, object] = {
+            "chance_samples_per_joint": 1,
+            "max_depth": 2,
+            "max_actions_per_side": 2,
+        }
+        settings.update(overrides)
+        return SimultaneousTreeSearch(
+            server,
+            network,
+            network,
+            JointSearchConfig(**settings),  # type: ignore[arg-type]
+            random.Random(1),
+            random.Random(2),
+        ).search(server._snapshot(0), sample_actions=False)
+
+    def test_one_ply_cannot_tell_the_two_subgames_apart(self) -> None:
+        result = self._result(_ToyServer(), max_depth=1)
+        self.assertAlmostEqual(result.player_policy[0], 0.5, places=2)
+        self.assertAlmostEqual(result.root_value, 0.0, places=3)
+
+    def test_two_plies_reject_the_opening_that_loses_the_subgame(self) -> None:
+        result = self._result(_ToyServer())
+        self.assertGreater(result.player_policy[0], 0.95)
+        self.assertEqual(result.player_action, 0)
+        self.assertAlmostEqual(result.root_value, 0.0, places=2)
+
+    def test_every_root_cell_gets_its_own_interior_matrix(self) -> None:
+        diagnostics = self._result(_ToyServer()).diagnostics or {}
+        self.assertEqual(diagnostics["tree_depth"], 2)
+        self.assertEqual(diagnostics["tree_nodes"], 5)
+        self.assertEqual(diagnostics["sampled_joint_coverage"], 1.0)
+
+    def test_interior_width_caps_the_branching(self) -> None:
+        wide = _ToyServer()
+        self._result(wide)
+        self.assertEqual(wide.batches, [4, 16])
+        narrow = _ToyServer()
+        self._result(narrow, interior_actions_per_side=1)
+        self.assertEqual(narrow.batches, [4, 4])
+
+    def test_siblings_share_their_interior_chance_worlds(self) -> None:
+        server = _ChanceSeedToyServer()
+        self._result(server)
+        self.assertEqual(len(server.seeds[1]), 16)
+        self.assertEqual(len(set(server.seeds[1])), 1)
+
+    def test_leaf_shaping_is_measured_against_the_root(self) -> None:
+        server = _PotentialLadderToyServer()
+        root = _tactical_potential(server._snapshot(0).player_features)
+        result = self._result(server)
+        leaf = next(handle for handle, state in server.states.items() if state[0] == 2)
+        rise = _tactical_potential(server._snapshot(leaf).player_features) - root
+        # Two rungs of chip, not one: a parent-relative leaf would score 0.25.
+        self.assertAlmostEqual(rise, 0.5, places=6)
+        self.assertAlmostEqual(result.root_value, rise, places=3)
 
 
 class PriorRegretTest(unittest.TestCase):
