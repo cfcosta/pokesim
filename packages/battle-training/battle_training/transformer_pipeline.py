@@ -121,19 +121,19 @@ class TransformerPipelineConfig:
     collection_dirichlet_alpha: float = 0.0
     collection_dirichlet_weight: float = 0.25
     collection_dirichlet_total: float = 0.0
-    frontier_buffer_size: int = 0
-    frontier_restart_fraction: float = 0.0
-    frontier_reset_cap: int = 0
-    frontier_episode_cap: int = 0
-    split_half_reliability: bool = False
-    prior_regret: bool = False
-    policy_reliability_floor: float = 1.0
-    matchup_value_cap: float = 0.0
-    matchup_filter_attempts: int = 1
-    matchup_lopsided_accept: float = 0.0
-    team_replay_fraction: float = 0.0
-    team_replay_buffer_size: int = 0
-    popular_gate: int = 26
+    frontier_buffer_size: int = 256
+    frontier_restart_fraction: float = 0.25
+    frontier_reset_cap: int = 8
+    frontier_episode_cap: int = 2
+    split_half_reliability: bool = True
+    prior_regret: bool = True
+    policy_reliability_floor: float = 0.25
+    matchup_value_cap: float = 0.9
+    matchup_filter_attempts: int = 4
+    matchup_lopsided_accept: float = 0.15
+    team_replay_fraction: float = 0.15
+    team_replay_buffer_size: int = 256
+    popular_gate: int = 64
     budget_loss_weight: float = 0.05
     budget_positive_weight: float = 4.0
     opponent_checkpoints: tuple[str, ...] = ()
@@ -3934,19 +3934,19 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("collection_dirichlet_alpha", 0.0)
     normalized.setdefault("collection_dirichlet_weight", 0.25)
     normalized.setdefault("collection_dirichlet_total", 0.0)
-    normalized.setdefault("frontier_buffer_size", 0)
-    normalized.setdefault("frontier_restart_fraction", 0.0)
-    normalized.setdefault("frontier_reset_cap", 0)
-    normalized.setdefault("frontier_episode_cap", 0)
-    normalized.setdefault("split_half_reliability", False)
-    normalized.setdefault("prior_regret", False)
-    normalized.setdefault("policy_reliability_floor", 1.0)
-    normalized.setdefault("matchup_value_cap", 0.0)
-    normalized.setdefault("matchup_filter_attempts", 1)
-    normalized.setdefault("matchup_lopsided_accept", 0.0)
-    normalized.setdefault("team_replay_fraction", 0.0)
-    normalized.setdefault("team_replay_buffer_size", 0)
-    normalized.setdefault("popular_gate", 26)
+    normalized.setdefault("frontier_buffer_size", 256)
+    normalized.setdefault("frontier_restart_fraction", 0.25)
+    normalized.setdefault("frontier_reset_cap", 8)
+    normalized.setdefault("frontier_episode_cap", 2)
+    normalized.setdefault("split_half_reliability", True)
+    normalized.setdefault("prior_regret", True)
+    normalized.setdefault("policy_reliability_floor", 0.25)
+    normalized.setdefault("matchup_value_cap", 0.9)
+    normalized.setdefault("matchup_filter_attempts", 4)
+    normalized.setdefault("matchup_lopsided_accept", 0.15)
+    normalized.setdefault("team_replay_fraction", 0.15)
+    normalized.setdefault("team_replay_buffer_size", 256)
+    normalized.setdefault("popular_gate", 64)
     return normalized
 
 

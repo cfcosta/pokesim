@@ -123,10 +123,10 @@ class ArenaConfig:
     rmplus_backend: str = RUST_RMPLUS_BACKEND
     cfr_plus_solves: bool = True
     policy_only: bool = False
-    matchup_value_cap: float = 0.0
-    matchup_filter_attempts: int = 1
+    matchup_value_cap: float = 0.9
+    matchup_filter_attempts: int = 4
     matchup_plan: dict[int, int] | None = None
-    popular_gate: int = 26
+    popular_gate: int = 64
 
 
 @dataclass(frozen=True)
@@ -1680,10 +1680,12 @@ def run_paired_arena(
     if not 0 <= config.popular_gate <= 256:
         raise ValueError("arena popular_gate must be in [0, 256]")
     matchup_stats: dict[str, Any] | None = None
-    if config.matchup_value_cap > 0.0 and not campaign:
+    if config.matchup_value_cap > 0.0 and not campaign and config.matchup_plan is None:
         # Campaign suites pin their rosters, and arena games are not training
         # data, so the contested-matchup filter probes with the incumbent and
-        # hard-rejects lopsided generated pairs before any game is played.
+        # hard-rejects lopsided generated pairs before any game is played. A
+        # caller-supplied plan already fixes the resets, and re-probing would
+        # overwrite it with whatever this incumbent happens to prefer.
         with SearchServer(popular_gate=config.popular_gate) as probe_server:
             matchup_plan, matchup_stats = _arena_matchup_plan(
                 probe_server, baseline, config

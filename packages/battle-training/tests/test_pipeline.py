@@ -2005,19 +2005,19 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["collection_dirichlet_alpha"], 0.0)
         self.assertEqual(normalized["collection_dirichlet_weight"], 0.25)
         self.assertEqual(normalized["collection_dirichlet_total"], 0.0)
-        self.assertEqual(normalized["frontier_buffer_size"], 0)
-        self.assertEqual(normalized["frontier_restart_fraction"], 0.0)
-        self.assertEqual(normalized["frontier_reset_cap"], 0)
-        self.assertEqual(normalized["frontier_episode_cap"], 0)
-        self.assertFalse(normalized["split_half_reliability"])
-        self.assertFalse(normalized["prior_regret"])
-        self.assertEqual(normalized["policy_reliability_floor"], 1.0)
-        self.assertEqual(normalized["matchup_value_cap"], 0.0)
-        self.assertEqual(normalized["matchup_filter_attempts"], 1)
-        self.assertEqual(normalized["matchup_lopsided_accept"], 0.0)
-        self.assertEqual(normalized["team_replay_fraction"], 0.0)
-        self.assertEqual(normalized["team_replay_buffer_size"], 0)
-        self.assertEqual(normalized["popular_gate"], 26)
+        self.assertEqual(normalized["frontier_buffer_size"], 256)
+        self.assertEqual(normalized["frontier_restart_fraction"], 0.25)
+        self.assertEqual(normalized["frontier_reset_cap"], 8)
+        self.assertEqual(normalized["frontier_episode_cap"], 2)
+        self.assertTrue(normalized["split_half_reliability"])
+        self.assertTrue(normalized["prior_regret"])
+        self.assertEqual(normalized["policy_reliability_floor"], 0.25)
+        self.assertEqual(normalized["matchup_value_cap"], 0.9)
+        self.assertEqual(normalized["matchup_filter_attempts"], 4)
+        self.assertEqual(normalized["matchup_lopsided_accept"], 0.15)
+        self.assertEqual(normalized["team_replay_fraction"], 0.15)
+        self.assertEqual(normalized["team_replay_buffer_size"], 256)
+        self.assertEqual(normalized["popular_gate"], 64)
         self.assertEqual(normalized, asdict(TransformerPipelineConfig(**config)))
         self.assertNotIn("leaf_hidden_layers", config)
 
@@ -5516,12 +5516,12 @@ class PolicyReliabilityTest(unittest.TestCase):
             self.assertAlmostEqual(weights.tolist()[0], 0.25, places=6)
             self.assertEqual(_load_examples([shard])[6].tolist(), [1.0])
 
-    def test_the_floor_flows_from_the_cli_and_defaults_off_in_the_config(self) -> None:
+    def test_the_cli_and_the_dataclass_agree_on_the_training_floor(self) -> None:
         arguments = training_parser().parse_args(
             ["transformer-train", "--output", "/tmp/reliability"]
         )
         self.assertEqual(arguments.policy_reliability_floor, 0.25)
-        self.assertEqual(FrontierCapTest._config().policy_reliability_floor, 1.0)
+        self.assertEqual(FrontierCapTest._config().policy_reliability_floor, 0.25)
 
 
 class FrontierPriorRegretTest(unittest.TestCase):
@@ -5719,12 +5719,12 @@ class FrontierCapTest(unittest.TestCase):
         self.assertEqual(arguments.frontier_episode_cap, 2)
         self.assertTrue(arguments.prior_regret)
 
-    def test_the_config_defaults_stay_off(self) -> None:
+    def test_the_config_defaults_match_the_cli(self) -> None:
         config = self._config()
-        self.assertEqual(config.frontier_reset_cap, 0)
-        self.assertEqual(config.frontier_episode_cap, 0)
-        self.assertFalse(config.prior_regret)
-        self.assertFalse(config.split_half_reliability)
+        self.assertEqual(config.frontier_reset_cap, 8)
+        self.assertEqual(config.frontier_episode_cap, 2)
+        self.assertTrue(config.prior_regret)
+        self.assertTrue(config.split_half_reliability)
 
     def test_the_search_config_carries_the_reliability_flags(self) -> None:
         network = SimpleNamespace(config=SimpleNamespace(action_count=3))
@@ -5742,7 +5742,7 @@ class FrontierCapTest(unittest.TestCase):
             object(),  # type: ignore[arg-type]
             network,  # type: ignore[arg-type]
             network,  # type: ignore[arg-type]
-            self._config(),
+            self._config(prior_regret=False, split_half_reliability=False),
             random.Random(0),
             random.Random(1),
         )
@@ -6147,11 +6147,11 @@ class MatchupFilterTest(unittest.TestCase):
         )
         return tuple(int(part) for part in snapshot.player_features)
 
-    def test_matchup_defaults_stay_legacy_in_the_dataclass(self) -> None:
+    def test_matchup_defaults_match_the_cli(self) -> None:
         config = self._config()
-        self.assertEqual(config.matchup_value_cap, 0.0)
-        self.assertEqual(config.matchup_filter_attempts, 1)
-        self.assertEqual(config.matchup_lopsided_accept, 0.0)
+        self.assertEqual(config.matchup_value_cap, 0.9)
+        self.assertEqual(config.matchup_filter_attempts, 4)
+        self.assertEqual(config.matchup_lopsided_accept, 0.15)
 
     def test_matchup_flags_flow_from_the_cli(self) -> None:
         arguments = training_parser().parse_args(
@@ -6259,7 +6259,11 @@ class MatchupFilterTest(unittest.TestCase):
     def test_contested_pairs_keep_the_legacy_reset(self) -> None:
         from battle_training.transformer_pipeline import _matchup_filter_plan
 
-        config = self._config(matchup_value_cap=0.9, matchup_filter_attempts=4)
+        config = self._config(
+            matchup_value_cap=0.9,
+            matchup_filter_attempts=4,
+            matchup_lopsided_accept=0.0,
+        )
         network = _ScriptedValueNetwork(default=0.0)
         plan, stats = _matchup_filter_plan(_RecordingLeanServer(), network, config, 1)
         self.assertEqual(plan, {})
@@ -6445,7 +6449,11 @@ class MatchupFilterTest(unittest.TestCase):
     def test_excluded_pairs_are_never_probed(self) -> None:
         from battle_training.transformer_pipeline import _matchup_filter_plan
 
-        config = self._config(matchup_value_cap=0.9, matchup_filter_attempts=2)
+        config = self._config(
+            matchup_value_cap=0.9,
+            matchup_filter_attempts=2,
+            matchup_lopsided_accept=0.0,
+        )
         network = _ScriptedValueNetwork(default=0.95)
         server = _RecordingLeanServer()
         plan, stats = _matchup_filter_plan(server, network, config, 1, exclude={1})
@@ -6538,10 +6546,10 @@ class TeamReplayTest(unittest.TestCase):
         )
         return [first, second]
 
-    def test_team_replay_defaults_stay_legacy_in_the_dataclass(self) -> None:
+    def test_team_replay_defaults_match_the_cli(self) -> None:
         config = self._config()
-        self.assertEqual(config.team_replay_fraction, 0.0)
-        self.assertEqual(config.team_replay_buffer_size, 0)
+        self.assertEqual(config.team_replay_fraction, 0.15)
+        self.assertEqual(config.team_replay_buffer_size, 256)
 
     def test_team_replay_flags_flow_from_the_cli_with_on_defaults(self) -> None:
         defaults = training_parser().parse_args(
@@ -6880,7 +6888,7 @@ class TeamReplayTest(unittest.TestCase):
     def test_finalize_hard_teams_is_inert_when_disabled(self) -> None:
         from battle_training.transformer_pipeline import _finalize_hard_teams
 
-        config = self._config()
+        config = self._config(team_replay_fraction=0.0, team_replay_buffer_size=0)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "iteration-003.jsonl"
             metrics = _finalize_hard_teams({"episodes": 3}, path, 3, config)
@@ -7022,9 +7030,9 @@ class PopularGateTest(unittest.TestCase):
         response.update(overrides)
         return response
 
-    def test_popular_gate_defaults_stay_legacy_in_the_dataclasses(self) -> None:
-        self.assertEqual(self._config().popular_gate, 26)
-        self.assertEqual(ArenaConfig(games=4, seed_count=2).popular_gate, 26)
+    def test_popular_gate_defaults_match_the_cli_in_both_dataclasses(self) -> None:
+        self.assertEqual(self._config().popular_gate, 64)
+        self.assertEqual(ArenaConfig(games=4, seed_count=2).popular_gate, 64)
 
     def test_popular_gate_flows_from_the_cli_with_a_raised_default(self) -> None:
         defaults = training_parser().parse_args(
@@ -7295,10 +7303,10 @@ class ArenaMatchupFilterTest(unittest.TestCase):
         )
         return tuple(int(part) for part in snapshot.player_features)
 
-    def test_arena_config_defaults_keep_the_filter_off(self) -> None:
+    def test_arena_config_defaults_match_the_cli(self) -> None:
         config = ArenaConfig(games=4, seed_count=2)
-        self.assertEqual(config.matchup_value_cap, 0.0)
-        self.assertEqual(config.matchup_filter_attempts, 1)
+        self.assertEqual(config.matchup_value_cap, 0.9)
+        self.assertEqual(config.matchup_filter_attempts, 4)
         self.assertIsNone(config.matchup_plan)
 
     def test_matchup_root_seed_offsets_by_the_attempt_stride(self) -> None:
@@ -7443,10 +7451,13 @@ class ArenaMatchupFilterTest(unittest.TestCase):
         with torch.no_grad():
             for parameter in baseline.parameters():
                 parameter.add_(torch.randn_like(parameter) * 0.5)
-        legacy = run_paired_arena(
-            candidate, baseline, self._integration_config(), capture_details=True
+        unfiltered = run_paired_arena(
+            candidate,
+            baseline,
+            self._integration_config(matchup_value_cap=0.0),
+            capture_details=True,
         )
-        self.assertIsNone(legacy["matchup_filter"])
+        self.assertIsNone(unfiltered["matchup_filter"])
         filtered = run_paired_arena(
             candidate,
             baseline,
@@ -7481,7 +7492,33 @@ class ArenaMatchupFilterTest(unittest.TestCase):
         )
         self.assertNotEqual(
             [battle["initial"] for battle in filtered["battles"]],
-            [battle["initial"] for battle in legacy["battles"]],
+            [battle["initial"] for battle in unfiltered["battles"]],
+        )
+
+    def test_a_supplied_plan_is_never_reprobed_away(self) -> None:
+        """An explicit plan is the caller's decision, not a starting guess.
+
+        The filter now defaults on, so without this precedence a caller that
+        pinned resets would have them silently replaced by whatever the fresh
+        probe preferred.
+        """
+        torch.manual_seed(0)
+        report = run_paired_arena(
+            self._tiny_network(),
+            self._tiny_network(),
+            self._integration_config(matchup_value_cap=1e-6, matchup_plan={0: 3, 1: 5}),
+            capture_details=True,
+        )
+        self.assertIsNone(report["matchup_filter"])
+        pinned = run_paired_arena(
+            self._tiny_network(),
+            self._tiny_network(),
+            self._integration_config(matchup_value_cap=0.0, matchup_plan={0: 3, 1: 5}),
+            capture_details=True,
+        )
+        self.assertEqual(
+            [battle["initial"] for battle in report["battles"]],
+            [battle["initial"] for battle in pinned["battles"]],
         )
 
     def test_paired_arena_campaign_skips_the_filter(self) -> None:
