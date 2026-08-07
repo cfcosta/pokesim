@@ -127,6 +127,7 @@ class TransformerPipelineConfig:
     frontier_episode_cap: int = 0
     split_half_reliability: bool = False
     prior_regret: bool = False
+    policy_reliability_floor: float = 1.0
     matchup_value_cap: float = 0.0
     matchup_filter_attempts: int = 1
     matchup_lopsided_accept: float = 0.0
@@ -2935,7 +2936,27 @@ ExampleTensors = tuple[
 ]
 
 
-def _rows_to_examples(rows: list[dict[str, Any]]) -> ExampleTensors:
+def _policy_reliability(row: dict[str, Any], floor: float) -> float:
+    """How much of this row's policy target survived the split-half check.
+
+    `root_split_half_distance` is the total-variation distance between the two
+    common-random-number solves of the same root matrix, so zero means both
+    chance worlds agreed exactly and one means they shared no mass at all. The
+    weight interpolates between `floor` at total disagreement and one at total
+    agreement; a floor of one is the legacy behaviour of trusting every target
+    the same, and a row search never split-half checked keeps full weight.
+    """
+    if row.get("side") == "enemy":
+        distance = row.get("root_split_half_enemy_distance")
+    else:
+        distance = row.get("root_split_half_distance")
+    if distance is None:
+        return 1.0
+    agreement = min(1.0, max(0.0, 1.0 - float(distance)))
+    return floor + (1.0 - floor) * agreement
+
+
+def _rows_to_examples(rows: list[dict[str, Any]], floor: float = 1.0) -> ExampleTensors:
     features = [row["features"] for row in rows]
     policies = [row["policy"] for row in rows]
     opponent_policies = [row.get("opponent_policy", row["policy"]) for row in rows]
@@ -2955,7 +2976,10 @@ def _rows_to_examples(rows: list[dict[str, Any]]) -> ExampleTensors:
         for row in rows
     ]
     policy_weights = [
-        0.0 if row.get("target_kind") == "policy-rollout" else 1.0 for row in rows
+        0.0
+        if row.get("target_kind") == "policy-rollout"
+        else _policy_reliability(row, floor)
+        for row in rows
     ]
     budget_labels = [
         float(max(0, int(row.get("deep_search_needed", -1)))) for row in rows
@@ -2992,12 +3016,13 @@ def _example_rows(paths: list[Path]) -> list[dict[str, Any]]:
     return rows
 
 
-def _load_examples(paths: list[Path]) -> ExampleTensors:
-    return _rows_to_examples(_example_rows(paths))
+def _load_examples(paths: list[Path], floor: float = 1.0) -> ExampleTensors:
+    return _rows_to_examples(_example_rows(paths), floor)
 
 
 def _load_partitioned_examples(
     paths: list[Path],
+    floor: float = 1.0,
 ) -> tuple[ExampleTensors, ExampleTensors, list[tuple[int, int]]]:
     training_rows = []
     heldout_rows = []
@@ -3014,8 +3039,8 @@ def _load_partitioned_examples(
     if not training_rows or not heldout_rows:
         raise ValueError("whole-battle diagnostic split produced an empty partition")
     return (
-        _rows_to_examples(training_rows),
-        _rows_to_examples(heldout_rows),
+        _rows_to_examples(training_rows, floor),
+        _rows_to_examples(heldout_rows, floor),
         heldout_battles,
     )
 
@@ -3336,7 +3361,7 @@ def _train_network(
 ) -> dict[str, Any]:
     device = next(network.parameters()).device
     training_examples, heldout_examples, heldout_battles = _load_partitioned_examples(
-        shards
+        shards, config.policy_reliability_floor
     )
     (
         features,
@@ -3909,6 +3934,7 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("frontier_episode_cap", 0)
     normalized.setdefault("split_half_reliability", False)
     normalized.setdefault("prior_regret", False)
+    normalized.setdefault("policy_reliability_floor", 1.0)
     normalized.setdefault("matchup_value_cap", 0.0)
     normalized.setdefault("matchup_filter_attempts", 1)
     normalized.setdefault("matchup_lopsided_accept", 0.0)
@@ -4173,6 +4199,12 @@ def run_transformer_pipeline(
     if config.prior_regret and not config.split_half_reliability:
         raise ValueError(
             "prior_regret needs split_half_reliability for its noise floor"
+        )
+    if not 0.0 <= config.policy_reliability_floor <= 1.0:
+        raise ValueError("policy_reliability_floor must be in [0, 1]")
+    if config.policy_reliability_floor < 1.0 and not config.split_half_reliability:
+        raise ValueError(
+            "policy_reliability_floor needs split_half_reliability for its distances"
         )
     if not 0.0 <= config.matchup_value_cap < 1.0:
         raise ValueError("matchup_value_cap must be in [0, 1)")

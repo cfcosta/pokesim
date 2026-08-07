@@ -171,6 +171,7 @@ from battle_training.transformer_pipeline import (
     _replay_frontier_entry,
     _resume_config,
     _resumed_pooled_evidence,
+    _rows_to_examples,
     _scheduled_for_opponent,
     _select_training_opponent,
     _serialized_network_config,
@@ -5436,6 +5437,82 @@ class FrontierBufferTest(unittest.TestCase):
             ]
         )
         self.assertEqual(arguments.frontier_buffer_size, 128)
+
+
+class PolicyReliabilityTest(unittest.TestCase):
+    """Down-weighting policy targets the two chance worlds disagreed about.
+
+    Search publishes the total-variation distance between its two
+    common-random-number solves of the same root matrix. Measured on a real
+    run that distance had a median of 0.33 and a p90 of 0.98, so a tenth of
+    the policy targets were effectively drawn at random and the loss weighted
+    them exactly as much as the targets both worlds agreed on.
+    """
+
+    @staticmethod
+    def _row(**overrides: object) -> dict[str, object]:
+        row: dict[str, object] = {
+            "type": "example",
+            "features": [0] * 8,
+            "policy": [0.5, 0.0, 0.5, 0.0],
+            "value": 1,
+            "legal_mask": 0b0101,
+            "side": "player",
+        }
+        row.update(overrides)
+        return row
+
+    def _weights(self, rows: list[dict[str, object]], floor: float) -> list[float]:
+        return _rows_to_examples(rows, floor)[6].tolist()
+
+    def test_a_row_without_the_diagnostic_keeps_full_weight(self) -> None:
+        self.assertEqual(self._weights([self._row()], 0.25), [1.0])
+
+    def test_agreeing_chance_worlds_keep_full_weight(self) -> None:
+        row = self._row(root_split_half_distance=0.0)
+        self.assertEqual(self._weights([row], 0.25), [1.0])
+
+    def test_disjoint_solves_fall_all_the_way_to_the_floor(self) -> None:
+        row = self._row(root_split_half_distance=1.0)
+        self.assertAlmostEqual(self._weights([row], 0.25)[0], 0.25, places=6)
+
+    def test_the_weight_moves_linearly_between_the_floor_and_one(self) -> None:
+        row = self._row(root_split_half_distance=0.5)
+        self.assertAlmostEqual(self._weights([row], 0.2)[0], 0.6, places=6)
+
+    def test_a_floor_of_one_leaves_every_target_alone(self) -> None:
+        rows = [
+            self._row(root_split_half_distance=0.0),
+            self._row(root_split_half_distance=1.0),
+        ]
+        self.assertEqual(self._weights(rows, 1.0), [1.0, 1.0])
+
+    def test_the_enemy_row_reads_the_enemy_distance(self) -> None:
+        row = self._row(
+            side="enemy",
+            root_split_half_distance=1.0,
+            root_split_half_enemy_distance=0.0,
+        )
+        self.assertEqual(self._weights([row], 0.25), [1.0])
+
+    def test_rollout_targets_stay_at_zero_however_reliable(self) -> None:
+        row = self._row(target_kind="policy-rollout", root_split_half_distance=0.0)
+        self.assertEqual(self._weights([row], 0.25), [0.0])
+
+    def test_the_loader_threads_the_floor_through(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            shard = Path(temporary) / "examples.jsonl"
+            shard.write_text(json.dumps(self._row(root_split_half_distance=1.0)) + "\n")
+            weights = _load_examples([shard], 0.25)[6]
+            self.assertAlmostEqual(weights.tolist()[0], 0.25, places=6)
+            self.assertEqual(_load_examples([shard])[6].tolist(), [1.0])
+
+    def test_the_floor_flows_from_the_cli_and_defaults_off_in_the_config(self) -> None:
+        arguments = training_parser().parse_args(
+            ["transformer-train", "--output", "/tmp/reliability"]
+        )
+        self.assertEqual(arguments.policy_reliability_floor, 0.25)
+        self.assertEqual(FrontierCapTest._config().policy_reliability_floor, 1.0)
 
 
 class FrontierPriorRegretTest(unittest.TestCase):
