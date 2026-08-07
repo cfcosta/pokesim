@@ -147,6 +147,8 @@ class TransformerPipelineConfig:
     regret_iterations: int = 2048
     inference_batch_size: int = 256
     max_actions_per_side: int = 13
+    interior_actions_per_side: int = 3
+    interior_chance_samples: int = 1
     replay_window: int = 2
     search_every: int = 1
     tree_regret_iterations: int = 16
@@ -523,6 +525,8 @@ def _new_search(
             regret_iterations=config.regret_iterations,
             inference_batch_size=config.inference_batch_size,
             max_actions_per_side=config.max_actions_per_side,
+            interior_actions_per_side=config.interior_actions_per_side,
+            interior_chance_samples=config.interior_chance_samples,
             regret_iterations_per_update=config.tree_regret_iterations,
             redundant_action_prior_scale=config.redundant_action_prior_scale,
             prior_anchor_temperature=config.prior_anchor_temperature,
@@ -555,6 +559,8 @@ def _arena_config(
         regret_iterations=config.regret_iterations,
         inference_batch_size=config.inference_batch_size,
         max_actions_per_side=config.max_actions_per_side,
+        interior_actions_per_side=config.interior_actions_per_side,
+        interior_chance_samples=config.interior_chance_samples,
         tree_regret_iterations=config.tree_regret_iterations,
         redundant_action_prior_scale=config.redundant_action_prior_scale,
         prior_anchor_temperature=config.prior_anchor_temperature,
@@ -3729,6 +3735,8 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("team_replay_fraction", 0.15)
     normalized.setdefault("team_replay_buffer_size", 256)
     normalized.setdefault("popular_gate", 64)
+    normalized.setdefault("interior_actions_per_side", 3)
+    normalized.setdefault("interior_chance_samples", 1)
     return normalized
 
 

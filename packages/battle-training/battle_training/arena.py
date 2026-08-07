@@ -97,10 +97,12 @@ class ArenaConfig:
     games: int
     budget: int = 512
     chance_samples_per_joint: int = 1
-    search_depth: int = 4
+    search_depth: int = 2
     regret_iterations: int = 2048
     inference_batch_size: int = 256
     max_actions_per_side: int = 13
+    interior_actions_per_side: int = 3
+    interior_chance_samples: int = 1
     tree_regret_iterations: int = 16
     redundant_action_prior_scale: float = 0.25
     prior_anchor_temperature: float = 0.02
@@ -339,6 +341,8 @@ def _joint_search_config(config: ArenaConfig) -> JointSearchConfig:
         regret_iterations=config.regret_iterations,
         inference_batch_size=config.inference_batch_size,
         max_actions_per_side=config.max_actions_per_side,
+        interior_actions_per_side=config.interior_actions_per_side,
+        interior_chance_samples=config.interior_chance_samples,
         regret_iterations_per_update=config.tree_regret_iterations,
         redundant_action_prior_scale=config.redundant_action_prior_scale,
         prior_anchor_temperature=config.prior_anchor_temperature,

@@ -42,12 +42,17 @@ The smoke command performs the complete loop:
 10. regenerates the first search shard byte for byte from checkpoint zero.
 
 Default training searches every real decision with a matrix-valued
-simultaneous solve that stops at the root. The root evaluates every legal joint
-action, stepping each pair against the same chance draws, so every payoff cell
-rests on an equal sample count and the RM+ solve reads a coherent matrix.
-`--search-depth` feeds the chance rollouts behind each leaf estimate; it never
-expands a frontier past the root. There is no expansion budget, no policy-guided
-resampling, and no learned router deciding how deep to go.
+simultaneous solve. The root evaluates every legal joint action, stepping each
+pair against the same chance draws, so every payoff cell rests on an equal
+sample count and the RM+ solve reads a coherent matrix. `--search-depth` is how
+many plies that solve looks ahead: each cell of a solved matrix opens its own
+matrix of the top `--interior-actions-per-side` actions per side, solved the
+same way, down to the configured depth. Interior priors come from the distilled
+leaf trunk rather than a full encoder forward, which is what keeps a second ply
+affordable. Every cell at a given level expands under the same rule, so no
+branch is refined further than the neighbours it is compared against. There is
+no expansion budget, no policy-guided resampling, and no learned router
+deciding how deep to go.
 Every completed neural-model decision therefore carries an RM+ average-strategy
 policy target. `--search-every` is fixed at one; sparse raw-policy action
 selection has been removed. If a search encounters semantic divergence before

@@ -32,6 +32,7 @@ from battle_training.arena import (
     _evaluation_party_sizes,
     _FastArenaEpisode,
     _finished_pair_scores,
+    _joint_search_config,
     _live_arena_report,
     _load_arena_model,
     _load_final_arena_baseline,
@@ -1923,7 +1924,9 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.iterations, 30)
         self.assertEqual(arguments.episodes, 16_384)
         self.assertEqual(arguments.arena_episodes, 1024)
-        self.assertEqual(arguments.search_depth, 4)
+        self.assertEqual(arguments.search_depth, 2)
+        self.assertEqual(arguments.interior_actions_per_side, 3)
+        self.assertEqual(arguments.interior_chance_samples, 1)
         self.assertEqual(arguments.budget, 512)
         self.assertEqual(arguments.search_every, 1)
         self.assertEqual(arguments.epochs, 1)
@@ -2036,8 +2039,79 @@ class TransformerTests(unittest.TestCase):
             ]
         )
         self.assertFalse(hasattr(arena, "search_every"))
-        self.assertEqual(arena.search_depth, 4)
+        self.assertEqual(arena.search_depth, 2)
+        self.assertEqual(arena.interior_actions_per_side, 3)
+        self.assertEqual(arena.interior_chance_samples, 1)
         self.assertEqual(arena.redundant_action_prior_scale, 0.25)
+
+    def test_both_search_sides_agree_on_the_interior_matrix_shape(self) -> None:
+        """Collection and the arena must look the same number of plies ahead.
+
+        The gate compares a candidate against an incumbent at the depth they
+        were trained to play; letting the two halves default apart would make
+        the promotion decision a statement about search budget rather than
+        about the networks.
+        """
+
+        arena = ArenaConfig(games=4, seed_count=2)
+        self.assertEqual(arena.search_depth, 2)
+        self.assertEqual(arena.interior_actions_per_side, 3)
+        self.assertEqual(arena.interior_chance_samples, 1)
+        search = _joint_search_config(
+            ArenaConfig(
+                games=4,
+                seed_count=2,
+                search_depth=3,
+                interior_actions_per_side=2,
+                interior_chance_samples=4,
+            )
+        )
+        self.assertEqual(search.max_depth, 3)
+        self.assertEqual(search.interior_actions_per_side, 2)
+        self.assertEqual(search.interior_chance_samples, 4)
+
+    def test_the_pipeline_carries_the_interior_matrix_shape_into_search(self) -> None:
+        """Interior width is the price of depth, so it has to be tunable."""
+
+        network = SimpleNamespace(config=SimpleNamespace(action_count=3))
+        settings: dict[str, object] = {
+            "iterations": 1,
+            "selfplay_episodes": 1,
+            "arena_episodes": 1,
+            "episode_budget": 8,
+            "search_depth": 3,
+            "epochs": 1,
+            "batch_size": 2,
+            "learning_rate": 1e-3,
+            "weight_decay": 0.0,
+            "seed": 1,
+            "device": "cpu",
+            "d_model": 8,
+            "heads": 2,
+            "layers": 1,
+            "feedforward": 16,
+        }
+        default = TransformerPipelineConfig(**settings)  # type: ignore[arg-type]
+        self.assertEqual(default.interior_actions_per_side, 3)
+        self.assertEqual(default.interior_chance_samples, 1)
+        config = TransformerPipelineConfig(
+            **settings,  # type: ignore[arg-type]
+            interior_actions_per_side=2,
+            interior_chance_samples=4,
+        )
+        search = _new_search(
+            object(),  # type: ignore[arg-type]
+            network,  # type: ignore[arg-type]
+            network,  # type: ignore[arg-type]
+            config,
+            random.Random(0),
+            random.Random(1),
+        )
+        self.assertEqual(search.config.max_depth, 3)
+        self.assertEqual(search.config.interior_actions_per_side, 2)
+        self.assertEqual(search.config.interior_chance_samples, 4)
+        self.assertEqual(_arena_config(config, 4, 0, 2).interior_actions_per_side, 2)
+        self.assertEqual(_arena_config(config, 4, 0, 2).interior_chance_samples, 4)
 
     def test_pre_rmplus_everywhere_lineage_cannot_resume(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -2146,7 +2220,13 @@ class TransformerTests(unittest.TestCase):
         config.pop("team_replay_fraction")
         config.pop("team_replay_buffer_size")
         config.pop("popular_gate")
+        config.pop("interior_actions_per_side")
+        config.pop("interior_chance_samples")
         normalized = _normalized_saved_config(config)
+        # Both reproduce what JointSearchConfig applied on its own before the
+        # pipeline had a say, so a resumed run keeps the shape it was solving.
+        self.assertEqual(normalized["interior_actions_per_side"], 3)
+        self.assertEqual(normalized["interior_chance_samples"], 1)
         self.assertIsNone(normalized["leaf_hidden_layers"])
         self.assertEqual(normalized["leaf_ema_decay"], 0.0)
         self.assertEqual(normalized["promotion_nonfinish_policy"], "losses")

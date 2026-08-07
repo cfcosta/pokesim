@@ -104,7 +104,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--episodes", type=int, default=4 if smoke else 16384)
     parser.add_argument("--arena-episodes", type=int, default=4 if smoke else 1024)
     parser.add_argument("--budget", type=int, default=64 if smoke else 512)
-    parser.add_argument("--search-depth", type=int, default=1 if smoke else 4)
+    parser.add_argument("--search-depth", type=int, default=1 if smoke else 2)
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=32 if smoke else 128)
     parser.add_argument("--learning-rate", type=float, default=3e-4 if smoke else 2e-4)
@@ -245,6 +245,16 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--regret-iterations", type=int, default=2048)
     parser.add_argument("--inference-batch-size", type=int, default=256)
     parser.add_argument("--max-actions-per-side", type=int, default=13)
+    parser.add_argument(
+        "--interior-actions-per-side",
+        type=int,
+        default=3,
+        help=(
+            "width of every solved matrix below the root; the root keeps its "
+            "full legal width, so this is what depth actually costs"
+        ),
+    )
+    parser.add_argument("--interior-chance-samples", type=int, default=1)
     parser.add_argument("--replay-window", type=int, default=defaults["replay_window"])
     parser.add_argument(
         "--search-every",
@@ -310,7 +320,9 @@ def parser() -> argparse.ArgumentParser:
     arena.add_argument("--games", type=int, default=10000)
     arena.add_argument("--budget", type=int, default=512)
     arena.add_argument("--chance-samples-per-joint", type=int, default=1)
-    arena.add_argument("--search-depth", type=int, default=4)
+    arena.add_argument("--search-depth", type=int, default=2)
+    arena.add_argument("--interior-actions-per-side", type=int, default=3)
+    arena.add_argument("--interior-chance-samples", type=int, default=1)
     arena.add_argument("--regret-iterations", type=int, default=2048)
     arena.add_argument("--inference-batch-size", type=int, default=256)
     arena.add_argument("--tree-regret-iterations", type=int, default=16)
@@ -358,6 +370,8 @@ def main(argv: list[str] | None = None) -> int:
                 regret_iterations=arguments.regret_iterations,
                 inference_batch_size=arguments.inference_batch_size,
                 max_actions_per_side=13,
+                interior_actions_per_side=arguments.interior_actions_per_side,
+                interior_chance_samples=arguments.interior_chance_samples,
                 tree_regret_iterations=arguments.tree_regret_iterations,
                 redundant_action_prior_scale=(arguments.redundant_action_prior_scale),
                 prior_anchor_temperature=arguments.prior_anchor_temperature,
@@ -459,6 +473,8 @@ def main(argv: list[str] | None = None) -> int:
             regret_iterations=arguments.regret_iterations,
             inference_batch_size=arguments.inference_batch_size,
             max_actions_per_side=arguments.max_actions_per_side,
+            interior_actions_per_side=arguments.interior_actions_per_side,
+            interior_chance_samples=arguments.interior_chance_samples,
             replay_window=arguments.replay_window,
             search_every=arguments.search_every,
             tree_regret_iterations=arguments.tree_regret_iterations,
