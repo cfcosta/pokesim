@@ -1967,6 +1967,10 @@ class TransformerTests(unittest.TestCase):
         config.pop("collection_dirichlet_total")
         config.pop("frontier_buffer_size")
         config.pop("frontier_restart_fraction")
+        config.pop("frontier_reset_cap")
+        config.pop("frontier_episode_cap")
+        config.pop("split_half_reliability")
+        config.pop("prior_regret")
         config.pop("matchup_value_cap")
         config.pop("matchup_filter_attempts")
         config.pop("matchup_lopsided_accept")
@@ -1994,6 +1998,10 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["collection_dirichlet_total"], 0.0)
         self.assertEqual(normalized["frontier_buffer_size"], 0)
         self.assertEqual(normalized["frontier_restart_fraction"], 0.0)
+        self.assertEqual(normalized["frontier_reset_cap"], 0)
+        self.assertEqual(normalized["frontier_episode_cap"], 0)
+        self.assertFalse(normalized["split_half_reliability"])
+        self.assertFalse(normalized["prior_regret"])
         self.assertEqual(normalized["matchup_value_cap"], 0.0)
         self.assertEqual(normalized["matchup_filter_attempts"], 1)
         self.assertEqual(normalized["matchup_lopsided_accept"], 0.0)
@@ -5392,9 +5400,15 @@ class FrontierBufferTest(unittest.TestCase):
         self.assertEqual([entry["tag"] for entry in merged], ["b4", "a3", "b2"])
 
     def test_frontier_meta_tags_appear_only_when_enabled(self) -> None:
-        self.assertEqual(_frontier_meta(SimpleNamespace(frontier_buffer_size=0)), {})
+        disabled = SimpleNamespace(
+            frontier_buffer_size=0, frontier_reset_cap=8, frontier_episode_cap=2
+        )
+        self.assertEqual(_frontier_meta(disabled), {})
+        enabled = SimpleNamespace(
+            frontier_buffer_size=128, frontier_reset_cap=0, frontier_episode_cap=0
+        )
         self.assertEqual(
-            _frontier_meta(SimpleNamespace(frontier_buffer_size=128)),
+            _frontier_meta(enabled),
             {"frontier_buffer": "surprise-topn-v1", "frontier_buffer_size": 128},
         )
 
@@ -5422,6 +5436,246 @@ class FrontierBufferTest(unittest.TestCase):
             ]
         )
         self.assertEqual(arguments.frontier_buffer_size, 128)
+
+
+class FrontierPriorRegretTest(unittest.TestCase):
+    """Scoring the frontier by the value the prior gives up, not by a KL."""
+
+    _PRIOR = (0.25, 0.5, 0.25, 0.9)
+
+    @staticmethod
+    def _row(**overrides: object) -> dict[str, object]:
+        row: dict[str, object] = {
+            "side": "player",
+            "search_value": 0.6,
+            "value": -1,
+            "policy": [0.5, 0.25, 0.25, 0.7],
+            "legal_mask": 0b0111,
+        }
+        row.update(overrides)
+        return row
+
+    def _score(self, row: dict[str, object]) -> dict[str, float]:
+        return _frontier_score(row, list(self._PRIOR))
+
+    def test_falls_back_to_the_policy_kl_without_a_regret(self) -> None:
+        components = self._score(self._row())
+        self.assertIn("policy_kl", components)
+        self.assertNotIn("prior_regret", components)
+
+    def test_prefers_the_prior_regret_when_the_row_carries_one(self) -> None:
+        components = self._score(self._row(root_prior_regret=0.4))
+        self.assertAlmostEqual(components["prior_regret"], 0.4, places=12)
+        self.assertAlmostEqual(components["score"], 0.4, places=12)
+        self.assertNotIn("policy_kl", components)
+
+    def test_still_reports_the_value_surprise(self) -> None:
+        components = self._score(self._row(root_prior_regret=0.4))
+        self.assertAlmostEqual(components["value_surprise"], 1.6, places=12)
+
+    def test_subtracts_the_split_half_noise_floor(self) -> None:
+        row = self._row(root_prior_regret=0.4, root_prior_regret_noise=0.1)
+        self.assertAlmostEqual(self._score(row)["score"], 0.3, places=12)
+
+    def test_a_regret_under_the_noise_floor_scores_zero(self) -> None:
+        row = self._row(root_prior_regret=0.1, root_prior_regret_noise=0.4)
+        self.assertEqual(self._score(row)["score"], 0.0)
+
+    def test_the_enemy_row_reads_the_enemy_regret(self) -> None:
+        row = self._row(
+            side="enemy",
+            root_prior_regret=0.9,
+            root_prior_regret_noise=0.0,
+            root_enemy_prior_regret=0.2,
+            root_enemy_prior_regret_noise=0.05,
+        )
+        self.assertAlmostEqual(self._score(row)["score"], 0.15, places=12)
+
+    def test_a_near_tie_no_longer_outscores_a_real_mistake(self) -> None:
+        """The inversion that filled one buffer with a single PP stall.
+
+        A root matrix estimated from two chance worlds solves to a near-pure
+        policy whose argmax is noise. A well-calibrated hedged prior shows its
+        *maximum* KL against exactly those samples, and near-zero regret,
+        because the actions it is hedging between are worth the same.
+        """
+        hedged = [0.5, 0.5, 0.0, 0.0]
+        near_tie = self._row(policy=[1.0, 0.0, 0.0, 0.0], root_prior_regret=0.01)
+        mistake = self._row(policy=[0.5, 0.5, 0.0, 0.0], root_prior_regret=0.8)
+        self.assertGreater(
+            _policy_kl(near_tie["policy"], hedged, 0b0011),
+            _policy_kl(mistake["policy"], hedged, 0b0011),
+        )
+        self.assertGreater(
+            _frontier_score(mistake, hedged)["score"],
+            _frontier_score(near_tie, hedged)["score"],
+        )
+
+
+class FrontierCapTest(unittest.TestCase):
+    """Caps on how much of the buffer any one battle can claim.
+
+    One real iteration ended with 253 of its 256 entries on a single reset;
+    a restart fraction of 0.25 then aimed a quarter of the next iteration's
+    episodes at that one battle.
+    """
+
+    @staticmethod
+    def _entry(
+        score: float, tag: str, reset: int = 0, episode: int = 0
+    ) -> dict[str, object]:
+        return {
+            "score": score,
+            "tag": tag,
+            "reset": {"seed": reset, "episode": reset},
+            "episode": episode,
+        }
+
+    @staticmethod
+    def _config(**overrides: object) -> TransformerPipelineConfig:
+        settings: dict[str, object] = {
+            "iterations": 1,
+            "selfplay_episodes": 1,
+            "arena_episodes": 1,
+            "episode_budget": 8,
+            "search_depth": 1,
+            "epochs": 1,
+            "batch_size": 1,
+            "learning_rate": 1e-3,
+            "weight_decay": 0.0,
+            "seed": 1,
+            "device": "cpu",
+            "d_model": 8,
+            "heads": 2,
+            "layers": 1,
+            "feedforward": 16,
+        }
+        settings.update(overrides)
+        return TransformerPipelineConfig(**settings)  # type: ignore[arg-type]
+
+    def _tags(self, buffer: _FrontierBuffer) -> list[str]:
+        return [entry["tag"] for entry in buffer.entries()]
+
+    def test_an_uncapped_buffer_lets_one_reset_own_everything(self) -> None:
+        buffer = _FrontierBuffer(3)
+        for index in range(5):
+            buffer.consider(self._entry(float(index), str(index), episode=index))
+        self.assertEqual(self._tags(buffer), ["4", "3", "2"])
+
+    def test_the_reset_cap_bounds_one_battle(self) -> None:
+        buffer = _FrontierBuffer(3, reset_cap=1)
+        for index in range(5):
+            buffer.consider(
+                self._entry(float(index), str(index), reset=index % 2, episode=index)
+            )
+        self.assertEqual(self._tags(buffer), ["4", "3"])
+
+    def test_the_episode_cap_bounds_one_episode(self) -> None:
+        buffer = _FrontierBuffer(4, episode_cap=2)
+        for index in range(6):
+            buffer.consider(self._entry(float(index), str(index), episode=index % 2))
+        self.assertEqual(self._tags(buffer), ["5", "4", "3", "2"])
+
+    def test_a_capped_group_still_swaps_in_a_better_entry(self) -> None:
+        buffer = _FrontierBuffer(4, reset_cap=1)
+        buffer.consider(self._entry(1.0, "weak"))
+        buffer.consider(self._entry(9.0, "strong"))
+        self.assertEqual(self._tags(buffer), ["strong"])
+
+    def test_a_capped_group_rejects_a_worse_entry(self) -> None:
+        buffer = _FrontierBuffer(4, reset_cap=1)
+        buffer.consider(self._entry(9.0, "strong"))
+        buffer.consider(self._entry(1.0, "weak"))
+        self.assertEqual(self._tags(buffer), ["strong"])
+
+    def test_the_cap_hands_the_freed_room_to_other_resets(self) -> None:
+        buffer = _FrontierBuffer(3, reset_cap=1)
+        for index in range(9):
+            buffer.consider(
+                self._entry(9.0 - index, str(index), reset=index // 3, episode=index)
+            )
+        self.assertEqual(self._tags(buffer), ["0", "3", "6"])
+
+    def test_both_caps_apply_together(self) -> None:
+        buffer = _FrontierBuffer(8, reset_cap=3, episode_cap=1)
+        for index in range(8):
+            buffer.consider(
+                self._entry(float(index), str(index), reset=0, episode=index % 2)
+            )
+        self.assertEqual(self._tags(buffer), ["7", "6"])
+
+    def test_a_long_stream_never_grows_the_buffer_past_capacity(self) -> None:
+        buffer = _FrontierBuffer(4, reset_cap=2, episode_cap=1)
+        for index in range(2000):
+            buffer.consider(
+                self._entry(float(index), str(index), reset=index % 3, episode=index)
+            )
+        self.assertEqual(len(buffer.entries()), 4)
+        self.assertEqual(self._tags(buffer), ["1999", "1998", "1997", "1996"])
+
+    def test_caps_survive_the_cross_worker_merge(self) -> None:
+        worker_a = [
+            self._entry(float(9 - index), f"a{index}", reset=0, episode=index)
+            for index in range(3)
+        ]
+        worker_b = [
+            self._entry(float(3 - index), f"b{index}", reset=1, episode=10 + index)
+            for index in range(3)
+        ]
+        merged = _merged_frontier([worker_a, worker_b], 4, reset_cap=1)
+        self.assertEqual([entry["tag"] for entry in merged], ["a0", "b0"])
+
+    def test_caps_flow_from_the_cli(self) -> None:
+        arguments = training_parser().parse_args(
+            ["transformer-train", "--output", "/tmp/frontier"]
+        )
+        self.assertEqual(arguments.frontier_reset_cap, 8)
+        self.assertEqual(arguments.frontier_episode_cap, 2)
+        self.assertTrue(arguments.prior_regret)
+
+    def test_the_config_defaults_stay_off(self) -> None:
+        config = self._config()
+        self.assertEqual(config.frontier_reset_cap, 0)
+        self.assertEqual(config.frontier_episode_cap, 0)
+        self.assertFalse(config.prior_regret)
+        self.assertFalse(config.split_half_reliability)
+
+    def test_the_search_config_carries_the_reliability_flags(self) -> None:
+        network = SimpleNamespace(config=SimpleNamespace(action_count=3))
+        search = _new_search(
+            object(),  # type: ignore[arg-type]
+            network,  # type: ignore[arg-type]
+            network,  # type: ignore[arg-type]
+            self._config(prior_regret=True, split_half_reliability=True),
+            random.Random(0),
+            random.Random(1),
+        )
+        self.assertTrue(search.config.prior_regret)
+        self.assertTrue(search.config.split_half_reliability)
+        plain = _new_search(
+            object(),  # type: ignore[arg-type]
+            network,  # type: ignore[arg-type]
+            network,  # type: ignore[arg-type]
+            self._config(),
+            random.Random(0),
+            random.Random(1),
+        )
+        self.assertFalse(plain.config.prior_regret)
+        self.assertFalse(plain.config.split_half_reliability)
+
+    def test_the_frontier_meta_reports_the_caps_when_set(self) -> None:
+        capped = SimpleNamespace(
+            frontier_buffer_size=128, frontier_reset_cap=8, frontier_episode_cap=2
+        )
+        self.assertEqual(
+            _frontier_meta(capped),
+            {
+                "frontier_buffer": "surprise-topn-v1",
+                "frontier_buffer_size": 128,
+                "frontier_reset_cap": 8,
+                "frontier_episode_cap": 2,
+            },
+        )
 
 
 class FrontierRestartTest(unittest.TestCase):

@@ -198,6 +198,32 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--collection-dirichlet-total", type=float, default=10.0)
     parser.add_argument("--frontier-buffer-size", type=int, default=256)
     parser.add_argument("--frontier-restart-fraction", type=float, default=0.25)
+    parser.add_argument(
+        "--frontier-reset-cap",
+        type=int,
+        default=8,
+        help="most frontier entries one originating reset may hold; 0 disables",
+    )
+    parser.add_argument(
+        "--frontier-episode-cap",
+        type=int,
+        default=2,
+        help="most frontier entries one episode may hold; 0 disables",
+    )
+    parser.add_argument(
+        "--no-split-half-reliability",
+        action="store_false",
+        dest="split_half_reliability",
+        help="stop solving the two chance worlds separately for a noise floor",
+    )
+    parser.set_defaults(split_half_reliability=True)
+    parser.add_argument(
+        "--no-prior-regret",
+        action="store_false",
+        dest="prior_regret",
+        help="score the frontier by policy KL instead of the prior's lost value",
+    )
+    parser.set_defaults(prior_regret=True)
     parser.add_argument("--matchup-value-cap", type=float, default=0.9)
     parser.add_argument("--matchup-filter-attempts", type=int, default=4)
     parser.add_argument("--matchup-lopsided-accept", type=float, default=0.15)
@@ -441,6 +467,10 @@ def main(argv: list[str] | None = None) -> int:
             collection_dirichlet_total=arguments.collection_dirichlet_total,
             frontier_buffer_size=arguments.frontier_buffer_size,
             frontier_restart_fraction=arguments.frontier_restart_fraction,
+            frontier_reset_cap=arguments.frontier_reset_cap,
+            frontier_episode_cap=arguments.frontier_episode_cap,
+            split_half_reliability=arguments.split_half_reliability,
+            prior_regret=arguments.prior_regret,
             matchup_value_cap=arguments.matchup_value_cap,
             matchup_filter_attempts=arguments.matchup_filter_attempts,
             matchup_lopsided_accept=arguments.matchup_lopsided_accept,

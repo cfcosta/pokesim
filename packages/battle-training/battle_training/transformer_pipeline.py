@@ -123,6 +123,10 @@ class TransformerPipelineConfig:
     collection_dirichlet_total: float = 0.0
     frontier_buffer_size: int = 0
     frontier_restart_fraction: float = 0.0
+    frontier_reset_cap: int = 0
+    frontier_episode_cap: int = 0
+    split_half_reliability: bool = False
+    prior_regret: bool = False
     matchup_value_cap: float = 0.0
     matchup_filter_attempts: int = 1
     matchup_lopsided_accept: float = 0.0
@@ -562,6 +566,8 @@ def _new_search(
             config.adaptive_payoff_spread_threshold,
             config.rmplus_backend,
             config.cfr_plus_solves,
+            config.split_half_reliability,
+            config.prior_regret,
         ),
         selection_rng,
         chance_rng,
@@ -758,6 +764,7 @@ def _smoothed_policy(
 
 _FRONTIER_VERSION = "surprise-topn-v1"
 _FRONTIER_KL_FLOOR = 1e-9
+_FRONTIER_COMPACT_SLACK = 16
 
 
 def _policy_kl(policy: list[float], prior: list[float], legal_mask: int) -> float:
@@ -771,39 +778,161 @@ def _policy_kl(policy: list[float], prior: list[float], legal_mask: int) -> floa
     return max(total, 0.0)
 
 
+def _frontier_regret(row: dict[str, Any]) -> float | None:
+    """This row's own prior regret, net of the split-half noise floor.
+
+    Search publishes both sides' regret on every row, so the side the row was
+    written for picks its own. Returns None when the solve did not measure it,
+    which is what keeps the legacy KL score reachable.
+    """
+    if row.get("side") == "enemy":
+        regret = row.get("root_enemy_prior_regret")
+        noise = row.get("root_enemy_prior_regret_noise")
+    else:
+        regret = row.get("root_prior_regret")
+        noise = row.get("root_prior_regret_noise")
+    if regret is None:
+        return None
+    return max(0.0, float(regret) - float(noise or 0.0))
+
+
 def _frontier_score(row: dict[str, Any], prior: list[float]) -> dict[str, float]:
+    """How much revisiting this state is worth.
+
+    Prior regret is the value the network prior gives up by playing itself
+    against the solved opponent, so it is exactly the cost of not searching
+    here. The KL it replaces measured the wrong thing: a root matrix estimated
+    from a couple of chance worlds solves to a near-pure policy whose argmax is
+    noise, and a well-calibrated hedged prior scores its *maximum* KL against
+    those samples. That inversion is how a single unresolvable position came to
+    own 253 of one iteration's 256 buffer entries.
+    """
     value_surprise = abs(row["search_value"] - row["value"])
-    policy_kl = _policy_kl(row["policy"], prior, row["legal_mask"])
+    regret = _frontier_regret(row)
+    if regret is None:
+        policy_kl = _policy_kl(row["policy"], prior, row["legal_mask"])
+        return {
+            "score": value_surprise + policy_kl,
+            "value_surprise": value_surprise,
+            "policy_kl": policy_kl,
+        }
     return {
-        "score": value_surprise + policy_kl,
+        "score": regret,
         "value_surprise": value_surprise,
-        "policy_kl": policy_kl,
+        "prior_regret": regret,
     }
 
 
-class _FrontierBuffer:
-    """Bounded top-N buffer over scored entries; earlier entries win ties."""
+@dataclass(order=True)
+class _FrontierItem:
+    """One scored candidate, shared by the buffer's global and group heaps.
 
-    def __init__(self, capacity: int) -> None:
+    Ordering is (score, order) only; `order` is unique, so a comparison never
+    reaches the unorderable entry dict. Retiring an item flips `live` in every
+    heap holding it at once, which is what lets a group cap evict an entry the
+    global heap already accepted.
+    """
+
+    score: float
+    order: int
+    entry: dict[str, Any] = field(compare=False)
+    keys: tuple[Any, ...] = field(compare=False, default=())
+    live: bool = field(compare=False, default=True)
+
+
+class _FrontierBuffer:
+    """Bounded top-N buffer over scored entries; earlier entries win ties.
+
+    The optional caps bound how many entries any one originating reset or any
+    one episode may hold. Without them a position search cannot resolve takes
+    the whole buffer, and the restart fraction then aims a quarter of the next
+    iteration's episodes at that single battle.
+    """
+
+    def __init__(self, capacity: int, reset_cap: int = 0, episode_cap: int = 0) -> None:
         self.capacity = max(capacity, 0)
-        self._heap: list[tuple[float, int, dict[str, Any]]] = []
+        self.reset_cap = max(reset_cap, 0)
+        self.episode_cap = max(episode_cap, 0)
+        self._heap: list[_FrontierItem] = []
+        self._groups: dict[Any, list[_FrontierItem]] = {}
+        self._counts: dict[Any, int] = {}
+        self._live = 0
         self._counter = 0
+
+    def _caps(self, entry: dict[str, Any]) -> list[tuple[Any, int]]:
+        caps: list[tuple[Any, int]] = []
+        if self.reset_cap:
+            reset = entry.get("reset")
+            # The reset recipe is a flat dict of scalars; a frontier restart
+            # carries the recipe it branched from, so every replay of one
+            # battle lands in the same group as the battle itself.
+            key = tuple(sorted(reset.items())) if isinstance(reset, dict) else reset
+            caps.append((("reset", key), self.reset_cap))
+        if self.episode_cap:
+            caps.append((("episode", entry.get("episode")), self.episode_cap))
+        return caps
+
+    @staticmethod
+    def _weakest(heap: list[_FrontierItem]) -> _FrontierItem:
+        while not heap[0].live:
+            heapq.heappop(heap)
+        return heap[0]
+
+    def _retire(self, item: _FrontierItem) -> None:
+        item.live = False
+        self._live -= 1
+        for key in item.keys:
+            self._counts[key] -= 1
 
     def consider(self, entry: dict[str, Any]) -> None:
         if not self.capacity:
             return
-        # The unique -counter breaks score ties before tuple comparison can
-        # ever reach the (unorderable) entry dict.
-        item = (entry["score"], -self._counter, entry)
+        caps = self._caps(entry)
+        item = _FrontierItem(
+            entry["score"], -self._counter, entry, tuple(key for key, _ in caps)
+        )
         self._counter += 1
-        if len(self._heap) < self.capacity:
-            heapq.heappush(self._heap, item)
-        elif item[:2] > self._heap[0][:2]:
-            heapq.heapreplace(self._heap, item)
+        for key, cap in caps:
+            if self._counts.get(key, 0) >= cap and item <= self._weakest(
+                self._groups[key]
+            ):
+                return
+        if self._live >= self.capacity and item <= self._weakest(self._heap):
+            return
+        for key, cap in caps:
+            # An earlier cap may have retired an item this group also held, so
+            # the count is re-read rather than reused from the check above.
+            if self._counts.get(key, 0) >= cap:
+                self._retire(self._weakest(self._groups[key]))
+            heapq.heappush(self._groups.setdefault(key, []), item)
+            self._counts[key] = self._counts.get(key, 0) + 1
+        heapq.heappush(self._heap, item)
+        self._live += 1
+        if self._live > self.capacity:
+            self._retire(self._weakest(self._heap))
+        self._compact()
+
+    def _compact(self) -> None:
+        # Retired items stay buried until they surface, and a group whose
+        # entries all died would otherwise keep its key forever. Rebuilding
+        # once the dead outnumber the live keeps both bounded by capacity
+        # rather than by the number of decisions considered.
+        if len(self._heap) <= 2 * self.capacity + _FRONTIER_COMPACT_SLACK:
+            return
+        self._heap = [item for item in self._heap if item.live]
+        heapq.heapify(self._heap)
+        groups: dict[Any, list[_FrontierItem]] = {}
+        for item in self._heap:
+            for key in item.keys:
+                groups.setdefault(key, []).append(item)
+        for group in groups.values():
+            heapq.heapify(group)
+        self._groups = groups
+        self._counts = {key: len(group) for key, group in groups.items()}
 
     def entries(self) -> list[dict[str, Any]]:
-        ranked = sorted(self._heap, key=lambda item: item[:2], reverse=True)
-        return [entry for _, _, entry in ranked]
+        ranked = sorted((item for item in self._heap if item.live), reverse=True)
+        return [item.entry for item in ranked]
 
 
 def _serialized_snapshot(snapshot: Snapshot) -> dict[str, Any]:
@@ -893,9 +1022,14 @@ def _frontier_entry(
 
 
 def _merged_frontier(
-    entry_lists: list[list[dict[str, Any]]], capacity: int
+    entry_lists: list[list[dict[str, Any]]],
+    capacity: int,
+    reset_cap: int = 0,
+    episode_cap: int = 0,
 ) -> list[dict[str, Any]]:
-    merged = _FrontierBuffer(capacity)
+    # Each worker capped only its own slice, so the caps are re-applied here:
+    # a battle split across two workers would otherwise pass both.
+    merged = _FrontierBuffer(capacity, reset_cap, episode_cap)
     for entries in entry_lists:
         for entry in entries:
             merged.consider(entry)
@@ -905,10 +1039,15 @@ def _merged_frontier(
 def _frontier_meta(config: TransformerPipelineConfig) -> dict[str, Any]:
     if not config.frontier_buffer_size:
         return {}
-    return {
+    meta = {
         "frontier_buffer": _FRONTIER_VERSION,
         "frontier_buffer_size": config.frontier_buffer_size,
     }
+    if config.frontier_reset_cap:
+        meta["frontier_reset_cap"] = config.frontier_reset_cap
+    if config.frontier_episode_cap:
+        meta["frontier_episode_cap"] = config.frontier_episode_cap
+    return meta
 
 
 def _finalize_frontier(
@@ -1535,7 +1674,11 @@ def _collect_rows_single(
     species_counts: dict[str, int] = {}
     decision_quality = DecisionQualityMetrics()
     recent_battles: list[dict[str, Any]] = []
-    frontier = _FrontierBuffer(config.frontier_buffer_size)
+    frontier = _FrontierBuffer(
+        config.frontier_buffer_size,
+        config.frontier_reset_cap,
+        config.frontier_episode_cap,
+    )
     restart_entries = _frontier_restart_entries(frontier_source)
     restart_plan = _frontier_restart_plan(config, iteration, len(restart_entries))
     frontier_restart_episodes = 0
@@ -2650,6 +2793,8 @@ def _merge_collection_rows(
         merged["frontier"] = _merged_frontier(
             [metrics.get("frontier", []) for metrics in worker_metrics],
             config.frontier_buffer_size,
+            config.frontier_reset_cap,
+            config.frontier_episode_cap,
         )
     if config.team_replay_fraction and config.team_replay_buffer_size:
         # Round-robin episode partitioning puts a pair's two legs on different
@@ -3760,6 +3905,10 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("collection_dirichlet_total", 0.0)
     normalized.setdefault("frontier_buffer_size", 0)
     normalized.setdefault("frontier_restart_fraction", 0.0)
+    normalized.setdefault("frontier_reset_cap", 0)
+    normalized.setdefault("frontier_episode_cap", 0)
+    normalized.setdefault("split_half_reliability", False)
+    normalized.setdefault("prior_regret", False)
     normalized.setdefault("matchup_value_cap", 0.0)
     normalized.setdefault("matchup_filter_attempts", 1)
     normalized.setdefault("matchup_lopsided_accept", 0.0)
@@ -4017,6 +4166,14 @@ def run_transformer_pipeline(
         raise ValueError("frontier_buffer_size must be nonnegative")
     if not 0.0 <= config.frontier_restart_fraction <= 0.25:
         raise ValueError("frontier_restart_fraction must be in [0, 0.25]")
+    if config.frontier_reset_cap < 0:
+        raise ValueError("frontier_reset_cap must be nonnegative")
+    if config.frontier_episode_cap < 0:
+        raise ValueError("frontier_episode_cap must be nonnegative")
+    if config.prior_regret and not config.split_half_reliability:
+        raise ValueError(
+            "prior_regret needs split_half_reliability for its noise floor"
+        )
     if not 0.0 <= config.matchup_value_cap < 1.0:
         raise ValueError("matchup_value_cap must be in [0, 1)")
     if config.matchup_filter_attempts < 1:
