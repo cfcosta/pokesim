@@ -398,6 +398,32 @@ class _DistinctFeatureToyServer(_ToyServer):
         )
 
 
+class _PriorRegretToyServer(_ToyServer):
+    """Player action 1 always wins, and the toy player prior is pure on 0."""
+
+    def search_step(
+        self, handle: int, player_action: int, enemy_action: int, chance_seed: int
+    ) -> Snapshot:
+        del handle, enemy_action, chance_seed
+        child = self.next_handle
+        self.next_handle += 1
+        self.states[child] = (2, player_action)
+        return self._snapshot(child, done=True, result=1 if player_action == 1 else -1)
+
+
+class _EnemyRegretToyServer(_ToyServer):
+    """Enemy action 0 always wins for the enemy, whose prior is pure on 1."""
+
+    def search_step(
+        self, handle: int, player_action: int, enemy_action: int, chance_seed: int
+    ) -> Snapshot:
+        del handle, player_action, chance_seed
+        child = self.next_handle
+        self.next_handle += 1
+        self.states[child] = (2, enemy_action)
+        return self._snapshot(child, done=True, result=-1 if enemy_action == 0 else 1)
+
+
 class _ChanceSplitToyServer(_ToyServer):
     """Terminal payoffs flip between the two common-random-number worlds.
 
@@ -4930,6 +4956,114 @@ class DirichletRootNoiseTest(unittest.TestCase):
         self.assertEqual(arguments.collection_dirichlet_alpha, 0.6)
         self.assertEqual(arguments.collection_dirichlet_weight, 0.3)
         self.assertEqual(arguments.collection_dirichlet_total, 6.5)
+
+
+class PriorRegretTest(unittest.TestCase):
+    """What the network's own prior costs it at the state search just solved."""
+
+    # RM+ averages in the prior-seeded first iterations, so a pure solve lands
+    # a hair short of the exact payoff gap.
+    _AVERAGING_SLACK = 1e-2
+
+    @staticmethod
+    def _search(server: _ToyServer, **overrides: object) -> SearchResult:
+        network = _JointToyNetwork()
+        settings: dict[str, object] = {
+            "chance_samples_per_joint": 1,
+            "max_depth": 1,
+            "expansion_budget": 8,
+            "minimum_expansion_budget": 8,
+            "prior_regret": True,
+        }
+        settings.update(overrides)
+        return SimultaneousTreeSearch(
+            server,
+            network,
+            network,
+            JointSearchConfig(**settings),  # type: ignore[arg-type]
+            random.Random(1),
+            random.Random(2),
+        ).search(server._snapshot(0), sample_actions=False)
+
+    def _diagnostics(
+        self, server: _ToyServer, **overrides: object
+    ) -> dict[str, float | int | str]:
+        return self._search(server, **overrides).diagnostics or {}
+
+    def test_measures_the_value_a_wrong_player_prior_gives_up(self) -> None:
+        diagnostics = self._diagnostics(_PriorRegretToyServer())
+        self.assertAlmostEqual(
+            float(diagnostics["root_prior_regret"]), 2.0, delta=self._AVERAGING_SLACK
+        )
+        self.assertAlmostEqual(
+            float(diagnostics["root_enemy_prior_regret"]),
+            0.0,
+            delta=self._AVERAGING_SLACK,
+        )
+
+    def test_measures_the_value_a_wrong_enemy_prior_gives_up(self) -> None:
+        diagnostics = self._diagnostics(_EnemyRegretToyServer())
+        self.assertAlmostEqual(
+            float(diagnostics["root_prior_regret"]), 0.0, delta=self._AVERAGING_SLACK
+        )
+        self.assertAlmostEqual(
+            float(diagnostics["root_enemy_prior_regret"]),
+            2.0,
+            delta=self._AVERAGING_SLACK,
+        )
+
+    def test_regret_is_never_negative(self) -> None:
+        for server in (
+            _PriorRegretToyServer(),
+            _EnemyRegretToyServer(),
+            _ToyServer(),
+        ):
+            diagnostics = self._diagnostics(server)
+            with self.subTest(server=type(server).__name__):
+                self.assertGreaterEqual(float(diagnostics["root_prior_regret"]), 0.0)
+                self.assertGreaterEqual(
+                    float(diagnostics["root_enemy_prior_regret"]), 0.0
+                )
+
+    def test_disagreeing_chance_worlds_raise_the_regret_noise_floor(self) -> None:
+        diagnostics = self._diagnostics(
+            _ChanceSplitToyServer(),
+            chance_samples_per_joint=2,
+            split_half_reliability=True,
+        )
+        # The pooled matrix averages the two worlds flat, so the published
+        # regret is nil while each world on its own looks decisive.
+        self.assertAlmostEqual(
+            float(diagnostics["root_prior_regret"]), 0.0, delta=self._AVERAGING_SLACK
+        )
+        self.assertAlmostEqual(
+            float(diagnostics["root_prior_regret_noise"]),
+            2.0,
+            delta=self._AVERAGING_SLACK,
+        )
+
+    def test_agreeing_chance_worlds_leave_the_noise_floor_at_zero(self) -> None:
+        diagnostics = self._diagnostics(
+            _ChanceStableToyServer(),
+            chance_samples_per_joint=2,
+            split_half_reliability=True,
+        )
+        self.assertAlmostEqual(
+            float(diagnostics["root_prior_regret_noise"]),
+            0.0,
+            delta=self._AVERAGING_SLACK,
+        )
+
+    def test_the_noise_floor_needs_split_half_reliability(self) -> None:
+        diagnostics = self._diagnostics(_PriorRegretToyServer())
+        self.assertIn("root_prior_regret", diagnostics)
+        self.assertNotIn("root_prior_regret_noise", diagnostics)
+        self.assertNotIn("root_enemy_prior_regret_noise", diagnostics)
+
+    def test_prior_regret_is_off_by_default_and_reports_nothing(self) -> None:
+        diagnostics = self._diagnostics(_PriorRegretToyServer(), prior_regret=False)
+        self.assertNotIn("root_prior_regret", diagnostics)
+        self.assertNotIn("root_enemy_prior_regret", diagnostics)
 
 
 class SplitHalfReliabilityTest(unittest.TestCase):

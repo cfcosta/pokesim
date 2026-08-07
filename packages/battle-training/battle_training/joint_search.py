@@ -102,6 +102,7 @@ class JointSearchConfig:
     rmplus_backend: str = PYTHON_REFERENCE_BACKEND
     cfr_plus_solves: bool = False
     split_half_reliability: bool = False
+    prior_regret: bool = False
 
 
 def legal_actions(mask: int, action_count: int) -> list[int]:
@@ -797,6 +798,8 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._split_half_player_distance = 0.0
         self._split_half_enemy_distance = 0.0
         self._split_half_value_gap = 0.0
+        self._prior_regret_noise = 0.0
+        self._enemy_prior_regret_noise = 0.0
 
     def _legal_from_priors(self, mask: int, priors: list[float]) -> list[int]:
         actions = legal_actions(mask, self.action_count)
@@ -980,6 +983,38 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             float(row_values.max() - column_values.min()),
         )
 
+    def _prior_regret(
+        self,
+        node: _TreeNode,
+        payoff: PayoffMatrix,
+        player_policy: Sequence[float],
+        enemy_policy: Sequence[float],
+    ) -> tuple[float, float]:
+        """Value each side gives up by playing its prior against the solution.
+
+        The prior here is the one search itself consumed -- already redundancy
+        shaped and restricted to the searched legal set -- so this is the exact
+        cost of skipping the search at this state rather than a distance
+        between two distributions. Unlike a policy KL it is bounded by the
+        payoff range and it goes to zero when the solve is a near-tie, which is
+        when a large KL against a near-pure sample means nothing.
+        """
+        matrix = np.asarray(payoff, dtype=np.float64)[
+            np.ix_(node.player_legal, node.enemy_legal)
+        ]
+        player = _normalized_prior(list(player_policy), node.player_legal)
+        enemy = _normalized_prior(list(enemy_policy), node.enemy_legal)
+        player_prior = _normalized_prior(node.player_priors, node.player_legal)
+        enemy_prior = _normalized_prior(node.enemy_priors, node.enemy_legal)
+        row_values = matrix @ enemy
+        column_values = -(player @ matrix)
+        # Both solved policies best-respond within the solve, so each gap is
+        # nonnegative up to solver error; the clamp absorbs only that error.
+        return (
+            max(0.0, float((player - player_prior) @ row_values)),
+            max(0.0, float((enemy - enemy_prior) @ column_values)),
+        )
+
     def _root_equilibrium(
         self, node: _TreeNode
     ) -> tuple[tuple[float, ...], tuple[float, ...], float, float]:
@@ -1001,6 +1036,8 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._split_half_player_distance = 0.0
         self._split_half_enemy_distance = 0.0
         self._split_half_value_gap = 0.0
+        self._prior_regret_noise = 0.0
+        self._enemy_prior_regret_noise = 0.0
         if not all(
             self._half_is_covered(node, half) for half in range(len(node.half_payoff))
         ):
@@ -1018,6 +1055,18 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             abs(left - right) for left, right in zip(first[1], second[1], strict=True)
         )
         self._split_half_value_gap = abs(first[2] - second[2])
+        if self.config.prior_regret:
+            # Each world is scored on its own matrix against its own solve, so
+            # the spread between them is the noise in the published regret
+            # rather than noise in some adjacent quantity.
+            regrets = [
+                self._prior_regret(node, payoff, solve[0], solve[1])
+                for payoff, solve in zip(
+                    node.half_payoff[:_SPLIT_HALVES], halves, strict=True
+                )
+            ]
+            self._prior_regret_noise = abs(regrets[0][0] - regrets[1][0])
+            self._enemy_prior_regret_noise = abs(regrets[0][1] - regrets[1][1])
         solves = (player_policy, first[0], second[0])
         averaged_player = tuple(
             sum(solve[action] for solve in solves) / len(solves)
@@ -1888,6 +1937,17 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     self._split_half_enemy_distance
                 )
                 diagnostics["root_split_half_value_gap"] = self._split_half_value_gap
+            if self.config.prior_regret:
+                regret, enemy_regret = self._prior_regret(
+                    root, root.payoff, root.player_policy, root.enemy_policy
+                )
+                diagnostics["root_prior_regret"] = regret
+                diagnostics["root_enemy_prior_regret"] = enemy_regret
+                if self.config.split_half_reliability:
+                    diagnostics["root_prior_regret_noise"] = self._prior_regret_noise
+                    diagnostics["root_enemy_prior_regret_noise"] = (
+                        self._enemy_prior_regret_noise
+                    )
         return diagnostics
 
     def _fallback(
