@@ -364,7 +364,7 @@ function renderBattlePopulation(data) {
     ["Setup use", collection ? `${number(collection.setup_uses)} · ${pct(collection.setup_use_rate)}` : "—"],
     ["Exploitability", collection ? number(collection.mean_search_exploitability, 3) : "—"],
     ["Deep / root", collection ? `${number(collection.deep_search_decisions)} / ${number(collection.root_only_decisions)}` : "—"],
-    ["Full-node batch", collection ? number(collection.mean_deep_full_inference_batch, 1) : "—"],
+    ["Joint coverage", collection ? pct(collection.mean_sampled_joint_coverage) : "—"],
     ["Router misses", collection ? `${number(collection.forced_router_false_negatives)} / ${number(collection.forced_router_samples)} · ${pct(collection.forced_router_false_negative_rate)}` : "—"],
     ["Mirror / model / AI", collection ? `${number(collection.mirror_episodes)} / ${number(collection.model_opponent_episodes)} / ${number(collection.heuristic_opponent_episodes)}` : "—"],
     ["Species coverage", collection?.species_schedule ? `${number(speciesValues.length)} / 151 · ${speciesRange}` : "—"],
@@ -899,7 +899,7 @@ function renderTurn(turn, rosters, context) {
     { kind: "action", side: 1, action: turn.enemy_action, synthetic: true },
     ...recorded,
   ];
-  const search = turn.root_value == null ? null : `Search value ${number(turn.root_value, 3)}${turn.exploitability == null ? "" : ` · exploitability ${number(turn.exploitability, 3)}`}${turn.tree_nodes == null ? "" : ` · ${number(turn.tree_nodes)} nodes · depth ${number(turn.tree_max_depth)}`}`;
+  const search = turn.root_value == null ? null : `Search value ${number(turn.root_value, 3)}${turn.exploitability == null ? "" : ` · exploitability ${number(turn.exploitability, 3)}`}${turn.tree_nodes == null ? "" : ` · ${number(turn.tree_nodes)} nodes`}`;
   const turnMarker = eventLine("turn", null, `Turn ${number(turn.turn)}`, [element("strong", "turn-request", title(turn.request)), search ? ` · ${search}` : ""]);
   const playerPolicy = policyPreview(turn.player_top_policy);
   const enemyPolicy = policyPreview(turn.enemy_top_policy);

@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import math
 import random
-from collections.abc import Generator, Sequence
-from concurrent.futures import Future, ThreadPoolExecutor
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -764,14 +763,12 @@ class _TreeNode:
     payoff: PayoffMatrix
     counts: list[list[int]]
     outcomes: dict[tuple[int, int], list[_TreeOutcome]] = field(default_factory=dict)
-    children: dict[int, _TreeNode] = field(default_factory=dict)
     player_policy: tuple[float, ...] = ()
     enemy_policy: tuple[float, ...] = ()
     root_value: float = 0.0
     exploitability: float = 0.0
     online_exploitability: float = 0.0
     expanded: bool = False
-    visits: int = 0
     solve_count: int = 0
     player_strategy_sum: list[float] = field(default_factory=list)
     enemy_strategy_sum: list[float] = field(default_factory=list)
@@ -780,37 +777,17 @@ class _TreeNode:
     sampled_pairs: set[tuple[int, int]] = field(default_factory=set)
     half_payoff: list[PayoffMatrix] = field(default_factory=list)
     half_counts: list[list[list[int]]] = field(default_factory=list)
-    half_cursor: int = 0
-
-
-@dataclass(frozen=True)
-class _NativeFrontier:
-    requests: list[tuple[int, int, int, int]]
-
-
-@dataclass(frozen=True)
-class _InferenceFrontier:
-    snapshots: list[Snapshot]
-
-
-@dataclass(frozen=True)
-class _NodeInferenceFrontier:
-    snapshots: list[Snapshot]
-
-
-type _NodeEvaluation = tuple[list[float], list[float], float]
-type _Frontier = _NativeFrontier | _InferenceFrontier | _NodeInferenceFrontier
-type _FrontierResponse = (
-    list[Snapshot] | list[tuple[float, float]] | list[_NodeEvaluation]
-)
 
 
 class SimultaneousTreeSearch(BatchedJointRegretSearch):
-    """Matrix-valued SM-MCTS with RM+ at every expanded simultaneous node.
+    """One exhaustive matrix at the root, solved to a prior-anchored equilibrium.
 
-    Expansion covers the complete legal joint matrix. Later visits spend their
-    budget on equilibrium-relevant descendants and explicit fresh chance
-    outcomes instead of independent disposable rollout trajectories.
+    Every legal joint pair is stepped and evaluated, so each cell of the payoff
+    matrix rests on the same number of chance samples as every other.  Search
+    stops there on purpose: the descendants a deeper pass would visit are the
+    ones the current policy already likes, so refining them replaces balanced
+    estimates with lopsided ones and moves the root solve for reasons that have
+    nothing to do with the position.
     """
 
     def __init__(
@@ -873,29 +850,15 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         ] = {}
         self._expanded_nodes = 0
         self._chance_outcomes = 0
-        self._max_depth_reached = 0
         self._sampled_joint_pairs = 0
         self._possible_joint_pairs = 0
         self._cross_root_batch_size = 1
         self._cross_root_root_leaves = 0
-        self._deep_inference_calls = 0
-        self._deep_inference_rows = 0
-        self._deep_inference_waves = 0
-        self._deep_full_inference_calls = 0
-        self._deep_full_inference_rows = 0
-        self._deep_full_inference_waves = 0
-        self._deep_native_calls = 0
-        self._deep_native_rows = 0
-        self._deep_native_waves = 0
-        self._deep_overlap_waves = 0
         self.budget_rng = budget_rng or random.Random(0)
         self.prior_noise = prior_noise
         self._adaptive_deep_selected = True
         self._adaptive_router_score = 1.0
         self._adaptive_reason = "adaptive-disabled"
-        self._deep_policy_change = 0.0
-        self._deep_action_changed = 0
-        self._deep_search_needed = -1
         self._split_half_available = 0
         self._split_half_player_distance = 0.0
         self._split_half_enemy_distance = 0.0
@@ -1656,32 +1619,17 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             results[group_id] = values
         return results, calls, rows
 
-    def _expansion_pairs(
-        self, node: _TreeNode, full_matrix: bool
-    ) -> list[tuple[int, int]]:
-        if full_matrix:
-            return [
-                (player, enemy)
-                for player in node.player_legal
-                for enemy in node.enemy_legal
-            ]
-        pair_count = max(len(node.player_legal), len(node.enemy_legal))
-        rotations = min(self.config.deeper_joint_rotations, len(node.enemy_legal))
-        pairs: list[tuple[int, int]] = []
-        for rotation in range(rotations):
-            for index in range(pair_count):
-                pair = (
-                    node.player_legal[index % len(node.player_legal)],
-                    node.enemy_legal[(index + rotation) % len(node.enemy_legal)],
-                )
-                if pair not in pairs:
-                    pairs.append(pair)
-        return pairs
+    def _expansion_pairs(self, node: _TreeNode) -> list[tuple[int, int]]:
+        return [
+            (player, enemy)
+            for player in node.player_legal
+            for enemy in node.enemy_legal
+        ]
 
     def _expansion_spec(
-        self, node: _TreeNode, full_matrix: bool
+        self, node: _TreeNode
     ) -> tuple[list[tuple[int, int, int]], list[tuple[int, int, int, int]]]:
-        pairs = self._expansion_pairs(node, full_matrix)
+        pairs = self._expansion_pairs(node)
         samples = [
             (player, enemy, sample)
             for player, enemy in pairs
@@ -1731,180 +1679,6 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._chance_outcomes += len(successors)
         self._solve_node(node)
         return len(successors)
-
-    def _expand_frontier(
-        self, node: _TreeNode, full_matrix: bool = False
-    ) -> Generator[_Frontier, _FrontierResponse, int]:
-        samples, requests = self._expansion_spec(node, full_matrix)
-        response = yield _NativeFrontier(requests)
-        successors = cast(list[Snapshot], response)
-        if any(successor.divergence is not None for successor in successors):
-            raise _TreeDivergence("semantic divergence in tree expansion")
-        response = yield _InferenceFrontier(successors)
-        evaluated = cast(list[tuple[float, float]], response)
-        return self._install_expansion(node, samples, successors, evaluated)
-
-    def _chance_resample_probability(self, evidence: int) -> float:
-        """Sample uncertain chance outcomes aggressively, then decay to the floor."""
-        if evidence < 1:
-            return 1.0
-        return max(self.config.chance_resample, 1.0 / math.sqrt(evidence))
-
-    def _mixed_policy(
-        self,
-        policy: tuple[float, ...],
-        priors: list[float],
-        legal: list[int],
-        visits: int,
-    ) -> list[float]:
-        """Progressively mix RM+ with neural priors while retaining legal support."""
-        epsilon = max(0.02, self.config.exploration / ((visits + 1) ** 0.5))
-        prior_total = sum(priors[action] for action in legal)
-        result = [0.0] * self.action_count
-        for action in legal:
-            exploration = (
-                priors[action] / prior_total if prior_total > 0.0 else 1.0 / len(legal)
-            )
-            result[action] = (1.0 - epsilon) * policy[action] + epsilon * exploration
-        return result
-
-    def _new_chance_outcome_frontier(
-        self, node: _TreeNode, player_action: int, enemy_action: int
-    ) -> Generator[_Frontier, _FrontierResponse, _TreeOutcome]:
-        response = yield _NativeFrontier(
-            [
-                (
-                    node.snapshot.handle,
-                    player_action,
-                    enemy_action,
-                    self.chance_rng.getrandbits(63),
-                )
-            ]
-        )
-        successor = cast(list[Snapshot], response)[0]
-        if successor.divergence is not None:
-            raise _TreeDivergence("semantic divergence in tree simulation")
-        response = yield _InferenceFrontier([successor])
-        evaluated = cast(list[tuple[float, float]], response)[0][0]
-        if successor.done:
-            delta = 0.0
-        else:
-            delta = _tactical_potential(
-                successor.player_features
-            ) - _tactical_potential(node.snapshot.player_features)
-        outcome = _TreeOutcome(successor, delta, evaluated)
-        pair = (player_action, enemy_action)
-        node.outcomes.setdefault(pair, []).append(outcome)
-        if pair not in node.sampled_pairs:
-            node.sampled_pairs.add(pair)
-            self._sampled_joint_pairs += 1
-        self._chance_outcomes += 1
-        return outcome
-
-    def _joint_cost(self, node: _TreeNode) -> int:
-        return (
-            len(self._expansion_pairs(node, False))
-            * self.config.chance_samples_per_joint
-        )
-
-    def _simulate_frontier(
-        self, node: _TreeNode, depth: int, remaining: int
-    ) -> Generator[_Frontier, _FrontierResponse, tuple[float, int, bool]]:
-        self._max_depth_reached = max(self._max_depth_reached, depth)
-        node.visits += 1
-        player_policy = self._mixed_policy(
-            tuple(node.player_policy),
-            node.player_priors,
-            node.player_legal,
-            node.visits,
-        )
-        enemy_policy = self._mixed_policy(
-            tuple(node.enemy_policy),
-            node.enemy_priors,
-            node.enemy_legal,
-            node.visits,
-        )
-        player_action = _sample(player_policy, self.selection_rng)
-        enemy_action = _sample(enemy_policy, self.selection_rng)
-        cost = 0
-        pair = (player_action, enemy_action)
-        if pair not in node.outcomes and remaining <= 0:
-            return node.root_value, 0, False
-        evidence = len(node.outcomes.get(pair, ()))
-        fresh = pair not in node.outcomes or (
-            remaining > 0
-            and self.selection_rng.random()
-            < self._chance_resample_probability(evidence)
-        )
-        if fresh:
-            outcome = yield from self._new_chance_outcome_frontier(
-                node, player_action, enemy_action
-            )
-            cost = 1
-        else:
-            outcomes = node.outcomes[pair]
-            outcome = outcomes[self.selection_rng.randrange(len(outcomes))]
-        successor = outcome.snapshot
-        if successor.done:
-            value = float(successor.terminal_return or 0)
-            learned = fresh
-        elif depth + 1 >= self.config.max_depth:
-            value = max(-1.0, min(1.0, outcome.leaf_value + outcome.tactical_delta))
-            learned = fresh
-        else:
-            child = node.children.get(successor.handle)
-            if child is None:
-                response = yield _NodeInferenceFrontier([successor])
-                evaluation = cast(list[_NodeEvaluation], response)[0]
-                child = self._make_node(successor, evaluation)
-                node.children[successor.handle] = child
-            if not child.expanded:
-                expansion_cost = self._joint_cost(child)
-                if cost + expansion_cost <= remaining:
-                    cost += yield from self._expand_frontier(child, False)
-                    self._max_depth_reached = max(self._max_depth_reached, depth + 1)
-                    value = max(
-                        -1.0,
-                        min(1.0, outcome.tactical_delta + child.root_value),
-                    )
-                    learned = True
-                else:
-                    value = max(
-                        -1.0,
-                        min(1.0, outcome.leaf_value + outcome.tactical_delta),
-                    )
-                    learned = fresh
-            else:
-                (
-                    child_value,
-                    child_cost,
-                    child_learned,
-                ) = yield from self._simulate_frontier(
-                    child, depth + 1, remaining - cost
-                )
-                learned = fresh or child_learned
-                cost += child_cost
-                value = max(
-                    -1.0,
-                    min(1.0, outcome.tactical_delta + child_value),
-                )
-        if learned:
-            # Resampled outcomes carry no chance-world label, so they are dealt
-            # alternately: still two disjoint sub-samples of the same estimator.
-            self._record_value(
-                node, player_action, enemy_action, value, node.half_cursor
-            )
-            node.half_cursor += 1
-            self._solve_node(node)
-        return value, cost, learned
-
-    def _average_policy(
-        self, strategy_sum: list[float], solves: int, fallback: tuple[float, ...]
-    ) -> tuple[float, ...]:
-        if solves <= 0:
-            return fallback
-        weight = solves * (solves + 1) / 2 if self.config.cfr_plus_solves else solves
-        return tuple(value / weight for value in strategy_sum)
 
     @classmethod
     def _pooled_budget_scores(
@@ -1992,20 +1766,15 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             return True, "forced-calibration-sample"
         return False, "router-stable-root"
 
-    def _diagnostics(
-        self, simulations: int, converged: bool, root: _TreeNode | None
-    ) -> dict[str, float | int | str]:
+    def _diagnostics(self, root: _TreeNode | None) -> dict[str, float | int | str]:
         diagnostics: dict[str, float | int | str] = {
             "tree_nodes": self._expanded_nodes,
-            "tree_simulations": simulations,
-            "tree_max_depth": self._max_depth_reached,
             "chance_outcomes": self._chance_outcomes,
             "sampled_joint_coverage": (
                 self._sampled_joint_pairs / self._possible_joint_pairs
                 if self._possible_joint_pairs
                 else 0.0
             ),
-            "tree_converged": int(converged),
             "cross_root_batch_size": self._cross_root_batch_size,
             "cross_root_root_leaves": self._cross_root_root_leaves,
             "inference_cache_hits": self._inference_cache_stats["hits"],
@@ -2014,31 +1783,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 self._inference_cache_stats["hits"]
                 / max(1, sum(self._inference_cache_stats.values()))
             ),
-            "deep_inference_calls": self._deep_inference_calls,
-            "deep_inference_rows": self._deep_inference_rows,
-            "deep_inference_waves": self._deep_inference_waves,
-            "mean_deep_inference_batch": (
-                self._deep_inference_rows / max(1, self._deep_inference_calls)
-            ),
-            "deep_full_inference_calls": self._deep_full_inference_calls,
-            "deep_full_inference_rows": self._deep_full_inference_rows,
-            "deep_full_inference_waves": self._deep_full_inference_waves,
-            "mean_deep_full_inference_batch": (
-                self._deep_full_inference_rows / max(1, self._deep_full_inference_calls)
-            ),
-            "deep_native_calls": self._deep_native_calls,
-            "deep_native_rows": self._deep_native_rows,
-            "deep_native_waves": self._deep_native_waves,
-            "mean_deep_native_batch": (
-                self._deep_native_rows / max(1, self._deep_native_calls)
-            ),
-            "deep_overlap_waves": self._deep_overlap_waves,
             "adaptive_deep_selected": int(self._adaptive_deep_selected),
             "adaptive_router_score": self._adaptive_router_score,
             "adaptive_reason": self._adaptive_reason,
-            "deep_policy_change": self._deep_policy_change,
-            "deep_action_changed": self._deep_action_changed,
-            "deep_search_needed": self._deep_search_needed,
         }
         if root is not None:
             diagnostics["root_joint_actions"] = len(root.player_legal) * len(
@@ -2081,7 +1828,6 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         enemy_policy: list[float],
         value: float,
         transitions: int,
-        simulations: int,
     ) -> SearchResult:
         return SearchResult(
             tuple(0.0 for _ in range(self.action_count)),
@@ -2094,123 +1840,27 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             None,
             None,
             None,
-            self._diagnostics(simulations, False, None),
+            self._diagnostics(None),
             "search-semantic-divergence",
         )
 
-    def _finish_root_frontier(
+    def _finish_root(
         self,
         root: _TreeNode,
-        player_prior: list[float],
-        enemy_prior: list[float],
-        prior_value: float,
         transitions: int,
         sample_actions: bool,
-    ) -> Generator[_Frontier, _FrontierResponse, SearchResult]:
-        simulations = 0
-        converged = False
-        initial_player = tuple(root.player_policy)
-        initial_enemy = tuple(root.enemy_policy)
-        initial_value = root.root_value
-        previous_player: tuple[float, ...] | None = initial_player
-        previous_enemy: tuple[float, ...] | None = initial_enemy
-        stable_updates = 0
-        try:
-            attempts_without_learning = 0
-            while (
-                self._adaptive_deep_selected
-                and transitions < self.config.expansion_budget
-            ):
-                _, cost, learned = yield from self._simulate_frontier(
-                    root, 0, self.config.expansion_budget - transitions
-                )
-                transitions += cost
-                if learned:
-                    simulations += 1
-                    attempts_without_learning = 0
-                    current_player = self._average_policy(
-                        root.player_strategy_sum,
-                        root.solve_count,
-                        root.player_policy,
-                    )
-                    current_enemy = self._average_policy(
-                        root.enemy_strategy_sum,
-                        root.solve_count,
-                        root.enemy_policy,
-                    )
-                    if previous_player is not None and previous_enemy is not None:
-                        change = sum(
-                            abs(left - right)
-                            for left, right in zip(
-                                current_player, previous_player, strict=True
-                            )
-                        ) + sum(
-                            abs(left - right)
-                            for left, right in zip(
-                                current_enemy, previous_enemy, strict=True
-                            )
-                        )
-                        stable_updates = (
-                            stable_updates + 1
-                            if change <= self.config.convergence_tolerance
-                            else 0
-                        )
-                    previous_player = current_player
-                    previous_enemy = current_enemy
-                    if (
-                        transitions >= self.config.minimum_expansion_budget
-                        and self._max_depth_reached >= self.config.max_depth - 1
-                        and stable_updates >= self.config.convergence_patience
-                    ):
-                        converged = True
-                        break
-                else:
-                    attempts_without_learning += 1
-                    if attempts_without_learning >= 64:
-                        break
-        except _TreeDivergence:
-            return self._fallback(
-                player_prior,
-                enemy_prior,
-                prior_value,
-                transitions,
-                simulations,
-            )
-        if self._adaptive_deep_selected:
-            player_policy, enemy_policy, final_value, exploitability = (
-                self._root_equilibrium(root)
-            )
-            root.player_policy = list(player_policy)
-            root.enemy_policy = list(enemy_policy)
-            root.root_value = final_value
-            root.exploitability = exploitability
-        else:
-            player_policy = initial_player
-            enemy_policy = initial_enemy
-            final_value = initial_value
-            exploitability = root.exploitability
-        self._deep_policy_change = sum(
-            abs(left - right)
-            for left, right in zip(player_policy, initial_player, strict=True)
-        ) + sum(
-            abs(left - right)
-            for left, right in zip(enemy_policy, initial_enemy, strict=True)
-        )
-        self._deep_action_changed = int(
-            max(root.player_legal, key=lambda action: player_policy[action])
-            != max(root.player_legal, key=lambda action: initial_player[action])
-            or max(root.enemy_legal, key=lambda action: enemy_policy[action])
-            != max(root.enemy_legal, key=lambda action: initial_enemy[action])
-        )
-        self._deep_search_needed = (
-            int(
-                self._deep_action_changed
-                or self._deep_policy_change >= 0.25
-                or abs(final_value - initial_value) >= 0.10
-            )
-            if self._adaptive_deep_selected
-            else -1
-        )
+    ) -> SearchResult:
+        """Publish the root equilibrium `search_many` already solved.
+
+        Nothing is refined between the solve and here.  The exhaustive root
+        expansion pairs every cell against the same chance draws, and any
+        further sampling would have to pick which cells to revisit -- which in
+        practice means the ones the current policy already prefers, so the
+        matrix drifts toward whatever the search happened to try first.
+        """
+        player_policy = tuple(root.player_policy)
+        enemy_policy = tuple(root.enemy_policy)
+        exploitability = root.exploitability
         if sample_actions:
             player_action = _sample(list(player_policy), self.selection_rng)
             enemy_action = _sample(list(enemy_policy), self.selection_rng)
@@ -2221,7 +1871,6 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             enemy_action = max(
                 root.enemy_legal, key=lambda action: enemy_policy[action]
             )
-        root_value = final_value
         legal_payoffs = [
             root.payoff[player][enemy]
             for player in root.player_legal
@@ -2232,234 +1881,25 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             enemy_policy,
             player_action,
             enemy_action,
-            root_value,
+            root.root_value,
             transitions,
             (
-                "simultaneous-matrix-tree-anchored-qre-pooled-node-v6"
+                "simultaneous-matrix-root-anchored-qre-v7"
                 if self.config.prior_anchor_temperature > 0.0
-                else "simultaneous-matrix-tree-rust-cfrplus-pooled-node-split-half-v5"
+                else "simultaneous-matrix-root-rust-cfrplus-split-half-v7"
                 if self.config.cfr_plus_solves
-                else "simultaneous-matrix-tree-rust-rmplus-pooled-node-v4"
+                else "simultaneous-matrix-root-rust-rmplus-v7"
                 if self.config.rmplus_backend == RUST_RMPLUS_BACKEND
-                else "simultaneous-matrix-tree-rmplus-pooled-node-v3"
+                else "simultaneous-matrix-root-rmplus-v7"
             ),
             exploitability,
             max(legal_payoffs) - min(legal_payoffs),
             tuple(tuple(row) for row in root.payoff),
-            self._diagnostics(simulations, converged, root),
+            self._diagnostics(root),
         )
 
     def search(self, snapshot: Snapshot, sample_actions: bool = True) -> SearchResult:
         return self.search_many([self], [snapshot], sample_actions)[0]
-
-    @classmethod
-    def _finish_many(
-        cls,
-        jobs: list[
-            tuple[
-                int,
-                SimultaneousTreeSearch,
-                _TreeNode,
-                list[float],
-                list[float],
-                float,
-                int,
-                bool,
-            ]
-        ],
-    ) -> list[tuple[int, SearchResult]]:
-        if not jobs:
-            return []
-        searches = {job[0]: job[1] for job in jobs}
-        generators = {
-            index: search._finish_root_frontier(
-                root, player, enemy, value, transitions, sample
-            )
-            for index, search, root, player, enemy, value, transitions, sample in jobs
-        }
-        started: set[int] = set()
-        responses: dict[int, _FrontierResponse] = {}
-        waiting_full: dict[int, tuple[SimultaneousTreeSearch, list[Snapshot]]] = {}
-        completed: dict[int, SearchResult] = {}
-        inference_calls = inference_rows = inference_waves = 0
-        full_inference_calls = full_inference_rows = full_inference_waves = 0
-        native_calls = native_rows = native_waves = overlap_waves = 0
-        native_executor = ThreadPoolExecutor(max_workers=1)
-        while generators:
-            frontiers: dict[int, _Frontier] = {}
-            for index in sorted(generators):
-                if index in waiting_full:
-                    continue
-                generator = generators[index]
-                try:
-                    if index in started:
-                        frontier = generator.send(responses.pop(index))
-                    else:
-                        frontier = next(generator)
-                        started.add(index)
-                    frontiers[index] = frontier
-                except StopIteration as stop:
-                    completed[index] = stop.value
-            for index in completed.keys() & generators.keys():
-                del generators[index]
-            native = [
-                (index, frontier)
-                for index, frontier in frontiers.items()
-                if isinstance(frontier, _NativeFrontier)
-            ]
-            inference = [
-                (index, searches[index], frontier.snapshots)
-                for index, frontier in frontiers.items()
-                if isinstance(frontier, _InferenceFrontier)
-            ]
-            for index, frontier in frontiers.items():
-                if isinstance(frontier, _NodeInferenceFrontier):
-                    waiting_full[index] = (searches[index], frontier.snapshots)
-            full_inference: list[
-                tuple[int, SimultaneousTreeSearch, list[Snapshot]]
-            ] = []
-            if native and not inference and len(native) > 1:
-                split = len(native) // 2
-                leading, native = native[:split], native[split:]
-                leading_requests = [
-                    request for _, frontier in leading for request in frontier.requests
-                ]
-                leading_snapshots = jobs[0][1].server.search_steps(leading_requests)
-                native_calls += 1
-                native_rows += len(leading_requests)
-                native_waves += 1
-                offset = 0
-                for index, frontier in leading:
-                    stop = offset + len(frontier.requests)
-                    try:
-                        next_frontier = generators[index].send(
-                            leading_snapshots[offset:stop]
-                        )
-                    except StopIteration as stopped:
-                        completed[index] = stopped.value
-                        del generators[index]
-                    else:
-                        if isinstance(next_frontier, _InferenceFrontier):
-                            inference.append(
-                                (index, searches[index], next_frontier.snapshots)
-                            )
-                        elif isinstance(next_frontier, _NodeInferenceFrontier):
-                            waiting_full[index] = (
-                                searches[index],
-                                next_frontier.snapshots,
-                            )
-                        else:
-                            native.append((index, next_frontier))
-                    offset = stop
-            full_batch_limit = max(
-                (
-                    search.config.inference_batch_size
-                    for search, _ in waiting_full.values()
-                ),
-                default=0,
-            )
-            if waiting_full and (
-                len(waiting_full) >= full_batch_limit or (not native and not inference)
-            ):
-                full_inference = [
-                    (index, search, snapshots)
-                    for index, (search, snapshots) in sorted(waiting_full.items())
-                ]
-                waiting_full.clear()
-            requests = [
-                request for _, frontier in native for request in frontier.requests
-            ]
-            pending_native: Future[list[Snapshot]] | None = None
-            snapshots: list[Snapshot] | None = None
-            if requests and (inference or full_inference):
-                pending_native = native_executor.submit(
-                    jobs[0][1].server.search_steps, requests
-                )
-                overlap_waves += 1
-            elif requests:
-                snapshots = jobs[0][1].server.search_steps(requests)
-            if inference:
-                values, calls, rows = cls._pooled_successor_values(inference)
-                responses.update(values)
-                inference_calls += calls
-                inference_rows += rows
-                inference_waves += 1
-            if full_inference:
-                evaluated, calls, rows = cls._pooled_evaluate(full_inference)
-                for index, (players, enemies, values) in evaluated.items():
-                    responses[index] = list(zip(players, enemies, values, strict=True))
-                full_inference_calls += calls
-                full_inference_rows += rows
-                full_inference_waves += 1
-            if pending_native is not None:
-                snapshots = pending_native.result()
-            if snapshots is not None:
-                offset = 0
-                for index, frontier in native:
-                    stop = offset + len(frontier.requests)
-                    responses[index] = snapshots[offset:stop]
-                    offset = stop
-                native_calls += 1
-                native_rows += len(requests)
-                native_waves += 1
-        native_executor.shutdown()
-        enriched = []
-        for index, result in sorted(completed.items()):
-            search = searches[index]
-            search._deep_inference_calls = inference_calls
-            search._deep_inference_rows = inference_rows
-            search._deep_inference_waves = inference_waves
-            search._deep_full_inference_calls = full_inference_calls
-            search._deep_full_inference_rows = full_inference_rows
-            search._deep_full_inference_waves = full_inference_waves
-            search._deep_native_calls = native_calls
-            search._deep_native_rows = native_rows
-            search._deep_native_waves = native_waves
-            search._deep_overlap_waves = overlap_waves
-            diagnostics = dict(result.diagnostics or {})
-            diagnostics.update(
-                {
-                    "inference_cache_hits": search._inference_cache_stats["hits"],
-                    "inference_cache_misses": search._inference_cache_stats["misses"],
-                    "inference_cache_hit_rate": search._inference_cache_stats["hits"]
-                    / max(1, sum(search._inference_cache_stats.values())),
-                    "deep_inference_calls": inference_calls,
-                    "deep_inference_rows": inference_rows,
-                    "deep_inference_waves": inference_waves,
-                    "mean_deep_inference_batch": inference_rows
-                    / max(1, inference_calls),
-                    "deep_full_inference_calls": full_inference_calls,
-                    "deep_full_inference_rows": full_inference_rows,
-                    "deep_full_inference_waves": full_inference_waves,
-                    "mean_deep_full_inference_batch": full_inference_rows
-                    / max(1, full_inference_calls),
-                    "deep_native_calls": native_calls,
-                    "deep_native_rows": native_rows,
-                    "deep_native_waves": native_waves,
-                    "mean_deep_native_batch": native_rows / max(1, native_calls),
-                    "deep_overlap_waves": overlap_waves,
-                }
-            )
-            enriched.append(
-                (
-                    index,
-                    SearchResult(
-                        result.player_policy,
-                        result.enemy_policy,
-                        result.player_action,
-                        result.enemy_action,
-                        result.root_value,
-                        result.nodes,
-                        result.solver,
-                        result.exploitability,
-                        result.payoff_spread,
-                        result.payoff_matrix,
-                        diagnostics,
-                        result.failure,
-                    ),
-                )
-            )
-        return enriched
 
     @classmethod
     def search_many(
@@ -2515,7 +1955,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             )
         ]
         specs = [
-            search._expansion_spec(root, True)
+            search._expansion_spec(root)
             for search, root in zip(searches, roots, strict=True)
         ]
         requests = [request for _, root_requests in specs for request in root_requests]
@@ -2547,7 +1987,6 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         ]
         router_scores = cls._pooled_budget_scores(adaptive_groups)
         results: list[SearchResult | None] = [None] * len(searches)
-        finish_jobs = []
         batch_size = len(searches)
         for index, (search, root, spec, bounds, is_good) in enumerate(
             zip(searches, roots, specs, offsets, good, strict=True)
@@ -2562,7 +2001,6 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     enemy_priors[index],
                     prior_values[index],
                     len(root_successors),
-                    0,
                 )
                 continue
             transitions = search._install_expansion(
@@ -2581,20 +2019,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             search._adaptive_deep_selected = selected
             search._adaptive_router_score = router_score
             search._adaptive_reason = reason
-            finish_jobs.append(
-                (
-                    index,
-                    search,
-                    root,
-                    player_priors[index],
-                    enemy_priors[index],
-                    prior_values[index],
-                    transitions,
-                    sample_actions,
-                )
-            )
-        for index, result in cls._finish_many(finish_jobs):
-            results[index] = result
+            results[index] = search._finish_root(root, transitions, sample_actions)
         if any(result is None for result in results):
             raise RuntimeError("cross-root scheduler left an unfinished search")
         return cast(list[SearchResult], results)

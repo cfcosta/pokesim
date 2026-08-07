@@ -1597,12 +1597,10 @@ def _collect_rows_single(
         "entropy": ENTROPY,
         "actor_entropy": _ACTOR_ENTROPY_VERSION,
         "chance": "fresh-root-v1",
-        "solver": "simultaneous-matrix-tree-rust-cfrplus-pooled-node-split-half-v5",
+        "solver": "simultaneous-matrix-root-anchored-qre-v7",
         "rmplus_backend": config.rmplus_backend,
         "cfr_plus_solves": config.cfr_plus_solves,
-        "action_selector": (
-            "simultaneous-matrix-tree-rust-cfrplus-every-decision-split-half-v5"
-        ),
+        "action_selector": ("simultaneous-matrix-root-anchored-qre-every-decision-v7"),
         "iteration": iteration,
         "episodes": len(episode_indices),
         "depth": config.search_depth,
@@ -2126,14 +2124,9 @@ def _collect_rows_single(
                                 "enemy",
                             ),
                             "tree_nodes": search_diagnostics.get("tree_nodes"),
-                            "tree_simulations": search_diagnostics.get(
-                                "tree_simulations"
-                            ),
-                            "tree_max_depth": search_diagnostics.get("tree_max_depth"),
                             "chance_outcomes": search_diagnostics.get(
                                 "chance_outcomes"
                             ),
-                            "tree_converged": search_diagnostics.get("tree_converged"),
                         }
                     )
                     player_row = {
@@ -2462,16 +2455,6 @@ def _collect_rows_single(
             if tree_rows
             else None
         ),
-        "mean_tree_simulations": (
-            sum(row["tree_simulations"] for row in tree_rows) / len(tree_rows)
-            if tree_rows
-            else None
-        ),
-        "mean_tree_max_depth": (
-            sum(row["tree_max_depth"] for row in tree_rows) / len(tree_rows)
-            if tree_rows
-            else None
-        ),
         "mean_chance_outcomes": (
             sum(row["chance_outcomes"] for row in tree_rows) / len(tree_rows)
             if tree_rows
@@ -2482,11 +2465,6 @@ def _collect_rows_single(
             if tree_rows
             else None
         ),
-        "tree_convergence_rate": (
-            sum(row["tree_converged"] for row in tree_rows) / len(tree_rows)
-            if tree_rows
-            else None
-        ),
         "mean_cross_root_batch_size": (
             sum(row["cross_root_batch_size"] for row in tree_rows) / len(tree_rows)
             if tree_rows
@@ -2494,12 +2472,6 @@ def _collect_rows_single(
         ),
         "mean_cross_root_root_leaves": (
             sum(row["cross_root_root_leaves"] for row in tree_rows) / len(tree_rows)
-            if tree_rows
-            else None
-        ),
-        "mean_deep_full_inference_batch": (
-            sum(row["mean_deep_full_inference_batch"] for row in tree_rows)
-            / len(tree_rows)
             if tree_rows
             else None
         ),
@@ -2781,14 +2753,10 @@ def _merge_collection_rows(
             sum(payoff_spreads) / len(payoff_spreads) if payoff_spreads else None
         ),
         "mean_tree_nodes": tree_mean("tree_nodes"),
-        "mean_tree_simulations": tree_mean("tree_simulations"),
-        "mean_tree_max_depth": tree_mean("tree_max_depth"),
         "mean_chance_outcomes": tree_mean("chance_outcomes"),
         "mean_sampled_joint_coverage": tree_mean("sampled_joint_coverage"),
-        "tree_convergence_rate": tree_mean("tree_converged"),
         "mean_cross_root_batch_size": tree_mean("cross_root_batch_size"),
         "mean_cross_root_root_leaves": tree_mean("cross_root_root_leaves"),
-        "mean_deep_full_inference_batch": tree_mean("mean_deep_full_inference_batch"),
         "mean_decisions": transitions / config.selfplay_episodes,
         "voluntary_switch_rate": sum(
             row["action"] in range(4, 10)
@@ -4509,11 +4477,9 @@ def run_transformer_pipeline(
                 ),
                 "chance": "fresh-root-v1",
                 "rmplus": native_metadata(),
-                "search_solver": (
-                    "simultaneous-matrix-tree-rust-cfrplus-pooled-node-split-half-v5"
-                ),
+                "search_solver": ("simultaneous-matrix-root-anchored-qre-v7"),
                 "action_selector": (
-                    "simultaneous-matrix-tree-rust-cfrplus-every-decision-split-half-v5"
+                    "simultaneous-matrix-root-anchored-qre-every-decision-v7"
                 ),
                 "collection_pairing": "same-reset-opposite-controller-sides-v1",
                 "learning_lineage": "persistent-shadow-v1",
@@ -5188,9 +5154,7 @@ def run_transformer_pipeline(
         ),
         "device": str(device),
         "rmplus": native_metadata(),
-        "action_selector": (
-            "simultaneous-matrix-tree-rust-cfrplus-every-decision-split-half-v5"
-        ),
+        "action_selector": ("simultaneous-matrix-root-anchored-qre-every-decision-v7"),
         "iterations": config.iterations,
         "selfplay_battles": config.iterations * config.selfplay_episodes,
         "mirror_battles": sum(item["mirror_episodes"] for item in collection),

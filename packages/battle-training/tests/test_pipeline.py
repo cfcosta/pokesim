@@ -1503,10 +1503,6 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(node.solve_count, 16)
         self.assertAlmostEqual(sum(node.player_strategy_sum), 136.0, places=10)
         self.assertAlmostEqual(sum(node.enemy_strategy_sum), 136.0, places=10)
-        average = search._average_policy(
-            node.player_strategy_sum, node.solve_count, node.player_policy
-        )
-        self.assertAlmostEqual(sum(average), 1.0, places=12)
 
     def test_tree_rmplus_does_not_cap_equilibrium_switch_mass(self) -> None:
         server = _ToyServer()
@@ -1570,37 +1566,37 @@ class TransformerTests(unittest.TestCase):
         self.assertGreaterEqual(node.player_policy[4], first_dominant_mass - 0.01)
         self.assertAlmostEqual(sum(node.player_strategy_sum), 128.0, places=6)
 
-    def test_chance_resampling_decays_with_evidence(self) -> None:
-        server = _ToyServer()
-        network = _ToyNetwork()
-        search = SimultaneousTreeSearch(
-            server,
-            network,
-            network,
-            JointSearchConfig(chance_resample=0.1),
-            random.Random(1),
-            random.Random(2),
-        )
-        self.assertEqual(search._chance_resample_probability(1), 1.0)
-        self.assertEqual(search._chance_resample_probability(4), 0.5)
-        self.assertEqual(search._chance_resample_probability(100), 0.1)
+    def test_search_stops_at_the_root_however_large_the_budget(self) -> None:
+        # Past the root the loop resampled only the cells the current policy
+        # already liked, overwriting exhaustive CRN-paired estimates with lone
+        # rollouts.  Extra budget must not be able to move the answer any more.
+        def run(budget: int) -> SearchResult:
+            server = _ToyServer()
+            network = _ToyNetwork()
+            return SimultaneousTreeSearch(
+                server,  # type: ignore[arg-type]
+                network,  # type: ignore[arg-type]
+                network,  # type: ignore[arg-type]
+                JointSearchConfig(
+                    max_depth=4,
+                    max_actions_per_side=2,
+                    expansion_budget=budget,
+                    minimum_expansion_budget=1,
+                    chance_resample=1.0,
+                ),
+                random.Random(7),
+                random.Random(11),
+            ).search(server._snapshot(0), sample_actions=False)
 
-    def test_tree_exploration_uses_neural_progressive_bias(self) -> None:
-        server = _ToyServer()
-        network = _ToyNetwork()
-        search = SimultaneousTreeSearch(
-            server,
-            network,
-            network,
-            JointSearchConfig(exploration=0.2),
-            random.Random(1),
-            random.Random(2),
-        )
-        mixed = search._mixed_policy((1.0, 0.0), [0.0, 1.0], [0, 1], 0)
-        self.assertAlmostEqual(mixed[0], 0.8)
-        self.assertAlmostEqual(mixed[1], 0.2)
+        shallow = run(1)
+        deep = run(512)
+        self.assertEqual(shallow.player_policy, deep.player_policy)
+        self.assertEqual(shallow.payoff_matrix, deep.payoff_matrix)
+        self.assertEqual(shallow.nodes, deep.nodes)
+        self.assertEqual(deep.diagnostics["tree_nodes"], 1)
+        self.assertEqual(deep.diagnostics["chance_outcomes"], shallow.nodes)
 
-    def test_simultaneous_tree_backs_up_deeper_equilibrium_values(self) -> None:
+    def test_the_root_matrix_covers_every_legal_joint_pair(self) -> None:
         server = _ToyServer()
         network = _ToyNetwork()
         search = SimultaneousTreeSearch(
@@ -1609,16 +1605,10 @@ class TransformerTests(unittest.TestCase):
             network,  # type: ignore[arg-type]
             JointSearchConfig(
                 chance_samples_per_joint=1,
-                max_depth=2,
                 regret_iterations=64,
                 inference_batch_size=16,
                 max_actions_per_side=2,
-                expansion_budget=128,
-                exploration=0.2,
-                chance_resample=1.0,
                 regret_iterations_per_update=16,
-                deeper_joint_rotations=2,
-                minimum_expansion_budget=4,
                 rmplus_backend=RUST_RMPLUS_BACKEND,
                 cfr_plus_solves=True,
             ),
@@ -1626,16 +1616,20 @@ class TransformerTests(unittest.TestCase):
             random.Random(11),
         )
         result = search.search(server._snapshot(0), sample_actions=False)
-        self.assertEqual(
-            result.solver, "simultaneous-matrix-tree-anchored-qre-pooled-node-v6"
-        )
+        self.assertEqual(result.solver, "simultaneous-matrix-root-anchored-qre-v7")
         self.assertEqual(
             result.diagnostics["root_solver"], "rust-anchored-f64-v1-t0.02"
         )
-        self.assertGreater(result.player_policy[0], 0.8)
-        self.assertEqual(result.diagnostics["tree_max_depth"], 1)
         self.assertEqual(result.diagnostics["root_joint_actions"], 4)
+        # Every cell is stepped, so no cell is estimated from fewer samples than
+        # any other and the solve reads a matrix that is balanced by construction.
         self.assertEqual(result.diagnostics["sampled_joint_coverage"], 1.0)
+        # This toy server pays zero everywhere, so the position genuinely has no
+        # preference and the published policy is the uniform prior.  Refining a
+        # sampled subtree used to invent a 0.9 here out of nothing.
+        self.assertEqual(result.payoff_matrix, ((0.0, 0.0), (0.0, 0.0)))
+        self.assertEqual(result.player_policy, (0.5, 0.5))
+        self.assertEqual(result.enemy_policy, (0.5, 0.5))
 
     def test_search_divergence_never_falls_back_to_raw_policy_actions(self) -> None:
         server = _DivergentToyServer()
@@ -1725,93 +1719,6 @@ class TransformerTests(unittest.TestCase):
         self.assertTrue(
             all(result.diagnostics["inference_cache_hits"] > 0 for result in results)
         )
-        self.assertTrue(
-            all(result.diagnostics["deep_inference_waves"] > 0 for result in results)
-        )
-        self.assertTrue(
-            all(result.diagnostics["mean_deep_native_batch"] >= 1 for result in results)
-        )
-        self.assertTrue(
-            all(result.diagnostics["deep_overlap_waves"] > 0 for result in results)
-        )
-
-    def test_expanded_node_full_evaluations_use_pooled_joint_frontiers(self) -> None:
-        server = _DistinctFeatureToyServer()
-        server.states[100] = (0, 0)
-        network = _LeafToyNetwork()
-        config = JointSearchConfig(
-            max_depth=2,
-            inference_batch_size=32,
-            max_actions_per_side=2,
-            expansion_budget=16,
-            chance_resample=1.0,
-            regret_iterations_per_update=4,
-            minimum_expansion_budget=4,
-        )
-        results = SimultaneousTreeSearch.search_many(
-            [
-                SimultaneousTreeSearch(
-                    server,
-                    network,
-                    network,
-                    config,
-                    random.Random(index + 1),
-                    random.Random(index + 101),
-                )
-                for index in range(2)
-            ],
-            [server._snapshot(0), server._snapshot(100)],
-        )
-        self.assertEqual(len(results), 2)
-        self.assertTrue(
-            all(
-                result.diagnostics["deep_full_inference_rows"] > 0 for result in results
-            )
-        )
-        self.assertTrue(
-            all(
-                result.diagnostics["mean_deep_full_inference_batch"] >= 2
-                for result in results
-            )
-        )
-
-    def test_complete_root_and_deep_tiers_share_one_frontier(self) -> None:
-        server = _ToyServer()
-        server.states[100] = (0, 0)
-        network = _ToyNetwork()
-        configs = [
-            JointSearchConfig(
-                max_depth=2,
-                inference_batch_size=32,
-                max_actions_per_side=2,
-                expansion_budget=1,
-                minimum_expansion_budget=1,
-            ),
-            JointSearchConfig(
-                max_depth=2,
-                inference_batch_size=32,
-                max_actions_per_side=2,
-                expansion_budget=16,
-                minimum_expansion_budget=4,
-            ),
-        ]
-        results = SimultaneousTreeSearch.search_many(
-            [
-                SimultaneousTreeSearch(
-                    server,  # type: ignore[arg-type]
-                    network,  # type: ignore[arg-type]
-                    network,  # type: ignore[arg-type]
-                    config,
-                    random.Random(index + 1),
-                    random.Random(index + 101),
-                )
-                for index, config in enumerate(configs)
-            ],
-            [server._snapshot(0), server._snapshot(100)],
-        )
-        self.assertEqual(results[0].nodes, 4)
-        self.assertGreater(results[1].nodes, results[0].nodes)
-        self.assertIsNotNone(results[0].payoff_matrix)
 
     def test_cross_root_search_pools_shared_networks_across_opponents(self) -> None:
         server = _ToyServer()
@@ -4065,9 +3972,7 @@ class TransformerTests(unittest.TestCase):
             random.Random(2),
         ).search(server._snapshot(0), sample_actions=False)
         self.assertEqual(result.nodes, 4)
-        self.assertEqual(
-            result.solver, "simultaneous-matrix-tree-anchored-qre-pooled-node-v6"
-        )
+        self.assertEqual(result.solver, "simultaneous-matrix-root-anchored-qre-v7")
         self.assertEqual(result.diagnostics["adaptive_deep_selected"], 0)
         self.assertEqual(result.diagnostics["adaptive_reason"], "router-stable-root")
         self.assertIsNotNone(result.payoff_matrix)
