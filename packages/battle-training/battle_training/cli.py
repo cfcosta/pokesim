@@ -119,6 +119,15 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--value-loss-weight", type=float, default=0.25)
     parser.add_argument("--redundant-action-prior-scale", type=float, default=0.25)
     parser.add_argument(
+        "--prior-anchor-temperature",
+        type=float,
+        default=0.02,
+        help=(
+            "KL weight pulling the matrix solve toward the network prior; "
+            "0 restores unanchored regret matching"
+        ),
+    )
+    parser.add_argument(
         "--weighted-final-species",
         action="store_false",
         dest="balanced_final_species",
@@ -328,6 +337,7 @@ def parser() -> argparse.ArgumentParser:
     arena.add_argument("--tree-convergence-tolerance", type=float, default=0.005)
     arena.add_argument("--tree-convergence-patience", type=int, default=8)
     arena.add_argument("--redundant-action-prior-scale", type=float, default=0.25)
+    arena.add_argument("--prior-anchor-temperature", type=float, default=0.02)
     arena.add_argument(
         "--no-adaptive-search", action="store_false", dest="adaptive_search"
     )
@@ -387,6 +397,7 @@ def main(argv: list[str] | None = None) -> int:
                 tree_convergence_tolerance=arguments.tree_convergence_tolerance,
                 tree_convergence_patience=arguments.tree_convergence_patience,
                 redundant_action_prior_scale=(arguments.redundant_action_prior_scale),
+                prior_anchor_temperature=arguments.prior_anchor_temperature,
                 adaptive_search=arguments.adaptive_search,
                 adaptive_deep_threshold=arguments.adaptive_deep_threshold,
                 adaptive_force_deep_fraction=(arguments.adaptive_force_deep_fraction),
@@ -528,6 +539,7 @@ def main(argv: list[str] | None = None) -> int:
             inference_engine=arguments.inference_engine,
             value_loss_weight=arguments.value_loss_weight,
             redundant_action_prior_scale=arguments.redundant_action_prior_scale,
+            prior_anchor_temperature=arguments.prior_anchor_temperature,
             balanced_final_species=arguments.balanced_final_species,
             warm_start_checkpoint=(
                 str(arguments.warm_start_checkpoint.resolve())

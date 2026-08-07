@@ -20,6 +20,9 @@ from .rmplus_native import (
     solver_identity,
 )
 from .rmplus_native import (
+    solve_anchored as solve_anchored_native,
+)
+from .rmplus_native import (
     solve_cold as solve_cold_native,
 )
 from .rmplus_native import (
@@ -27,6 +30,13 @@ from .rmplus_native import (
 )
 
 type PayoffMatrix = list[list[float]]
+
+# The smallest positive f64, matching the native kernel's log floor exactly so
+# the two implementations agree bit for bit on degenerate priors.
+_LOG_FLOOR = float(np.finfo(np.float64).tiny)
+# Smallest share the prior anchor may assign to any legal action; see
+# `_floored_prior` for why an exact zero cannot be allowed through.
+_ANCHOR_FLOOR = 1e-9
 
 _PARTY_MON_WIDTH = 22
 _FULL_SIDE_WIDTH = 181
@@ -94,6 +104,7 @@ class JointSearchConfig:
     convergence_tolerance: float = 0.005
     convergence_patience: int = 8
     redundant_action_prior_scale: float = 1.0
+    prior_anchor_temperature: float = 0.02
     adaptive_search: bool = False
     adaptive_deep_threshold: float = 0.55
     adaptive_force_deep_fraction: float = 0.10
@@ -330,6 +341,95 @@ def solve_zero_sum_regret(
     )
 
 
+def _soft_normalize(logits: np.ndarray) -> np.ndarray:
+    weights = np.exp(logits - logits.max())
+    return weights / weights.sum()
+
+
+def _floored_prior(priors: list[float], legal: list[int]) -> np.ndarray:
+    """The normalized prior with every action held above `_ANCHOR_FLOOR`.
+
+    KL to an exact zero is infinite, so an unfloored anchor would turn a head
+    that emitted 0.0 into a hard ban rather than a strong preference.  At the
+    temperatures we ship the floor caps the anchor's pull at roughly 0.4 payoff
+    units, well inside the [-1, 1] range a decisive matrix can produce.
+    """
+    values = np.maximum(_normalized_prior(priors, legal), _ANCHOR_FLOOR)
+    return values / values.sum()
+
+
+def solve_anchored_zero_sum(
+    payoff: PayoffMatrix,
+    player_priors: list[float],
+    enemy_priors: list[float],
+    player_legal: list[int],
+    enemy_legal: list[int],
+    iterations: int,
+    temperature: float,
+) -> tuple[tuple[float, ...], tuple[float, ...], float, float]:
+    """Solve the prior-anchored saddle `pi' M mu - t*KL(pi||p) + t*KL(mu||q)`.
+
+    Plain regret matching hands back an arbitrary point of the equilibrium set,
+    so wherever the matrix is indifferent -- which is most of a search tree --
+    the network prior has no say in what gets played.  The KL terms make the
+    saddle strictly convex-concave: the solution is unique, moves continuously
+    with the payoff, and falls back to the prior exactly where the matrix has
+    nothing to say.  The iteration is KL-proximal extragradient; the half step
+    cancels the rotation that leaves plain best response orbiting the solution.
+    """
+    if iterations < 1:
+        raise ValueError("regret iterations must be positive")
+    if not player_legal or not enemy_legal:
+        raise ValueError("each side needs at least one legal action")
+    if not math.isfinite(temperature) or temperature <= 0.0:
+        raise ValueError("anchor temperature must be finite and positive")
+    action_count = len(payoff)
+    matrix = np.asarray(payoff, dtype=np.float64)[np.ix_(player_legal, enemy_legal)]
+    player = _floored_prior(player_priors, player_legal)
+    enemy = _floored_prior(enemy_priors, enemy_legal)
+    log_player_prior = np.log(player)
+    log_enemy_prior = np.log(enemy)
+    # Convergence needs step * max|M| <= 1; search payoffs are clamped to
+    # [-1, 1] so this is 1.0 in practice and only shrinks defensively.
+    step = 1.0 / max(1.0, float(np.abs(matrix).max()))
+    scale = 1.0 / (1.0 + step * temperature)
+
+    def prox(current: np.ndarray, log_anchor: np.ndarray, gradient: np.ndarray):
+        return _soft_normalize(
+            scale
+            * (
+                step * gradient
+                + step * temperature * log_anchor
+                + np.log(np.maximum(current, _LOG_FLOOR))
+            )
+        )
+
+    for _ in range(iterations):
+        half_player = prox(player, log_player_prior, matrix @ enemy)
+        half_enemy = prox(enemy, log_enemy_prior, -(player @ matrix))
+        # Both full steps leave from the same base point with the gradient read
+        # at the half point -- that ordering is the extragradient correction.
+        player, enemy = (
+            prox(player, log_player_prior, matrix @ half_enemy),
+            prox(enemy, log_enemy_prior, -(half_player @ matrix)),
+        )
+
+    player_average = [0.0] * action_count
+    enemy_average = [0.0] * action_count
+    for index, action in enumerate(player_legal):
+        player_average[action] = float(player[index])
+    for index, action in enumerate(enemy_legal):
+        enemy_average[action] = float(enemy[index])
+    row_values = matrix @ enemy
+    column_values = player @ matrix
+    return (
+        tuple(player_average),
+        tuple(enemy_average),
+        float(player @ row_values),
+        float(row_values.max() - column_values.min()),
+    )
+
+
 class BatchedJointRegretSearch:
     """Covers every root joint action, batches rollouts, then solves its matrix."""
 
@@ -352,6 +452,8 @@ class BatchedJointRegretSearch:
             raise ValueError("max actions per side must be positive")
         if not 0.0 < config.redundant_action_prior_scale <= 1.0:
             raise ValueError("redundant action prior scale must be in (0, 1]")
+        if not 0.0 <= config.prior_anchor_temperature <= 1.0:
+            raise ValueError("prior_anchor_temperature must be in [0, 1]")
         self.server = server
         self.player_network = player_network
         self.enemy_network = enemy_network
@@ -932,6 +1034,27 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
     def _solve_matrix(
         self, node: _TreeNode, payoff: PayoffMatrix
     ) -> tuple[tuple[float, ...], tuple[float, ...], float, float]:
+        temperature = self.config.prior_anchor_temperature
+        if temperature > 0.0:
+            if self.config.rmplus_backend == RUST_RMPLUS_BACKEND:
+                return solve_anchored_native(
+                    payoff,
+                    node.player_priors,
+                    node.enemy_priors,
+                    node.player_legal,
+                    node.enemy_legal,
+                    self.config.regret_iterations,
+                    temperature=temperature,
+                )
+            return solve_anchored_zero_sum(
+                payoff,
+                node.player_priors,
+                node.enemy_priors,
+                node.player_legal,
+                node.enemy_legal,
+                self.config.regret_iterations,
+                temperature,
+            )
         if self.config.rmplus_backend == RUST_RMPLUS_BACKEND:
             return solve_cold_native(
                 payoff,
@@ -1926,7 +2049,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             diagnostics["root_final_exploitability"] = root.exploitability
             diagnostics["root_equilibrium_iterations"] = self.config.regret_iterations
             diagnostics["root_solver"] = solver_identity(
-                self.config.rmplus_backend, self.config.cfr_plus_solves
+                self.config.rmplus_backend,
+                self.config.cfr_plus_solves,
+                self.config.prior_anchor_temperature,
             )
             if self.config.split_half_reliability:
                 diagnostics["root_split_half_available"] = self._split_half_available
@@ -2110,7 +2235,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             root_value,
             transitions,
             (
-                "simultaneous-matrix-tree-rust-cfrplus-pooled-node-split-half-v5"
+                "simultaneous-matrix-tree-anchored-qre-pooled-node-v6"
+                if self.config.prior_anchor_temperature > 0.0
+                else "simultaneous-matrix-tree-rust-cfrplus-pooled-node-split-half-v5"
                 if self.config.cfr_plus_solves
                 else "simultaneous-matrix-tree-rust-rmplus-pooled-node-v4"
                 if self.config.rmplus_backend == RUST_RMPLUS_BACKEND

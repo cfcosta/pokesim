@@ -110,6 +110,7 @@ class ArenaConfig:
     tree_convergence_tolerance: float = 0.005
     tree_convergence_patience: int = 8
     redundant_action_prior_scale: float = 0.25
+    prior_anchor_temperature: float = 0.02
     adaptive_search: bool = True
     adaptive_deep_threshold: float = 0.55
     adaptive_force_deep_fraction: float = 0.10
@@ -360,6 +361,7 @@ def _joint_search_config(config: ArenaConfig) -> JointSearchConfig:
         convergence_tolerance=config.tree_convergence_tolerance,
         convergence_patience=config.tree_convergence_patience,
         redundant_action_prior_scale=config.redundant_action_prior_scale,
+        prior_anchor_temperature=config.prior_anchor_temperature,
         adaptive_search=config.adaptive_search,
         adaptive_deep_threshold=config.adaptive_deep_threshold,
         adaptive_force_deep_fraction=config.adaptive_force_deep_fraction,

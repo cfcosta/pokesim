@@ -76,6 +76,7 @@ from battle_training.joint_search import (
     SimultaneousTreeSearch,
     _dirichlet_noised_priors,
     _tactical_potential,
+    solve_anchored_zero_sum,
     solve_zero_sum_regret,
 )
 from battle_training.model import MoveValueModel
@@ -109,6 +110,9 @@ from battle_training.rmplus_native import (
     PYTHON_REFERENCE_BACKEND,
     RUST_RMPLUS_BACKEND,
     native_available,
+)
+from battle_training.rmplus_native import (
+    solve_anchored as solve_anchored_native,
 )
 from battle_training.rmplus_native import (
     solve_cold as solve_cold_native,
@@ -1323,6 +1327,118 @@ class TransformerTests(unittest.TestCase):
         )
         self.assertLess(accelerated[3], uniform[3])
 
+    def _anchored_player_policy(
+        self, temperature: float, priors: list[float]
+    ) -> tuple[float, ...]:
+        server = _ToyServer()
+        network = _ToyNetwork()
+        search = SimultaneousTreeSearch(
+            server,
+            network,
+            network,
+            JointSearchConfig(
+                rmplus_backend=RUST_RMPLUS_BACKEND,
+                cfr_plus_solves=True,
+                prior_anchor_temperature=temperature,
+            ),
+            random.Random(1),
+            random.Random(2),
+        )
+        node = search._make_node(server._snapshot(0), ([0.5, 0.5], [0.5, 0.5], 0.0))
+        # Column 0 is the enemy's best reply against any player mix that puts at
+        # least half its mass on row 0, and both rows tie against it.  So every
+        # mix from 0.5 to 1.0 is an equilibrium and only a tie-break picks one.
+        node.payoff = [[0.0, 1.0], [0.0, -1.0]]
+        node.player_priors = list(priors)
+        node.enemy_priors = list(priors)
+        return search._solve_matrix(node, node.payoff)[0]
+
+    def test_the_anchored_root_solve_answers_to_the_network_prior(self) -> None:
+        # 0.9 sits inside the equilibrium segment, so the anchor reaches it
+        # exactly; 0.1 does not, and the solve stops at the segment's edge.
+        confident = self._anchored_player_policy(0.02, [0.9, 0.1])
+        self.assertAlmostEqual(confident[0], 0.9, places=4)
+        self.assertAlmostEqual(confident[1], 0.1, places=4)
+        flipped = self._anchored_player_policy(0.02, [0.1, 0.9])
+        self.assertLess(flipped[0], 0.6)
+
+    def test_regret_matching_publishes_a_tie_break_the_prior_cannot_reach(
+        self,
+    ) -> None:
+        # The kernel consults the prior only while every regret is still zero,
+        # so a tied face resolves to the same vertex whatever the head said.
+        matched = self._anchored_player_policy(0.0, [0.9, 0.1])
+        self.assertGreater(matched[0], 0.99)
+        flipped = self._anchored_player_policy(0.0, [0.1, 0.9])
+        self.assertGreater(flipped[0], 0.99)
+
+    def test_native_anchored_solve_matches_the_python_reference(self) -> None:
+        payoff = [
+            [0.71, -0.42, 0.19],
+            [-0.83, 0.37, 0.54],
+            [-0.28, 0.91, -0.66],
+        ]
+        priors = [0.2, 0.3, 0.5]
+        expected = solve_anchored_zero_sum(
+            payoff, priors, list(reversed(priors)), [0, 1, 2], [0, 1, 2], 2048, 0.02
+        )
+        actual = solve_anchored_native(
+            payoff,
+            priors,
+            list(reversed(priors)),
+            [0, 1, 2],
+            [0, 1, 2],
+            2048,
+            temperature=0.02,
+        )
+        self.assertTrue(native_available())
+        for expected_policy, actual_policy in zip(
+            expected[:2], actual[:2], strict=True
+        ):
+            for expected_value, actual_value in zip(
+                expected_policy, actual_policy, strict=True
+            ):
+                self.assertAlmostEqual(expected_value, actual_value, places=10)
+        self.assertAlmostEqual(expected[2], actual[2], places=10)
+        self.assertAlmostEqual(expected[3], actual[3], places=10)
+
+    def test_a_zero_prior_discourages_an_action_without_forbidding_it(self) -> None:
+        # KL to an exact zero is infinite, which would make anything the head
+        # rated 0.0 unplayable forever.  The anchor is a preference, not a mask:
+        # a matrix this decisive has to win.
+        dominated = [[-1.0, -1.0], [1.0, 1.0]]
+        policy = solve_anchored_zero_sum(
+            dominated, [1.0, 0.0], [0.5, 0.5], [0, 1], [0, 1], 2048, 0.02
+        )[0]
+        self.assertGreater(policy[1], 0.99)
+
+    def test_the_anchored_solve_moves_continuously_with_the_payoff(self) -> None:
+        payoff = [[0.30, 0.30], [0.30001, 0.29999]]
+        nudged = [[0.30 + 1e-6, 0.30], [0.30001, 0.29999]]
+        priors = [0.5, 0.5]
+        base = solve_anchored_zero_sum(
+            payoff, priors, priors, [0, 1], [0, 1], 1024, 0.02
+        )[0]
+        shifted = solve_anchored_zero_sum(
+            nudged, priors, priors, [0, 1], [0, 1], 1024, 0.02
+        )[0]
+        moved = 0.5 * sum(abs(a - b) for a, b in zip(base, shifted, strict=True))
+        self.assertLess(moved, 1e-3)
+
+    def test_the_anchored_solve_rejects_a_nonpositive_temperature(self) -> None:
+        priors = [0.5, 0.5]
+        for temperature in (0.0, -0.1, float("nan")):
+            with self.assertRaisesRegex(ValueError, "temperature"):
+                solve_anchored_zero_sum(
+                    [[0.0, 0.0], [0.0, 0.0]],
+                    priors,
+                    priors,
+                    [0, 1],
+                    [0, 1],
+                    16,
+                    temperature,
+                )
+
     def test_native_uniform_warm_state_matches_python_reference(self) -> None:
         server = _ToyServer()
         network = _ToyNetwork()
@@ -1511,10 +1627,11 @@ class TransformerTests(unittest.TestCase):
         )
         result = search.search(server._snapshot(0), sample_actions=False)
         self.assertEqual(
-            result.solver,
-            "simultaneous-matrix-tree-rust-cfrplus-pooled-node-split-half-v5",
+            result.solver, "simultaneous-matrix-tree-anchored-qre-pooled-node-v6"
         )
-        self.assertEqual(result.diagnostics["root_solver"], "rust-cfrplus-f64-v1")
+        self.assertEqual(
+            result.diagnostics["root_solver"], "rust-anchored-f64-v1-t0.02"
+        )
         self.assertGreater(result.player_policy[0], 0.8)
         self.assertEqual(result.diagnostics["tree_max_depth"], 1)
         self.assertEqual(result.diagnostics["root_joint_actions"], 4)
@@ -3949,7 +4066,7 @@ class TransformerTests(unittest.TestCase):
         ).search(server._snapshot(0), sample_actions=False)
         self.assertEqual(result.nodes, 4)
         self.assertEqual(
-            result.solver, "simultaneous-matrix-tree-rmplus-pooled-node-v3"
+            result.solver, "simultaneous-matrix-tree-anchored-qre-pooled-node-v6"
         )
         self.assertEqual(result.diagnostics["adaptive_deep_selected"], 0)
         self.assertEqual(result.diagnostics["adaptive_reason"], "router-stable-root")
@@ -7029,6 +7146,42 @@ class PopularGateTest(unittest.TestCase):
         }
         response.update(overrides)
         return response
+
+    def test_prior_anchor_defaults_match_the_cli_in_every_dataclass(self) -> None:
+        self.assertEqual(JointSearchConfig().prior_anchor_temperature, 0.02)
+        self.assertEqual(
+            ArenaConfig(games=4, seed_count=2).prior_anchor_temperature, 0.02
+        )
+        self.assertEqual(self._config().prior_anchor_temperature, 0.02)
+        defaults = training_parser().parse_args(
+            ["transformer-train", "--output", "/tmp/prior-anchor"]
+        )
+        self.assertEqual(defaults.prior_anchor_temperature, 0.02)
+        arguments = training_parser().parse_args(
+            [
+                "transformer-train",
+                "--output",
+                "/tmp/prior-anchor",
+                "--prior-anchor-temperature",
+                "0.05",
+            ]
+        )
+        self.assertEqual(arguments.prior_anchor_temperature, 0.05)
+
+    def test_prior_anchor_temperature_is_validated(self) -> None:
+        from battle_training.transformer_pipeline import run_transformer_pipeline
+
+        for temperature in (-0.1, 1.5):
+            with (
+                tempfile.TemporaryDirectory() as tmp,
+                self.assertRaisesRegex(
+                    ValueError, r"prior_anchor_temperature must be in \[0, 1\]"
+                ),
+            ):
+                run_transformer_pipeline(
+                    Path(tmp),
+                    self._config(prior_anchor_temperature=temperature),
+                )
 
     def test_popular_gate_defaults_match_the_cli_in_both_dataclasses(self) -> None:
         self.assertEqual(self._config().popular_gate, 64)

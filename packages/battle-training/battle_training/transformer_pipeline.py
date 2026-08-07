@@ -178,6 +178,7 @@ class TransformerPipelineConfig:
     heuristic_opponents: bool = True
     value_loss_weight: float = 0.25
     redundant_action_prior_scale: float = 0.25
+    prior_anchor_temperature: float = 0.02
     balanced_final_species: bool = True
     generated_schedule_version: int = 3
     rmplus_backend: str = RUST_RMPLUS_BACKEND
@@ -546,29 +547,32 @@ def _new_search(
         player,
         enemy,
         JointSearchConfig(
-            config.chance_samples_per_joint,
-            config.search_depth,
-            config.regret_iterations,
-            config.inference_batch_size,
-            config.max_actions_per_side,
-            config.tree_expansion_budget if deep else 1,
-            config.tree_exploration,
-            config.tree_chance_resample,
-            config.tree_regret_iterations,
-            config.tree_deeper_joint_rotations,
-            config.tree_minimum_budget if deep else 1,
-            config.tree_convergence_tolerance,
-            config.tree_convergence_patience,
-            config.redundant_action_prior_scale,
-            adaptive,
-            config.adaptive_deep_threshold,
-            config.adaptive_force_deep_fraction,
-            config.adaptive_exploitability_threshold,
-            config.adaptive_payoff_spread_threshold,
-            config.rmplus_backend,
-            config.cfr_plus_solves,
-            config.split_half_reliability,
-            config.prior_regret,
+            chance_samples_per_joint=config.chance_samples_per_joint,
+            max_depth=config.search_depth,
+            regret_iterations=config.regret_iterations,
+            inference_batch_size=config.inference_batch_size,
+            max_actions_per_side=config.max_actions_per_side,
+            expansion_budget=config.tree_expansion_budget if deep else 1,
+            exploration=config.tree_exploration,
+            chance_resample=config.tree_chance_resample,
+            regret_iterations_per_update=config.tree_regret_iterations,
+            deeper_joint_rotations=config.tree_deeper_joint_rotations,
+            minimum_expansion_budget=config.tree_minimum_budget if deep else 1,
+            convergence_tolerance=config.tree_convergence_tolerance,
+            convergence_patience=config.tree_convergence_patience,
+            redundant_action_prior_scale=config.redundant_action_prior_scale,
+            prior_anchor_temperature=config.prior_anchor_temperature,
+            adaptive_search=adaptive,
+            adaptive_deep_threshold=config.adaptive_deep_threshold,
+            adaptive_force_deep_fraction=config.adaptive_force_deep_fraction,
+            adaptive_exploitability_threshold=(
+                config.adaptive_exploitability_threshold
+            ),
+            adaptive_payoff_spread_threshold=config.adaptive_payoff_spread_threshold,
+            rmplus_backend=config.rmplus_backend,
+            cfr_plus_solves=config.cfr_plus_solves,
+            split_half_reliability=config.split_half_reliability,
+            prior_regret=config.prior_regret,
         ),
         selection_rng,
         chance_rng,
@@ -604,6 +608,7 @@ def _arena_config(
         tree_convergence_tolerance=config.tree_convergence_tolerance,
         tree_convergence_patience=config.tree_convergence_patience,
         redundant_action_prior_scale=config.redundant_action_prior_scale,
+        prior_anchor_temperature=config.prior_anchor_temperature,
         adaptive_search=config.adaptive_search,
         adaptive_deep_threshold=config.adaptive_deep_threshold,
         adaptive_force_deep_fraction=config.adaptive_force_deep_fraction,
@@ -1636,6 +1641,7 @@ def _collect_rows_single(
         "adaptive_exploitability_threshold": (config.adaptive_exploitability_threshold),
         "adaptive_payoff_spread_threshold": (config.adaptive_payoff_spread_threshold),
         "redundant_action_prior_scale": config.redundant_action_prior_scale,
+        "prior_anchor_temperature": config.prior_anchor_temperature,
         "redundant_action_prior": "non-excluding-static-context-v1",
         "decision_quality_version": "static-active-context-v1",
         "actor_batch_size": config.actor_batch_size,
@@ -3916,6 +3922,7 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     # V16 runs created before observational decision-quality probes used raw
     # network priors. Preserve that exact resume behavior.
     normalized.setdefault("redundant_action_prior_scale", 1.0)
+    normalized.setdefault("prior_anchor_temperature", 0.02)
     normalized.setdefault("leaf_hidden_layers", None)
     normalized.setdefault("leaf_ema_decay", 0.0)
     normalized.setdefault("promotion_nonfinish_policy", "losses")
@@ -4262,6 +4269,8 @@ def run_transformer_pipeline(
         raise ValueError("leaf_loss_weight must be in [0, 1]")
     if not 0.0 < config.redundant_action_prior_scale <= 1.0:
         raise ValueError("redundant_action_prior_scale must be in (0, 1]")
+    if not 0.0 <= config.prior_anchor_temperature <= 1.0:
+        raise ValueError("prior_anchor_temperature must be in [0, 1]")
     if config.historical_window < 0:
         raise ValueError("historical_window must be nonnegative")
     if config.promotion_games < 2 or config.promotion_games % 2:

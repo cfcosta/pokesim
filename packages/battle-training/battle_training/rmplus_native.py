@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import math
 import os
 import sys
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ _STATUS = {
     2: "invalid matrix or legal-action shape",
     3: "iteration count must be positive",
     4: "legal action is outside the matrix",
+    5: "anchor temperature must be finite and positive",
     255: "native solver panic",
 }
 
@@ -41,7 +43,17 @@ class NativeWarmResult:
     solve_count: int
 
 
-def solver_identity(backend: str, cfr_plus: bool) -> str:
+def solver_identity(
+    backend: str, cfr_plus: bool, anchor_temperature: float = 0.0
+) -> str:
+    if anchor_temperature > 0.0:
+        # The anchored kernel ignores the CFR+ flag entirely -- it is a
+        # different iteration, not a variant of regret matching.
+        if backend == RUST_RMPLUS_BACKEND:
+            return f"rust-anchored-f64-v1-t{anchor_temperature:g}"
+        if backend == PYTHON_REFERENCE_BACKEND:
+            return f"python-anchored-f64-reference-v1-t{anchor_temperature:g}"
+        raise ValueError(f"unsupported RM+ backend: {backend!r}")
     if backend == RUST_RMPLUS_BACKEND:
         variant = "cfrplus" if cfr_plus else "uniform"
         return f"rust-{variant}-f64-v1"
@@ -102,6 +114,23 @@ def _load_library() -> tuple[ctypes.CDLL, Path]:
             pointer,
         ]
         library.battle_rmplus_solve_cold_v1.restype = ctypes.c_int32
+        library.battle_rmplus_solve_anchored_v1.argtypes = [
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_double,
+            pointer,
+            pointer,
+            pointer,
+            pointer,
+            ctypes.c_uint32,
+            pointer,
+            ctypes.c_uint32,
+            pointer,
+            pointer,
+            pointer,
+            pointer,
+        ]
+        library.battle_rmplus_solve_anchored_v1.restype = ctypes.c_int32
         library.battle_rmplus_solve_warm_v1.argtypes = [
             ctypes.c_uint32,
             ctypes.c_uint32,
@@ -235,6 +264,55 @@ def solve_cold(
         ctypes.byref(exploitability),
     )
     _check(status, "cold solve")
+    return (
+        tuple(float(item) for item in player_policy),
+        tuple(float(item) for item in enemy_policy),
+        value.value,
+        exploitability.value,
+    )
+
+
+def solve_anchored(
+    payoff: list[list[float]],
+    player_priors: list[float],
+    enemy_priors: list[float],
+    player_legal: list[int],
+    enemy_legal: list[int],
+    iterations: int,
+    *,
+    temperature: float,
+) -> tuple[tuple[float, ...], tuple[float, ...], float, float]:
+    action_count = len(payoff)
+    if iterations < 1:
+        raise ValueError("regret iterations must be positive")
+    if not math.isfinite(temperature) or temperature <= 0.0:
+        raise ValueError("anchor temperature must be finite and positive")
+    matrix = _f64(payoff, (action_count, action_count))
+    player_prior = _f64(player_priors, (action_count,))
+    enemy_prior = _f64(enemy_priors, (action_count,))
+    player_actions = _legal(player_legal, action_count)
+    enemy_actions = _legal(enemy_legal, action_count)
+    player_policy = np.empty(action_count, dtype=np.float64)
+    enemy_policy = np.empty(action_count, dtype=np.float64)
+    value = ctypes.c_double()
+    exploitability = ctypes.c_double()
+    status = _library().battle_rmplus_solve_anchored_v1(
+        action_count,
+        iterations,
+        temperature,
+        _pointer(matrix),
+        _pointer(player_prior),
+        _pointer(enemy_prior),
+        _pointer(player_actions),
+        len(player_actions),
+        _pointer(enemy_actions),
+        len(enemy_actions),
+        _pointer(player_policy),
+        _pointer(enemy_policy),
+        ctypes.byref(value),
+        ctypes.byref(exploitability),
+    )
+    _check(status, "anchored solve")
     return (
         tuple(float(item) for item in player_policy),
         tuple(float(item) for item in enemy_policy),
