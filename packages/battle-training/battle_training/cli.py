@@ -173,6 +173,13 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
         dest="distilled_leaf_evaluator",
     )
     parser.set_defaults(distilled_leaf_evaluator=True)
+    parser.add_argument(
+        "--no-distilled-leaf-policy",
+        action="store_false",
+        dest="distilled_leaf_policy",
+        help="drop the distilled priors and pay a full encoder forward per node",
+    )
+    parser.set_defaults(distilled_leaf_policy=True)
     parser.add_argument("--leaf-hidden", type=int, default=64)
     parser.add_argument(
         "--leaf-hidden-layers",
@@ -405,6 +412,7 @@ def main(argv: list[str] | None = None) -> int:
             token_layout=arguments.token_layout,
             joint_policy_heads=arguments.joint_policy_heads,
             distilled_leaf_evaluator=arguments.distilled_leaf_evaluator,
+            distilled_leaf_policy=arguments.distilled_leaf_policy,
             leaf_hidden=arguments.leaf_hidden,
             leaf_hidden_layers=arguments.leaf_hidden_layers,
             leaf_loss_weight=arguments.leaf_loss_weight,

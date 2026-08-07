@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import os
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -116,6 +116,7 @@ class TransformerConfig:
     token_layout: str = "scalar-v1"
     joint_policy_heads: bool = False
     distilled_leaf_evaluator: bool = False
+    distilled_leaf_policy: bool = False
     leaf_hidden: int = 64
     leaf_hidden_layers: tuple[int, ...] | None = None
 
@@ -155,6 +156,10 @@ class BattleTransformer(nn.Module):
             or any(size < 1 for size in config.leaf_hidden_layers)
         ):
             raise ValueError("leaf_hidden_layers must list positive hidden sizes")
+        if config.distilled_leaf_policy and not config.distilled_leaf_evaluator:
+            raise ValueError("the distilled policy shares the leaf evaluator's trunk")
+        if config.distilled_leaf_policy and not config.joint_policy_heads:
+            raise ValueError("the distilled policy distills both joint policy heads")
         if config.token_layout not in {"scalar-v1", "semantic-entity-v1"}:
             raise ValueError("token_layout must be scalar-v1 or semantic-entity-v1")
         if (
@@ -216,9 +221,12 @@ class BattleTransformer(nn.Module):
                 leaf_layers.append(nn.Linear(leaf_width, hidden))
                 leaf_layers.append(nn.GELU())
                 leaf_width = hidden
-            leaf_layers.append(nn.Linear(leaf_width, 1))
-            leaf_layers.append(nn.Tanh())
-            self.leaf_value = nn.Sequential(*leaf_layers)
+            # Trunk and heads are separate so the distilled policy can hang off
+            # the representation the distilled value already paid for.
+            self.leaf_trunk = nn.Sequential(*leaf_layers)
+            self.leaf_value = nn.Sequential(nn.Linear(leaf_width, 1), nn.Tanh())
+            if config.distilled_leaf_policy:
+                self.leaf_policy = nn.Linear(leaf_width, 2 * config.action_count)
         masks = torch.arange(1 << config.action_count, dtype=torch.long).unsqueeze(1)
         actions = torch.arange(config.action_count, dtype=torch.long).unsqueeze(0)
         self.register_buffer(
@@ -245,6 +253,7 @@ class BattleTransformer(nn.Module):
         self._compiled_forwards: dict[int, Any] = {}
         self._compiled_joint_forwards: dict[int, Any] = {}
         self._compiled_leaf_forwards: dict[int, Any] = {}
+        self._compiled_leaf_joint_forwards: dict[int, Any] = {}
         self._inference_stream: torch.cuda.Stream | None = None
         nn.init.normal_(self.cls, std=0.02)
         self._initialize_policy(self.policy)
@@ -253,17 +262,21 @@ class BattleTransformer(nn.Module):
         nn.init.zeros_(self.value[-2].weight)
         nn.init.zeros_(self.value[-2].bias)
         if config.distilled_leaf_evaluator:
-            nn.init.zeros_(self.leaf_value[-2].weight)
-            nn.init.zeros_(self.leaf_value[-2].bias)
+            nn.init.zeros_(self.leaf_value[0].weight)
+            nn.init.zeros_(self.leaf_value[0].bias)
+            if config.distilled_leaf_policy:
+                self._initialize_policy(self.leaf_policy, sides=2)
 
-    def _initialize_policy(self, head: nn.Linear) -> None:
+    def _initialize_policy(self, head: nn.Linear, sides: int = 1) -> None:
         nn.init.zeros_(head.weight)
         nn.init.zeros_(head.bias)
         if self.config.action_count == 13:
             with torch.no_grad():
-                head.bias[4:10].fill_(-2.0)
-                head.bias[10].fill_(-2.0)
-                head.bias[12].fill_(-4.0)
+                for side in range(sides):
+                    bias = head.bias[side * 13 : (side + 1) * 13]
+                    bias[4:10].fill_(-2.0)
+                    bias[10].fill_(-2.0)
+                    bias[12].fill_(-4.0)
 
     def _scalar_tokens(self, values: Tensor) -> tuple[Tensor, Tensor]:
         low = values.bitwise_and(255)
@@ -387,25 +400,57 @@ class BattleTransformer(nn.Module):
         # Keep policy normalization, losses, reductions, and search values in FP32.
         return logits.float(), values.float()
 
-    def _leaf_forward_impl(self, features: Tensor) -> Tensor:
+    def _leaf_trunk_impl(self, features: Tensor) -> Tensor:
         if not self.config.distilled_leaf_evaluator:
             raise RuntimeError("distilled leaf evaluation is disabled")
         normalized = torch.log1p(features.float().clamp(0, 65535)) / 11.090354888959125
-        return self.leaf_value(normalized).squeeze(-1)
+        return self.leaf_trunk(normalized)
 
-    def leaf_forward(self, features: Tensor) -> Tensor:
+    def _leaf_forward_impl(self, features: Tensor) -> Tensor:
+        return self.leaf_value(self._leaf_trunk_impl(features)).squeeze(-1)
+
+    def _leaf_joint_forward_impl(
+        self, features: Tensor
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        if not self.config.distilled_leaf_policy:
+            raise RuntimeError("the distilled policy head is disabled")
+        pooled = self._leaf_trunk_impl(features)
+        logits = self.leaf_policy(pooled)
+        split = self.config.action_count
+        return (
+            logits[:, :split],
+            logits[:, split:],
+            self.leaf_value(pooled).squeeze(-1),
+        )
+
+    def _leaf_autocast(self, features: Tensor) -> str | None:
+        """Name the autocast device for a leaf batch, or None to stay in FP32."""
         if features.ndim != 2 or features.shape[1] != self.config.feature_count:
             raise ValueError(f"expected [batch,{self.config.feature_count}] features")
         if self.config.precision == "fp32":
-            return self._leaf_forward_impl(features)
+            return None
         device_type = features.device.type
         if device_type == "cuda" and not torch.cuda.is_bf16_supported():
             raise RuntimeError("bf16 precision requires a bf16-capable CUDA device")
         if device_type not in {"cpu", "cuda"}:
             raise RuntimeError(f"bf16 precision is unsupported on {device_type}")
+        return device_type
+
+    def leaf_forward(self, features: Tensor) -> Tensor:
+        device_type = self._leaf_autocast(features)
+        if device_type is None:
+            return self._leaf_forward_impl(features)
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
             values = self._leaf_forward_impl(features)
         return values.float()
+
+    def leaf_joint_forward(self, features: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        device_type = self._leaf_autocast(features)
+        if device_type is None:
+            return self._leaf_joint_forward_impl(features)
+        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+            own, opponent, values = self._leaf_joint_forward_impl(features)
+        return own.float(), opponent.float(), values.float()
 
     def forward_joint(self, features: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         if features.ndim != 2 or features.shape[1] != self.config.feature_count:
@@ -473,6 +518,7 @@ class BattleTransformer(nn.Module):
             self._compiled_forwards.clear()
             self._compiled_joint_forwards.clear()
             self._compiled_leaf_forwards.clear()
+            self._compiled_leaf_joint_forwards.clear()
             self._inference_engine = selected
 
     @staticmethod
@@ -538,6 +584,22 @@ class BattleTransformer(nn.Module):
             self._compiled_leaf_forwards[bucket] = compiled
         return compiled(padded)[:batch]
 
+    def _compiled_leaf_joint_forward(
+        self, features: Tensor
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        padded, batch, bucket = self._padded_inference(features)
+        compiled = self._compiled_leaf_joint_forwards.get(bucket)
+        if compiled is None:
+            compiled = torch.compile(
+                self._leaf_joint_forward_impl,
+                mode="reduce-overhead",
+                fullgraph=True,
+                dynamic=False,
+            )
+            self._compiled_leaf_joint_forwards[bucket] = compiled
+        own, opponent, values = compiled(padded)
+        return own[:batch], opponent[:batch], values[:batch]
+
     def _staged_tensor(
         self,
         values: np.ndarray,
@@ -596,6 +658,28 @@ class BattleTransformer(nn.Module):
             own, opponent, values = own.float(), opponent.float(), values.float()
         else:
             own, opponent, values = self.forward_joint(tensor)
+        return self._joint_rows(own, opponent, values, own_masks, opponent_masks)
+
+    def _leaf_joint_evaluation_outputs(
+        self, tensor: Tensor, own_masks: Tensor, opponent_masks: Tensor
+    ) -> Tensor:
+        if self._inference_engine == "compiled":
+            device_type = tensor.device.type
+            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                own, opponent, values = self._compiled_leaf_joint_forward(tensor)
+            own, opponent, values = own.float(), opponent.float(), values.float()
+        else:
+            own, opponent, values = self.leaf_joint_forward(tensor)
+        return self._joint_rows(own, opponent, values, own_masks, opponent_masks)
+
+    def _joint_rows(
+        self,
+        own: Tensor,
+        opponent: Tensor,
+        values: Tensor,
+        own_masks: Tensor,
+        opponent_masks: Tensor,
+    ) -> Tensor:
         return torch.cat(
             (
                 self._masked_policy(own, own_masks),
@@ -688,14 +772,19 @@ class BattleTransformer(nn.Module):
         return self.begin_evaluate(features, masks).result()
 
     @torch.inference_mode()
-    def begin_evaluate_joint(
+    def _begin_joint(
         self,
         features: Sequence[Sequence[int]],
         own_masks: Sequence[int],
         opponent_masks: Sequence[int],
+        outputs_of: Callable[[Tensor, Tensor, Tensor], Tensor],
     ) -> JointEvaluationTicket:
-        if not self.config.joint_policy_heads:
-            raise RuntimeError("joint evaluation requires joint policy heads")
+        """Launch one masked own/opponent/value batch through `outputs_of`.
+
+        The encoder head and the distilled head differ only in which module
+        turns features into logits; the staging, streams, and pinned buffers
+        that keep the launch asynchronous are the same either way.
+        """
         device = next(self.parameters()).device
         feature_array, own_mask_array = self._arrays(features, own_masks)
         opponent_mask_array = self._checked_masks(opponent_masks)
@@ -707,11 +796,7 @@ class BattleTransformer(nn.Module):
             ).long()
             own_indexes = torch.from_numpy(own_mask_array).to(device).long()
             opponent_indexes = torch.from_numpy(opponent_mask_array).to(device).long()
-            output = (
-                self._joint_evaluation_outputs(tensor, own_indexes, opponent_indexes)
-                .cpu()
-                .numpy()
-            )
+            output = outputs_of(tensor, own_indexes, opponent_indexes).cpu().numpy()
             split = self.config.action_count
             return _ImmediateJointEvaluation(
                 (
@@ -748,9 +833,7 @@ class BattleTransformer(nn.Module):
             opponent_indexes = pinned_opponent_masks.to(
                 device, non_blocking=True
             ).long()
-            outputs = self._joint_evaluation_outputs(
-                tensor, own_indexes, opponent_indexes
-            )
+            outputs = outputs_of(tensor, own_indexes, opponent_indexes)
             host_output = torch.empty(
                 outputs.shape, dtype=outputs.dtype, device="cpu", pin_memory=True
             )
@@ -772,6 +855,18 @@ class BattleTransformer(nn.Module):
             ),
         )
 
+    def begin_evaluate_joint(
+        self,
+        features: Sequence[Sequence[int]],
+        own_masks: Sequence[int],
+        opponent_masks: Sequence[int],
+    ) -> JointEvaluationTicket:
+        if not self.config.joint_policy_heads:
+            raise RuntimeError("joint evaluation requires joint policy heads")
+        return self._begin_joint(
+            features, own_masks, opponent_masks, self._joint_evaluation_outputs
+        )
+
     def evaluate_joint(
         self,
         features: Sequence[Sequence[int]],
@@ -779,6 +874,29 @@ class BattleTransformer(nn.Module):
         opponent_masks: Sequence[int],
     ) -> tuple[list[list[float]], list[list[float]], list[float]]:
         return self.begin_evaluate_joint(features, own_masks, opponent_masks).result()
+
+    def begin_evaluate_leaf_joint(
+        self,
+        features: Sequence[Sequence[int]],
+        own_masks: Sequence[int],
+        opponent_masks: Sequence[int],
+    ) -> JointEvaluationTicket:
+        """Priors and a value from the distilled trunk, skipping the encoder."""
+        if not self.config.distilled_leaf_policy:
+            raise RuntimeError("the distilled policy head is disabled")
+        return self._begin_joint(
+            features, own_masks, opponent_masks, self._leaf_joint_evaluation_outputs
+        )
+
+    def evaluate_leaf_joint(
+        self,
+        features: Sequence[Sequence[int]],
+        own_masks: Sequence[int],
+        opponent_masks: Sequence[int],
+    ) -> tuple[list[list[float]], list[list[float]], list[float]]:
+        return self.begin_evaluate_leaf_joint(
+            features, own_masks, opponent_masks
+        ).result()
 
     @torch.inference_mode()
     def begin_evaluate_leaf(
@@ -947,7 +1065,9 @@ def warm_start_network(
     target_state = target.state_dict()
     with torch.no_grad():
         for name, source_value in source_state.items():
-            if name.startswith("leaf_value.") and not copy_leaf:
+            if not copy_leaf and name.startswith(
+                ("leaf_trunk.", "leaf_value.", "leaf_policy.")
+            ):
                 continue
             target_value = target_state[name]
             if name == "position.weight":

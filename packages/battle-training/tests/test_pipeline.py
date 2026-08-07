@@ -157,6 +157,7 @@ from battle_training.transformer_pipeline import (
     _HeuristicNetwork,
     _initial_leaf_ema_state,
     _leaf_ema_checkpoint_state,
+    _leaf_parameters,
     _learning_rate_for_iteration,
     _lineage_promotions,
     _load_completed_prefix,
@@ -183,6 +184,7 @@ from battle_training.transformer_pipeline import (
     _shadow_seed_iterations,
     _smoothed_policy,
     _snapshot_from_serialized,
+    _train_network,
     _training_entropy_seed,
     _training_level100,
     _training_pair,
@@ -1821,6 +1823,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.token_layout, "semantic-entity-v1")
         self.assertTrue(arguments.joint_policy_heads)
         self.assertTrue(arguments.distilled_leaf_evaluator)
+        self.assertTrue(arguments.distilled_leaf_policy)
         self.assertEqual(arguments.leaf_hidden, 64)
         self.assertIsNone(arguments.leaf_hidden_layers)
         self.assertEqual(arguments.leaf_ema_decay, 0.995)
@@ -2798,12 +2801,13 @@ class TransformerTests(unittest.TestCase):
                 token_layout=train.token_layout,
                 joint_policy_heads=train.joint_policy_heads,
                 distilled_leaf_evaluator=train.distilled_leaf_evaluator,
+                distilled_leaf_policy=train.distilled_leaf_policy,
                 leaf_hidden=train.leaf_hidden,
                 leaf_hidden_layers=train.leaf_hidden_layers,
             )
         )
         self.assertEqual(
-            sum(parameter.numel() for parameter in network.parameters()), 5_024_988
+            sum(parameter.numel() for parameter in network.parameters()), 5_026_678
         )
         self.assertIsNone(train.leaf_hidden_layers)
         self.assertEqual(train.replay_window, 3)
@@ -2851,7 +2855,7 @@ class TransformerTests(unittest.TestCase):
         leaf = sum(
             value.numel()
             for key, value in network.state_dict().items()
-            if key.startswith("leaf_value.")
+            if key.startswith("leaf_")
         )
         self.assertEqual(leaf, 159_233)
         self.assertEqual(
@@ -4184,6 +4188,186 @@ class TransformerTests(unittest.TestCase):
             )
             restored = load_network(path, torch.device("cpu"))
             self.assertEqual(restored.config.precision, "fp32")
+
+
+class DistilledPolicyHeadTest(unittest.TestCase):
+    """A cheap policy that rides the distilled evaluator's trunk.
+
+    Interior search nodes need priors as much as they need values, and paying a
+    full encoder forward for them is what makes a second solved ply expensive.
+    The distilled evaluator already reads raw features through a small MLP for
+    its value; hanging both policy heads off the same trunk buys the priors for
+    one linear layer.
+    """
+
+    @staticmethod
+    def _network(**overrides: object) -> BattleTransformer:
+        settings: dict[str, object] = {
+            "feature_count": 492,
+            "action_count": 13,
+            "d_model": 32,
+            "heads": 4,
+            "layers": 1,
+            "feedforward": 64,
+            "token_layout": "semantic-entity-v1",
+            "joint_policy_heads": True,
+            "distilled_leaf_evaluator": True,
+            "distilled_leaf_policy": True,
+            "leaf_hidden": 16,
+        }
+        settings.update(overrides)
+        return BattleTransformer(TransformerConfig(**settings)).eval()  # type: ignore[arg-type]
+
+    def test_the_distilled_head_masks_both_policies_and_bounds_the_value(self) -> None:
+        torch.manual_seed(5)
+        network = self._network()
+        own_masks = [0b1111, 1 << 12]
+        opponent_masks = [0b11, 0b1111]
+        own, opponent, values = network.evaluate_leaf_joint(
+            [[0] * 492, [65535] * 492], own_masks, opponent_masks
+        )
+        for policies, masks in ((own, own_masks), (opponent, opponent_masks)):
+            for policy, mask in zip(policies, masks, strict=True):
+                self.assertEqual(len(policy), 13)
+                self.assertAlmostEqual(sum(policy), 1.0, places=5)
+                for action, probability in enumerate(policy):
+                    if not mask & (1 << action):
+                        self.assertEqual(probability, 0.0)
+        self.assertTrue(all(-1.0 <= value <= 1.0 for value in values))
+
+    def test_the_distilled_policy_needs_the_heads_it_distills(self) -> None:
+        # The target is the joint search policy for *both* sides, which only the
+        # dual-head trunk produces, and the head lives on the leaf evaluator's
+        # trunk, so neither switch is optional once this one is on.
+        with self.assertRaises(ValueError):
+            self._network(joint_policy_heads=False)
+        with self.assertRaises(ValueError):
+            self._network(distilled_leaf_evaluator=False)
+
+    def test_the_distilled_policy_rides_the_value_evaluators_trunk(self) -> None:
+        without = self._network(distilled_leaf_policy=False)
+        with_policy = self._network()
+        added = sum(parameter.numel() for parameter in with_policy.parameters()) - sum(
+            parameter.numel() for parameter in without.parameters()
+        )
+        # One 16 -> 26 linear and nothing else. A private trunk would have cost
+        # another 492x16 projection, which is the whole reason to share.
+        self.assertEqual(added, 16 * 26 + 26)
+
+    def test_the_leaf_ema_carries_the_whole_distilled_evaluator(self) -> None:
+        network = BattleTransformer(
+            TransformerConfig(
+                feature_count=8,
+                action_count=2,
+                d_model=8,
+                heads=2,
+                layers=1,
+                feedforward=16,
+                joint_policy_heads=True,
+                distilled_leaf_evaluator=True,
+                distilled_leaf_policy=True,
+                leaf_hidden=4,
+            )
+        )
+        distilled = _leaf_parameters(network)
+        self.assertTrue(any(name.startswith("leaf_policy.") for name in distilled))
+        self.assertTrue(any(name.startswith("leaf_trunk.") for name in distilled))
+        self.assertTrue(any(name.startswith("leaf_value.") for name in distilled))
+        with torch.no_grad():
+            for parameter in distilled.values():
+                parameter.fill_(1.0)
+        state = _initial_leaf_ema_state(network, 0.5)
+        self.assertIsNotNone(state)
+        _begin_leaf_training(network, state)
+        with torch.no_grad():
+            for parameter in _leaf_parameters(network).values():
+                parameter.fill_(3.0)
+        _update_leaf_ema(network, state, 0.5)
+        _end_leaf_training(network, state)
+        for name, parameter in _leaf_parameters(network).items():
+            torch.testing.assert_close(
+                parameter, torch.full_like(parameter, 2.0), msg=name
+            )
+
+    @staticmethod
+    def _shard(path: Path) -> None:
+        """Two features that disagree about which action the search picked."""
+        rows = []
+        for episode in range(10):
+            first = episode % 2 == 0
+            rows.append(
+                {
+                    "type": "example",
+                    "episode": episode,
+                    "features": [7 if first else 900] + [0] * 7,
+                    "policy": [1.0, 0.0] if first else [0.0, 1.0],
+                    "opponent_policy": [0.0, 1.0] if first else [1.0, 0.0],
+                    "value": 0.5 if first else -0.5,
+                    "legal_mask": 0b11,
+                    "opponent_legal_mask": 0b11,
+                }
+            )
+        path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+
+    def test_training_pulls_the_distilled_policy_toward_the_search_target(self) -> None:
+        torch.manual_seed(3)
+        network = BattleTransformer(
+            TransformerConfig(
+                feature_count=8,
+                action_count=2,
+                d_model=8,
+                heads=2,
+                layers=1,
+                feedforward=16,
+                precision="fp32",
+                joint_policy_heads=True,
+                distilled_leaf_evaluator=True,
+                distilled_leaf_policy=True,
+                leaf_hidden=16,
+            )
+        )
+        features = torch.tensor([[7] + [0] * 7, [900] + [0] * 7], dtype=torch.long)
+        targets = torch.tensor([[0], [1]])
+
+        def chosen() -> float:
+            with torch.no_grad():
+                logits, _, _ = network.leaf_joint_forward(features)
+            probabilities = torch.softmax(logits, dim=-1)
+            return float(torch.take_along_dim(probabilities, targets, dim=1).min())
+
+        before = chosen()
+        with tempfile.TemporaryDirectory() as directory:
+            shard = Path(directory) / "iteration-001.jsonl"
+            self._shard(shard)
+            report = _train_network(
+                network,
+                torch.optim.Adam(network.parameters(), lr=0.05),
+                [shard],
+                TransformerPipelineConfig(
+                    iterations=1,
+                    selfplay_episodes=1,
+                    arena_episodes=1,
+                    episode_budget=8,
+                    search_depth=1,
+                    epochs=120,
+                    batch_size=8,
+                    learning_rate=0.05,
+                    weight_decay=0.0,
+                    seed=1,
+                    device="cpu",
+                    d_model=8,
+                    heads=2,
+                    layers=1,
+                    feedforward=16,
+                    precision="fp32",
+                    leaf_loss_weight=1.0,
+                ),
+                1,
+            )
+        after = chosen()
+        self.assertGreater(after, before)
+        self.assertGreater(after, 0.7)
+        self.assertIn("leaf_policy_loss", report["history"][-1])
 
 
 class RedTrainerHeuristicTests(unittest.TestCase):

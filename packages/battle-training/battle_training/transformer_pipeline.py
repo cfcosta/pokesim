@@ -102,6 +102,7 @@ class TransformerPipelineConfig:
     lr_decay_factor: float = 0.1
     joint_policy_heads: bool = True
     distilled_leaf_evaluator: bool = True
+    distilled_leaf_policy: bool = True
     leaf_hidden: int = 64
     leaf_hidden_layers: tuple[int, ...] | None = None
     leaf_loss_weight: float = 0.25
@@ -177,6 +178,7 @@ class _HeuristicNetwork:
             {
                 "action_count": 13,
                 "distilled_leaf_evaluator": True,
+                "distilled_leaf_policy": False,
             },
         )()
 
@@ -2914,6 +2916,7 @@ def _heldout_diagnostics(
     leaf_squared_errors: list[float] = []
     leaf_distillation_errors: list[float] = []
     policy_cross_entropy = 0.0
+    leaf_policy_cross_entropy = 0.0
     target_entropy = 0.0
     top_action_matches = 0
     weighted_policy_rows = 0.0
@@ -2970,8 +2973,34 @@ def _heldout_diagnostics(
             squared_errors.extend(
                 (values - batch_value).square().float().cpu().tolist()
             )
-            if network.config.distilled_leaf_evaluator:
+            if network.config.distilled_leaf_policy:
+                leaf_logits, leaf_opponent_logits, leaf_values = (
+                    network.leaf_joint_forward(batch_features)
+                )
+                leaf_log_policy = torch.log_softmax(
+                    leaf_logits.masked_fill(
+                        ~batch_legal, torch.finfo(leaf_logits.dtype).min
+                    ),
+                    dim=-1,
+                )
+                leaf_opponent_log_policy = torch.log_softmax(
+                    leaf_opponent_logits.masked_fill(
+                        ~batch_opponent_legal,
+                        torch.finfo(leaf_opponent_logits.dtype).min,
+                    ),
+                    dim=-1,
+                )
+                leaf_policy_cross_entropy += float(
+                    (
+                        -(batch_policy * leaf_log_policy).sum(dim=-1)
+                        - (batch_opponent_policy * leaf_opponent_log_policy).sum(dim=-1)
+                    )
+                    .mul(batch_weights)
+                    .sum()
+                )
+            elif network.config.distilled_leaf_evaluator:
                 leaf_values = network.leaf_forward(batch_features)
+            if network.config.distilled_leaf_evaluator:
                 leaf_squared_errors.extend(
                     (leaf_values - batch_value).square().float().cpu().tolist()
                 )
@@ -3007,6 +3036,12 @@ def _heldout_diagnostics(
             else None
         ),
         "policy_cross_entropy": mean_cross_entropy,
+        "leaf_policy_kl": (
+            leaf_policy_cross_entropy / max(1.0, weighted_policy_rows)
+            - mean_target_entropy
+            if network.config.distilled_leaf_policy
+            else None
+        ),
         "policy_target_entropy": mean_target_entropy,
         "policy_kl": mean_cross_entropy - mean_target_entropy,
         "policy_top_action_agreement": top_action_matches
@@ -3051,12 +3086,29 @@ def _gradient_report(
     }
 
 
+_DISTILLED_PREFIXES = ("leaf_trunk.", "leaf_value.", "leaf_policy.")
+
+
 def _leaf_parameters(network: BattleTransformer) -> dict[str, Tensor]:
     return {
         name: parameter
         for name, parameter in network.named_parameters()
-        if name.startswith("leaf_value.")
+        if name.startswith(_DISTILLED_PREFIXES)
     }
+
+
+def _joint_policy_cross_entropy(
+    log_policy: Tensor,
+    opponent_log_policy: Tensor,
+    target: Tensor,
+    opponent_target: Tensor,
+    weights: Tensor,
+) -> Tensor:
+    """Reliability-weighted cross entropy averaged over both sides' rows."""
+    rows = -(target * log_policy).sum(dim=-1) - (
+        opponent_target * opponent_log_policy
+    ).sum(dim=-1)
+    return (rows * weights).sum() / (2.0 * weights.sum()).clamp_min(1.0)
 
 
 def _initial_leaf_ema_state(
@@ -3165,7 +3217,9 @@ def _train_network(
     trunk_parameters = [
         parameter
         for name, parameter in network.named_parameters()
-        if not name.startswith(("policy.", "opponent_policy.", "value.", "leaf_value."))
+        if not name.startswith(
+            ("policy.", "opponent_policy.", "value.", *_DISTILLED_PREFIXES)
+        )
     ]
     heldout_before = _heldout_diagnostics(
         network, heldout_examples, heldout_battles, config.inference_batch_size
@@ -3177,6 +3231,7 @@ def _train_network(
     for epoch in range(config.epochs):
         permutation = torch.randperm(len(features), generator=generator)
         policy_total = value_total = leaf_total = total_total = 0.0
+        leaf_policy_total = 0.0
         gradient_samples: list[tuple[float, float, float | None]] = []
         batches = 0
         for start in range(0, len(features), config.batch_size):
@@ -3197,18 +3252,57 @@ def _train_network(
             opponent_logits = opponent_logits.masked_fill(
                 ~batch_opponent_legal, torch.finfo(opponent_logits.dtype).min
             )
-            policy_rows = -(batch_policy * torch.log_softmax(logits, dim=-1)).sum(
-                dim=-1
+            log_policy = torch.log_softmax(logits, dim=-1)
+            opponent_log_policy = torch.log_softmax(opponent_logits, dim=-1)
+            policy_loss = _joint_policy_cross_entropy(
+                log_policy,
+                opponent_log_policy,
+                batch_policy,
+                batch_opponent_policy,
+                batch_policy_weight,
             )
-            opponent_policy_rows = -(
-                batch_opponent_policy * torch.log_softmax(opponent_logits, dim=-1)
-            ).sum(dim=-1)
-            policy_loss = (
-                (policy_rows + opponent_policy_rows) * batch_policy_weight
-            ).sum() / (2.0 * batch_policy_weight.sum()).clamp_min(1.0)
             value_loss = torch.nn.functional.mse_loss(values, batch_value)
-            if network.config.distilled_leaf_evaluator:
+            leaf_policy_loss = value_loss.new_zeros(())
+            if network.config.distilled_leaf_policy:
+                # One trunk forward feeds both distilled heads.
+                leaf_logits, leaf_opponent_logits, leaf_values = (
+                    network.leaf_joint_forward(batch_features)
+                )
+                leaf_log_policy = torch.log_softmax(
+                    leaf_logits.masked_fill(
+                        ~batch_legal, torch.finfo(leaf_logits.dtype).min
+                    ),
+                    dim=-1,
+                )
+                leaf_opponent_log_policy = torch.log_softmax(
+                    leaf_opponent_logits.masked_fill(
+                        ~batch_opponent_legal,
+                        torch.finfo(leaf_opponent_logits.dtype).min,
+                    ),
+                    dim=-1,
+                )
+                # Same split as the distilled value: half the search target the
+                # main head learns from, half the main head's own answer, which
+                # is defined on every row rather than only the reliable ones.
+                leaf_policy_loss = 0.5 * (
+                    _joint_policy_cross_entropy(
+                        leaf_log_policy,
+                        leaf_opponent_log_policy,
+                        batch_policy,
+                        batch_opponent_policy,
+                        batch_policy_weight,
+                    )
+                    + _joint_policy_cross_entropy(
+                        leaf_log_policy,
+                        leaf_opponent_log_policy,
+                        log_policy.exp().detach(),
+                        opponent_log_policy.exp().detach(),
+                        torch.ones_like(batch_policy_weight),
+                    )
+                )
+            elif network.config.distilled_leaf_evaluator:
                 leaf_values = network.leaf_forward(batch_features)
+            if network.config.distilled_leaf_evaluator:
                 leaf_target_loss = torch.nn.functional.mse_loss(
                     leaf_values, batch_value
                 )
@@ -3221,7 +3315,7 @@ def _train_network(
             loss = (
                 policy_loss
                 + config.value_loss_weight * value_loss
-                + config.leaf_loss_weight * leaf_loss
+                + config.leaf_loss_weight * (leaf_loss + leaf_policy_loss)
             )
             if len(gradient_samples) < 8:
                 policy_gradients = torch.autograd.grad(
@@ -3274,6 +3368,7 @@ def _train_network(
             policy_total += float(policy_loss.detach())
             value_total += float(value_loss.detach())
             leaf_total += float(leaf_loss.detach())
+            leaf_policy_total += float(leaf_policy_loss.detach())
             total_total += float(loss.detach())
             batches += 1
         history.append(
@@ -3284,6 +3379,10 @@ def _train_network(
                 "weighted_value_loss": config.value_loss_weight * value_total / batches,
                 "leaf_loss": leaf_total / batches,
                 "weighted_leaf_loss": config.leaf_loss_weight * leaf_total / batches,
+                "leaf_policy_loss": leaf_policy_total / batches,
+                "weighted_leaf_policy_loss": config.leaf_loss_weight
+                * leaf_policy_total
+                / batches,
                 "total_loss": total_total / batches,
             }
         )
@@ -3334,7 +3433,7 @@ def _train_network(
         "epochs": config.epochs,
         "value_loss_weight": config.value_loss_weight,
         "leaf_loss_weight": config.leaf_loss_weight,
-        "objective": "dual-policy-value-and-leaf-v5",
+        "objective": "dual-policy-value-and-distilled-leaf-v6",
         "batches_per_epoch": math.ceil(len(features) / config.batch_size),
         "history": history,
         "diagnostics": {
@@ -3905,6 +4004,12 @@ def run_transformer_pipeline(
         raise ValueError("leaf_hidden must be positive")
     if not 0.0 <= config.leaf_loss_weight <= 1.0:
         raise ValueError("leaf_loss_weight must be in [0, 1]")
+    if config.distilled_leaf_policy and not (
+        config.distilled_leaf_evaluator and config.joint_policy_heads
+    ):
+        raise ValueError(
+            "distilled_leaf_policy needs the leaf evaluator and both policy heads"
+        )
     if not 0.0 < config.redundant_action_prior_scale <= 1.0:
         raise ValueError("redundant_action_prior_scale must be in (0, 1]")
     if not 0.0 <= config.prior_anchor_temperature <= 1.0:
@@ -3989,6 +4094,7 @@ def run_transformer_pipeline(
         token_layout=config.token_layout,
         joint_policy_heads=config.joint_policy_heads,
         distilled_leaf_evaluator=config.distilled_leaf_evaluator,
+        distilled_leaf_policy=config.distilled_leaf_policy,
         leaf_hidden=config.leaf_hidden,
         leaf_hidden_layers=config.leaf_hidden_layers,
     )
