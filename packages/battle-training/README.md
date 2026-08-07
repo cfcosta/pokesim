@@ -253,7 +253,10 @@ collection or promotion. It also reports and gates 1–2, 3–4,
 5–6, and unequal-party strata, plus a nine-team fixed campaign suite covering
 Brock through Giovanni and Lance. The campaign teams use canonical natural
 moves and fixed DVs inside the link quotient; they do not claim trainer AI or
-item equivalence. The v16–v23 pipelines separate a persistent shadow learner from the
+item equivalence. A campaign arena splits its pairs nine ways, so each case
+carries too few to resolve its own point estimate; a case vetoes promotion only
+when its whole 95% paired interval sits below 0.40. The well-powered overall
+score carries the positive claim at 0.45. The v16–v23 pipelines separate a persistent shadow learner from the
 quality-gated deployed incumbent. Inconclusive evaluations retain the incumbent
 but carry the learner parameters and AdamW state into the next collection
 iteration, allowing small updates to compound without weakening deployment. Each

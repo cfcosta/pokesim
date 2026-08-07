@@ -951,6 +951,41 @@ def _stratified_report(scores: dict[str, list[float]]) -> dict[str, Any]:
     return {"pass": all(row["pass"] for row in strata.values()), "groups": strata}
 
 
+def _campaign_report(
+    scores: dict[int, list[float]], robust_score: float
+) -> dict[str, Any]:
+    """Veto promotion per campaign case only where a deficit was witnessed.
+
+    A campaign arena splits its pairs nine ways, so a single case carries a
+    handful of them and its point estimate is mostly noise.  Vetoing on the
+    point estimate therefore blocks a candidate roughly as often when it is
+    even as when it is behind, and one such case sinks the whole gate.  The
+    case must clear the floor across its paired interval before it counts as
+    evidence of a deficit; the well-powered overall score is what carries the
+    positive claim.
+    """
+    cases: dict[str, Any] = {}
+    for index, name in enumerate(_CAMPAIGN_NAMES):
+        values = scores.get(index, [])
+        if values:
+            low, high = _mean_ci95(values)
+            case_score = sum(values) / len(values)
+        else:
+            low = high = case_score = None
+        cases[name] = {
+            "pairs": len(values),
+            "score": case_score,
+            "paired_score_ci95": [low, high],
+            "pass": high is not None and high >= 0.40,
+        }
+    return {
+        "pass": robust_score >= 0.45 and all(case["pass"] for case in cases.values()),
+        "minimum_overall_score": 0.45,
+        "minimum_case_ci95_high": 0.40,
+        "cases": cases,
+    }
+
+
 def _arena_batch_spans(games: int, batch_size: int) -> list[tuple[int, int]]:
     """Slice games into the exact server-level batches a sequential run uses."""
     if batch_size < 2 or batch_size % 2:
@@ -1743,30 +1778,8 @@ def run_paired_arena(
         excluded_score = None
         excluded_ci = [None, None]
     finished = wins + losses + draws
-    campaign_cases = {}
-    for index, name in enumerate(_CAMPAIGN_NAMES):
-        values = campaign_scores[index]
-        if values:
-            low, high = _mean_ci95(values)
-            case_score = sum(values) / len(values)
-        else:
-            low = high = case_score = None
-        campaign_cases[name] = {
-            "pairs": len(values),
-            "score": case_score,
-            "paired_score_ci95": [low, high],
-            "pass": case_score is not None and case_score >= 0.40,
-        }
-    campaign_report = {
-        "pass": (
-            campaign
-            and robust_score >= 0.45
-            and all(case["pass"] for case in campaign_cases.values())
-        ),
-        "minimum_overall_score": 0.45,
-        "minimum_case_score": 0.40,
-        "cases": campaign_cases,
-    }
+    campaign_report = _campaign_report(campaign_scores, robust_score)
+    campaign_report["pass"] = campaign and campaign_report["pass"]
     return {
         "games": games,
         "pairs": games // 2,

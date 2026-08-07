@@ -27,6 +27,7 @@ from battle_training.arena import (
     _arena_parallel_batch_size,
     _arena_span_partition,
     _battle_finished,
+    _campaign_report,
     _evaluation_level100,
     _evaluation_party_sizes,
     _FastArenaEpisode,
@@ -3492,6 +3493,36 @@ class TransformerTests(unittest.TestCase):
             _training_entropy_seed(20260726, 1, 0, _SELECTION_DOMAIN),
             10456798846194407138,
         )
+
+    def test_a_campaign_case_vetoes_only_on_witnessed_deficit(self) -> None:
+        # The gate compared a nine-way split of the campaign pairs against 0.40
+        # on the point estimate alone.  At two or three pairs a case that is
+        # actually even fails roughly as often as it passes, and one unlucky
+        # case vetoes the whole promotion, so the veto needs evidence.
+        report = _campaign_report(
+            {
+                # Even on the mean, but nowhere near resolved: the interval
+                # covers 0.40, so this case witnessed no deficit.
+                0: [0.0, 1.0, 0.0],
+                # Below the floor on the mean and resolved there: a real
+                # deficit, and the only kind that should veto.
+                1: [0.10, 0.15, 0.05],
+            },
+            robust_score=0.50,
+        )
+        cases = report["cases"]
+        self.assertEqual(cases["Brock"]["score"], 1 / 3)
+        self.assertTrue(cases["Brock"]["pass"])
+        self.assertLess(cases["Misty"]["paired_score_ci95"][1], 0.40)
+        self.assertFalse(cases["Misty"]["pass"])
+        self.assertFalse(report["pass"])
+
+    def test_a_campaign_case_without_pairs_never_passes(self) -> None:
+        report = _campaign_report({0: [0.9, 0.9]}, robust_score=0.90)
+        self.assertEqual(report["cases"]["Misty"]["pairs"], 0)
+        self.assertIsNone(report["cases"]["Misty"]["score"])
+        self.assertFalse(report["cases"]["Misty"]["pass"])
+        self.assertFalse(report["pass"])
 
     def test_the_actor_episode_carries_no_unread_controller_stream(self) -> None:
         # The tier stream was seeded per episode and drawn from only by the
