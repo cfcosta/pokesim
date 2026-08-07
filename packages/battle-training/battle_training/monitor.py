@@ -158,10 +158,6 @@ def _aggregate_actor_progress(actors: list[dict[str, Any]]) -> dict[str, Any] | 
         "capped_stat_setup",
         "ohko_attempts",
         "ohko_into_faster",
-        "deep_search_decisions",
-        "root_only_decisions",
-        "forced_router_samples",
-        "forced_router_false_negatives",
         "mirror_episodes",
         "opponent_episodes",
         "model_opponent_episodes",
@@ -170,9 +166,6 @@ def _aggregate_actor_progress(actors: list[dict[str, Any]]) -> dict[str, Any] | 
         "level100_six_vs_six_battles",
     )
     result = {name: sum(int(actor.get(name, 0)) for actor in actors) for name in summed}
-    result["forced_router_false_negative_rate"] = result[
-        "forced_router_false_negatives"
-    ] / max(1, result["forced_router_samples"])
     completed = result["completed"]
     result["mean_decisions"] = (
         sum(

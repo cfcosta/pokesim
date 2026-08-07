@@ -94,21 +94,9 @@ class JointSearchConfig:
     regret_iterations: int = 2048
     inference_batch_size: int = 256
     max_actions_per_side: int = 13
-    expansion_budget: int = 320
-    exploration: float = 0.10
-    chance_resample: float = 0.10
     regret_iterations_per_update: int = 16
-    deeper_joint_rotations: int = 2
-    minimum_expansion_budget: int = 192
-    convergence_tolerance: float = 0.005
-    convergence_patience: int = 8
     redundant_action_prior_scale: float = 1.0
     prior_anchor_temperature: float = 0.02
-    adaptive_search: bool = False
-    adaptive_deep_threshold: float = 0.55
-    adaptive_force_deep_fraction: float = 0.10
-    adaptive_exploitability_threshold: float = 0.08
-    adaptive_payoff_spread_threshold: float = 0.75
     rmplus_backend: str = PYTHON_REFERENCE_BACKEND
     cfr_plus_solves: bool = False
     split_half_reliability: bool = False
@@ -798,7 +786,6 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         config: JointSearchConfig,
         selection_rng: random.Random,
         chance_rng: random.Random,
-        budget_rng: random.Random | None = None,
         prior_noise: RootPriorNoise | None = None,
     ) -> None:
         super().__init__(
@@ -809,30 +796,8 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             selection_rng,
             chance_rng,
         )
-        if config.expansion_budget < 1:
-            raise ValueError("tree expansion budget must be positive")
-        if not 0.0 <= config.exploration <= 1.0:
-            raise ValueError("tree exploration must be in [0, 1]")
-        if not 0.0 <= config.chance_resample <= 1.0:
-            raise ValueError("tree chance resampling must be in [0, 1]")
         if config.regret_iterations_per_update < 1:
             raise ValueError("tree regret iterations per update must be positive")
-        if config.deeper_joint_rotations < 1:
-            raise ValueError("deeper joint rotations must be positive")
-        if not 1 <= config.minimum_expansion_budget <= config.expansion_budget:
-            raise ValueError("minimum tree budget must be in 1..expansion_budget")
-        if config.convergence_tolerance < 0.0:
-            raise ValueError("tree convergence tolerance must be nonnegative")
-        if config.convergence_patience < 1:
-            raise ValueError("tree convergence patience must be positive")
-        if not 0.0 <= config.adaptive_deep_threshold <= 1.0:
-            raise ValueError("adaptive deep threshold must be in [0, 1]")
-        if not 0.0 <= config.adaptive_force_deep_fraction <= 1.0:
-            raise ValueError("adaptive force-deep fraction must be in [0, 1]")
-        if config.adaptive_exploitability_threshold < 0.0:
-            raise ValueError("adaptive exploitability threshold must be nonnegative")
-        if config.adaptive_payoff_spread_threshold < 0.0:
-            raise ValueError("adaptive payoff-spread threshold must be nonnegative")
         if config.rmplus_backend not in {
             PYTHON_REFERENCE_BACKEND,
             RUST_RMPLUS_BACKEND,
@@ -854,11 +819,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._possible_joint_pairs = 0
         self._cross_root_batch_size = 1
         self._cross_root_root_leaves = 0
-        self.budget_rng = budget_rng or random.Random(0)
         self.prior_noise = prior_noise
-        self._adaptive_deep_selected = True
-        self._adaptive_router_score = 1.0
-        self._adaptive_reason = "adaptive-disabled"
         self._split_half_available = 0
         self._split_half_player_distance = 0.0
         self._split_half_enemy_distance = 0.0
@@ -1680,92 +1641,6 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._solve_node(node)
         return len(successors)
 
-    @classmethod
-    def _pooled_budget_scores(
-        cls,
-        groups: list[tuple[int, SimultaneousTreeSearch, Snapshot]],
-    ) -> dict[int, float]:
-        outputs: dict[tuple[int, int], float] = {}
-        by_network: dict[int, dict[str, Any]] = {}
-        for group_id, search, snapshot in groups:
-            mirror = search.player_network is search.enemy_network
-            controllers = (
-                ((0, search.player_network),)
-                if mirror
-                else (
-                    (0, search.player_network),
-                    (1, search.enemy_network),
-                )
-            )
-            for side, network in controllers:
-                feature = (
-                    snapshot.player_features if side == 0 else snapshot.enemy_features
-                )
-                if not bool(
-                    getattr(network.config, "adaptive_budget_head", False)
-                ) or not hasattr(network, "evaluate_budget"):
-                    score = 1.0
-                    outputs[(group_id, side)] = score
-                    if mirror:
-                        outputs[(group_id, 1)] = score
-                    continue
-                bucket = by_network.setdefault(
-                    id(network), {"network": network, "items": []}
-                )
-                bucket["items"].append((group_id, side, mirror, feature, search))
-        for bucket in by_network.values():
-            items = bucket["items"]
-            network = bucket["network"]
-            batch_size = max(item[4].config.inference_batch_size for item in items)
-            for start in range(0, len(items), batch_size):
-                batch = items[start : start + batch_size]
-                scores = network.evaluate_budget([item[3] for item in batch])
-                for (group_id, side, mirror, _, _), score in zip(
-                    batch, scores, strict=True
-                ):
-                    outputs[(group_id, side)] = score
-                    if mirror:
-                        outputs[(group_id, 1)] = score
-        return {
-            group_id: max(outputs[(group_id, 0)], outputs[(group_id, 1)])
-            for group_id, _, _ in groups
-        }
-
-    @staticmethod
-    def _policy_entropy(policy: tuple[float, ...]) -> float:
-        return -sum(
-            probability * math.log(probability) for probability in policy if probability
-        )
-
-    def _choose_adaptive_depth(
-        self, root: _TreeNode, router_score: float
-    ) -> tuple[bool, str]:
-        if not self.config.adaptive_search:
-            return True, "adaptive-disabled"
-        if self.config.max_depth <= 1:
-            return False, "configured-root-only"
-        if router_score >= self.config.adaptive_deep_threshold:
-            return True, "learned-router"
-        if root.online_exploitability >= self.config.adaptive_exploitability_threshold:
-            return True, "root-online-exploitability"
-        legal_payoffs = [
-            root.payoff[player][enemy]
-            for player in root.player_legal
-            for enemy in root.enemy_legal
-        ]
-        payoff_spread = max(legal_payoffs) - min(legal_payoffs)
-        entropy = self._policy_entropy(root.player_policy) + self._policy_entropy(
-            root.enemy_policy
-        )
-        if (
-            payoff_spread >= self.config.adaptive_payoff_spread_threshold
-            and entropy >= 1.0
-        ):
-            return True, "root-payoff-uncertainty"
-        if self.budget_rng.random() < self.config.adaptive_force_deep_fraction:
-            return True, "forced-calibration-sample"
-        return False, "router-stable-root"
-
     def _diagnostics(self, root: _TreeNode | None) -> dict[str, float | int | str]:
         diagnostics: dict[str, float | int | str] = {
             "tree_nodes": self._expanded_nodes,
@@ -1783,9 +1658,6 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 self._inference_cache_stats["hits"]
                 / max(1, sum(self._inference_cache_stats.values()))
             ),
-            "adaptive_deep_selected": int(self._adaptive_deep_selected),
-            "adaptive_router_score": self._adaptive_router_score,
-            "adaptive_reason": self._adaptive_reason,
         }
         if root is not None:
             diagnostics["root_joint_actions"] = len(root.player_legal) * len(
@@ -1980,12 +1852,6 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             if is_good
         ]
         root_values, _, _ = cls._pooled_successor_values(root_groups)
-        adaptive_groups = [
-            (index, searches[index], snapshots[index])
-            for index, is_good in enumerate(good)
-            if is_good and searches[index].config.adaptive_search
-        ]
-        router_scores = cls._pooled_budget_scores(adaptive_groups)
         results: list[SearchResult | None] = [None] * len(searches)
         batch_size = len(searches)
         for index, (search, root, spec, bounds, is_good) in enumerate(
@@ -2014,11 +1880,6 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             root.enemy_policy = list(enemy_policy)
             root.root_value = value
             root.exploitability = exploitability
-            router_score = router_scores.get(index, 1.0)
-            selected, reason = search._choose_adaptive_depth(root, router_score)
-            search._adaptive_deep_selected = selected
-            search._adaptive_router_score = router_score
-            search._adaptive_reason = reason
             results[index] = search._finish_root(root, transitions, sample_actions)
         if any(result is None for result in results):
             raise RuntimeError("cross-root scheduler left an unfinished search")

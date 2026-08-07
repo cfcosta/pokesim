@@ -32,7 +32,6 @@ def _profile(
     backend: str,
     cfr_plus: bool,
     depth: int,
-    budget: int,
     iterations: int,
 ) -> tuple[dict[str, Any], list[Any]]:
     config = JointSearchConfig(
@@ -40,15 +39,7 @@ def _profile(
         regret_iterations=iterations,
         inference_batch_size=256,
         max_actions_per_side=13,
-        expansion_budget=budget,
-        exploration=0.10,
-        chance_resample=0.10,
         regret_iterations_per_update=16,
-        deeper_joint_rotations=2,
-        minimum_expansion_budget=min(192, budget),
-        convergence_tolerance=0.005,
-        convergence_patience=8,
-        adaptive_search=False,
         rmplus_backend=backend,
         cfr_plus_solves=cfr_plus,
     )
@@ -66,7 +57,6 @@ def _profile(
                 config,
                 random.Random(seed + 10_000 + index),
                 random.Random(seed + 20_000 + index),
-                random.Random(seed + 30_000 + index),
             )
             for index in range(roots)
         ]
@@ -98,12 +88,11 @@ def main() -> None:
     parser.add_argument("--roots", type=int, default=64)
     parser.add_argument("--seed", type=int, default=77_110_031)
     parser.add_argument("--depth", type=int, default=4)
-    parser.add_argument("--budget", type=int, default=320)
     parser.add_argument("--iterations", type=int, default=2048)
     parser.add_argument("--engine", choices=("eager", "compiled"), default="compiled")
     arguments = parser.parse_args()
-    if arguments.roots < 1 or arguments.depth < 1 or arguments.budget < 1:
-        raise SystemExit("roots, depth, and budget must be positive")
+    if arguments.roots < 1 or arguments.depth < 1:
+        raise SystemExit("roots and depth must be positive")
     if not torch.cuda.is_available():
         raise SystemExit("CUDA is required")
 
@@ -119,7 +108,6 @@ def main() -> None:
         RUST_RMPLUS_BACKEND,
         True,
         arguments.depth,
-        arguments.budget,
         arguments.iterations,
     )
     variants = (
@@ -137,7 +125,6 @@ def main() -> None:
             backend,
             cfr_plus,
             arguments.depth,
-            arguments.budget,
             arguments.iterations,
         )
         rows.append(row)
@@ -150,7 +137,6 @@ def main() -> None:
         "engine": arguments.engine,
         "roots": arguments.roots,
         "depth": arguments.depth,
-        "budget": arguments.budget,
         "iterations": arguments.iterations,
         "variants": rows,
         "native_uniform_speedup": (

@@ -59,12 +59,6 @@ class TimedNetwork:
         self._record(len(features), started)
         return result
 
-    def evaluate_budget(self, features: Any) -> Any:
-        started = time.perf_counter()
-        result = self.inner.evaluate_budget(features)
-        self._record(len(features), started)
-        return result
-
 
 class TimedServer:
     def __init__(self, inner: SearchServer) -> None:
@@ -129,7 +123,6 @@ def search_profile(
     roots: int,
     seed: int,
     depth: int,
-    budget: int,
 ) -> tuple[dict[str, Any], list[Any]]:
     with SearchServer() as raw_server:
         server = TimedServer(raw_server)
@@ -144,14 +137,7 @@ def search_profile(
             regret_iterations=256,
             inference_batch_size=256,
             max_actions_per_side=13,
-            expansion_budget=budget,
-            exploration=0.10,
-            chance_resample=0.10,
             regret_iterations_per_update=16,
-            deeper_joint_rotations=2,
-            minimum_expansion_budget=min(192, budget),
-            convergence_tolerance=0.005,
-            convergence_patience=8,
         )
         searches = [
             SimultaneousTreeSearch(
@@ -177,7 +163,6 @@ def search_profile(
     report = {
         "roots": roots,
         "depth": depth,
-        "budget": budget,
         "elapsed_seconds": elapsed,
         "milliseconds_per_root": elapsed * 1000 / roots,
         "network_seconds": timed_network.seconds,
@@ -277,13 +262,11 @@ def collection_config(
 
 
 def collection_profile(
-    network: Any, episodes: int, seed: int, name: str, depth: int, budget: int
+    network: Any, episodes: int, seed: int, name: str, depth: int
 ) -> dict[str, Any]:
     config = dataclasses.replace(
         collection_config(network, episodes, seed),
         search_depth=depth,
-        tree_expansion_budget=budget,
-        tree_minimum_budget=min(192, budget),
     )
     path = Path(f"/tmp/variable-party-tree-{name}.jsonl")
     path.unlink(missing_ok=True)
@@ -340,21 +323,21 @@ def main() -> int:
             )
     profiles = []
     result_sets: dict[int, list[Any]] = {}
-    for name, depth, budget in (
-        ("complete-root", 1, 1),
-        ("tree-96", 4, 96),
-        ("tree-192", 4, 192),
-        ("tree-320", 4, 320),
+    for name, depth in (
+        ("depth-1", 1),
+        ("depth-2", 2),
+        ("depth-4", 4),
+        ("depth-8", 8),
     ):
         profile, results = search_profile(
-            network, arguments.roots, arguments.seed, depth, budget
+            network, arguments.roots, arguments.seed, depth
         )
         profile["name"] = name
         profiles.append(profile)
-        result_sets[budget] = results
-    reference = result_sets[320]
+        result_sets[depth] = results
+    reference = result_sets[4]
     stability = {}
-    for budget, results in result_sets.items():
+    for depth, results in result_sets.items():
         l1 = []
         disagreements = 0
         for result, target in zip(results, reference, strict=True):
@@ -378,17 +361,19 @@ def main() -> int:
             disagreements += max(
                 range(13), key=lambda action: result.enemy_policy[action]
             ) != max(range(13), key=lambda action: target.enemy_policy[action])
-        stability[str(budget)] = {
-            "mean_two_side_policy_l1_vs_320": sum(l1) / len(l1),
-            "argmax_disagreement_fraction_vs_320": disagreements / (2 * len(results)),
+        stability[str(depth)] = {
+            "mean_two_side_policy_l1_vs_depth_4": sum(l1) / len(l1),
+            "argmax_disagreement_fraction_vs_depth_4": (
+                disagreements / (2 * len(results))
+            ),
         }
     collections = []
     if arguments.collection_episodes:
-        for name, depth, budget in (
-            ("complete-root", 1, 1),
-            ("tree-96", 4, 96),
-            ("tree-192", 4, 192),
-            ("tree-320", 4, 320),
+        for name, depth in (
+            ("depth-1", 1),
+            ("depth-2", 2),
+            ("depth-4", 4),
+            ("depth-8", 8),
         ):
             collections.append(
                 collection_profile(
@@ -397,7 +382,6 @@ def main() -> int:
                     arguments.seed + 1_000_000,
                     name,
                     depth,
-                    budget,
                 )
             )
     report = {
@@ -408,7 +392,7 @@ def main() -> int:
         "profiles": profiles,
         "target_stability": stability,
         "collection": collections,
-        "caveat": "Performance benchmark only; lower budgets change the teacher.",
+        "caveat": "Performance benchmark only; other depths change the teacher.",
     }
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

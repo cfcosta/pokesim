@@ -28,8 +28,6 @@ def _profile(
         regret_iterations=iterations,
         inference_batch_size=256,
         max_actions_per_side=13,
-        expansion_budget=320,
-        adaptive_search=False,
     )
     with SearchServer() as server:
         snapshots = []
@@ -45,7 +43,6 @@ def _profile(
                 config,
                 random.Random(seed + 10_000 + index),
                 random.Random(seed + 20_000 + index),
-                random.Random(seed + 30_000 + index),
             )
             for index in range(roots)
         ]

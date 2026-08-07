@@ -106,15 +106,6 @@ class TransformerPipelineConfig:
     leaf_hidden_layers: tuple[int, ...] | None = None
     leaf_loss_weight: float = 0.25
     leaf_ema_decay: float = 0.0
-    adaptive_search: bool = True
-    adaptive_warmup_iterations: int = 1
-    adaptive_deep_threshold: float = 0.55
-    adaptive_force_deep_fraction: float = 0.10
-    adaptive_exploitability_threshold: float = 0.08
-    adaptive_payoff_spread_threshold: float = 0.75
-    adaptive_max_false_negative_rate: float = 0.10
-    adaptive_fn_pool_window: int = 1
-    router_fn_exposure_floor: float = 0.0
     collection_epsilon: float = 0.0
     collection_epsilon_turns: int = 0
     policy_target_smoothing: float = 0.0
@@ -134,8 +125,6 @@ class TransformerPipelineConfig:
     team_replay_fraction: float = 0.15
     team_replay_buffer_size: int = 256
     popular_gate: int = 64
-    budget_loss_weight: float = 0.05
-    budget_positive_weight: float = 4.0
     opponent_checkpoints: tuple[str, ...] = ()
     opponent_fraction: float = 0.5
     model_opponent_share: float = 0.5
@@ -159,15 +148,7 @@ class TransformerPipelineConfig:
     max_actions_per_side: int = 13
     replay_window: int = 2
     search_every: int = 1
-    tree_expansion_budget: int = 320
-    tree_exploration: float = 0.10
-    tree_chance_resample: float = 0.10
     tree_regret_iterations: int = 16
-    tree_deeper_joint_rotations: int = 2
-    tree_minimum_budget: int = 192
-    tree_convergence_tolerance: float = 0.005
-    tree_convergence_patience: int = 8
-    deep_search_fraction: float = 1.0
     actor_batch_size: int = 16
     actor_processes: int = 1
     eval_processes: int = 1
@@ -196,7 +177,6 @@ class _HeuristicNetwork:
             {
                 "action_count": 13,
                 "distilled_leaf_evaluator": True,
-                "adaptive_budget_head": True,
             },
         )()
 
@@ -243,11 +223,6 @@ class _HeuristicNetwork:
     def evaluate_leaf(features: list[tuple[int, ...]]) -> list[float]:
         return [0.0] * len(features)
 
-    @staticmethod
-    def evaluate_budget(features: list[tuple[int, ...]]) -> list[float]:
-        # Unknown heuristic-controller counterfactuals remain fully searched.
-        return [1.0] * len(features)
-
 
 def _heuristic_population() -> list[tuple[_HeuristicNetwork, str]]:
     general = [
@@ -284,7 +259,6 @@ class _ActorEpisode:
     selection_rng: random.Random
     chance_rng: random.Random
     opponent_rng: random.Random
-    tier_rng: random.Random
     exploration_rng: random.Random
     prior_noise_rng: random.Random
     initial: dict[str, Any] | None = None
@@ -395,7 +369,6 @@ _RESET_DOMAIN = 0x7265736574
 _SELECTION_DOMAIN = 0x73656C656374
 _CHANCE_DOMAIN = 0x6368616E6365
 _OPPONENT_DOMAIN = 0x6F70706F6E656E74
-_TIER_DOMAIN = 0x74696572
 _EXPLORATION_DOMAIN = 0x6578706C6F7265
 _PRIOR_NOISE_DOMAIN = 0x7072696F72
 _FRONTIER_PLAN_DOMAIN = 0x66726F6E74696572
@@ -536,10 +509,6 @@ def _new_search(
     config: TransformerPipelineConfig,
     selection_rng: random.Random,
     chance_rng: random.Random,
-    *,
-    deep: bool = True,
-    adaptive: bool = False,
-    budget_rng: random.Random | None = None,
     prior_noise: RootPriorNoise | None = None,
 ) -> SimultaneousTreeSearch:
     return SimultaneousTreeSearch(
@@ -552,23 +521,9 @@ def _new_search(
             regret_iterations=config.regret_iterations,
             inference_batch_size=config.inference_batch_size,
             max_actions_per_side=config.max_actions_per_side,
-            expansion_budget=config.tree_expansion_budget if deep else 1,
-            exploration=config.tree_exploration,
-            chance_resample=config.tree_chance_resample,
             regret_iterations_per_update=config.tree_regret_iterations,
-            deeper_joint_rotations=config.tree_deeper_joint_rotations,
-            minimum_expansion_budget=config.tree_minimum_budget if deep else 1,
-            convergence_tolerance=config.tree_convergence_tolerance,
-            convergence_patience=config.tree_convergence_patience,
             redundant_action_prior_scale=config.redundant_action_prior_scale,
             prior_anchor_temperature=config.prior_anchor_temperature,
-            adaptive_search=adaptive,
-            adaptive_deep_threshold=config.adaptive_deep_threshold,
-            adaptive_force_deep_fraction=config.adaptive_force_deep_fraction,
-            adaptive_exploitability_threshold=(
-                config.adaptive_exploitability_threshold
-            ),
-            adaptive_payoff_spread_threshold=config.adaptive_payoff_spread_threshold,
             rmplus_backend=config.rmplus_backend,
             cfr_plus_solves=config.cfr_plus_solves,
             split_half_reliability=config.split_half_reliability,
@@ -576,7 +531,6 @@ def _new_search(
         ),
         selection_rng,
         chance_rng,
-        budget_rng,
         prior_noise,
     )
 
@@ -599,21 +553,9 @@ def _arena_config(
         regret_iterations=config.regret_iterations,
         inference_batch_size=config.inference_batch_size,
         max_actions_per_side=config.max_actions_per_side,
-        tree_expansion_budget=config.tree_expansion_budget,
-        tree_exploration=config.tree_exploration,
-        tree_chance_resample=config.tree_chance_resample,
         tree_regret_iterations=config.tree_regret_iterations,
-        tree_deeper_joint_rotations=config.tree_deeper_joint_rotations,
-        tree_minimum_budget=config.tree_minimum_budget,
-        tree_convergence_tolerance=config.tree_convergence_tolerance,
-        tree_convergence_patience=config.tree_convergence_patience,
         redundant_action_prior_scale=config.redundant_action_prior_scale,
         prior_anchor_temperature=config.prior_anchor_temperature,
-        adaptive_search=config.adaptive_search,
-        adaptive_deep_threshold=config.adaptive_deep_threshold,
-        adaptive_force_deep_fraction=config.adaptive_force_deep_fraction,
-        adaptive_exploitability_threshold=(config.adaptive_exploitability_threshold),
-        adaptive_payoff_spread_threshold=config.adaptive_payoff_spread_threshold,
         seed=seed,
         replay_games=replay_games,
         seed_count=seed_count,
@@ -1622,22 +1564,7 @@ def _collect_rows_single(
         "inference_batch_size": config.inference_batch_size,
         "max_actions_per_side": config.max_actions_per_side,
         "search_every": config.search_every,
-        "tree_expansion_budget": config.tree_expansion_budget,
-        "tree_exploration": config.tree_exploration,
-        "tree_chance_resample": config.tree_chance_resample,
         "tree_regret_iterations": config.tree_regret_iterations,
-        "tree_deeper_joint_rotations": config.tree_deeper_joint_rotations,
-        "tree_minimum_budget": config.tree_minimum_budget,
-        "tree_convergence_tolerance": config.tree_convergence_tolerance,
-        "tree_convergence_patience": config.tree_convergence_patience,
-        "deep_search_fraction": config.deep_search_fraction,
-        "deep_search_schedule": "learned-root-disagreement-router-v1",
-        "adaptive_search": config.adaptive_search,
-        "adaptive_warmup_iterations": config.adaptive_warmup_iterations,
-        "adaptive_deep_threshold": config.adaptive_deep_threshold,
-        "adaptive_force_deep_fraction": config.adaptive_force_deep_fraction,
-        "adaptive_exploitability_threshold": (config.adaptive_exploitability_threshold),
-        "adaptive_payoff_spread_threshold": (config.adaptive_payoff_spread_threshold),
         "redundant_action_prior_scale": config.redundant_action_prior_scale,
         "prior_anchor_temperature": config.prior_anchor_temperature,
         "redundant_action_prior": "non-excluding-static-context-v1",
@@ -1665,8 +1592,6 @@ def _collect_rows_single(
     rows: list[dict[str, Any]] = [meta]
     smoothing = config.policy_target_smoothing
     finished = truncated = semantic_divergences = examples = transitions = 0
-    deep_search_decisions = root_only_decisions = 0
-    forced_router_samples = forced_router_false_negatives = 0
     mirror_episodes = opponent_episodes = 0
     model_opponent_episodes = heuristic_opponent_episodes = 0
     candidate_player_episodes = candidate_enemy_episodes = 0
@@ -1942,11 +1867,6 @@ def _collect_rows_single(
                                 config.seed, iteration, episode, _OPPONENT_DOMAIN
                             )
                         ),
-                        tier_rng=random.Random(
-                            _training_entropy_seed(
-                                config.seed, iteration, episode, _TIER_DOMAIN
-                            )
-                        ),
                         exploration_rng=random.Random(
                             _training_entropy_seed(
                                 config.seed, iteration, episode, _EXPLORATION_DOMAIN
@@ -1991,12 +1911,6 @@ def _collect_rows_single(
                             config,
                             actor.selection_rng,
                             actor.chance_rng,
-                            deep=True,
-                            adaptive=(
-                                config.adaptive_search
-                                and iteration > config.adaptive_warmup_iterations
-                            ),
-                            budget_rng=actor.tier_rng,
                             prior_noise=_collection_prior_noise(
                                 config, actor.prior_noise_rng
                             ),
@@ -2060,20 +1974,7 @@ def _collect_rows_single(
                     valid_search_target = result.payoff_matrix is not None
                     search_diagnostics = result.diagnostics or {}
                     if valid_search_target:
-                        if int(search_diagnostics.get("adaptive_deep_selected", 1)):
-                            target_kind = "joint-regret"
-                            deep_search_decisions += 1
-                        else:
-                            target_kind = "joint-regret-root"
-                            root_only_decisions += 1
-                        if (
-                            search_diagnostics.get("adaptive_reason")
-                            == "forced-calibration-sample"
-                        ):
-                            forced_router_samples += 1
-                            forced_router_false_negatives += int(
-                                search_diagnostics.get("deep_search_needed", 0) == 1
-                            )
+                        target_kind = "joint-regret"
                     else:
                         raise RuntimeError("available RM+ search lacks a payoff matrix")
                     player_choice = _choice_detail(
@@ -2319,13 +2220,6 @@ def _collect_rows_single(
                     species_schedule=meta["species_schedule"],
                     decision_quality_version="static-active-context-v1",
                     **decision_quality.report(),
-                    deep_search_decisions=deep_search_decisions,
-                    root_only_decisions=root_only_decisions,
-                    forced_router_samples=forced_router_samples,
-                    forced_router_false_negatives=forced_router_false_negatives,
-                    forced_router_false_negative_rate=(
-                        forced_router_false_negatives / max(1, forced_router_samples)
-                    ),
                     mirror_episodes=mirror_episodes,
                     opponent_episodes=opponent_episodes,
                     model_opponent_episodes=model_opponent_episodes,
@@ -2412,13 +2306,6 @@ def _collect_rows_single(
         "ordinary_actions": ordinary_actions,
         "examples": examples,
         "transitions": transitions,
-        "deep_search_decisions": deep_search_decisions,
-        "root_only_decisions": root_only_decisions,
-        "forced_router_samples": forced_router_samples,
-        "forced_router_false_negatives": forced_router_false_negatives,
-        "forced_router_false_negative_rate": (
-            forced_router_false_negatives / max(1, forced_router_samples)
-        ),
         "mirror_episodes": mirror_episodes,
         **(
             {"frontier_restart_episodes": frontier_restart_episodes}
@@ -2693,14 +2580,6 @@ def _merge_collection_rows(
         "pairs": config.selfplay_episodes // 2,
         "examples": len(example_rows),
         "transitions": transitions,
-        "deep_search_decisions": total("deep_search_decisions"),
-        "root_only_decisions": total("root_only_decisions"),
-        "forced_router_samples": total("forced_router_samples"),
-        "forced_router_false_negatives": total("forced_router_false_negatives"),
-        "forced_router_false_negative_rate": (
-            total("forced_router_false_negatives")
-            / max(1, total("forced_router_samples"))
-        ),
         "mirror_episodes": total("mirror_episodes"),
         **(
             {"frontier_restart_episodes": total("frontier_restart_episodes")}
@@ -2911,9 +2790,7 @@ def _collect_rows(
         )
 
 
-ExampleTensors = tuple[
-    Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor
-]
+ExampleTensors = tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]
 
 
 def _policy_reliability(row: dict[str, Any], floor: float) -> float:
@@ -2961,12 +2838,6 @@ def _rows_to_examples(rows: list[dict[str, Any]], floor: float = 1.0) -> Example
         else _policy_reliability(row, floor)
         for row in rows
     ]
-    budget_labels = [
-        float(max(0, int(row.get("deep_search_needed", -1)))) for row in rows
-    ]
-    budget_weights = [
-        1.0 if int(row.get("deep_search_needed", -1)) in {0, 1} else 0.0 for row in rows
-    ]
     return (
         torch.tensor(features, dtype=torch.long),
         torch.tensor(policies, dtype=torch.float32),
@@ -2975,8 +2846,6 @@ def _rows_to_examples(rows: list[dict[str, Any]], floor: float = 1.0) -> Example
         torch.tensor(legal_masks, dtype=torch.bool),
         torch.tensor(opponent_legal_masks, dtype=torch.bool),
         torch.tensor(policy_weights, dtype=torch.float32),
-        torch.tensor(budget_labels, dtype=torch.float32),
-        torch.tensor(budget_weights, dtype=torch.float32),
     )
 
 
@@ -3039,8 +2908,6 @@ def _heldout_diagnostics(
         legal_masks,
         opponent_legal_masks,
         policy_weights,
-        budget_labels,
-        budget_weights,
     ) = examples
     device = next(network.parameters()).device
     squared_errors: list[float] = []
@@ -3050,9 +2917,6 @@ def _heldout_diagnostics(
     target_entropy = 0.0
     top_action_matches = 0
     weighted_policy_rows = 0.0
-    budget_loss_total = budget_brier_total = 0.0
-    budget_correct = budget_rows = budget_positive = 0.0
-    budget_true_positive = budget_false_positive = budget_false_negative = 0.0
     network.eval()
     with torch.inference_mode():
         for start in range(0, len(features), batch_size):
@@ -3064,8 +2928,6 @@ def _heldout_diagnostics(
             batch_legal = legal_masks[start:stop].to(device)
             batch_opponent_legal = opponent_legal_masks[start:stop].to(device)
             batch_weights = policy_weights[start:stop].to(device)
-            batch_budget_labels = budget_labels[start:stop].to(device)
-            batch_budget_weights = budget_weights[start:stop].to(device)
             if network.config.joint_policy_heads:
                 logits, opponent_logits, values = network.forward_joint(batch_features)
             else:
@@ -3108,38 +2970,6 @@ def _heldout_diagnostics(
             squared_errors.extend(
                 (values - batch_value).square().float().cpu().tolist()
             )
-            if network.config.adaptive_budget_head:
-                budget_logits = network.budget_forward(batch_features)
-                budget_probabilities = torch.sigmoid(budget_logits)
-                budget_losses = torch.nn.functional.binary_cross_entropy_with_logits(
-                    budget_logits, batch_budget_labels, reduction="none"
-                )
-                budget_loss_total += float((budget_losses * batch_budget_weights).sum())
-                budget_brier_total += float(
-                    (
-                        (budget_probabilities - batch_budget_labels).square()
-                        * batch_budget_weights
-                    ).sum()
-                )
-                budget_prediction = budget_probabilities.ge(0.5)
-                budget_target = batch_budget_labels.bool()
-                budget_valid = batch_budget_weights.bool()
-                budget_correct += float(
-                    (budget_prediction.eq(budget_target) * budget_valid).sum()
-                )
-                budget_true_positive += float(
-                    (budget_prediction & budget_target & budget_valid).sum()
-                )
-                budget_false_positive += float(
-                    (budget_prediction & ~budget_target & budget_valid).sum()
-                )
-                budget_false_negative += float(
-                    (~budget_prediction & budget_target & budget_valid).sum()
-                )
-                budget_positive += float(
-                    (batch_budget_labels * batch_budget_weights).sum()
-                )
-                budget_rows += float(batch_budget_weights.sum())
             if network.config.distilled_leaf_evaluator:
                 leaf_values = network.leaf_forward(batch_features)
                 leaf_squared_errors.extend(
@@ -3181,27 +3011,6 @@ def _heldout_diagnostics(
         "policy_kl": mean_cross_entropy - mean_target_entropy,
         "policy_top_action_agreement": top_action_matches
         / max(1.0, weighted_policy_rows),
-        "budget_rows": int(budget_rows),
-        "budget_positive_rate": (
-            budget_positive / budget_rows if budget_rows else None
-        ),
-        "budget_binary_cross_entropy": (
-            budget_loss_total / budget_rows if budget_rows else None
-        ),
-        "budget_brier": budget_brier_total / budget_rows if budget_rows else None,
-        "budget_accuracy": budget_correct / budget_rows if budget_rows else None,
-        "budget_recall": (
-            budget_true_positive
-            / max(1.0, budget_true_positive + budget_false_negative)
-            if budget_rows
-            else None
-        ),
-        "budget_precision": (
-            budget_true_positive
-            / max(1.0, budget_true_positive + budget_false_positive)
-            if budget_rows
-            else None
-        ),
     }
 
 
@@ -3351,16 +3160,12 @@ def _train_network(
         legal_masks,
         opponent_legal_masks,
         policy_weights,
-        budget_labels,
-        budget_weights,
     ) = training_examples
     generator = torch.Generator(device="cpu").manual_seed(config.seed + iteration)
     trunk_parameters = [
         parameter
         for name, parameter in network.named_parameters()
-        if not name.startswith(
-            ("policy.", "opponent_policy.", "value.", "leaf_value.", "budget.")
-        )
+        if not name.startswith(("policy.", "opponent_policy.", "value.", "leaf_value."))
     ]
     heldout_before = _heldout_diagnostics(
         network, heldout_examples, heldout_battles, config.inference_batch_size
@@ -3371,7 +3176,7 @@ def _train_network(
     diagnostic_epochs: list[dict[str, Any]] = []
     for epoch in range(config.epochs):
         permutation = torch.randperm(len(features), generator=generator)
-        policy_total = value_total = leaf_total = budget_total = total_total = 0.0
+        policy_total = value_total = leaf_total = total_total = 0.0
         gradient_samples: list[tuple[float, float, float | None]] = []
         batches = 0
         for start in range(0, len(features), config.batch_size):
@@ -3383,8 +3188,6 @@ def _train_network(
             batch_legal = legal_masks[indexes].to(device)
             batch_opponent_legal = opponent_legal_masks[indexes].to(device)
             batch_policy_weight = policy_weights[indexes].to(device)
-            batch_budget_labels = budget_labels[indexes].to(device)
-            batch_budget_weights = budget_weights[indexes].to(device)
             if network.config.joint_policy_heads:
                 logits, opponent_logits, values = network.forward_joint(batch_features)
             else:
@@ -3415,24 +3218,10 @@ def _train_network(
                 leaf_loss = 0.5 * (leaf_target_loss + leaf_distillation_loss)
             else:
                 leaf_loss = value_loss.new_zeros(())
-            if network.config.adaptive_budget_head and batch_budget_weights.any():
-                budget_logits = network.budget_forward(batch_features)
-                budget_rows = torch.nn.functional.binary_cross_entropy_with_logits(
-                    budget_logits,
-                    batch_budget_labels,
-                    reduction="none",
-                    pos_weight=budget_logits.new_tensor(config.budget_positive_weight),
-                )
-                budget_loss = (
-                    budget_rows * batch_budget_weights
-                ).sum() / batch_budget_weights.sum()
-            else:
-                budget_loss = value_loss.new_zeros(())
             loss = (
                 policy_loss
                 + config.value_loss_weight * value_loss
                 + config.leaf_loss_weight * leaf_loss
-                + config.budget_loss_weight * budget_loss
             )
             if len(gradient_samples) < 8:
                 policy_gradients = torch.autograd.grad(
@@ -3485,7 +3274,6 @@ def _train_network(
             policy_total += float(policy_loss.detach())
             value_total += float(value_loss.detach())
             leaf_total += float(leaf_loss.detach())
-            budget_total += float(budget_loss.detach())
             total_total += float(loss.detach())
             batches += 1
         history.append(
@@ -3496,10 +3284,6 @@ def _train_network(
                 "weighted_value_loss": config.value_loss_weight * value_total / batches,
                 "leaf_loss": leaf_total / batches,
                 "weighted_leaf_loss": config.leaf_loss_weight * leaf_total / batches,
-                "budget_loss": budget_total / batches,
-                "weighted_budget_loss": (
-                    config.budget_loss_weight * budget_total / batches
-                ),
                 "total_loss": total_total / batches,
             }
         )
@@ -3550,9 +3334,7 @@ def _train_network(
         "epochs": config.epochs,
         "value_loss_weight": config.value_loss_weight,
         "leaf_loss_weight": config.leaf_loss_weight,
-        "budget_loss_weight": config.budget_loss_weight,
-        "budget_positive_weight": config.budget_positive_weight,
-        "objective": "dual-policy-value-leaf-and-budget-router-v4",
+        "objective": "dual-policy-value-and-leaf-v5",
         "batches_per_epoch": math.ceil(len(features) / config.batch_size),
         "history": history,
         "diagnostics": {
@@ -3654,22 +3436,11 @@ def _parameter_distance(before: BattleTransformer, after: BattleTransformer) -> 
     return float(torch.sqrt(total).detach().cpu())
 
 
-def _pooled_root_only_share(
-    entries: list[dict[str, Any]] | tuple[dict[str, Any], ...],
-) -> float:
-    root_only = sum(int(entry.get("root_only_decisions", 0)) for entry in entries)
-    deep = sum(int(entry.get("deep_search_decisions", 0)) for entry in entries)
-    total = root_only + deep
-    return root_only / total if total else 0.0
-
-
 def _collection_quality(
     metrics: dict[str, Any],
     config: TransformerPipelineConfig,
-    history: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
 ) -> dict[str, Any]:
     reasons: list[str] = []
-    advisory: list[str] = []
     episodes = config.selfplay_episodes
     if metrics["truncated"] / episodes > 0.01:
         reasons.append("horizon-truncation-rate-above-1pct")
@@ -3679,72 +3450,11 @@ def _collection_quality(
         reasons.append("mean-battle-length-above-96")
     if metrics["finished"] / episodes < 0.98:
         reasons.append("finished-rate-below-98pct")
-    window = config.adaptive_fn_pool_window
-    recent = [*history[-(window - 1) :], metrics] if window >= 2 else [metrics]
-    floor = config.router_fn_exposure_floor
-    exposure = _pooled_root_only_share(recent)
-    # A router false negative only harms the decisions the router actually
-    # keeps shallow; below the exposure floor a rate breach is recorded for
-    # observability but no longer fails the gate.
-    downgraded = floor > 0.0 and exposure < floor
-
-    def flag_router(reason: str) -> None:
-        reasons.append(reason)
-        if downgraded:
-            advisory.append(reason)
-
-    forced_samples = metrics.get("forced_router_samples", 0)
-    if (
-        forced_samples >= 128
-        and metrics.get("forced_router_false_negative_rate", 0.0)
-        > config.adaptive_max_false_negative_rate
-    ):
-        flag_router("adaptive-router-false-negative-rate-above-limit")
-    pooled_router: dict[str, Any] | None = None
-    if window >= 2:
-        # A sustained router regression can hide under the per-iteration sample
-        # floor; pooling recent iterations accumulates enough forced probes to
-        # judge it at the same rate limit.
-        pooled_samples = sum(
-            int(entry.get("forced_router_samples", 0)) for entry in recent
-        )
-        pooled_false_negatives = sum(
-            int(entry.get("forced_router_false_negatives", 0)) for entry in recent
-        )
-        pooled_rate = pooled_false_negatives / max(1, pooled_samples)
-        if (
-            pooled_samples >= 128
-            and pooled_rate > config.adaptive_max_false_negative_rate
-        ):
-            flag_router("adaptive-router-pooled-false-negative-rate-above-limit")
-        pooled_router = {
-            "window": window,
-            "iterations": len(recent),
-            "samples": pooled_samples,
-            "false_negatives": pooled_false_negatives,
-            "rate": pooled_rate,
-        }
-    blocking = [reason for reason in reasons if reason not in advisory]
-    if floor > 0.0:
-        version = "completion-and-exposure-aware-router-integrity-v5"
-    elif window >= 2:
-        version = "completion-and-pooled-router-integrity-v4"
-    else:
-        version = "completion-and-router-integrity-v3"
-    report: dict[str, Any] = {
-        "version": version,
-        "pass": not blocking,
+    return {
+        "version": "completion-v6",
+        "pass": not reasons,
         "reasons": reasons,
     }
-    if floor > 0.0:
-        report["router_exposure"] = {
-            "floor": floor,
-            "share": exposure,
-            "advisory": advisory,
-        }
-    if pooled_router is not None:
-        report["pooled_router"] = pooled_router
-    return report
 
 
 def _iteration_numbers(directory: Path, prefix: str, suffix: str) -> set[int]:
@@ -3897,12 +3607,10 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("promotion_pooled_z", 0.0)
     normalized.setdefault("promotion_policy_games", 0)
     normalized.setdefault("bootstrap_promotion", False)
-    normalized.setdefault("adaptive_fn_pool_window", 1)
     normalized.setdefault("lr_schedule", "constant")
     normalized.setdefault("lr_milestones", ())
     normalized.setdefault("lr_decay_factor", 0.1)
     normalized.setdefault("shadow_opponent_window", 0)
-    normalized.setdefault("router_fn_exposure_floor", 0.0)
     normalized.setdefault("collection_epsilon", 0.0)
     normalized.setdefault("collection_epsilon_turns", 0)
     normalized.setdefault("policy_target_smoothing", 0.0)
@@ -4102,22 +3810,8 @@ def run_transformer_pipeline(
         raise ValueError("V26 requires the native Rust CFR+ solver")
     if not native_available():
         raise RuntimeError("V26 native Rust CFR+ library is unavailable")
-    if config.tree_expansion_budget < 1:
-        raise ValueError("tree_expansion_budget must be positive")
-    if not 0.0 <= config.tree_exploration <= 1.0:
-        raise ValueError("tree_exploration must be in [0, 1]")
-    if not 0.0 <= config.tree_chance_resample <= 1.0:
-        raise ValueError("tree_chance_resample must be in [0, 1]")
     if config.tree_regret_iterations < 1:
         raise ValueError("tree_regret_iterations must be positive")
-    if config.tree_deeper_joint_rotations < 1:
-        raise ValueError("tree_deeper_joint_rotations must be positive")
-    if not 1 <= config.tree_minimum_budget <= config.tree_expansion_budget:
-        raise ValueError("tree_minimum_budget must be in 1..tree_expansion_budget")
-    if config.tree_convergence_tolerance < 0.0:
-        raise ValueError("tree_convergence_tolerance must be nonnegative")
-    if config.tree_convergence_patience < 1:
-        raise ValueError("tree_convergence_patience must be positive")
     if not 0.0 <= config.leaf_ema_decay < 1.0:
         raise ValueError("leaf_ema_decay must be in [0, 1)")
     if config.promotion_nonfinish_policy not in ("losses", "exclude-pairs"):
@@ -4137,26 +3831,6 @@ def run_transformer_pipeline(
         raise ValueError(
             "lr_milestones must be strictly increasing positive iterations"
         )
-    if config.deep_search_fraction != 1.0:
-        raise ValueError(
-            "random deep-search tiers are replaced by the adaptive root router"
-        )
-    if config.adaptive_warmup_iterations < 1:
-        raise ValueError("adaptive_warmup_iterations must be positive")
-    if not 0.0 <= config.adaptive_deep_threshold <= 1.0:
-        raise ValueError("adaptive_deep_threshold must be in [0, 1]")
-    if not 0.0 <= config.adaptive_force_deep_fraction <= 1.0:
-        raise ValueError("adaptive_force_deep_fraction must be in [0, 1]")
-    if config.adaptive_exploitability_threshold < 0.0:
-        raise ValueError("adaptive_exploitability_threshold must be nonnegative")
-    if config.adaptive_payoff_spread_threshold < 0.0:
-        raise ValueError("adaptive_payoff_spread_threshold must be nonnegative")
-    if not 0.0 <= config.adaptive_max_false_negative_rate <= 1.0:
-        raise ValueError("adaptive_max_false_negative_rate must be in [0, 1]")
-    if config.adaptive_fn_pool_window < 1:
-        raise ValueError("adaptive_fn_pool_window must be positive")
-    if not 0.0 <= config.router_fn_exposure_floor <= 1.0:
-        raise ValueError("router_fn_exposure_floor must be in [0, 1]")
     if not 0.0 <= config.collection_epsilon <= 1.0:
         raise ValueError("collection_epsilon must be in [0, 1]")
     if config.collection_epsilon_turns < 0:
@@ -4201,10 +3875,6 @@ def run_transformer_pipeline(
         raise ValueError("team_replay_buffer_size must be positive with team replay")
     if not 0 <= config.popular_gate <= 64:
         raise ValueError("popular_gate must be in [0, 64]")
-    if not 0.0 <= config.budget_loss_weight <= 1.0:
-        raise ValueError("budget_loss_weight must be in [0, 1]")
-    if config.budget_positive_weight < 1.0:
-        raise ValueError("budget_positive_weight must be at least one")
     if config.generated_schedule_version not in {2, 3}:
         raise ValueError("generated_schedule_version must be 2 or 3")
     if config.balanced_final_species and config.generated_schedule_version != 3:
@@ -4321,7 +3991,6 @@ def run_transformer_pipeline(
         distilled_leaf_evaluator=config.distilled_leaf_evaluator,
         leaf_hidden=config.leaf_hidden,
         leaf_hidden_layers=config.leaf_hidden_layers,
-        adaptive_budget_head=config.adaptive_search,
     )
     opponents: list[tuple[Any, str]] = []
     opponent_metadata: list[dict[str, Any]] = []
@@ -4613,7 +4282,7 @@ def run_transformer_pipeline(
                 },
             )
             raise
-        collection_quality = _collection_quality(collection_metrics, config, collection)
+        collection_quality = _collection_quality(collection_metrics, config)
         collection_metrics["quality"] = collection_quality
         shards.append(shard)
         collection.append(collection_metrics)

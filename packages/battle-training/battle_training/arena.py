@@ -101,21 +101,9 @@ class ArenaConfig:
     regret_iterations: int = 2048
     inference_batch_size: int = 256
     max_actions_per_side: int = 13
-    tree_expansion_budget: int = 320
-    tree_exploration: float = 0.10
-    tree_chance_resample: float = 0.10
     tree_regret_iterations: int = 16
-    tree_deeper_joint_rotations: int = 2
-    tree_minimum_budget: int = 192
-    tree_convergence_tolerance: float = 0.005
-    tree_convergence_patience: int = 8
     redundant_action_prior_scale: float = 0.25
     prior_anchor_temperature: float = 0.02
-    adaptive_search: bool = True
-    adaptive_deep_threshold: float = 0.55
-    adaptive_force_deep_fraction: float = 0.10
-    adaptive_exploitability_threshold: float = 0.08
-    adaptive_payoff_spread_threshold: float = 0.75
     seed: int = 0
     replay_games: int = 3
     seed_count: int = 8
@@ -242,7 +230,6 @@ class _FastArenaEpisode:
     enemy: BattleTransformer | None
     selection_rng: random.Random | None
     chance_rng: random.Random | None
-    budget_rng: random.Random | None
     player_size: int
     enemy_size: int
     level100: bool
@@ -352,21 +339,9 @@ def _joint_search_config(config: ArenaConfig) -> JointSearchConfig:
         regret_iterations=config.regret_iterations,
         inference_batch_size=config.inference_batch_size,
         max_actions_per_side=config.max_actions_per_side,
-        expansion_budget=config.tree_expansion_budget,
-        exploration=config.tree_exploration,
-        chance_resample=config.tree_chance_resample,
         regret_iterations_per_update=config.tree_regret_iterations,
-        deeper_joint_rotations=config.tree_deeper_joint_rotations,
-        minimum_expansion_budget=config.tree_minimum_budget,
-        convergence_tolerance=config.tree_convergence_tolerance,
-        convergence_patience=config.tree_convergence_patience,
         redundant_action_prior_scale=config.redundant_action_prior_scale,
         prior_anchor_temperature=config.prior_anchor_temperature,
-        adaptive_search=config.adaptive_search,
-        adaptive_deep_threshold=config.adaptive_deep_threshold,
-        adaptive_force_deep_fraction=config.adaptive_force_deep_fraction,
-        adaptive_exploitability_threshold=(config.adaptive_exploitability_threshold),
-        adaptive_payoff_spread_threshold=config.adaptive_payoff_spread_threshold,
         rmplus_backend=config.rmplus_backend,
         cfr_plus_solves=config.cfr_plus_solves,
     )
@@ -387,7 +362,6 @@ def _rmplus_search_many(
                 search_config,
                 episode.selection_rng,
                 episode.chance_rng,
-                episode.budget_rng,
             )
             for episode in episodes
         ],
@@ -1038,7 +1012,6 @@ def _slim_arena_episode(episode: _FastArenaEpisode) -> _FastArenaEpisode:
         enemy=None,
         selection_rng=None,
         chance_rng=None,
-        budget_rng=None,
         player_size=episode.player_size,
         enemy_size=episode.enemy_size,
         level100=episode.level100,
@@ -1468,7 +1441,6 @@ def _run_fast_arena_spans(
                 candidate_player = game % 2 == 0
                 selection_rng = random.Random(seed + 30_000_019 + pair * 2_000_003)
                 chance_rng = random.Random(seed + 40_000_033 + pair * 2_000_003)
-                budget_rng = random.Random(seed + 50_000_087 + pair * 2_000_003)
                 player_size, enemy_size = _evaluation_party_sizes(
                     pair, config.generated_schedule_version
                 )
@@ -1480,7 +1452,6 @@ def _run_fast_arena_spans(
                         enemy=baseline if candidate_player else candidate,
                         selection_rng=selection_rng,
                         chance_rng=chance_rng,
-                        budget_rng=budget_rng,
                         player_size=player_size,
                         enemy_size=enemy_size,
                         level100=not campaign
@@ -1941,7 +1912,6 @@ def _slim_traced_episode(episode: _TracedArenaEpisode) -> _TracedArenaEpisode:
         enemy=None,
         selection_rng=None,
         chance_rng=None,
-        budget_rng=None,
         player_size=episode.player_size,
         enemy_size=episode.enemy_size,
         level100=episode.level100,
@@ -1992,7 +1962,6 @@ def _run_traced_arena_spans(
                     config.seed + 30_000_019 + pair * 2_000_003
                 )
                 chance_rng = random.Random(config.seed + 40_000_033 + pair * 2_000_003)
-                budget_rng = random.Random(config.seed + 50_000_087 + pair * 2_000_003)
                 player_size, enemy_size = _evaluation_party_sizes(
                     pair, config.generated_schedule_version
                 )
@@ -2005,7 +1974,6 @@ def _run_traced_arena_spans(
                         enemy=baseline if candidate_player else candidate,
                         selection_rng=selection_rng,
                         chance_rng=chance_rng,
-                        budget_rng=budget_rng,
                         player_size=player_size,
                         enemy_size=enemy_size,
                         level100=_evaluation_level100(
@@ -2337,7 +2305,6 @@ def _run_traced_arena_sequential(
         )
     selection_rng = random.Random(config.seed + 0xA7E9A)
     chance_rng = random.Random(config.seed + 0xA7E9B)
-    budget_rng = random.Random(config.seed + 0xA7E9C)
     search_config = _joint_search_config(config)
     candidate_metrics = SkillMetrics()
     baseline_metrics = SkillMetrics()
@@ -2400,7 +2367,6 @@ def _run_traced_arena_sequential(
                         search_config,
                         selection_rng,
                         chance_rng,
-                        budget_rng,
                     )
                     result = search.search(snapshot, sample_actions=True)
                     if result.failure is not None:

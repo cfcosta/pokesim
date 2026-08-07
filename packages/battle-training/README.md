@@ -42,15 +42,12 @@ The smoke command performs the complete loop:
 10. regenerates the first search shard byte for byte from checkpoint zero.
 
 Default training searches every real decision with a matrix-valued
-simultaneous tree. The root always evaluates every legal joint action. After one
-full-search calibration iteration, a learned budget head predicts whether the
-320-transition teacher would materially change the complete-root RM+ target.
-High root exploitability or joint-payoff uncertainty forces deep search, and a
-separate budget RNG forces 10% of otherwise skipped decisions deep to keep
-measuring false negatives. Deep searches may also stop after eight stable
-average-strategy updates once full depth is reached. Deeper nodes begin with two cyclic
-joint-action rotations that cover every legal move and switch, then sample
-additional pairs and fresh chance outcomes under persistent regret matching+.
+simultaneous solve that stops at the root. The root evaluates every legal joint
+action, stepping each pair against the same chance draws, so every payoff cell
+rests on an equal sample count and the RM+ solve reads a coherent matrix.
+`--search-depth` feeds the chance rollouts behind each leaf estimate; it never
+expands a frontier past the root. There is no expansion budget, no policy-guided
+resampling, and no learned router deciding how deep to go.
 Every completed neural-model decision therefore carries an RM+ average-strategy
 policy target. `--search-every` is fixed at one; sparse raw-policy action
 selection has been removed. If a search encounters semantic divergence before
@@ -69,8 +66,7 @@ V26 moves the unchanged dense solver surface to a versioned Rust C ABI and
 enables CFR+'s alternating updates and linear averaging. The root still runs
 2,048 iterations; no action pruning, root noise, tolerance stop, chance, tree,
 or neural code moved into Rust. Each controller decision still ends in
-simultaneous RM+ over the complete root; adaptive routing changes only whether
-deeper refinements are requested. V27 shares one twelve-process evaluation pool
+simultaneous RM+ over the complete root. V27 shares one twelve-process evaluation pool
 across promotion, probes, and campaign. Pair-preserving balanced spans keep all
 workers useful, compiled models stay resident between gates, and each promotion
 worker atomically streams completed-game counts, provisional paired confidence,
@@ -94,13 +90,13 @@ parties retain ordered legal move histories and resource witnesses.
 `--weighted-final-species` retains the legacy distribution for differential
 runs. It uses
 depth-four simultaneous trees, the
-5,025,245-parameter six-layer, 256-wide model, BF16 autocast, one epoch per
+5,024,988-parameter six-layer, 256-wide model, BF16 autocast, one epoch per
 iteration, a CUDA-safe batch size of 128, and a 2,048-game final arena. The policy objective
 adds value MSE at weight 0.25, reducing the effective value-trunk gradient
 imbalance observed in v15. Parameters, gradients, AdamW state, policy
 normalization, losses, and reductions remain FP32. The tree
-uses up to 320 native transitions per searched root and was 1.31× slower than
-disposable depth-four rollouts in a 24-root benchmark. The former every-tenth
+steps every legal joint pair at the root against shared chance draws. The
+former every-tenth
 profile had an approximately nine-hour strict-FP32 estimate and completed a
 15-iteration BF16 run in under five hours. Searching every move creates roughly
 ten times as many search roots; a complete all-move production run has not yet
@@ -237,8 +233,8 @@ same model already owns both controllers, the second leg instead swaps the exact
 two generated teams across physical sides and uses independent policy/search
 sampling. The two legs intentionally share one `(reset_seed, reset_episode)`
 coordinate; every other pair receives a distinct coordinate. The reset root and
-six controller streams (selection, chance, opponent, router tier, exploration,
-and prior noise) use versioned SplitMix64 domain separation over the run seed,
+five controller streams (selection, chance, opponent, exploration, and prior
+noise) use versioned SplitMix64 domain separation over the run seed,
 iteration, and global episode index. Actor partitioning never renumbers episodes.
 Pair identity, leg, and reset coordinates are stored in every episode, and
 collection rejects missing, mismatched, unswapped, or cross-pair-reused resets.
@@ -302,9 +298,7 @@ encode their own canonical view, preserving each model's policy and value.
 Ordinary successor leaves use a 64-hidden-unit MLP trained against both terminal
 returns and the detached main value. Roots and expanded nodes still use the full
 semantic encoder for priors and values. The distilled leaf is an estimator only;
-Lean remains the transition and terminal authority. A one-logit budget head is
-trained only from witnessed full-search disagreement and is consumed after the
-complete root matrix has already been solved.
+Lean remains the transition and terminal authority.
 
 Encoder and head matrix operations run under BF16 autocast. Both head outputs
 are immediately promoted to FP32 before masks, softmax, RM+ search, losses, or
@@ -313,13 +307,12 @@ UInt16 rows use reusable pinned buffers, legal masks come from a device lookup,
 and CUDA inference uses static compiled batch buckets. Exact feature/mask cache
 keys suppress duplicate forwards without claiming mechanics-state equivalence.
 
-Search and policy loss mask illegal actions. Every expanded node retains an
-empirical joint payoff matrix, cumulative RM+ regrets, average strategies,
-explicit chance outcomes, and immutable child handles. Full expanded-node
-inference is a mandatory pooled frontier: a missing evaluation fails rather
-than falling back to synchronous batch-one inference. The root matrix is
-complete; progressive deeper matrices represent unvisited pairs with the neural
-leaf prior while mandatory exploration gives every legal action initial support.
+Search and policy loss mask illegal actions. The root retains an empirical
+joint payoff matrix, cumulative RM+ regrets, average strategies, explicit chance
+outcomes, and immutable child handles. Root inference is a mandatory pooled
+batch: a missing evaluation fails rather than falling back to synchronous
+batch-one inference. The root matrix is complete -- every legal joint pair is
+stepped against the same chance draws, so no cell is represented by a prior.
 A dense,
 antisymmetric HP/faint/status delta stabilizes one-step leaf estimates. No
 post-solver switch cap or other semantic policy override remains: the fresh
@@ -347,16 +340,11 @@ their existing hidden RNG. The compatibility `compact-many` command still emits
 full snapshots for external protocol probes. Python cannot
 mutate or resolve battle state itself. Actors run in groups of 16. Root matrices,
 root leaf inference, RM+ decisions, and real episode transitions are batched
-across compatible independent roots. Deeper progressive simulations are
-resumable frontiers: native requests and leaf rows are pooled across roots and
-model identities, then deterministic cohorts overlap Lean mechanics with GPU
-inference. Independent search, chance, and deep-tier RNG streams are retained.
-Random deep-search tiers have been removed. `--deep-search-fraction` is fixed at
-1.0 for compatibility, while the learned router labels full-search examples by
-whether depth changed an argmax, moved the two-side policy by at least 0.25, or
-changed root value by at least 0.10. Root-only decisions receive no fabricated
-counterfactual label. Positive examples receive 4× classifier weight; held-out
-recall, precision, Brier score, and forced-calibration outcomes remain explicit.
+across compatible independent roots. Native requests and leaf rows are pooled
+across roots and model identities, then deterministic cohorts overlap Lean
+mechanics with GPU inference. Independent search and chance RNG streams are
+retained. Every decision gets the same complete-root treatment, so no decision
+carries a routing label and none is exempted from the teacher.
 
 Promotion, campaign, probe, and final arenas use the same RM+ tree parameters
 and every-decision action selector as collection. They keep live games on one
@@ -399,11 +387,10 @@ The earlier terminal-return move table remains available as `tabular-smoke` and
   the branch, while a real episode stops without a terminal value target.
 - The synchronized full-party profile is still a hot-path quotient, not the
   paired-cartridge emulator deployment profile.
-- Cross-root batching covers complete roots, progressive deep frontiers, native
-  mechanics, and model-identity inference pools. Exact neural memoization still
-  does not license mechanics transposition merging.
-- Deeper matrices use progressive joint sampling rather than exhaustive pair
-  coverage. Artifacts report sampled-joint coverage separately from mandatory
+- Cross-root batching covers complete roots, native mechanics, and
+  model-identity inference pools. Exact neural memoization still does not
+  license mechanics transposition merging.
+- Artifacts report sampled-joint coverage separately from mandatory
   legal-action coverage.
 - Forced replacement and Mimic are normalized; other profile-excluded nested
   protocols remain blocked before widening beyond stock link battle control.

@@ -126,8 +126,8 @@ from battle_training.transformer_pipeline import (
     _PRIOR_NOISE_DOMAIN,
     _RESET_DOMAIN,
     _SELECTION_DOMAIN,
-    _TIER_DOMAIN,
     TransformerPipelineConfig,
+    _ActorEpisode,
     _append_shadow_opponent,
     _apply_learning_rate,
     _arena,
@@ -170,7 +170,6 @@ from battle_training.transformer_pipeline import (
     _policy_gate_superior,
     _policy_kl,
     _pooled_promotion_evidence,
-    _pooled_root_only_share,
     _promotion_gate_scores,
     _replay_frontier_entry,
     _resume_config,
@@ -304,17 +303,19 @@ class _LeafToyNetwork(_JointToyNetwork):
         return [0.5 for _ in features]  # type: ignore[union-attr]
 
 
-class _AdaptiveToyNetwork(_LeafToyNetwork):
+class _RefusingBudgetNetwork(_LeafToyNetwork):
+    """Offers a search-budget head and fails if anything ever consults it."""
+
     config = SimpleNamespace(
         action_count=2,
         joint_policy_heads=True,
         distilled_leaf_evaluator=True,
-        adaptive_budget_head=True,
     )
 
     @staticmethod
     def evaluate_budget(features: object) -> list[float]:
-        return [0.0 for _ in features]  # type: ignore[union-attr]
+        del features
+        raise AssertionError("search asked the network how deep to go")
 
 
 class _ThirteenActionToyNetwork:
@@ -322,7 +323,6 @@ class _ThirteenActionToyNetwork:
         action_count=13,
         joint_policy_heads=False,
         distilled_leaf_evaluator=False,
-        adaptive_budget_head=False,
     )
 
     @staticmethod
@@ -1566,11 +1566,12 @@ class TransformerTests(unittest.TestCase):
         self.assertGreaterEqual(node.player_policy[4], first_dominant_mass - 0.01)
         self.assertAlmostEqual(sum(node.player_strategy_sum), 128.0, places=6)
 
-    def test_search_stops_at_the_root_however_large_the_budget(self) -> None:
+    def test_the_search_tree_is_one_node_at_any_depth(self) -> None:
         # Past the root the loop resampled only the cells the current policy
         # already liked, overwriting exhaustive CRN-paired estimates with lone
-        # rollouts.  Extra budget must not be able to move the answer any more.
-        def run(budget: int) -> SearchResult:
+        # rollouts.  Depth now feeds the leaf rollouts alone and must never
+        # grow that frontier back.
+        def run(max_depth: int) -> SearchResult:
             server = _ToyServer()
             network = _ToyNetwork()
             return SimultaneousTreeSearch(
@@ -1578,23 +1579,17 @@ class TransformerTests(unittest.TestCase):
                 network,  # type: ignore[arg-type]
                 network,  # type: ignore[arg-type]
                 JointSearchConfig(
-                    max_depth=4,
+                    max_depth=max_depth,
                     max_actions_per_side=2,
-                    expansion_budget=budget,
-                    minimum_expansion_budget=1,
-                    chance_resample=1.0,
                 ),
                 random.Random(7),
                 random.Random(11),
             ).search(server._snapshot(0), sample_actions=False)
 
-        shallow = run(1)
-        deep = run(512)
-        self.assertEqual(shallow.player_policy, deep.player_policy)
-        self.assertEqual(shallow.payoff_matrix, deep.payoff_matrix)
-        self.assertEqual(shallow.nodes, deep.nodes)
-        self.assertEqual(deep.diagnostics["tree_nodes"], 1)
-        self.assertEqual(deep.diagnostics["chance_outcomes"], shallow.nodes)
+        for max_depth in (1, 4, 32):
+            result = run(max_depth)
+            self.assertEqual(result.diagnostics["tree_nodes"], 1)
+            self.assertEqual(result.diagnostics["chance_outcomes"], result.nodes)
 
     def test_the_root_matrix_covers_every_legal_joint_pair(self) -> None:
         server = _ToyServer()
@@ -1641,8 +1636,6 @@ class TransformerTests(unittest.TestCase):
             JointSearchConfig(
                 max_depth=1,
                 max_actions_per_side=2,
-                expansion_budget=4,
-                minimum_expansion_budget=1,
             ),
             random.Random(7),
             random.Random(11),
@@ -1665,12 +1658,7 @@ class TransformerTests(unittest.TestCase):
             regret_iterations=64,
             inference_batch_size=32,
             max_actions_per_side=2,
-            expansion_budget=32,
-            exploration=0.2,
-            chance_resample=1.0,
             regret_iterations_per_update=8,
-            deeper_joint_rotations=2,
-            minimum_expansion_budget=4,
         )
         searches = [
             SimultaneousTreeSearch(
@@ -1729,10 +1717,7 @@ class TransformerTests(unittest.TestCase):
             max_depth=2,
             inference_batch_size=32,
             max_actions_per_side=2,
-            expansion_budget=16,
-            chance_resample=1.0,
             regret_iterations_per_update=4,
-            minimum_expansion_budget=4,
         )
         searches = [
             SimultaneousTreeSearch(
@@ -1778,14 +1763,9 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.promotion_policy_games, 2048)
         self.assertEqual(arguments.probe_games, 256)
         self.assertEqual(arguments.campaign_games, 288)
-        self.assertEqual(arguments.tree_expansion_budget, 320)
         self.assertEqual(arguments.chance_samples_per_joint, 2)
         self.assertEqual(arguments.regret_iterations, 2048)
         self.assertEqual(arguments.tree_regret_iterations, 16)
-        self.assertEqual(arguments.tree_deeper_joint_rotations, 2)
-        self.assertEqual(arguments.tree_minimum_budget, 192)
-        self.assertEqual(arguments.tree_convergence_patience, 8)
-        self.assertEqual(arguments.deep_search_fraction, 1.0)
         self.assertEqual(arguments.actor_batch_size, 64)
         self.assertEqual(arguments.actor_processes, 8)
         self.assertEqual(arguments.eval_processes, 12)
@@ -1805,14 +1785,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.lr_decay_factor, 0.1)
         self.assertIsNone(arguments.capacity_preset)
         self.assertEqual(arguments.replay_window, 3)
-        self.assertTrue(arguments.adaptive_search)
-        self.assertEqual(arguments.adaptive_warmup_iterations, 1)
-        self.assertEqual(arguments.adaptive_deep_threshold, 0.50)
-        self.assertEqual(arguments.adaptive_force_deep_fraction, 0.10)
-        self.assertEqual(arguments.adaptive_max_false_negative_rate, 0.10)
-        self.assertEqual(arguments.adaptive_fn_pool_window, 1)
         self.assertEqual(arguments.shadow_opponent_window, 6)
-        self.assertEqual(arguments.router_fn_exposure_floor, 0.02)
         self.assertEqual(arguments.collection_epsilon, 0.05)
         self.assertEqual(arguments.collection_epsilon_turns, 8)
         self.assertEqual(arguments.policy_target_smoothing, 0.02)
@@ -1832,8 +1805,6 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.team_replay_fraction, 0.15)
         self.assertEqual(arguments.team_replay_buffer_size, 256)
         self.assertEqual(arguments.popular_gate, 64)
-        self.assertEqual(arguments.budget_loss_weight, 0.05)
-        self.assertEqual(arguments.budget_positive_weight, 4.0)
         self.assertEqual(arguments.precision, "bf16")
         self.assertEqual(arguments.inference_engine, "auto")
         self.assertTrue(arguments.heuristic_opponents)
@@ -1848,11 +1819,6 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.feedforward, 1024)
         self.assertEqual(arguments.inference_batch_size, 256)
         self.assertEqual(arguments.max_actions_per_side, 13)
-        self.assertEqual(arguments.tree_exploration, 0.10)
-        self.assertEqual(arguments.tree_chance_resample, 0.10)
-        self.assertEqual(arguments.tree_convergence_tolerance, 0.005)
-        self.assertEqual(arguments.adaptive_exploitability_threshold, 0.08)
-        self.assertEqual(arguments.adaptive_payoff_spread_threshold, 0.75)
         self.assertEqual(arguments.opponent_checkpoint, [])
         self.assertEqual(arguments.historical_window, 4)
         self.assertEqual(arguments.promotion_seed_count, 8)
@@ -1895,11 +1861,7 @@ class TransformerTests(unittest.TestCase):
         )
         self.assertFalse(hasattr(arena, "search_every"))
         self.assertEqual(arena.search_depth, 4)
-        self.assertEqual(arena.tree_expansion_budget, 320)
         self.assertEqual(arena.redundant_action_prior_scale, 0.25)
-        self.assertTrue(arena.adaptive_search)
-        self.assertEqual(arena.adaptive_deep_threshold, 0.50)
-        self.assertEqual(arena.adaptive_force_deep_fraction, 0.10)
 
     def test_pre_rmplus_everywhere_lineage_cannot_resume(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1985,12 +1947,10 @@ class TransformerTests(unittest.TestCase):
         config.pop("promotion_pooled_z")
         config.pop("promotion_policy_games")
         config.pop("bootstrap_promotion")
-        config.pop("adaptive_fn_pool_window")
         config.pop("lr_schedule")
         config.pop("lr_milestones")
         config.pop("lr_decay_factor")
         config.pop("shadow_opponent_window")
-        config.pop("router_fn_exposure_floor")
         config.pop("collection_epsilon")
         config.pop("collection_epsilon_turns")
         config.pop("policy_target_smoothing")
@@ -2017,12 +1977,10 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(normalized["promotion_pooled_z"], 0.0)
         self.assertEqual(normalized["promotion_policy_games"], 0)
         self.assertFalse(normalized["bootstrap_promotion"])
-        self.assertEqual(normalized["adaptive_fn_pool_window"], 1)
         self.assertEqual(normalized["lr_schedule"], "constant")
         self.assertEqual(normalized["lr_milestones"], ())
         self.assertEqual(normalized["lr_decay_factor"], 0.1)
         self.assertEqual(normalized["shadow_opponent_window"], 0)
-        self.assertEqual(normalized["router_fn_exposure_floor"], 0.0)
         self.assertEqual(normalized["collection_epsilon"], 0.0)
         self.assertEqual(normalized["collection_epsilon_turns"], 0)
         self.assertEqual(normalized["policy_target_smoothing"], 0.0)
@@ -2262,11 +2220,7 @@ class TransformerTests(unittest.TestCase):
             regret_iterations=8,
             inference_batch_size=64,
             max_actions_per_side=2,
-            tree_expansion_budget=2,
-            tree_minimum_budget=1,
             tree_regret_iterations=1,
-            tree_convergence_patience=1,
-            adaptive_search=False,
             seed=1234,
             seed_count=2,
         )
@@ -2370,7 +2324,6 @@ class TransformerTests(unittest.TestCase):
                 enemy=baseline if candidate_player else candidate,
                 selection_rng=None,
                 chance_rng=None,
-                budget_rng=None,
                 player_size=3,
                 enemy_size=3,
                 level100=False,
@@ -2675,18 +2628,6 @@ class TransformerTests(unittest.TestCase):
         )
         self.assertEqual(arguments.promotion_pooled_z, 2.25)
 
-    def test_adaptive_fn_pool_window_flows_from_the_cli(self) -> None:
-        arguments = training_parser().parse_args(
-            [
-                "transformer-train",
-                "--output",
-                "/tmp/fn-pool",
-                "--adaptive-fn-pool-window",
-                "3",
-            ]
-        )
-        self.assertEqual(arguments.adaptive_fn_pool_window, 3)
-
     def test_learning_rate_schedule_steps_at_milestones(self) -> None:
         config = SimpleNamespace(
             learning_rate=2e-4,
@@ -2811,11 +2752,10 @@ class TransformerTests(unittest.TestCase):
                 distilled_leaf_evaluator=train.distilled_leaf_evaluator,
                 leaf_hidden=train.leaf_hidden,
                 leaf_hidden_layers=train.leaf_hidden_layers,
-                adaptive_budget_head=train.adaptive_search,
             )
         )
         self.assertEqual(
-            sum(parameter.numel() for parameter in network.parameters()), 5_025_245
+            sum(parameter.numel() for parameter in network.parameters()), 5_024_988
         )
         self.assertIsNone(train.leaf_hidden_layers)
         self.assertEqual(train.replay_window, 3)
@@ -2856,11 +2796,10 @@ class TransformerTests(unittest.TestCase):
                 joint_policy_heads=True,
                 distilled_leaf_evaluator=True,
                 leaf_hidden_layers=preset["leaf_hidden_layers"],
-                adaptive_budget_head=True,
             )
         )
         total = sum(parameter.numel() for parameter in network.parameters())
-        self.assertEqual(total, 3_004_317)
+        self.assertEqual(total, 3_004_124)
         leaf = sum(
             value.numel()
             for key, value in network.state_dict().items()
@@ -3087,7 +3026,6 @@ class TransformerTests(unittest.TestCase):
             enemy=object(),
             selection_rng=random.Random(0),
             chance_rng=random.Random(1),
-            budget_rng=random.Random(2),
             player_size=6,
             enemy_size=5,
             level100=True,
@@ -3124,7 +3062,6 @@ class TransformerTests(unittest.TestCase):
             "enemy",
             "selection_rng",
             "chance_rng",
-            "budget_rng",
             "snapshot",
             "inspection",
         ):
@@ -3145,7 +3082,6 @@ class TransformerTests(unittest.TestCase):
                 enemy=None,
                 selection_rng=None,
                 chance_rng=None,
-                budget_rng=None,
                 player_size=2,
                 enemy_size=3,
                 level100=False,
@@ -3195,7 +3131,6 @@ class TransformerTests(unittest.TestCase):
             enemy=object(),
             selection_rng=random.Random(0),
             chance_rng=random.Random(1),
-            budget_rng=random.Random(2),
             player_size=4,
             enemy_size=4,
             level100=False,
@@ -3223,7 +3158,6 @@ class TransformerTests(unittest.TestCase):
             "enemy",
             "selection_rng",
             "chance_rng",
-            "budget_rng",
             "snapshot",
             "inspection",
         ):
@@ -3453,11 +3387,6 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(metrics["setup_move_counts"]["Reflect"], 2)
 
     def test_collection_quality_does_not_gate_switch_rate(self) -> None:
-        config = SimpleNamespace(
-            selfplay_episodes=100,
-            adaptive_fn_pool_window=1,
-            router_fn_exposure_floor=0.0,
-        )
         report = _collection_quality(
             {
                 "truncated": 0,
@@ -3466,99 +3395,11 @@ class TransformerTests(unittest.TestCase):
                 "mean_decisions": 20.0,
                 "finished": 100,
             },
-            config,
+            SimpleNamespace(selfplay_episodes=100),
         )
-        self.assertEqual(report["version"], "completion-and-router-integrity-v3")
+        self.assertEqual(report["version"], "completion-v6")
         self.assertTrue(report["pass"])
         self.assertEqual(report["reasons"], [])
-        self.assertNotIn("pooled_router", report)
-
-    def test_collection_quality_gates_witnessed_router_false_negatives(self) -> None:
-        config = SimpleNamespace(
-            selfplay_episodes=100,
-            adaptive_max_false_negative_rate=0.10,
-            adaptive_fn_pool_window=1,
-            router_fn_exposure_floor=0.0,
-        )
-        report = _collection_quality(
-            {
-                "truncated": 0,
-                "semantic_divergences": 0,
-                "mean_decisions": 20.0,
-                "finished": 100,
-                "forced_router_samples": 200,
-                "forced_router_false_negative_rate": 0.11,
-            },
-            config,
-        )
-        self.assertFalse(report["pass"])
-        self.assertIn(
-            "adaptive-router-false-negative-rate-above-limit", report["reasons"]
-        )
-
-    def _router_iteration(
-        self, samples: int, false_negatives: int
-    ) -> dict[str, object]:
-        return {
-            "truncated": 0,
-            "semantic_divergences": 0,
-            "mean_decisions": 20.0,
-            "finished": 100,
-            "forced_router_samples": samples,
-            "forced_router_false_negatives": false_negatives,
-            "forced_router_false_negative_rate": false_negatives / max(1, samples),
-        }
-
-    def test_pooled_router_false_negatives_gate_across_iterations(self) -> None:
-        config = SimpleNamespace(
-            selfplay_episodes=100,
-            adaptive_max_false_negative_rate=0.10,
-            adaptive_fn_pool_window=3,
-            router_fn_exposure_floor=0.0,
-        )
-        history = [self._router_iteration(60, 12), self._router_iteration(60, 12)]
-        report = _collection_quality(self._router_iteration(60, 12), config, history)
-        self.assertEqual(report["version"], "completion-and-pooled-router-integrity-v4")
-        self.assertFalse(report["pass"])
-        self.assertEqual(
-            report["reasons"],
-            ["adaptive-router-pooled-false-negative-rate-above-limit"],
-        )
-        self.assertEqual(
-            report["pooled_router"],
-            {
-                "window": 3,
-                "iterations": 3,
-                "samples": 180,
-                "false_negatives": 36,
-                "rate": 0.2,
-            },
-        )
-
-    def test_pooled_router_window_uses_only_recent_history(self) -> None:
-        config = SimpleNamespace(
-            selfplay_episodes=100,
-            adaptive_max_false_negative_rate=0.10,
-            adaptive_fn_pool_window=2,
-            router_fn_exposure_floor=0.0,
-        )
-        history = [self._router_iteration(400, 200), self._router_iteration(200, 0)]
-        report = _collection_quality(self._router_iteration(200, 0), config, history)
-        self.assertTrue(report["pass"])
-        self.assertEqual(report["pooled_router"]["samples"], 400)
-        self.assertEqual(report["pooled_router"]["false_negatives"], 0)
-
-    def test_pooled_router_respects_the_sample_floor(self) -> None:
-        config = SimpleNamespace(
-            selfplay_episodes=100,
-            adaptive_max_false_negative_rate=0.10,
-            adaptive_fn_pool_window=3,
-            router_fn_exposure_floor=0.0,
-        )
-        report = _collection_quality(self._router_iteration(20, 10), config, [])
-        self.assertTrue(report["pass"])
-        self.assertEqual(report["pooled_router"]["samples"], 20)
-        self.assertEqual(report["pooled_router"]["iterations"], 1)
 
     def test_fixed_opponent_schedule_is_exact_and_periodic(self) -> None:
         schedule = [_scheduled_for_opponent(episode, 0.5) for episode in range(1000)]
@@ -3628,7 +3469,6 @@ class TransformerTests(unittest.TestCase):
             _SELECTION_DOMAIN,
             _CHANCE_DOMAIN,
             _OPPONENT_DOMAIN,
-            _TIER_DOMAIN,
             _EXPLORATION_DOMAIN,
             _PRIOR_NOISE_DOMAIN,
         )
@@ -3651,6 +3491,26 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(
             _training_entropy_seed(20260726, 1, 0, _SELECTION_DOMAIN),
             10456798846194407138,
+        )
+
+    def test_the_actor_episode_carries_no_unread_controller_stream(self) -> None:
+        # The tier stream was seeded per episode and drawn from only by the
+        # depth router.  A stream nobody reads is still a stream every resume
+        # has to reproduce byte for byte, so it must not outlive its reader.
+        streams = {
+            name
+            for name, annotation in _ActorEpisode.__annotations__.items()
+            if annotation == "random.Random"
+        }
+        self.assertEqual(
+            streams,
+            {
+                "selection_rng",
+                "chance_rng",
+                "opponent_rng",
+                "exploration_rng",
+                "prior_noise_rng",
+            },
         )
 
     def test_collection_pair_validator_requires_same_reset_and_side_swap(self) -> None:
@@ -3890,9 +3750,8 @@ class TransformerTests(unittest.TestCase):
                 )
                 + "\n"
             )
-            _, _, _, _, masks, _, weights, _, budget_weights = _load_examples([shard])
+            _, _, _, _, masks, _, weights = _load_examples([shard])
             self.assertEqual(weights.tolist(), [1.0])
-            self.assertEqual(budget_weights.tolist(), [0.0])
             self.assertEqual(masks.tolist(), [[True, False, True, False]])
 
     def test_full_party_models_stay_under_one_million_parameters(self) -> None:
@@ -3950,32 +3809,29 @@ class TransformerTests(unittest.TestCase):
             all(count <= 1_000_000 for count in [*counts, semantic_count, joint_count])
         )
 
-    def test_adaptive_router_skips_stable_roots_but_retains_rmplus(self) -> None:
+    def test_search_never_asks_a_network_for_a_budget_score(self) -> None:
+        # The router bought one extra network forward per root to decide how
+        # deep to go.  Search stops at the root now, so the score decides
+        # nothing and must not be paid for -- even by a network offering it.
         server = _ToyServer()
-        network = _AdaptiveToyNetwork()
-        config = JointSearchConfig(
-            max_depth=2,
-            expansion_budget=16,
-            minimum_expansion_budget=4,
-            adaptive_search=True,
-            adaptive_deep_threshold=0.6,
-            adaptive_force_deep_fraction=0.0,
-            adaptive_exploitability_threshold=1.0,
-            adaptive_payoff_spread_threshold=2.0,
-        )
+        network = _RefusingBudgetNetwork()
         result = SimultaneousTreeSearch(
             server,
             network,
             network,
-            config,
+            JointSearchConfig(max_depth=2, max_actions_per_side=2),
             random.Random(1),
             random.Random(2),
         ).search(server._snapshot(0), sample_actions=False)
         self.assertEqual(result.nodes, 4)
         self.assertEqual(result.solver, "simultaneous-matrix-root-anchored-qre-v7")
-        self.assertEqual(result.diagnostics["adaptive_deep_selected"], 0)
-        self.assertEqual(result.diagnostics["adaptive_reason"], "router-stable-root")
         self.assertIsNotNone(result.payoff_matrix)
+        for key in (
+            "adaptive_deep_selected",
+            "adaptive_router_score",
+            "adaptive_reason",
+        ):
+            self.assertNotIn(key, result.diagnostics)
 
     def test_distilled_leaf_value_is_bounded_and_keeps_model_under_budget(self) -> None:
         torch.manual_seed(12)
@@ -3991,14 +3847,13 @@ class TransformerTests(unittest.TestCase):
                 joint_policy_heads=True,
                 distilled_leaf_evaluator=True,
                 leaf_hidden=64,
-                adaptive_budget_head=True,
             )
         ).eval()
         values = network.evaluate_leaf([[0] * 492, [65535] * 492])
         self.assertEqual(len(values), 2)
         self.assertTrue(all(-1.0 <= value <= 1.0 for value in values))
         self.assertEqual(
-            sum(parameter.numel() for parameter in network.parameters()), 937949
+            sum(parameter.numel() for parameter in network.parameters()), 937820
         )
 
     def test_pooled_successors_use_the_leaf_evaluator(self) -> None:
@@ -4010,8 +3865,6 @@ class TransformerTests(unittest.TestCase):
             network,
             JointSearchConfig(
                 max_depth=1,
-                expansion_budget=4,
-                minimum_expansion_budget=1,
             ),
             random.Random(1),
             random.Random(2),
@@ -4056,8 +3909,6 @@ class TransformerTests(unittest.TestCase):
             network,
             JointSearchConfig(
                 max_depth=1,
-                expansion_budget=4,
-                minimum_expansion_budget=1,
             ),
             random.Random(1),
             random.Random(2),
@@ -4138,8 +3989,6 @@ class TransformerTests(unittest.TestCase):
             enemy,
             JointSearchConfig(
                 max_depth=1,
-                expansion_budget=4,
-                minimum_expansion_budget=1,
                 inference_batch_size=1,
             ),
             random.Random(1),
@@ -4477,120 +4326,6 @@ class ShadowOpponentPoolTest(unittest.TestCase):
             ]
         )
         self.assertEqual(arguments.shadow_opponent_window, 6)
-
-
-class ExposureAwareRouterGateTest(unittest.TestCase):
-    def _entry(
-        self,
-        samples: int,
-        false_negatives: int,
-        root_only: int = 0,
-        deep: int = 0,
-    ) -> dict[str, object]:
-        return {
-            "truncated": 0,
-            "semantic_divergences": 0,
-            "mean_decisions": 20.0,
-            "finished": 100,
-            "forced_router_samples": samples,
-            "forced_router_false_negatives": false_negatives,
-            "forced_router_false_negative_rate": false_negatives / max(1, samples),
-            "root_only_decisions": root_only,
-            "deep_search_decisions": deep,
-        }
-
-    def _config(self, window: int, floor: float) -> SimpleNamespace:
-        return SimpleNamespace(
-            selfplay_episodes=100,
-            adaptive_max_false_negative_rate=0.10,
-            adaptive_fn_pool_window=window,
-            router_fn_exposure_floor=floor,
-        )
-
-    def test_pooled_root_only_share_pools_decision_counts(self) -> None:
-        entries = [
-            {"root_only_decisions": 1, "deep_search_decisions": 399},
-            {"root_only_decisions": 3, "deep_search_decisions": 397},
-        ]
-        self.assertAlmostEqual(_pooled_root_only_share(entries), 4 / 800)
-        self.assertEqual(_pooled_root_only_share([{}]), 0.0)
-
-    def test_low_exposure_downgrades_the_pooled_breach(self) -> None:
-        history = [self._entry(60, 12, 1, 399), self._entry(60, 12, 2, 398)]
-        report = _collection_quality(
-            self._entry(60, 12, 1, 399), self._config(3, 0.02), history
-        )
-        self.assertTrue(report["pass"])
-        self.assertEqual(
-            report["reasons"],
-            ["adaptive-router-pooled-false-negative-rate-above-limit"],
-        )
-        self.assertEqual(
-            report["version"], "completion-and-exposure-aware-router-integrity-v5"
-        )
-        self.assertEqual(report["router_exposure"]["floor"], 0.02)
-        self.assertAlmostEqual(report["router_exposure"]["share"], 4 / 1200)
-        self.assertEqual(report["pooled_router"]["samples"], 180)
-
-    def test_high_exposure_keeps_the_pooled_gate_blocking(self) -> None:
-        history = [self._entry(60, 12, 30, 370), self._entry(60, 12, 30, 370)]
-        report = _collection_quality(
-            self._entry(60, 12, 30, 370), self._config(3, 0.02), history
-        )
-        self.assertFalse(report["pass"])
-        self.assertEqual(
-            report["reasons"],
-            ["adaptive-router-pooled-false-negative-rate-above-limit"],
-        )
-        self.assertEqual(
-            report["version"], "completion-and-exposure-aware-router-integrity-v5"
-        )
-        self.assertAlmostEqual(report["router_exposure"]["share"], 90 / 1200)
-
-    def test_zero_floor_preserves_the_legacy_gate(self) -> None:
-        history = [self._entry(60, 12), self._entry(60, 12)]
-        report = _collection_quality(self._entry(60, 12), self._config(3, 0.0), history)
-        self.assertFalse(report["pass"])
-        self.assertEqual(report["version"], "completion-and-pooled-router-integrity-v4")
-        self.assertNotIn("router_exposure", report)
-
-    def test_low_exposure_downgrades_the_witnessed_breach(self) -> None:
-        entry = self._entry(200, 30, 1, 399)
-        report = _collection_quality(entry, self._config(1, 0.02))
-        self.assertTrue(report["pass"])
-        self.assertEqual(
-            report["reasons"], ["adaptive-router-false-negative-rate-above-limit"]
-        )
-        self.assertEqual(
-            report["version"], "completion-and-exposure-aware-router-integrity-v5"
-        )
-        self.assertNotIn("pooled_router", report)
-
-    def test_completion_breaches_still_block_at_low_exposure(self) -> None:
-        entry = self._entry(60, 12, 1, 399)
-        entry["truncated"] = 5
-        history = [self._entry(60, 12, 1, 399), self._entry(60, 12, 2, 398)]
-        report = _collection_quality(entry, self._config(3, 0.02), history)
-        self.assertFalse(report["pass"])
-        self.assertEqual(
-            report["reasons"],
-            [
-                "horizon-truncation-rate-above-1pct",
-                "adaptive-router-pooled-false-negative-rate-above-limit",
-            ],
-        )
-
-    def test_router_fn_exposure_floor_flows_from_the_cli(self) -> None:
-        arguments = training_parser().parse_args(
-            [
-                "transformer-train",
-                "--output",
-                "/tmp/exposure-floor",
-                "--router-fn-exposure-floor",
-                "0.02",
-            ]
-        )
-        self.assertEqual(arguments.router_fn_exposure_floor, 0.02)
 
 
 class _ExplodingRng:
@@ -5011,8 +4746,6 @@ class PriorRegretTest(unittest.TestCase):
         settings: dict[str, object] = {
             "chance_samples_per_joint": 1,
             "max_depth": 1,
-            "expansion_budget": 8,
-            "minimum_expansion_budget": 8,
             "prior_regret": True,
         }
         settings.update(overrides)
@@ -5120,8 +4853,6 @@ class SplitHalfReliabilityTest(unittest.TestCase):
         settings: dict[str, object] = {
             "chance_samples_per_joint": 2,
             "max_depth": 1,
-            "expansion_budget": 8,
-            "minimum_expansion_budget": 8,
             "split_half_reliability": True,
         }
         settings.update(overrides)
@@ -5178,8 +4909,6 @@ class SplitHalfReliabilityTest(unittest.TestCase):
         result = self._search(
             _ChanceSplitToyServer(),
             chance_samples_per_joint=1,
-            expansion_budget=4,
-            minimum_expansion_budget=4,
         )
         diagnostics = result.diagnostics or {}
         self.assertEqual(diagnostics["root_split_half_available"], 0)
@@ -5197,8 +4926,6 @@ class SplitHalfReliabilityTest(unittest.TestCase):
             JointSearchConfig(
                 chance_samples_per_joint=2,
                 max_depth=1,
-                expansion_budget=8,
-                minimum_expansion_budget=8,
             ),
             random.Random(1),
             random.Random(2),
@@ -7313,11 +7040,7 @@ class ArenaMatchupFilterTest(unittest.TestCase):
             "regret_iterations": 8,
             "inference_batch_size": 64,
             "max_actions_per_side": 2,
-            "tree_expansion_budget": 2,
-            "tree_minimum_budget": 1,
             "tree_regret_iterations": 1,
-            "tree_convergence_patience": 1,
-            "adaptive_search": False,
             "seed": 1234,
             "seed_count": 2,
         }

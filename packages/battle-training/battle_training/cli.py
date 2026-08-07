@@ -187,18 +187,6 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
         default=0.995,
         help="per-step EMA decay for the deployed leaf evaluator; 0 disables",
     )
-    parser.add_argument(
-        "--no-adaptive-search", action="store_false", dest="adaptive_search"
-    )
-    parser.set_defaults(adaptive_search=True)
-    parser.add_argument("--adaptive-warmup-iterations", type=int, default=1)
-    parser.add_argument("--adaptive-deep-threshold", type=float, default=0.50)
-    parser.add_argument("--adaptive-force-deep-fraction", type=float, default=0.10)
-    parser.add_argument("--adaptive-exploitability-threshold", type=float, default=0.08)
-    parser.add_argument("--adaptive-payoff-spread-threshold", type=float, default=0.75)
-    parser.add_argument("--adaptive-max-false-negative-rate", type=float, default=0.10)
-    parser.add_argument("--adaptive-fn-pool-window", type=int, default=1)
-    parser.add_argument("--router-fn-exposure-floor", type=float, default=0.02)
     parser.add_argument("--collection-epsilon", type=float, default=0.05)
     parser.add_argument("--collection-epsilon-turns", type=int, default=8)
     parser.add_argument("--policy-target-smoothing", type=float, default=0.02)
@@ -246,8 +234,6 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--team-replay-fraction", type=float, default=0.15)
     parser.add_argument("--team-replay-buffer-size", type=int, default=256)
     parser.add_argument("--popular-gate", type=int, default=64)
-    parser.add_argument("--budget-loss-weight", type=float, default=0.05)
-    parser.add_argument("--budget-positive-weight", type=float, default=4.0)
     parser.add_argument("--chance-samples-per-joint", type=int, default=2)
     parser.add_argument("--regret-iterations", type=int, default=2048)
     parser.add_argument("--inference-batch-size", type=int, default=256)
@@ -260,15 +246,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
         default=1,
         help="fixed at one: every neural action is selected by RM+ search",
     )
-    parser.add_argument("--tree-expansion-budget", type=int, default=320)
-    parser.add_argument("--tree-exploration", type=float, default=0.10)
-    parser.add_argument("--tree-chance-resample", type=float, default=0.10)
     parser.add_argument("--tree-regret-iterations", type=int, default=16)
-    parser.add_argument("--tree-deeper-joint-rotations", type=int, default=2)
-    parser.add_argument("--tree-minimum-budget", type=int, default=192)
-    parser.add_argument("--tree-convergence-tolerance", type=float, default=0.005)
-    parser.add_argument("--tree-convergence-patience", type=int, default=8)
-    parser.add_argument("--deep-search-fraction", type=float, default=1.0)
     parser.add_argument("--actor-batch-size", type=int, default=16 if smoke else 64)
     parser.add_argument("--actor-processes", type=int, default=1 if smoke else 8)
     parser.add_argument("--eval-processes", type=int, default=1 if smoke else 12)
@@ -328,24 +306,9 @@ def parser() -> argparse.ArgumentParser:
     arena.add_argument("--search-depth", type=int, default=4)
     arena.add_argument("--regret-iterations", type=int, default=2048)
     arena.add_argument("--inference-batch-size", type=int, default=256)
-    arena.add_argument("--tree-expansion-budget", type=int, default=320)
-    arena.add_argument("--tree-exploration", type=float, default=0.10)
-    arena.add_argument("--tree-chance-resample", type=float, default=0.10)
     arena.add_argument("--tree-regret-iterations", type=int, default=16)
-    arena.add_argument("--tree-deeper-joint-rotations", type=int, default=2)
-    arena.add_argument("--tree-minimum-budget", type=int, default=192)
-    arena.add_argument("--tree-convergence-tolerance", type=float, default=0.005)
-    arena.add_argument("--tree-convergence-patience", type=int, default=8)
     arena.add_argument("--redundant-action-prior-scale", type=float, default=0.25)
     arena.add_argument("--prior-anchor-temperature", type=float, default=0.02)
-    arena.add_argument(
-        "--no-adaptive-search", action="store_false", dest="adaptive_search"
-    )
-    arena.set_defaults(adaptive_search=True)
-    arena.add_argument("--adaptive-deep-threshold", type=float, default=0.50)
-    arena.add_argument("--adaptive-force-deep-fraction", type=float, default=0.10)
-    arena.add_argument("--adaptive-exploitability-threshold", type=float, default=0.08)
-    arena.add_argument("--adaptive-payoff-spread-threshold", type=float, default=0.75)
     arena.add_argument("--seed", type=int, default=90210)
     arena.add_argument("--device", default="auto")
     arena.add_argument(
@@ -388,25 +351,9 @@ def main(argv: list[str] | None = None) -> int:
                 regret_iterations=arguments.regret_iterations,
                 inference_batch_size=arguments.inference_batch_size,
                 max_actions_per_side=13,
-                tree_expansion_budget=arguments.tree_expansion_budget,
-                tree_exploration=arguments.tree_exploration,
-                tree_chance_resample=arguments.tree_chance_resample,
                 tree_regret_iterations=arguments.tree_regret_iterations,
-                tree_deeper_joint_rotations=arguments.tree_deeper_joint_rotations,
-                tree_minimum_budget=arguments.tree_minimum_budget,
-                tree_convergence_tolerance=arguments.tree_convergence_tolerance,
-                tree_convergence_patience=arguments.tree_convergence_patience,
                 redundant_action_prior_scale=(arguments.redundant_action_prior_scale),
                 prior_anchor_temperature=arguments.prior_anchor_temperature,
-                adaptive_search=arguments.adaptive_search,
-                adaptive_deep_threshold=arguments.adaptive_deep_threshold,
-                adaptive_force_deep_fraction=(arguments.adaptive_force_deep_fraction),
-                adaptive_exploitability_threshold=(
-                    arguments.adaptive_exploitability_threshold
-                ),
-                adaptive_payoff_spread_threshold=(
-                    arguments.adaptive_payoff_spread_threshold
-                ),
                 seed=arguments.seed,
                 replay_games=arguments.replay_games,
                 seed_count=arguments.seed_count,
@@ -462,21 +409,6 @@ def main(argv: list[str] | None = None) -> int:
             leaf_hidden_layers=arguments.leaf_hidden_layers,
             leaf_loss_weight=arguments.leaf_loss_weight,
             leaf_ema_decay=arguments.leaf_ema_decay,
-            adaptive_search=arguments.adaptive_search,
-            adaptive_warmup_iterations=arguments.adaptive_warmup_iterations,
-            adaptive_deep_threshold=arguments.adaptive_deep_threshold,
-            adaptive_force_deep_fraction=arguments.adaptive_force_deep_fraction,
-            adaptive_exploitability_threshold=(
-                arguments.adaptive_exploitability_threshold
-            ),
-            adaptive_payoff_spread_threshold=(
-                arguments.adaptive_payoff_spread_threshold
-            ),
-            adaptive_max_false_negative_rate=(
-                arguments.adaptive_max_false_negative_rate
-            ),
-            adaptive_fn_pool_window=arguments.adaptive_fn_pool_window,
-            router_fn_exposure_floor=arguments.router_fn_exposure_floor,
             collection_epsilon=arguments.collection_epsilon,
             collection_epsilon_turns=arguments.collection_epsilon_turns,
             policy_target_smoothing=arguments.policy_target_smoothing,
@@ -496,8 +428,6 @@ def main(argv: list[str] | None = None) -> int:
             team_replay_fraction=arguments.team_replay_fraction,
             team_replay_buffer_size=arguments.team_replay_buffer_size,
             popular_gate=arguments.popular_gate,
-            budget_loss_weight=arguments.budget_loss_weight,
-            budget_positive_weight=arguments.budget_positive_weight,
             opponent_checkpoints=tuple(
                 str(path.resolve()) for path in arguments.opponent_checkpoint
             ),
@@ -523,15 +453,7 @@ def main(argv: list[str] | None = None) -> int:
             max_actions_per_side=arguments.max_actions_per_side,
             replay_window=arguments.replay_window,
             search_every=arguments.search_every,
-            tree_expansion_budget=arguments.tree_expansion_budget,
-            tree_exploration=arguments.tree_exploration,
-            tree_chance_resample=arguments.tree_chance_resample,
             tree_regret_iterations=arguments.tree_regret_iterations,
-            tree_deeper_joint_rotations=arguments.tree_deeper_joint_rotations,
-            tree_minimum_budget=arguments.tree_minimum_budget,
-            tree_convergence_tolerance=arguments.tree_convergence_tolerance,
-            tree_convergence_patience=arguments.tree_convergence_patience,
-            deep_search_fraction=arguments.deep_search_fraction,
             actor_batch_size=arguments.actor_batch_size,
             actor_processes=arguments.actor_processes,
             eval_processes=arguments.eval_processes,
