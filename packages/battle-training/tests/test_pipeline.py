@@ -9,15 +9,18 @@ import random
 import sys
 import tempfile
 import unittest
+from collections.abc import Sequence
 from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 import torch
 
+from battle_training import joint_search
 from battle_training.arena import (
     ArenaConfig,
     ArenaReportJob,
@@ -78,6 +81,7 @@ from battle_training.joint_search import (
     SimultaneousTreeSearch,
     _dirichlet_noised_priors,
     _tactical_potential,
+    _tactical_potentials,
     solve_anchored_zero_sum,
     solve_zero_sum_regret,
 )
@@ -1325,6 +1329,76 @@ class TacticalPotentialTest(unittest.TestCase):
         self.assertAlmostEqual(
             self._potential(swapped), -self._potential(features), places=9
         )
+
+    def _spread(self) -> list[list[int]]:
+        """Positions that between them take every branch the scan can take."""
+        rows = [self._row()]
+        damaged = self._row()
+        damaged[self.SIDE + self.ACTIVE_MON + self.HP] = 37
+        damaged[self.SIDE + self.ACTIVE_MON + self.STATUS] = 4
+        rows.append(damaged)
+        fainted = self._row()
+        for slot in (1, 2):
+            fainted[self.SIDE + slot * self.MON + self.HP] = 0
+        rows.append(fainted)
+        switched = self._row()
+        switched[self.ACTIVE_INDEX] = 3
+        switched[3 * self.MON + self.HP] = 1
+        rows.append(switched)
+        drained = self._row()
+        for move in range(4):
+            drained[self.ACTIVE_MON + self.PP + move] = 0
+        rows.append(drained)
+        packed = self._row()
+        for move in range(4):
+            packed[self.ACTIVE_MON + self.PP + move] = 9 | 0xC0
+        rows.append(packed)
+        moveless = self._row()
+        for move in range(4):
+            moveless[self.SIDE + 4 * self.MON + self.MOVES + move] = 0
+        rows.append(moveless)
+        clamped = self._row()
+        for stat in range(6):
+            clamped[self.STAGES + stat] = 40
+            clamped[self.SIDE + self.STAGES + stat] = 0
+        rows.append(clamped)
+        return rows
+
+    def test_the_batch_prices_every_row_exactly_as_the_scalar_scan_does(self) -> None:
+        """One vectorized pass has to be the same function, not an approximation.
+
+        The batch is what search calls now, and it feeds potential shaping, so a
+        row the two versions disagree on is a leaf value that silently depends
+        on which code path happened to reach it.
+        """
+
+        rows = self._spread()
+        batched = _tactical_potentials([tuple(row) for row in rows])
+        self.assertEqual(len(batched), len(rows))
+        for index, row in enumerate(rows):
+            self.assertAlmostEqual(
+                float(batched[index]),
+                self._potential(row),
+                places=12,
+                msg=f"row {index}",
+            )
+
+    def test_the_batch_accepts_the_arrays_the_engine_actually_hands_back(self) -> None:
+        rows = self._spread()
+        batched = _tactical_potentials(
+            [np.asarray(row, dtype=np.int64) for row in rows]
+        )
+        for index, row in enumerate(rows):
+            self.assertAlmostEqual(
+                float(batched[index]),
+                self._potential(row),
+                places=12,
+                msg=f"row {index}",
+            )
+
+    def test_an_empty_batch_is_not_an_error(self) -> None:
+        """A search whose every successor is terminal prices no leaves at all."""
+        self.assertEqual(len(_tactical_potentials([])), 0)
 
 
 class TransformerTests(unittest.TestCase):
@@ -5259,6 +5333,28 @@ class SolvedInteriorMatrixTest(unittest.TestCase):
         self._result(server)
         self.assertEqual(len(server.seeds[1]), 16)
         self.assertEqual(len(set(server.seeds[1])), 1)
+
+    def test_the_whole_tree_is_priced_in_one_batched_potential_pass(self) -> None:
+        """Per-leaf shaping was the largest single cost of a second ply.
+
+        ``_settle`` already gathers every leaf before pricing any of them, so
+        the potential is a matrix operation over that batch. Charging it once
+        per leaf instead made a Python scan, not the solver depth was bought
+        for, the thing that grew as the tree did.
+        """
+
+        batches: list[int] = []
+        original = joint_search._tactical_potentials
+
+        def counted(batch: Sequence[Sequence[int]]) -> object:
+            rows = list(batch)
+            batches.append(len(rows))
+            return original(rows)
+
+        with mock.patch.object(joint_search, "_tactical_potentials", counted):
+            self._result(_ToyServer())
+        # One pass for the root, one for every leaf of every level at once.
+        self.assertEqual(batches, [1, 16])
 
     def test_leaf_shaping_is_measured_against_the_root(self) -> None:
         server = _PotentialLadderToyServer()

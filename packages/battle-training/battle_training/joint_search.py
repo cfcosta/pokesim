@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 import numpy as np
+from numpy.typing import NDArray
 
 from .decision_quality import shape_redundant_action_priors
 from .native import SearchServer, Snapshot
@@ -145,73 +146,75 @@ def _dirichlet_noised_priors(
 
 
 @dataclass(frozen=True)
-class _SidePotential:
-    """The per-side quantities the tactical potential differences."""
+class _SidePotentials:
+    """The per-side quantities the tactical potential differences.
 
-    hp: float
-    alive: int
-    statused: int
-    usable_moves: float
-    pp_reserve: float
-    stages: float
+    Every field is one value per row of the batch, so the difference that
+    forms the potential is a handful of vector operations rather than one
+    Python scan per position.
+    """
+
+    hp: NDArray[np.float64]
+    alive: NDArray[np.int64]
+    statused: NDArray[np.int64]
+    usable_moves: NDArray[np.float64]
+    pp_reserve: NDArray[np.float64]
+    stages: NDArray[np.float64]
 
 
-def _side_potential(features: Sequence[int], offset: int) -> _SidePotential:
+def _side_potentials(rows: NDArray[np.int64], offset: int) -> _SidePotentials:
     # The six party rows are cartridge storage. `SideState.syncOutgoing` copies
     # the battle mon back into its row only on switch-out and faint, so the
     # row belonging to `activeIndex` still holds pre-battle HP, status and PP
     # for the whole time that mon is fighting. Read it from the active block
     # instead, which is the authoritative live copy.
-    active_index = int(features[offset + _ACTIVE_INDEX_OFFSET])
-    hp_fraction = 0.0
-    alive = 0
-    statused = 0
-    usable_moves = 0.0
-    pp_reserve = 0.0
-    for slot in range(_PARTY_SIZE):
-        if slot == active_index:
-            base = offset + _ACTIVE_MON_OFFSET
-        else:
-            base = offset + slot * _PARTY_MON_WIDTH
-        hp = int(features[base + _MON_HP])
-        max_hp = int(features[base + _MON_MAX_HP])
-        hp_fraction += hp / max(1, max_hp)
-        if hp <= 0:
-            continue
-        alive += 1
-        statused += int(features[base + _MON_STATUS] != 0)
-        known = 0
-        with_pp = 0
-        remaining = 0
-        for move in range(_MOVE_SLOTS):
-            if int(features[base + _MON_MOVES + move]) == 0:
-                continue
-            known += 1
-            pp = int(features[base + _MON_PP + move]) & _PP_MASK
-            with_pp += int(pp > 0)
-            remaining += pp
-        if known == 0:
-            continue
-        usable_moves += with_pp / known
-        pp_reserve += min(1.0, remaining / (known * _PP_REFERENCE))
-    stages = 0.0
-    for stat in range(_STAGE_COUNT):
-        stage = int(features[offset + _ACTIVE_STAGE_OFFSET + stat])
-        stage = min(
-            _NEUTRAL_STAGE + _STAGE_BAND, max(_NEUTRAL_STAGE - _STAGE_BAND, stage)
-        )
-        stages += (stage - _NEUTRAL_STAGE) / _STAGE_BAND
-    return _SidePotential(
+    active_index = rows[:, offset + _ACTIVE_INDEX_OFFSET][:, None]
+    slots = np.arange(_PARTY_SIZE)[None, :]
+    bases = np.where(
+        slots == active_index,
+        offset + _ACTIVE_MON_OFFSET,
+        offset + slots * _PARTY_MON_WIDTH,
+    )
+
+    def column(field: int) -> NDArray[np.int64]:
+        return np.take_along_axis(rows, bases + field, axis=1)
+
+    def move_columns(field: int) -> NDArray[np.int64]:
+        return np.stack([column(field + move) for move in range(_MOVE_SLOTS)], axis=2)
+
+    hp = column(_MON_HP)
+    # A fainted mon still contributes its (zero) HP share before being skipped
+    # for everything else, exactly as the per-slot scan did.
+    hp_fraction = (hp / np.maximum(1, column(_MON_MAX_HP))).sum(axis=1)
+    live = hp > 0
+    known_slots = move_columns(_MON_MOVES) != 0
+    pp = move_columns(_MON_PP) & _PP_MASK
+    known = known_slots.sum(axis=2)
+    counted = live & (known > 0)
+    # Guards the division for slots that are about to be masked away anyway.
+    denominator = np.maximum(1, known)
+    with_pp = (known_slots & (pp > 0)).sum(axis=2)
+    remaining = np.where(known_slots, pp, 0).sum(axis=2)
+    stages = rows[
+        :,
+        offset + _ACTIVE_STAGE_OFFSET : offset + _ACTIVE_STAGE_OFFSET + _STAGE_COUNT,
+    ]
+    stages = np.clip(stages, _NEUTRAL_STAGE - _STAGE_BAND, _NEUTRAL_STAGE + _STAGE_BAND)
+    return _SidePotentials(
         hp=hp_fraction / _PARTY_SIZE,
-        alive=alive,
-        statused=statused,
-        usable_moves=usable_moves / _PARTY_SIZE,
-        pp_reserve=pp_reserve / _PARTY_SIZE,
-        stages=stages,
+        alive=live.sum(axis=1),
+        statused=(live & (column(_MON_STATUS) != 0)).sum(axis=1),
+        usable_moves=np.where(counted, with_pp / denominator, 0.0).sum(axis=1)
+        / _PARTY_SIZE,
+        pp_reserve=np.where(
+            counted, np.minimum(1.0, remaining / (denominator * _PP_REFERENCE)), 0.0
+        ).sum(axis=1)
+        / _PARTY_SIZE,
+        stages=((stages - _NEUTRAL_STAGE) / _STAGE_BAND).sum(axis=1),
     )
 
 
-def _tactical_potential(features: Sequence[int]) -> float:
+def _tactical_potentials(batch: Sequence[Sequence[int]]) -> NDArray[np.float64]:
     """Dense, antisymmetric potential over HP, faints, status, PP and stages.
 
     PP earns two terms because it fails in two ways. `usable_moves` is the
@@ -220,10 +223,17 @@ def _tactical_potential(features: Sequence[int]) -> float:
     `Battle/Full/Action.lean` proves. `pp_reserve` grades the approach to that
     cliff, so a long attrition race has a per-turn gradient instead of a flat
     landscape terminated by one discontinuity.
+
+    Search prices whole batches of leaves at once, so this reads a batch. A
+    tree spends this once per level-set rather than once per leaf, which is
+    what keeps the shaping cost flat as depth grows the tree underneath it.
     """
 
-    own = _side_potential(features, 0)
-    foe = _side_potential(features, _FULL_SIDE_WIDTH)
+    if len(batch) == 0:
+        return np.zeros(0, dtype=np.float64)
+    rows = np.asarray(batch, dtype=np.int64)
+    own = _side_potentials(rows, 0)
+    foe = _side_potentials(rows, _FULL_SIDE_WIDTH)
     return (
         own.hp
         - foe.hp
@@ -233,6 +243,17 @@ def _tactical_potential(features: Sequence[int]) -> float:
         + _PP_RESERVE_WEIGHT * (own.pp_reserve - foe.pp_reserve)
         + _STAGE_WEIGHT * (own.stages - foe.stages)
     )
+
+
+def _tactical_potential(features: Sequence[int]) -> float:
+    """One position's tactical potential, for the callers that hold only one.
+
+    Deliberately a wrapper rather than a second implementation: the batched
+    form is what search prices leaves with, and two scans of the same layout
+    would be free to drift apart under exactly the edits this file invites.
+    """
+
+    return float(_tactical_potentials([features])[0])
 
 
 def _sample(probabilities: list[float], rng: random.Random) -> int:
@@ -641,11 +662,13 @@ class BatchedJointRegretSearch:
                 active_snapshots
             )
             if depth >= self.config.max_depth:
-                for index, value in zip(active_indexes, leaf_values, strict=True):
-                    tactical_delta = (
-                        _tactical_potential(trajectories[index].player_features)
-                        - root_potential
-                    )
+                potentials = _tactical_potentials(
+                    [trajectories[index].player_features for index in active_indexes]
+                ).tolist()
+                for index, value, potential in zip(
+                    active_indexes, leaf_values, potentials, strict=True
+                ):
+                    tactical_delta = potential - root_potential
                     values[index] = max(-1.0, min(1.0, value + tactical_delta))
                 break
             rollout_chance = [
@@ -1853,7 +1876,11 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         return samples, requests
 
     def _shaped_leaf_value(
-        self, root_potential: float, successor: Snapshot, leaf_value: float
+        self,
+        root_potential: float,
+        successor: Snapshot,
+        leaf_value: float,
+        potential: float,
     ) -> float:
         """Score a leaf against the root, not against whatever reached it.
 
@@ -1862,11 +1889,13 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         against its own parent would clamp the value once per level and pay the
         search for a plan's first turn while hiding the rest of it, which is
         exactly the multi-turn payoff depth was bought to see.
+
+        `potential` arrives precomputed because the caller holds every leaf of
+        the tree at once and prices them in a single batch.
         """
         if successor.done:
             return leaf_value
-        delta = _tactical_potential(successor.player_features) - root_potential
-        return max(-1.0, min(1.0, leaf_value + delta))
+        return max(-1.0, min(1.0, leaf_value + potential - root_potential))
 
     def _install_expansion(
         self,
@@ -2111,9 +2140,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             if not frontier:
                 break
             levels.append(frontier)
-        root_potentials = [
-            _tactical_potential(snapshot.player_features) for snapshot in snapshots
-        ]
+        root_potentials = _tactical_potentials(
+            [snapshot.player_features for snapshot in snapshots]
+        ).tolist()
         transitions = cls._settle(searches, levels, root_potentials)
         results: list[SearchResult | None] = [None] * len(searches)
         batch_size = len(searches)
@@ -2258,8 +2287,14 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     for root, snapshots in leaf_snapshots.items()
                 ]
             )
+            potentials = _tactical_potentials(
+                [
+                    expansion.successors[position].player_features
+                    for expansion, position in leaves
+                ]
+            ).tolist()
             slots = dict.fromkeys(leaf_snapshots, 0)
-            for expansion, position in leaves:
+            for index, (expansion, position) in enumerate(leaves):
                 slot = slots[expansion.root]
                 slots[expansion.root] = slot + 1
                 expansion.values[position] = searches[
@@ -2268,6 +2303,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     root_potentials[expansion.root],
                     expansion.successors[position],
                     evaluated[expansion.root][slot][0],
+                    potentials[index],
                 )
         transitions: dict[int, int] = {}
         for depth, level in reversed(list(enumerate(levels))):
