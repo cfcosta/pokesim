@@ -30,8 +30,9 @@ Every `Sample` carries two independent proofs:
 * `historyReplays` proves ordered origins/events or an explicitly marked
   competitive preset reconstruct exactly that team and final resource ledger.
 
-The defensive repair branch remains fail-closed. It now returns a replayable
-natural Rhydon rather than an arbitrary learn-pool prefix.
+The defensive repair branch remains fail-closed. It returns a replayable natural
+Rattata rather than an arbitrary learn-pool prefix; the species is chosen for its
+floor-2 generation level, which fits inside any battle level band.
 -/
 
 namespace Battle.RL.DynamicGenerator
@@ -152,6 +153,71 @@ def everyAdmissibleLevelSampled : Bool :=
 /-- The one-byte level map has full support over every declared interval. -/
 theorem every_admissible_level_sampled : everyAdmissibleLevelSampled = true := by
   native_decide
+
+/-- An inclusive level interval shared by every mon in one generated battle.
+`free` and `level100` recover the two policies that predate banding, so the band
+is the single level policy rather than a third one bolted alongside. -/
+structure LevelBand where
+  /-- Lowest level the band admits, before a species floor lifts it. -/
+  low : UInt8
+  /-- Highest level the band admits. -/
+  high : UInt8
+deriving Repr, DecidableEq, BEq
+
+namespace LevelBand
+
+/-- The unbanded policy: each mon spans its own floor through 100. -/
+def free : LevelBand := ⟨0, 100⟩
+
+/-- The competitive policy: every mon is level 100. -/
+def level100 : LevelBand := ⟨100, 100⟩
+
+end LevelBand
+
+/-- Map one entropy byte onto a band, lifting it past the species' generation
+floor when the floor sits above the band. The lift keeps the function total for
+bands a species cannot honour; `battleLevelBand` chooses bands no drawn species
+needs lifting out of, which is what makes the spread bound exact. -/
+def bandedLevel (band : LevelBand) (species : SpeciesId) (raw : UInt8) : UInt8 :=
+  let floor := (Data.MinimumLevels.generationFloor species).toNat
+  let low := min 100 (max floor band.low.toNat)
+  let high := min 100 (max low (max floor band.high.toNat))
+  (low + raw.toNat % (high + 1 - low)).toUInt8
+
+/-- The free band reproduces the per-species interval exactly, so banding
+generalizes the original level policy instead of replacing it. -/
+theorem bandedLevel_free (species : SpeciesId) (raw : UInt8) :
+    bandedLevel LevelBand.free species raw = sampledLevel species raw := by
+  have checked : (List.range 256).all (fun speciesValue =>
+      (List.range 256).all (fun rawValue =>
+        bandedLevel LevelBand.free speciesValue.toUInt8 rawValue.toUInt8 ==
+          sampledLevel speciesValue.toUInt8 rawValue.toUInt8)) = true := by
+    native_decide
+  have speciesItem := (List.all_eq_true.mp checked) species.toNat
+    (List.mem_range.mpr species.toNat_lt)
+  have rawItem := (List.all_eq_true.mp speciesItem) raw.toNat
+    (List.mem_range.mpr raw.toNat_lt)
+  have round (value : UInt8) : value.toNat.toUInt8 = value := by
+    apply UInt8.toNat.inj
+    simp
+  simpa only [beq_iff_eq, round] using rawItem
+
+/-- The level-100 band forces level 100 for every species and entropy byte. -/
+theorem bandedLevel_level100 (species : SpeciesId) (raw : UInt8) :
+    bandedLevel LevelBand.level100 species raw = 100 := by
+  have checked : (List.range 256).all (fun speciesValue =>
+      (List.range 256).all (fun rawValue =>
+        bandedLevel LevelBand.level100 speciesValue.toUInt8 rawValue.toUInt8 == 100))
+      = true := by
+    native_decide
+  have speciesItem := (List.all_eq_true.mp checked) species.toNat
+    (List.mem_range.mpr species.toNat_lt)
+  have rawItem := (List.all_eq_true.mp speciesItem) raw.toNat
+    (List.mem_range.mpr raw.toNat_lt)
+  have round (value : UInt8) : value.toNat.toUInt8 = value := by
+    apply UInt8.toNat.inj
+    simp
+  simpa only [beq_iff_eq, round] using rawItem
 
 /-- An evolution is available only when its encoded minimum level has been
 reached. Item and trade records retain their cartridge minimum-level fields. -/
@@ -275,7 +341,7 @@ The balanced profile uses the first species/evolution-decision bytes as one
 profiles consume the same fourteen bytes. Acquisition replays exact
 `WriteMonMoves` for the selected final species at the sampled level before
 machine teachings and PP Ups. -/
-private def sampleMonWithLevel (forcedLevel : Option UInt8) (balancedFinal : Bool)
+private def sampleMonWithLevel (band : LevelBand) (balancedFinal : Bool)
     (ledger : ResourceLedger) (rng : Rng.LinkRng) :
     MonPlan × MonState × ResourceLedger × Rng.LinkRng :=
   let (speciesByte, rng) := draw rng
@@ -295,7 +361,7 @@ private def sampleMonWithLevel (forcedLevel : Option UInt8) (balancedFinal : Boo
   let entry := if balancedFinal then
       entryOf (balancedSpeciesIndex speciesByte firstEvolutionDecision)
     else entryOf speciesByte.toNat
-  let level := forcedLevel.getD (sampledLevel entry.speciesId levelByte)
+  let level := bandedLevel band entry.speciesId levelByte
   let species := if balancedFinal then entry.speciesId else
     promoteSpecies entry.speciesId level firstEvolutionDecision firstEvolutionBranch
       secondEvolutionDecision secondEvolutionBranch
@@ -313,45 +379,66 @@ private def sampleMonWithLevel (forcedLevel : Option UInt8) (balancedFinal : Boo
 /-- Ordinary level-distributed mon generation. -/
 def sampleMon (ledger : ResourceLedger) (rng : Rng.LinkRng) :
     MonPlan × MonState × ResourceLedger × Rng.LinkRng :=
-  sampleMonWithLevel none false ledger rng
+  sampleMonWithLevel LevelBand.free false ledger rng
 
-private def sampleMonsWithLevel (forcedLevel : Option UInt8) (balancedFinal : Bool) :
+private def sampleMonsWithLevel (band : LevelBand) (balancedFinal : Bool) :
     Nat → ResourceLedger → Rng.LinkRng →
       Array MonPlan × Team × ResourceLedger × Rng.LinkRng
   | 0, ledger, rng => (#[], #[], ledger, rng)
   | count + 1, ledger, rng =>
-      let (plan, mon, ledger, rng) := sampleMonWithLevel forcedLevel balancedFinal ledger rng
+      let (plan, mon, ledger, rng) := sampleMonWithLevel band balancedFinal ledger rng
       let (plans, mons, ledger, rng) :=
-        sampleMonsWithLevel forcedLevel balancedFinal count ledger rng
+        sampleMonsWithLevel band balancedFinal count ledger rng
       (#[plan] ++ plans, #[mon] ++ mons, ledger, rng)
 
 private def sampleMons : Nat → ResourceLedger → Rng.LinkRng →
     Array MonPlan × Team × ResourceLedger × Rng.LinkRng :=
-  sampleMonsWithLevel none false
+  sampleMonsWithLevel LevelBand.free false
 
-private def fallbackOrigin : Origin :=
-  { species := (entryOf 0).speciesId, level := 100
+/-- The repair species, fixed so a band can account for its generation floor
+before any team is drawn. Rattata's floor-2 generation level fits inside every
+band; the natural Rhydon this branch used to return has a floor of 42, which
+would have put a level-42 sub-floor under every banded battle. -/
+def fallbackSpecies : SpeciesId := 0xa5
+
+/-- The repair branch honours the battle's band too. A level-100 repair inside a
+level-30 battle would be a rare but real breach of the spread bound, so the
+level rides the band exactly as a sampled mon's does. -/
+private def fallbackOrigin (level : UInt8) : Origin :=
+  { species := fallbackSpecies, level
     atkDv := 15, defDv := 15, spdDv := 15, spcDv := 15 }
 
-private def fallbackPlan : MonPlan := { origin := fallbackOrigin, events := [] }
-private def fallbackTeam : Team := #[acquire fallbackOrigin]
+private def fallbackPlan (level : UInt8) : MonPlan :=
+  { origin := fallbackOrigin level, events := [] }
 
-private theorem fallbackTeam_legal :
-    teamLegal genDex .canonical fallbackTeam = true := by
-  native_decide
+private def fallbackTeam (level : UInt8) : Team := #[acquire (fallbackOrigin level)]
 
-private theorem fallback_replays (ledger : ResourceLedger) :
-    replayTeam { initialLedger := ledger, plans := #[fallbackPlan] } =
-      some (fallbackTeam, ledger) := by
+private theorem fallbackTeam_legal (level : UInt8) :
+    teamLegal genDex .canonical (fallbackTeam level) = true := by
+  have checked : (List.range 256).all (fun value =>
+      teamLegal genDex .canonical (fallbackTeam value.toUInt8)) = true := by
+    native_decide
+  have item := (List.all_eq_true.mp checked) level.toNat
+    (List.mem_range.mpr level.toNat_lt)
+  have round (value : UInt8) : value.toNat.toUInt8 = value := by
+    apply UInt8.toNat.inj
+    simp
+  simpa only [decide_eq_true_eq, round] using item
+
+private theorem fallback_replays (level : UInt8) (ledger : ResourceLedger) :
+    replayTeam { initialLedger := ledger, plans := #[fallbackPlan level] } =
+      some (fallbackTeam level, ledger) := by
   rfl
 
-private def fallbackSample (ledger : ResourceLedger) (rng : Rng.LinkRng) : Sample :=
-  { team := ⟨fallbackTeam, fallbackTeam_legal⟩
+private def fallbackSample (band : LevelBand) (ledger : ResourceLedger)
+    (rng : Rng.LinkRng) : Sample :=
+  let level := bandedLevel band fallbackSpecies 0
+  { team := ⟨fallbackTeam level, fallbackTeam_legal level⟩
     rng
     repaired := true
-    history := { initialLedger := ledger, plans := #[fallbackPlan] }
+    history := { initialLedger := ledger, plans := #[fallbackPlan level] }
     remainingLedger := ledger
-    historyReplays := fallback_replays ledger }
+    historyReplays := fallback_replays level ledger }
 
 /-- Generate a requested-size party under an explicit shared resource budget.
 The size is clamped to `1..PARTY_LENGTH`. -/
@@ -364,8 +451,8 @@ def sampleSizedWithLedger (requested : Nat) (ledger : ResourceLedger)
     if legal : teamLegal genDex .canonical candidate = true then
       { team := ⟨candidate, legal⟩, rng, repaired := false, history
         remainingLedger := remaining, historyReplays := replayed }
-    else fallbackSample ledger rng
-  else fallbackSample ledger rng
+    else fallbackSample LevelBand.free ledger rng
+  else fallbackSample LevelBand.free ledger rng
 
 /-- Default RL budget: one copy of each TM, all five HMs, and eighteen PP Ups.
 This is explicit distribution policy, not a new-game inventory claim. -/
@@ -377,30 +464,112 @@ def sampleSized (requested : Nat) (rng : Rng.LinkRng) : Sample :=
 /-- Shared fixed-size constructor for the weighted and balanced-final-species
 profiles. The balance choice changes only final-species selection; resource,
 move-history, PP-Up, level, and entropy-consumption contracts remain shared. -/
-private def sampleSizedProfile (requested : Nat) (forcedLevel : Option UInt8)
+private def sampleSizedProfile (requested : Nat) (band : LevelBand)
     (balancedFinal : Bool) (rng : Rng.LinkRng) : Sample :=
   let count := max 1 (min maxPartySize requested)
   let (plans, candidate, remaining, rng) :=
-    sampleMonsWithLevel forcedLevel balancedFinal count defaultLedger rng
+    sampleMonsWithLevel band balancedFinal count defaultLedger rng
   let history : TeamHistory := { initialLedger := defaultLedger, plans }
   if replayed : replayTeam history = some (candidate, remaining) then
     if legal : teamLegal genDex .canonical candidate = true then
       { team := ⟨candidate, legal⟩, rng, repaired := false, history
         remainingLedger := remaining, historyReplays := replayed }
-    else fallbackSample defaultLedger rng
-  else fallbackSample defaultLedger rng
+    else fallbackSample band defaultLedger rng
+  else fallbackSample band defaultLedger rng
 
 /-- Generate a requested-size progression-witnessed party whose members are all
 level 100. The ordinary level byte is still consumed, preserving stream shape;
 only the level-selection policy changes. -/
 def sampleSizedLevel100 (requested : Nat) (rng : Rng.LinkRng) : Sample :=
-  sampleSizedProfile requested (some 100) false rng
+  sampleSizedProfile requested LevelBand.level100 false rng
 
 /-- Generate a requested-size party with near-uniform final-species support.
 Unlike the weighted profile, evolutionary families do not funnel several source
 rows into the same final form. -/
 def sampleSizedBalanced (requested : Nat) (rng : Rng.LinkRng) : Sample :=
-  sampleSizedProfile requested none true rng
+  sampleSizedProfile requested LevelBand.free true rng
+
+/-! ## Battle-wide level band
+
+Sampling each mon's level independently across `[generationFloor, 100]` produced
+battles that were decided before the first turn: a level-27 side against a
+level-94 side teaches the value head to read levels rather than positions. One
+band per battle removes that gradient without touching which species appear.
+
+The band's floor has to clear the generation floor of every species the battle
+will draw, which is only knowable before generation because the balanced profile
+picks its final species from two fixed bytes and never consults the level. The
+peek below reads exactly those bytes and is checked against the real sampler. -/
+
+/-- Widest level gap admitted between any two mons in one generated battle. -/
+def maxLevelSpread : Nat := 10
+
+/-- Highest level a spread-capped band may start at. -/
+def maxBandFloor : Nat := 100 - maxLevelSpread
+
+/-- Entropy bytes `sampleMonWithLevel` consumes per mon. The peek skips exactly
+this many to stay aligned with it. -/
+def bytesPerMon : Nat := 14
+
+private def skipBytes : Nat → Rng.LinkRng → Rng.LinkRng
+  | 0, rng => rng
+  | count + 1, rng => skipBytes count (draw rng).2
+
+/-- Read the final species a balanced-profile party will draw without building
+it. Only the species and first evolution-decision bytes matter; the rest of the
+block is skipped so the returned stream is exactly where the real sampler would
+leave it. -/
+private def peekBalancedSpecies : Nat → Rng.LinkRng → Array SpeciesId × Rng.LinkRng
+  | 0, rng => (#[], rng)
+  | count + 1, rng =>
+      let (speciesByte, rng) := draw rng
+      let (_levelByte, rng) := draw rng
+      let (firstEvolutionDecision, rng) := draw rng
+      let rng := skipBytes (bytesPerMon - 3) rng
+      let entry := entryOf (balancedSpeciesIndex speciesByte firstEvolutionDecision)
+      let (rest, rng) := peekBalancedSpecies count rng
+      (#[entry.speciesId] ++ rest, rng)
+
+/-- Place a `maxLevelSpread`-wide band above every floor it has to honour. The
+anchor is drawn across the whole range first and only then pushed up, so a
+battle whose species all start low keeps its low band instead of being dragged
+to the middle of whatever room the floor left. -/
+def bandOfAnchor (floor : Nat) (anchor : UInt8) : LevelBand :=
+  let low := max (min maxBandFloor floor) (anchor.toNat % (maxBandFloor + 1))
+  ⟨low.toUInt8, (low + maxLevelSpread).toUInt8⟩
+
+/-- Draw the band one generated battle runs under, consuming a single anchor
+byte and then peeking both rosters without consuming anything further. The
+repair species is folded in so the fail-closed branch also lands inside the
+band. -/
+def battleLevelBand (playerRequested enemyRequested : Nat) (rng : Rng.LinkRng) :
+    LevelBand × Rng.LinkRng :=
+  let (anchor, rng) := draw rng
+  let playerCount := max 1 (min maxPartySize playerRequested)
+  let enemyCount := max 1 (min maxPartySize enemyRequested)
+  let (playerSpecies, peeked) := peekBalancedSpecies playerCount rng
+  let (enemySpecies, _) := peekBalancedSpecies enemyCount peeked
+  let floor := (playerSpecies ++ enemySpecies ++ #[fallbackSpecies]).foldl
+    (fun highest species =>
+      max highest (Data.MinimumLevels.generationFloor species).toNat) 0
+  (bandOfAnchor floor anchor, rng)
+
+/-- Generate a balanced-profile party inside an explicit level band. -/
+def sampleSizedBanded (requested : Nat) (band : LevelBand) (rng : Rng.LinkRng) : Sample :=
+  sampleSizedProfile requested band true rng
+
+/-- Generate both sides of one battle under a single shared level band. -/
+def sampleBandedPair (playerRequested enemyRequested : Nat) (rng : Rng.LinkRng) :
+    Sample × Sample :=
+  let (band, rng) := battleLevelBand playerRequested enemyRequested rng
+  let player := sampleSizedBanded playerRequested band rng
+  let enemy := sampleSizedBanded enemyRequested band player.rng
+  (player, enemy)
+
+/-- Widest level gap present across both sides of a generated battle. -/
+def pairLevelSpread (pair : Sample × Sample) : Nat :=
+  let levels := (pair.1.team.1 ++ pair.2.team.1).map (fun mon => mon.level.toNat)
+  levels.foldl max 0 - levels.foldl min 100
 
 def popularTeamIndex (high low : UInt8) : Nat :=
   (high.toNat * 256 + low.toNat) % 200
@@ -442,8 +611,8 @@ def samplePopularLevel100 (rng : Rng.LinkRng) : Sample :=
     if legal : teamLegal genDex .canonical candidate = true then
       { team := ⟨candidate, legal⟩, rng, repaired := false, popular := true, history
         remainingLedger := defaultLedger, historyReplays := replayed }
-    else fallbackSample defaultLedger rng
-  else fallbackSample defaultLedger rng
+    else fallbackSample LevelBand.level100 defaultLedger rng
+  else fallbackSample LevelBand.level100 defaultLedger rng
 
 /-- Number of byte residues that pass a popular-team gate threshold. -/
 def popularGateCountAt (gate : Nat) : Nat :=
@@ -472,8 +641,8 @@ def sampleSizedBalancedLevel100Gated (gate : Nat) (requested : Nat)
   if count == maxPartySize then
     let (popularGate, rng) := draw rng
     if popularGate.toNat < gate then samplePopularLevel100 rng
-    else sampleSizedProfile requested (some 100) true rng
-  else sampleSizedProfile requested (some 100) true rng
+    else sampleSizedProfile requested LevelBand.level100 true rng
+  else sampleSizedProfile requested LevelBand.level100 true rng
 
 /-- The legacy 26/256 sampler is the gated sampler at threshold 26, so
 existing replay recordings and seed streams are preserved byte-for-byte. -/
@@ -562,6 +731,57 @@ theorem sampleSized_progression_witnessed (requested : Nat) (ledger : ResourceLe
   (sampleSizedWithLedger requested ledger rng).historyReplays
 
 /-! ## Deterministic sampling guards -/
+
+/-- Distinct well-formed generator seeds for the executable batch checks. -/
+private def guardSeed (index : Nat) : Rng.LinkRng :=
+  { list := (Array.range Wram.serialRnsLength).map fun offset =>
+      (13 * offset + 37 * index + 3).toUInt8
+    index := 0 }
+
+/-- The species peek reads the same roster the sampler goes on to build and
+leaves the entropy stream exactly where the sampler leaves it, so lifting the
+band above the drawn floors cannot drift out of step with generation. -/
+theorem peekBalancedSpecies_matches_sampler :
+    ((List.range 24).all fun seed =>
+      (List.range 6).all fun size =>
+        let requested := size + 1
+        let peeked := peekBalancedSpecies requested (guardSeed seed)
+        let sampled := sampleSizedBalanced requested (guardSeed seed)
+        peeked.1 == sampled.team.1.map (fun mon => mon.species) &&
+          peeked.2 == sampled.rng) = true := by
+  native_decide
+
+/-- No generated battle opens with one side outlevelling the other: every mon on
+both sides sits inside a single `maxLevelSpread`-wide band. -/
+theorem banded_pair_stays_within_spread :
+    ((List.range 24).all fun seed =>
+      (List.range 6).all fun size =>
+        (List.range 6).all fun other =>
+          pairLevelSpread
+              (sampleBandedPair (size + 1) (other + 1) (guardSeed seed)) ≤
+            maxLevelSpread) = true := by
+  native_decide
+
+/-- Executable support check: banding narrows each battle without narrowing the
+corpus. Some battle uses the full spread, some opens near the bottom of the
+range, and some opens near the top. -/
+def bandedPairsSpanTheLevelRange : Bool :=
+  let levels (player enemy seed : Nat) : Array Nat :=
+    let pair := sampleBandedPair player enemy (guardSeed seed)
+    (pair.1.team.1 ++ pair.2.team.1).map fun mon => mon.level.toNat
+  ((List.range 96).any fun seed =>
+      pairLevelSpread (sampleBandedPair 6 6 (guardSeed seed)) == maxLevelSpread) &&
+    ((List.range 96).any fun seed => (levels 1 1 seed).all (· ≤ 20)) &&
+    ((List.range 96).any fun seed => (levels 6 6 seed).all (90 ≤ ·))
+
+
+/-- Banding still admits the whole level range across battles. -/
+theorem banded_pairs_span_the_level_range : bandedPairsSpanTheLevelRange = true := by
+  native_decide
+
+-- The repair species must fit under any band the generator can draw.
+#guard Data.MinimumLevels.generationFloor fallbackSpecies == 2
+#guard Data.internalToDex fallbackSpecies == 19
 
 private def sample0 : Sample := sample Rng.seed0
 

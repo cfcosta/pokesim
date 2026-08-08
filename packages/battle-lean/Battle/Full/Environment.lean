@@ -228,13 +228,15 @@ def resetSizedPair (playerRequested enemyRequested : Nat)
   resetFromSamples player enemy battleRng mode playerBag enemyBag trainerClass
 
 /-- Reset with independently sized parties whose displayed final species use
-the bounded near-uniform 151-species profile. -/
+the bounded near-uniform 151-species profile. Both parties are drawn under one
+shared level band, so no generated battle opens with one side outlevelling the
+other. -/
 def resetSizedPairBalanced (playerRequested enemyRequested : Nat)
     (generatorRng battleRng : Rng.LinkRng)
     (mode : BattleMode := .link) (playerBag enemyBag : Items.Bag := [])
     (trainerClass : UInt8 := 1) : State :=
-  let player := RL.DynamicGenerator.sampleSizedBalanced playerRequested generatorRng
-  let enemy := RL.DynamicGenerator.sampleSizedBalanced enemyRequested player.rng
+  let (player, enemy) :=
+    RL.DynamicGenerator.sampleBandedPair playerRequested enemyRequested generatorRng
   resetFromSamples player enemy battleRng mode playerBag enemyBag trainerClass
 
 /-- Reset a generated battle whose independently sampled parties are both
@@ -270,8 +272,8 @@ def resetSizedPairSwapped (playerRequested enemyRequested : Nat)
 /-- Swapped counterpart of `resetSizedPairBalanced`. -/
 def resetSizedPairBalancedSwapped (playerRequested enemyRequested : Nat)
     (generatorRng battleRng : Rng.LinkRng) : State :=
-  let player := RL.DynamicGenerator.sampleSizedBalanced playerRequested generatorRng
-  let enemy := RL.DynamicGenerator.sampleSizedBalanced enemyRequested player.rng
+  let (player, enemy) :=
+    RL.DynamicGenerator.sampleBandedPair playerRequested enemyRequested generatorRng
   resetFromSamples enemy player battleRng .link [] [] 1
 
 /-- Level-100 counterpart of `resetSizedPairSwapped`. -/

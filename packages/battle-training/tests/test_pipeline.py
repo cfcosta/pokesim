@@ -3777,11 +3777,11 @@ class TransformerTests(unittest.TestCase):
     def test_training_schedule_pairs_every_reset_and_side_assignment(self) -> None:
         self.assertEqual(
             _pipeline_id(),
-            "transformer-variable-party-bf16-rmplus-v31-capped-deficit-schedule-5m-16k",
+            "transformer-variable-party-bf16-rmplus-v32-banded-levels-5m-16k",
         )
         self.assertEqual(
             _pipeline_id(False, 2),
-            "transformer-variable-party-bf16-rmplus-v31-capped-deficit-schedule-5m-16k",
+            "transformer-variable-party-bf16-rmplus-v32-banded-levels-5m-16k",
         )
         for episode in range(0, 128, 2):
             self.assertEqual(_training_pair(episode), _training_pair(episode + 1))

@@ -281,7 +281,7 @@ def _pipeline_id(
     balanced_final_species: bool = True, generated_schedule_version: int = 4
 ) -> str:
     del balanced_final_species, generated_schedule_version
-    return "transformer-variable-party-bf16-rmplus-v31-capped-deficit-schedule-5m-16k"
+    return "transformer-variable-party-bf16-rmplus-v32-banded-levels-5m-16k"
 
 
 def _serialized_network_config(config: TransformerConfig) -> dict[str, Any]:
