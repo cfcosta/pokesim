@@ -20,7 +20,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 import torch
 
-from battle_training import joint_search
+from battle_training import (
+    FULL_PARTY_SIZE,
+    generated_level100,
+    generated_level100_fraction,
+    generated_party_sizes,
+    generated_schedule_block,
+    generated_schedule_names,
+    generated_six_vs_six_fraction,
+    joint_search,
+)
 from battle_training.arena import (
     ArenaConfig,
     ArenaReportJob,
@@ -35,6 +44,7 @@ from battle_training.arena import (
     _evaluation_party_sizes,
     _FastArenaEpisode,
     _finished_pair_scores,
+    _generated_party_report,
     _joint_search_config,
     _live_arena_report,
     _load_arena_model,
@@ -3206,9 +3216,9 @@ class TransformerTests(unittest.TestCase):
             _paired_coordinates(100, 8, 0), _paired_coordinates(100, 8, 2)
         )
         schedule = [_evaluation_party_sizes(pair) for pair in range(512)]
-        self.assertEqual(schedule.count((6, 6)), 171)
+        self.assertEqual(schedule.count((6, 6)), 256)
         level100 = [_evaluation_level100(pair) for pair in range(512)]
-        self.assertEqual(sum(level100), 57)
+        self.assertEqual(sum(level100), 86)
         legacy_schedule = [_evaluation_party_sizes(pair, 2) for pair in range(512)]
         legacy_level100 = [_evaluation_level100(pair, 2) for pair in range(512)]
         self.assertEqual(legacy_schedule.count((6, 6)), 128)
@@ -3767,11 +3777,11 @@ class TransformerTests(unittest.TestCase):
     def test_training_schedule_pairs_every_reset_and_side_assignment(self) -> None:
         self.assertEqual(
             _pipeline_id(),
-            "transformer-variable-party-bf16-rmplus-v30-prior-regret-frontier-5m-16k",
+            "transformer-variable-party-bf16-rmplus-v31-capped-deficit-schedule-5m-16k",
         )
         self.assertEqual(
             _pipeline_id(False, 2),
-            "transformer-variable-party-bf16-rmplus-v30-prior-regret-frontier-5m-16k",
+            "transformer-variable-party-bf16-rmplus-v31-capped-deficit-schedule-5m-16k",
         )
         for episode in range(0, 128, 2):
             self.assertEqual(_training_pair(episode), _training_pair(episode + 1))
@@ -3968,19 +3978,26 @@ class TransformerTests(unittest.TestCase):
         ]
         _validate_collection_pairs(rows, 2)
 
-    def test_training_schedule_covers_all_sizes_with_one_third_6v6(self) -> None:
+    def test_training_schedule_covers_all_sizes_with_half_6v6(self) -> None:
         expected = {(player, enemy) for player in range(1, 7) for enemy in range(1, 7)}
+        tolerance = 2 * (generated_schedule_block() - 1)
         for iteration in (1, 2):
             schedule = [
                 _training_party_sizes(iteration, episode) for episode in range(2048)
             ]
             self.assertEqual(set(schedule), expected)
             six_vs_six = schedule.count((6, 6))
-            self.assertLessEqual(abs(six_vs_six * 3 - len(schedule)), 4)
+            self.assertLessEqual(
+                abs(six_vs_six - len(schedule) * generated_six_vs_six_fraction()),
+                tolerance,
+            )
             level100 = [
                 _training_level100(iteration, episode) for episode in range(2048)
             ]
-            self.assertLessEqual(abs(sum(level100) * 3 - six_vs_six), 4)
+            self.assertLessEqual(
+                abs(sum(level100) - six_vs_six * generated_level100_fraction()),
+                tolerance,
+            )
             self.assertTrue(
                 all(
                     not selected or schedule[index] == (6, 6)
@@ -8079,6 +8096,151 @@ class ArenaMatchupFilterTest(unittest.TestCase):
             arena._run_traced_arena_sequential,
         ):
             self.assertIn("_matchup_root_seed(", inspect.getsource(function))
+
+
+class PartySizeScheduleTest(unittest.TestCase):
+    """Version 4 stops handing the network games decided before turn one.
+
+    Version 3 drew two of every three matches from all 35 non-6v6 combinations,
+    so 38% of every corpus opened at least two Pokemon down.  A value head
+    trained on that reads party size and saturates, which flattens the payoff
+    matrix and leaves search nothing to choose between.
+    """
+
+    # Three blocks of sixteen, which is where the level-100 third also lands
+    # exactly, so every share below is a count rather than a rounding.
+    SPAN = 4800
+
+    def _schedule(self, version: int = 4) -> list[tuple[int, int]]:
+        return [generated_party_sizes(index, version) for index in range(self.SPAN)]
+
+    def test_the_schedule_keeps_six_versus_six_dominant(self) -> None:
+        schedule = self._schedule()
+        self.assertEqual(schedule.count((FULL_PARTY_SIZE, FULL_PARTY_SIZE)), 2400)
+        self.assertEqual(
+            generated_six_vs_six_fraction(4),
+            schedule.count((FULL_PARTY_SIZE, FULL_PARTY_SIZE)) / self.SPAN,
+        )
+
+    def test_most_mismatches_are_capped_at_one_pokemon(self) -> None:
+        deficits = [abs(player - enemy) for player, enemy in self._schedule()]
+        self.assertEqual(
+            {deficit: deficits.count(deficit) for deficit in sorted(set(deficits))},
+            {0: 3600, 1: 900, 2: 120, 3: 90, 4: 60, 5: 30},
+        )
+        # The share that made the old corpus unlearnable, now a deliberate slice.
+        self.assertEqual(
+            sum(1 for deficit in deficits if deficit >= 2) / self.SPAN, 0.0625
+        )
+
+    def test_the_wide_handicaps_still_cover_every_combination(self) -> None:
+        wide = {sizes for sizes in self._schedule() if abs(sizes[0] - sizes[1]) >= 2}
+        self.assertEqual(len(wide), 20)
+        self.assertEqual(
+            wide,
+            {
+                (player, enemy)
+                for player in range(1, FULL_PARTY_SIZE + 1)
+                for enemy in range(1, FULL_PARTY_SIZE + 1)
+                if abs(player - enemy) >= 2
+            },
+        )
+
+    def test_the_small_even_matchups_are_all_reachable(self) -> None:
+        schedule = self._schedule()
+        for size in range(1, FULL_PARTY_SIZE):
+            self.assertIn((size, size), schedule)
+        self.assertTrue(
+            all(
+                1 <= player <= FULL_PARTY_SIZE and 1 <= enemy <= FULL_PARTY_SIZE
+                for player, enemy in schedule
+            )
+        )
+
+    def test_level_one_hundred_still_covers_a_third_of_the_six_versus_six_pairs(
+        self,
+    ) -> None:
+        schedule = self._schedule()
+        level100 = [generated_level100(index, 4) for index in range(self.SPAN)]
+        self.assertEqual(sum(level100), 800)
+        self.assertTrue(
+            all(
+                not selected or schedule[index] == (FULL_PARTY_SIZE, FULL_PARTY_SIZE)
+                for index, selected in enumerate(level100)
+            )
+        )
+        self.assertEqual(
+            generated_level100_fraction(4),
+            sum(level100) / schedule.count((FULL_PARTY_SIZE, FULL_PARTY_SIZE)),
+        )
+
+    def test_the_mix_targets_come_from_the_schedule_itself(self) -> None:
+        # Version 2 and 3 both happened to share one denominator for the 6v6
+        # share and the level-100 share; version 4 does not, so the callers can
+        # no longer derive either from a single number.
+        for version, six, level in (
+            (2, 1 / 4, 1 / 4),
+            (3, 1 / 3, 1 / 3),
+            (4, 1 / 2, 1 / 3),
+        ):
+            self.assertAlmostEqual(generated_six_vs_six_fraction(version), six)
+            self.assertAlmostEqual(generated_level100_fraction(version), level)
+        self.assertEqual(
+            [generated_schedule_block(version) for version in (2, 3, 4)], [4, 3, 16]
+        )
+
+    def test_the_older_schedules_are_untouched(self) -> None:
+        legacy = [generated_party_sizes(index, 2) for index in range(512)]
+        self.assertEqual(legacy.count((FULL_PARTY_SIZE, FULL_PARTY_SIZE)), 128)
+        self.assertEqual(sum(generated_level100(index, 2) for index in range(512)), 32)
+        previous = [generated_party_sizes(index, 3) for index in range(512)]
+        self.assertEqual(previous.count((FULL_PARTY_SIZE, FULL_PARTY_SIZE)), 171)
+        self.assertEqual(sum(generated_level100(index, 3) for index in range(512)), 57)
+
+    def test_version_four_is_what_a_fresh_run_gets(self) -> None:
+        self.assertEqual(generated_party_sizes(0), generated_party_sizes(0, 4))
+        self.assertEqual(_evaluation_party_sizes(17), generated_party_sizes(17, 4))
+        self.assertEqual(_evaluation_level100(12), generated_level100(12, 4))
+        self.assertEqual(ArenaConfig(games=2).generated_schedule_version, 4)
+        self.assertEqual(
+            TransformerPipelineConfig(
+                iterations=1,
+                selfplay_episodes=2,
+                arena_episodes=2,
+                episode_budget=8,
+                search_depth=2,
+                epochs=1,
+                batch_size=8,
+                learning_rate=1e-3,
+                weight_decay=0.0,
+                seed=1,
+                device="cpu",
+                d_model=8,
+                heads=2,
+                layers=1,
+                feedforward=16,
+            ).generated_schedule_version,
+            4,
+        )
+
+    def test_an_unknown_schedule_version_is_refused(self) -> None:
+        for version in (1, 5):
+            with self.assertRaisesRegex(ValueError, "schedule version"):
+                generated_party_sizes(0, version)
+            with self.assertRaisesRegex(ValueError, "schedule version"):
+                generated_six_vs_six_fraction(version)
+
+    def test_the_arena_report_accepts_the_new_mix(self) -> None:
+        report = _generated_party_report(9600, 4)
+        self.assertEqual(report["target_6v6_fraction"], 1 / 2)
+        self.assertAlmostEqual(report["level100_6v6_fraction"], 1 / 3)
+        self.assertEqual(report["six_vs_six_games"], 4800)
+        self.assertEqual(report["level100_six_vs_six_games"], 1600)
+        self.assertEqual(report["party_size_schedule"], generated_schedule_names(4)[0])
+        self.assertEqual(report["level_schedule"], generated_schedule_names(4)[1])
+
+    def test_the_pipeline_identity_moves_with_the_schedule(self) -> None:
+        self.assertNotIn("v30", _pipeline_id())
 
 
 if __name__ == "__main__":

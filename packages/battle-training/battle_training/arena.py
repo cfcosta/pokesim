@@ -20,8 +20,11 @@ from . import (
     FULL_PARTY_SIZE,
     FULL_PROFILE,
     generated_level100,
+    generated_level100_fraction,
     generated_party_sizes,
+    generated_schedule_block,
     generated_schedule_names,
+    generated_six_vs_six_fraction,
 )
 from .artifacts import write_json
 from .decision_quality import (
@@ -110,7 +113,7 @@ class ArenaConfig:
     replay_games: int = 3
     seed_count: int = 8
     balanced_final_species: bool = True
-    generated_schedule_version: int = 3
+    generated_schedule_version: int = 4
     rmplus_backend: str = RUST_RMPLUS_BACKEND
     cfr_plus_solves: bool = True
     policy_only: bool = False
@@ -750,15 +753,15 @@ def _finished_pair_scores(battles: list[dict[str, Any]]) -> list[float]:
     return scores
 
 
-def _evaluation_party_sizes(pair: int, schedule_version: int = 3) -> tuple[int, int]:
+def _evaluation_party_sizes(pair: int, schedule_version: int = 4) -> tuple[int, int]:
     return generated_party_sizes(pair, schedule_version)
 
 
-def _evaluation_level100(pair: int, schedule_version: int = 3) -> bool:
+def _evaluation_level100(pair: int, schedule_version: int = 4) -> bool:
     return generated_level100(pair, schedule_version)
 
 
-def _generated_party_report(games: int, schedule_version: int = 3) -> dict[str, Any]:
+def _generated_party_report(games: int, schedule_version: int = 4) -> dict[str, Any]:
     six_vs_six_games = 2 * sum(
         _evaluation_party_sizes(pair, schedule_version)
         == (FULL_PARTY_SIZE, FULL_PARTY_SIZE)
@@ -767,20 +770,22 @@ def _generated_party_report(games: int, schedule_version: int = 3) -> dict[str, 
     level100_six_vs_six_games = 2 * sum(
         _evaluation_level100(pair, schedule_version) for pair in range(games // 2)
     )
-    denominator = 4 if schedule_version == 2 else 3
-    if abs(six_vs_six_games * denominator - games) > 2 * (denominator - 1):
+    # Both shares come from the schedule rather than one shared denominator:
+    # from version 4 on, the 6v6 share and the level-100 share differ.
+    six_vs_six_target = generated_six_vs_six_fraction(schedule_version)
+    level100_target = generated_level100_fraction(schedule_version)
+    tolerance = 2 * (generated_schedule_block(schedule_version) - 1)
+    if abs(six_vs_six_games - games * six_vs_six_target) > tolerance:
         raise RuntimeError("generated arena 6v6 schedule differs from its target")
-    if abs(level100_six_vs_six_games * denominator - six_vs_six_games) > 2 * (
-        denominator - 1
-    ):
+    if abs(level100_six_vs_six_games - six_vs_six_games * level100_target) > tolerance:
         raise RuntimeError(
             "generated arena level-100 6v6 schedule differs from its target"
         )
     return {
         "party_size_schedule": generated_schedule_names(schedule_version)[0],
         "level_schedule": generated_schedule_names(schedule_version)[1],
-        "target_6v6_fraction": 1 / denominator,
-        "level100_6v6_fraction": 1 / denominator,
+        "target_6v6_fraction": six_vs_six_target,
+        "level100_6v6_fraction": level100_target,
         "six_vs_six_games": six_vs_six_games,
         "level100_six_vs_six_games": level100_six_vs_six_games,
         "side_swap_complete": True,

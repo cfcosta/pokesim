@@ -26,8 +26,11 @@ from . import (
     FULL_PROFILE,
     FULL_SCHEMA,
     generated_level100,
+    generated_level100_fraction,
     generated_party_sizes,
+    generated_schedule_block,
     generated_schedule_names,
+    generated_six_vs_six_fraction,
 )
 from .arena import (
     _MATCHUP_FILTER_VERSION,
@@ -164,7 +167,7 @@ class TransformerPipelineConfig:
     redundant_action_prior_scale: float = 0.25
     prior_anchor_temperature: float = 0.02
     balanced_final_species: bool = True
-    generated_schedule_version: int = 3
+    generated_schedule_version: int = 4
     rmplus_backend: str = RUST_RMPLUS_BACKEND
     cfr_plus_solves: bool = True
 
@@ -275,10 +278,10 @@ class _ActorEpisode:
 
 
 def _pipeline_id(
-    balanced_final_species: bool = True, generated_schedule_version: int = 3
+    balanced_final_species: bool = True, generated_schedule_version: int = 4
 ) -> str:
     del balanced_final_species, generated_schedule_version
-    return "transformer-variable-party-bf16-rmplus-v30-prior-regret-frontier-5m-16k"
+    return "transformer-variable-party-bf16-rmplus-v31-capped-deficit-schedule-5m-16k"
 
 
 def _serialized_network_config(config: TransformerConfig) -> dict[str, Any]:
@@ -408,7 +411,7 @@ def _training_party_index(iteration: int, episode: int) -> int:
 
 
 def _training_party_sizes(
-    iteration: int, episode: int, schedule_version: int = 3
+    iteration: int, episode: int, schedule_version: int = 4
 ) -> tuple[int, int]:
     """Give both legs the same teams while retaining the full size schedule."""
     return generated_party_sizes(
@@ -416,7 +419,7 @@ def _training_party_sizes(
     )
 
 
-def _training_level100(iteration: int, episode: int, schedule_version: int = 3) -> bool:
+def _training_level100(iteration: int, episode: int, schedule_version: int = 4) -> bool:
     return generated_level100(
         _training_party_index(iteration, episode), schedule_version
     )
@@ -2261,19 +2264,22 @@ def _collect_rows_single(
         and row["level_profile"] == "level100"
         for row in episode_rows
     )
-    schedule_denominator = 4 if config.generated_schedule_version == 2 else 3
-    schedule_tolerance = 2 * (schedule_denominator - 1)
+    six_vs_six_target = generated_six_vs_six_fraction(config.generated_schedule_version)
+    level100_target = generated_level100_fraction(config.generated_schedule_version)
+    schedule_tolerance = 2 * (
+        generated_schedule_block(config.generated_schedule_version) - 1
+    )
     if (
         len(episode_indices) == config.selfplay_episodes
         and _scheduled_size_mix_enforced(config)
-        and abs(six_vs_six_battles * schedule_denominator - len(episode_indices))
+        and abs(six_vs_six_battles - len(episode_indices) * six_vs_six_target)
         > schedule_tolerance
     ):
         raise RuntimeError("collection 6v6 schedule differs from its target")
     if (
         len(episode_indices) == config.selfplay_episodes
         and _scheduled_size_mix_enforced(config)
-        and abs(level100_six_vs_six_battles * schedule_denominator - six_vs_six_battles)
+        and abs(level100_six_vs_six_battles - six_vs_six_battles * level100_target)
         > schedule_tolerance
     ):
         raise RuntimeError("collection level-100 6v6 schedule differs from its target")
@@ -2301,8 +2307,8 @@ def _collect_rows_single(
             if config.balanced_final_species
             else "progression-weighted-final-species-v1"
         ),
-        "target_6v6_fraction": 1 / schedule_denominator,
-        "level100_6v6_fraction": 1 / schedule_denominator,
+        "target_6v6_fraction": six_vs_six_target,
+        "level100_6v6_fraction": level100_target,
         "six_vs_six_battles": six_vs_six_battles,
         "level100_six_vs_six_battles": level100_six_vs_six_battles,
         "voluntary_switches": voluntary_switches,
@@ -2555,17 +2561,20 @@ def _merge_collection_rows(
     )
     six_vs_six_battles = party_size_counts.get("6v6", 0)
     level100_six_vs_six_battles = total("level100_six_vs_six_battles")
-    schedule_denominator = 4 if config.generated_schedule_version == 2 else 3
-    schedule_tolerance = 2 * (schedule_denominator - 1)
+    six_vs_six_target = generated_six_vs_six_fraction(config.generated_schedule_version)
+    level100_target = generated_level100_fraction(config.generated_schedule_version)
+    schedule_tolerance = 2 * (
+        generated_schedule_block(config.generated_schedule_version) - 1
+    )
     if (
         _scheduled_size_mix_enforced(config)
-        and abs(six_vs_six_battles * schedule_denominator - config.selfplay_episodes)
+        and abs(six_vs_six_battles - config.selfplay_episodes * six_vs_six_target)
         > schedule_tolerance
     ):
         raise RuntimeError("collection 6v6 schedule differs from its target")
     if (
         _scheduled_size_mix_enforced(config)
-        and abs(level100_six_vs_six_battles * schedule_denominator - six_vs_six_battles)
+        and abs(level100_six_vs_six_battles - six_vs_six_battles * level100_target)
         > schedule_tolerance
     ):
         raise RuntimeError("collection level-100 6v6 schedule differs from its target")
@@ -2620,8 +2629,8 @@ def _merge_collection_rows(
             if config.balanced_final_species
             else "progression-weighted-final-species-v1"
         ),
-        "target_6v6_fraction": 1 / schedule_denominator,
-        "level100_6v6_fraction": 1 / schedule_denominator,
+        "target_6v6_fraction": six_vs_six_target,
+        "level100_6v6_fraction": level100_target,
         "six_vs_six_battles": six_vs_six_battles,
         "level100_six_vs_six_battles": level100_six_vs_six_battles,
         "setup_uses": total("setup_uses"),
@@ -3982,10 +3991,12 @@ def run_transformer_pipeline(
         raise ValueError("team_replay_buffer_size must be positive with team replay")
     if not 0 <= config.popular_gate <= 64:
         raise ValueError("popular_gate must be in [0, 64]")
-    if config.generated_schedule_version not in {2, 3}:
-        raise ValueError("generated_schedule_version must be 2 or 3")
-    if config.balanced_final_species and config.generated_schedule_version != 3:
-        raise ValueError("balanced final species requires generated schedule v3")
+    if config.generated_schedule_version not in {2, 3, 4}:
+        raise ValueError("generated_schedule_version must be 2, 3 or 4")
+    if config.balanced_final_species and config.generated_schedule_version < 3:
+        raise ValueError(
+            "balanced final species requires generated schedule v3 or later"
+        )
     if config.actor_batch_size < 1:
         raise ValueError("actor_batch_size must be positive")
     if not 1 <= config.actor_processes <= min(16, config.selfplay_episodes):
