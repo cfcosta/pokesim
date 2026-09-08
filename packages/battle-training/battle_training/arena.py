@@ -27,6 +27,7 @@ from . import (
     generated_six_vs_six_fraction,
 )
 from .artifacts import write_json
+from .controller import search_controllers_many
 from .decision_quality import (
     DecisionQualityMetrics,
     classify_feature_decision,
@@ -117,6 +118,9 @@ class ArenaConfig:
     rmplus_backend: str = RUST_RMPLUS_BACKEND
     cfr_plus_solves: bool = True
     policy_only: bool = False
+    leaf_evaluator: str = "full"
+    solver_backend: str = "auto"
+    solver_precision: str = "fp32"
     matchup_value_cap: float = 0.9
     matchup_filter_attempts: int = 4
     matchup_plan: dict[int, int] | None = None
@@ -351,6 +355,9 @@ def _joint_search_config(config: ArenaConfig) -> JointSearchConfig:
         prior_anchor_temperature=config.prior_anchor_temperature,
         rmplus_backend=config.rmplus_backend,
         cfr_plus_solves=config.cfr_plus_solves,
+        leaf_evaluator=config.leaf_evaluator,
+        solver_backend=config.solver_backend,
+        solver_precision=config.solver_precision,
     )
 
 
@@ -360,7 +367,7 @@ def _rmplus_search_many(
     config: ArenaConfig,
 ) -> list[SearchResult]:
     search_config = _joint_search_config(config)
-    return SimultaneousTreeSearch.search_many(
+    decisions = search_controllers_many(
         [
             SimultaneousTreeSearch(
                 server,
@@ -375,6 +382,7 @@ def _rmplus_search_many(
         [episode.snapshot for episode in episodes],
         sample_actions=True,
     )
+    return [decision.executed() for decision in decisions]
 
 
 def _policy_priors(
@@ -1797,7 +1805,7 @@ def run_paired_arena(
         "action_selector": (
             "network-policy-argmax-v1"
             if config.policy_only
-            else "simultaneous-tree-anchored-qre-every-decision-v8"
+            else "independent-simultaneous-controllers-v1"
         ),
         "search": (
             None if config.policy_only else asdict(_joint_search_config(config))
@@ -2273,7 +2281,7 @@ def _run_traced_arena_batched(
         candidate_metrics,
         baseline_metrics,
     )
-    result["action_selector"] = "simultaneous-tree-anchored-qre-every-decision-v8"
+    result["action_selector"] = "independent-simultaneous-controllers-v1"
     result["search"] = asdict(_joint_search_config(config))
     return result
 
@@ -2388,7 +2396,7 @@ def _run_traced_arena_sequential(
                         selection_rng,
                         chance_rng,
                     )
-                    result = search.search(snapshot, sample_actions=True)
+                    result = search_controllers_many([search], [snapshot])[0].executed()
                     if result.failure is not None:
                         semantic_divergence = True
                         semantic_divergences += 1
@@ -2649,9 +2657,13 @@ def write_arena_report(
     candidate: BattleTransformer,
     baseline: BattleTransformer,
     config: ArenaConfig,
+    *,
+    checkpoint_sources: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     output.mkdir(parents=True, exist_ok=True)
     result = run_traced_arena(candidate, baseline, config, output / "replays")
+    if checkpoint_sources is not None:
+        result["checkpoint_sources"] = checkpoint_sources
     write_json(output / "summary.json", result)
     return result
 

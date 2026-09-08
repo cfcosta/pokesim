@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from .arena import ArenaConfig, write_arena_report
+from .artifacts import sha256
 from .monitor import serve_monitor, write_monitor_state
 from .network import choose_device, load_network
 from .pipeline import PipelineConfig, run_pipeline, verify_run
@@ -103,8 +104,15 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--iterations", type=int, default=1 if smoke else 30)
     parser.add_argument("--episodes", type=int, default=4 if smoke else 16384)
     parser.add_argument("--arena-episodes", type=int, default=4 if smoke else 1024)
-    parser.add_argument("--budget", type=int, default=64 if smoke else 512)
+    parser.add_argument("--budget", type=int, default=256 if smoke else 512)
     parser.add_argument("--search-depth", type=int, default=1 if smoke else 2)
+    parser.add_argument(
+        "--leaf-evaluator", choices=("full", "distilled"), default="full"
+    )
+    parser.add_argument(
+        "--solver-backend", choices=("auto", "rust", "cuda"), default="auto"
+    )
+    parser.add_argument("--solver-precision", choices=("fp32", "fp64"), default="fp32")
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=32 if smoke else 128)
     parser.add_argument("--learning-rate", type=float, default=3e-4 if smoke else 2e-4)
@@ -241,7 +249,9 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--team-replay-fraction", type=float, default=0.15)
     parser.add_argument("--team-replay-buffer-size", type=int, default=256)
     parser.add_argument("--popular-gate", type=int, default=64)
-    parser.add_argument("--chance-samples-per-joint", type=int, default=2)
+    parser.add_argument(
+        "--chance-samples-per-joint", type=int, default=2 if smoke else 4
+    )
     parser.add_argument("--regret-iterations", type=int, default=2048)
     parser.add_argument("--inference-batch-size", type=int, default=256)
     parser.add_argument("--max-actions-per-side", type=int, default=13)
@@ -254,7 +264,9 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
             "full legal width, so this is what depth actually costs"
         ),
     )
-    parser.add_argument("--interior-chance-samples", type=int, default=1)
+    parser.add_argument(
+        "--interior-chance-samples", type=int, default=1 if smoke else 2
+    )
     parser.add_argument("--replay-window", type=int, default=defaults["replay_window"])
     parser.add_argument(
         "--search-every",
@@ -289,14 +301,19 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
         choices=("losses", "exclude-pairs"),
         default="losses",
     )
-    parser.add_argument("--promotion-pooled-z", type=float, default=1.96)
+    parser.add_argument(
+        "--promotion-pooled-z",
+        type=float,
+        default=0.0,
+        help="optional historical score diagnostic; never substitutes for current-candidate evidence",
+    )
     parser.add_argument(
         "--no-bootstrap-promotion",
         action="store_false",
         dest="bootstrap_promotion",
         help="require full statistical superiority even against the random-init incumbent",
     )
-    parser.set_defaults(bootstrap_promotion=True)
+    parser.set_defaults(bootstrap_promotion=False)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -316,6 +333,20 @@ def parser() -> argparse.ArgumentParser:
     arena = subparsers.add_parser("arena")
     arena.add_argument("--candidate", type=Path, required=True)
     arena.add_argument("--baseline", type=Path, required=True)
+    arena.add_argument(
+        "--candidate-state", choices=("deployed", "learner"), default="deployed"
+    )
+    arena.add_argument(
+        "--baseline-state", choices=("deployed", "learner"), default="deployed"
+    )
+    arena.add_argument("--policy-only", action="store_true")
+    arena.add_argument(
+        "--leaf-evaluator", choices=("full", "distilled"), default="full"
+    )
+    arena.add_argument(
+        "--solver-backend", choices=("auto", "rust", "cuda"), default="auto"
+    )
+    arena.add_argument("--solver-precision", choices=("fp32", "fp64"), default="fp32")
     arena.add_argument("--output", type=Path, required=True)
     arena.add_argument("--games", type=int, default=10000)
     arena.add_argument("--budget", type=int, default=512)
@@ -354,10 +385,32 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if arguments.command == "arena":
         device = choose_device(arguments.device)
-        candidate = load_network(arguments.candidate.resolve(), device)
-        baseline = load_network(arguments.baseline.resolve(), device)
+        candidate = load_network(
+            arguments.candidate.resolve(), device, state=arguments.candidate_state
+        )
+        baseline = load_network(
+            arguments.baseline.resolve(), device, state=arguments.baseline_state
+        )
         candidate.configure_inference(arguments.inference_engine)
         baseline.configure_inference(arguments.inference_engine)
+        checkpoint_sources = {
+            name: {
+                "path": str(path.resolve()),
+                "state": state,
+                "sha256": sha256(path.resolve()),
+                "precision": network.config.precision,
+                "inference_engine": network.inference_engine,
+            }
+            for name, path, state, network in (
+                (
+                    "candidate",
+                    arguments.candidate,
+                    arguments.candidate_state,
+                    candidate,
+                ),
+                ("baseline", arguments.baseline, arguments.baseline_state, baseline),
+            )
+        }
         report = write_arena_report(
             arguments.output.resolve(),
             candidate,
@@ -367,6 +420,10 @@ def main(argv: list[str] | None = None) -> int:
                 budget=arguments.budget,
                 chance_samples_per_joint=arguments.chance_samples_per_joint,
                 search_depth=arguments.search_depth,
+                leaf_evaluator=arguments.leaf_evaluator,
+                solver_backend=arguments.solver_backend,
+                solver_precision=arguments.solver_precision,
+                policy_only=arguments.policy_only,
                 regret_iterations=arguments.regret_iterations,
                 inference_batch_size=arguments.inference_batch_size,
                 max_actions_per_side=13,
@@ -379,6 +436,7 @@ def main(argv: list[str] | None = None) -> int:
                 replay_games=arguments.replay_games,
                 seed_count=arguments.seed_count,
             ),
+            checkpoint_sources=checkpoint_sources,
         )
     elif arguments.command == "verify":
         summary = json.loads((arguments.run / "summary.json").read_text())
@@ -409,6 +467,9 @@ def main(argv: list[str] | None = None) -> int:
             arena_episodes=arguments.arena_episodes,
             episode_budget=arguments.budget,
             search_depth=arguments.search_depth,
+            leaf_evaluator=arguments.leaf_evaluator,
+            solver_backend=arguments.solver_backend,
+            solver_precision=arguments.solver_precision,
             epochs=arguments.epochs,
             batch_size=arguments.batch_size,
             learning_rate=arguments.learning_rate,

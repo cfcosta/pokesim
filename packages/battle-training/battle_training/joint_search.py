@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import random
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -104,6 +105,9 @@ class JointSearchConfig:
     cfr_plus_solves: bool = False
     split_half_reliability: bool = False
     prior_regret: bool = False
+    leaf_evaluator: str = "full"
+    solver_backend: str = "auto"
+    solver_precision: str = "fp32"
 
 
 def legal_actions(mask: int, action_count: int) -> list[int]:
@@ -775,6 +779,7 @@ class _TreeNode:
     online_exploitability: float = 0.0
     expanded: bool = False
     solve_count: int = 0
+    solve_backend: str = ""
     player_strategy_sum: list[float] = field(default_factory=list)
     enemy_strategy_sum: list[float] = field(default_factory=list)
     player_regrets: list[float] = field(default_factory=list)
@@ -819,11 +824,10 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
     replace balanced estimates with lopsided ones and move the root solve for
     reasons that have nothing to do with the position.
 
-    Depth is what lets the search price a plan.  Boosting a stat, laying spikes
-    or landing a status costs a turn and pays on the turns after, and at one ply
-    the payment is invisible: the leaf evaluator sees the same position whether
-    the opponent is about to punish the setup or not.  A second solved ply puts
-    that punishment inside the matrix.
+    Deeper matrices explicitly simulate responses that a shallow search must
+    estimate through the learned continuation value. Interior action selection
+    and finite chance sampling are approximations; solving those matrices does
+    not establish an equilibrium of the complete battle.
     """
 
     def __init__(
@@ -835,6 +839,8 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         selection_rng: random.Random,
         chance_rng: random.Random,
         prior_noise: RootPriorNoise | None = None,
+        *,
+        evaluation_side: str = "player",
     ) -> None:
         super().__init__(
             server,
@@ -844,6 +850,15 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             selection_rng,
             chance_rng,
         )
+        if evaluation_side not in {"player", "enemy"}:
+            raise ValueError("evaluation_side must be player or enemy")
+        if config.leaf_evaluator not in {"full", "distilled"}:
+            raise ValueError("leaf_evaluator must be full or distilled")
+        if config.solver_backend not in {"auto", "rust", "cuda"}:
+            raise ValueError("solver_backend must be auto, rust or cuda")
+        if config.solver_precision not in {"fp32", "fp64"}:
+            raise ValueError("solver_precision must be fp32 or fp64")
+        self.evaluation_side = evaluation_side
         if config.regret_iterations_per_update < 1:
             raise ValueError("tree regret iterations per update must be positive")
         if config.interior_actions_per_side < 1:
@@ -884,6 +899,8 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         self._enemy_prior_regret_noise = 0.0
         self._interior_nodes = 0
         self._interior_divergences = 0
+        self._solver_backends: dict[str, int] = {}
+        self._solver_seconds = 0.0
 
     def _legal_from_priors(
         self, mask: int, priors: list[float], width: int
@@ -1018,7 +1035,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         node.root_value = float(player @ row_values)
         node.exploitability = float(row_values.max() - (player @ matrix).min())
 
-    def _solve_matrix(
+    def _solve_matrix_reference(
         self, node: _TreeNode, payoff: PayoffMatrix
     ) -> tuple[tuple[float, ...], tuple[float, ...], float, float]:
         temperature = self.config.prior_anchor_temperature
@@ -1060,6 +1077,92 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             node.enemy_legal,
             self.config.regret_iterations,
         )
+
+    def _solve_matrix(self, node: _TreeNode, payoff: PayoffMatrix):
+        return self._solve_matrices([(self, node, payoff)])[0]
+
+    @classmethod
+    def _solve_matrices(
+        cls, jobs: list[tuple[SimultaneousTreeSearch, _TreeNode, PayoffMatrix]]
+    ):
+        """Batch independent same-level games without changing their estimates."""
+        from .solver_cuda import solve_anchored_batch
+
+        groups: dict[tuple, list[int]] = {}
+        results: list[Any] = [None] * len(jobs)
+        for index, (search, _, _) in enumerate(jobs):
+            config = search.config
+            device = "cpu"
+            if isinstance(search.player_network, BattleTransformer):
+                device = str(next(search.player_network.parameters()).device)
+            backend = config.solver_backend
+            if backend == "auto" and not device.startswith("cuda"):
+                backend = "rust"
+            key = (
+                search.action_count,
+                config.regret_iterations,
+                config.prior_anchor_temperature,
+                config.rmplus_backend,
+                config.cfr_plus_solves,
+                backend,
+                device,
+                config.solver_precision,
+            )
+            groups.setdefault(key, []).append(index)
+        for key, indexes in groups.items():
+            (
+                actions,
+                iterations,
+                temperature,
+                arithmetic,
+                _,
+                backend,
+                device,
+                precision,
+            ) = key
+            started = time.perf_counter()
+            if temperature > 0 and arithmetic == RUST_RMPLUS_BACKEND:
+                player_masks = np.zeros((len(indexes), actions), dtype=np.bool_)
+                enemy_masks = np.zeros_like(player_masks)
+                for row, index in enumerate(indexes):
+                    node = jobs[index][1]
+                    player_masks[row, node.player_legal] = True
+                    enemy_masks[row, node.enemy_legal] = True
+                batch = solve_anchored_batch(
+                    [jobs[index][2] for index in indexes],
+                    [jobs[index][1].player_priors for index in indexes],
+                    [jobs[index][1].enemy_priors for index in indexes],
+                    player_masks,
+                    enemy_masks,
+                    iterations,
+                    temperature,
+                    backend=backend,
+                    device=device if device.startswith("cuda") else None,
+                    precision=precision,
+                )
+                for row, index in enumerate(indexes):
+                    results[index] = batch.row(row)
+                actual_backend = batch.backend
+            else:
+                if backend == "cuda":
+                    raise ValueError(
+                        "CUDA matrix solving requires the positive-temperature anchored solver"
+                    )
+                for index in indexes:
+                    search, node, payoff = jobs[index]
+                    results[index] = search._solve_matrix_reference(node, payoff)
+                actual_backend = solver_identity(
+                    arithmetic, jobs[indexes[0]][0].config.cfr_plus_solves, temperature
+                )
+            elapsed = time.perf_counter() - started
+            for index in indexes:
+                search = jobs[index][0]
+                jobs[index][1].solve_backend = actual_backend
+                search._solver_backends[actual_backend] = (
+                    search._solver_backends.get(actual_backend, 0) + 1
+                )
+                search._solver_seconds += elapsed / len(indexes)
+        return results
 
     def _half_is_covered(self, node: _TreeNode, half: int) -> bool:
         counts = node.half_counts[half]
@@ -1126,19 +1229,18 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         )
 
     def _root_equilibrium(
-        self, node: _TreeNode
+        self,
+        node: _TreeNode,
+        solved: Any = None,
+        half_solutions: Any = None,
     ) -> tuple[tuple[float, ...], tuple[float, ...], float, float]:
         """Solve the current root matrix without stale online-search averages.
 
-        Under split-half reliability the same expansion is also solved once per
-        common-random-number world. The published policy averages the three
-        solves, which bags a discontinuous estimator, and the total-variation
-        distance between the two world solves is recorded as the per-decision
-        noise floor. Both halves reuse values already sampled, so this costs two
-        matrix solves and no extra native steps or inference.
+        Split-half solves only measure uncertainty. The published strategy is
+        always the solution to the mean payoff matrix.
         """
-        player_policy, enemy_policy, value, exploitability = self._solve_matrix(
-            node, node.payoff
+        player_policy, enemy_policy, value, exploitability = (
+            self._solve_matrix(node, node.payoff) if solved is None else solved
         )
         if not self.config.split_half_reliability or not node.half_payoff:
             return player_policy, enemy_policy, value, exploitability
@@ -1152,10 +1254,14 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             self._half_is_covered(node, half) for half in range(len(node.half_payoff))
         ):
             return player_policy, enemy_policy, value, exploitability
-        halves = [
-            self._solve_matrix(node, payoff)
-            for payoff in node.half_payoff[:_SPLIT_HALVES]
-        ]
+        halves = (
+            half_solutions
+            if half_solutions is not None
+            else [
+                self._solve_matrix(node, payoff)
+                for payoff in node.half_payoff[:_SPLIT_HALVES]
+            ]
+        )
         first, second = halves[0], halves[1]
         self._split_half_available = 1
         self._split_half_player_distance = 0.5 * sum(
@@ -1177,22 +1283,10 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             ]
             self._prior_regret_noise = abs(regrets[0][0] - regrets[1][0])
             self._enemy_prior_regret_noise = abs(regrets[0][1] - regrets[1][1])
-        solves = (player_policy, first[0], second[0])
-        averaged_player = tuple(
-            sum(solve[action] for solve in solves) / len(solves)
-            for action in range(self.action_count)
-        )
-        solves = (enemy_policy, first[1], second[1])
-        averaged_enemy = tuple(
-            sum(solve[action] for solve in solves) / len(solves)
-            for action in range(self.action_count)
-        )
-        # The hedge is no longer the equilibrium of the mean matrix, so its
-        # value and exploitability are remeasured rather than inherited.
-        value, exploitability = self._matrix_metrics(
-            node, node.payoff, averaged_player, averaged_enemy
-        )
-        return averaged_player, averaged_enemy, value, exploitability
+        # The halves measure uncertainty. Actions and training labels must use
+        # the solution to the expected payoff, not an average of solutions to
+        # individually observed chance outcomes.
+        return player_policy, enemy_policy, value, exploitability
 
     @staticmethod
     def _record_value(
@@ -1259,12 +1353,30 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                             f"request={snapshot.request} player_mask={snapshot.player_mask} "
                             f"enemy_mask={snapshot.enemy_mask} inspection={inspection!r}"
                         )
-                    identity = search._feature_identity(snapshot.player_features)
+                    owner = 0 if search.evaluation_side == "player" else 1
+                    feature = (
+                        snapshot.player_features
+                        if owner == 0
+                        else snapshot.enemy_features
+                    )
+                    opponent_feature = (
+                        snapshot.enemy_features
+                        if owner == 0
+                        else snapshot.player_features
+                    )
+                    own_mask = (
+                        snapshot.player_mask if owner == 0 else snapshot.enemy_mask
+                    )
+                    opponent_mask = (
+                        snapshot.enemy_mask if owner == 0 else snapshot.player_mask
+                    )
+                    identity = search._feature_identity(feature)
                     key = (
                         id(network),
                         *identity,
-                        snapshot.player_mask,
-                        snapshot.enemy_mask,
+                        own_mask,
+                        opponent_mask,
+                        search.config.redundant_action_prior_scale,
                     )
                     cached = search._joint_inference_cache.get(key) or joint_known.get(
                         key
@@ -1274,8 +1386,11 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                         search._inference_cache_stats["hits"] += 1
                         search._joint_inference_cache[key] = cached
                         joint_known[key] = cached
-                        outputs[(group_id, position, 0)] = (cached[0], cached[2])
-                        outputs[(group_id, position, 1)] = (cached[1], -cached[2])
+                        outputs[(group_id, position, owner)] = (cached[0], cached[2])
+                        outputs[(group_id, position, 1 - owner)] = (
+                            cached[1],
+                            -cached[2],
+                        )
                     elif key in joint_missing:
                         search._inference_cache_stats["hits"] += 1
                         joint_missing[key]["consumers"].append(consumer)
@@ -1283,10 +1398,10 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                         search._inference_cache_stats["misses"] += 1
                         joint_missing[key] = {
                             "network": network,
-                            "feature": snapshot.player_features,
-                            "opponent_feature": snapshot.enemy_features,
-                            "own_mask": snapshot.player_mask,
-                            "opponent_mask": snapshot.enemy_mask,
+                            "feature": feature,
+                            "opponent_feature": opponent_feature,
+                            "own_mask": own_mask,
+                            "opponent_mask": opponent_mask,
                             "consumers": [consumer],
                         }
                 continue
@@ -1311,7 +1426,10 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                             f"request={snapshot.request} player_mask={snapshot.player_mask} "
                             f"enemy_mask={snapshot.enemy_mask} inspection={inspection!r}"
                         )
-                    key = search._cache_key(side_network, feature, mask)
+                    key = (
+                        *search._cache_key(side_network, feature, mask),
+                        search.config.redundant_action_prior_scale,
+                    )
                     cached = search._inference_cache.get(key) or known.get(key)
                     consumer = (group_id, position, side, search)
                     if cached is not None:
@@ -1451,8 +1569,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 joint_known[key] = cached
                 for group_id, position, search in item["consumers"]:
                     search._joint_inference_cache[key] = cached
-                    outputs[(group_id, position, 0)] = (player, value)
-                    outputs[(group_id, position, 1)] = (enemy, -value)
+                    owner = 0 if search.evaluation_side == "player" else 1
+                    outputs[(group_id, position, owner)] = (player, value)
+                    outputs[(group_id, position, 1 - owner)] = (enemy, -value)
 
         results = {}
         for group_id, search, snapshots in groups:
@@ -1465,7 +1584,13 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                 for position in range(len(snapshots))
             ]
             values = [
-                max(
+                (
+                    outputs[(group_id, position, 0)][1]
+                    if search.evaluation_side == "player"
+                    else -outputs[(group_id, position, 1)][1]
+                )
+                if search.player_network is search.enemy_network
+                else max(
                     -1.0,
                     min(
                         1.0,
@@ -1498,7 +1623,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         own, opponent, value = evaluated
         outputs[(group_id, position, side)] = (own, value)
         if mirror:
-            outputs[(group_id, position, 1)] = (opponent, -value)
+            outputs[(group_id, position, 1 - side)] = (opponent, -value)
 
     @classmethod
     def _pooled_leaf_evaluate(
@@ -1528,7 +1653,12 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         for group_id, search, snapshots in groups:
             mirror = search.player_network is search.enemy_network
             sides = (
-                ((0, search.player_network),)
+                (
+                    (
+                        (0 if search.evaluation_side == "player" else 1),
+                        search.player_network,
+                    ),
+                )
                 if mirror
                 else (
                     (0, search.player_network),
@@ -1567,6 +1697,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                         *search._feature_identity(feature),
                         own_mask,
                         opponent_mask,
+                        search.config.redundant_action_prior_scale,
                     )
                     cached = search._leaf_joint_inference_cache.get(key) or known.get(
                         key
@@ -1696,7 +1827,12 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         for group_id, search, snapshots in groups:
             mirror = search.player_network is search.enemy_network
             sides = (
-                ((0, search.player_network),)
+                (
+                    (
+                        (0 if search.evaluation_side == "player" else 1),
+                        search.player_network,
+                    ),
+                )
                 if mirror
                 else (
                     (0, search.player_network),
@@ -1711,7 +1847,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                         else snapshot.enemy_features
                     )
                     key = (id(network), *search._feature_identity(feature))
-                    cached = search._leaf_inference_cache.get(key) or known.get(key)
+                    cached = search._leaf_inference_cache.get(key)
+                    if cached is None:
+                        cached = known.get(key)
                     consumer = (group_id, position, side, mirror, search)
                     if cached is not None:
                         search._inference_cache_stats["hits"] += 1
@@ -1719,7 +1857,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                         known[key] = cached
                         outputs[(group_id, position, side)] = cached
                         if mirror:
-                            outputs[(group_id, position, 1)] = -cached
+                            outputs[(group_id, position, 1 - side)] = -cached
                     elif key in missing:
                         search._inference_cache_stats["hits"] += 1
                         missing[key]["consumers"].append(consumer)
@@ -1771,7 +1909,7 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     search._leaf_inference_cache[key] = value
                     outputs[(group_id, position, side)] = value
                     if mirror:
-                        outputs[(group_id, position, 1)] = -value
+                        outputs[(group_id, position, 1 - side)] = -value
 
         results = {}
         for group_id, _, snapshots in groups:
@@ -1811,22 +1949,31 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             active = [snapshot for snapshot in snapshots if not snapshot.done]
             if active:
                 active_groups.append((group_id, search, active))
-        use_distilled = all(
-            bool(
+        distilled_groups = [
+            (group_id, search, snapshots)
+            for group_id, search, snapshots in active_groups
+            if search.config.leaf_evaluator == "distilled"
+            and bool(
                 getattr(search.player_network.config, "distilled_leaf_evaluator", False)
             )
             and bool(
                 getattr(search.enemy_network.config, "distilled_leaf_evaluator", False)
             )
-            for _, search, _ in active_groups
-        )
-        if use_distilled:
-            leaf_values, calls, rows = cls._pooled_leaf_values(active_groups)
-        else:
-            evaluated, calls, rows = cls._pooled_evaluate(active_groups)
-            leaf_values = {
-                group_id: values[2] for group_id, values in evaluated.items()
-            }
+        ]
+        distilled_ids = {group_id for group_id, _, _ in distilled_groups}
+        full_groups = [
+            group for group in active_groups if group[0] not in distilled_ids
+        ]
+        leaf_values, calls, rows = {}, 0, 0
+        if distilled_groups:
+            leaf_values, calls, rows = cls._pooled_leaf_values(distilled_groups)
+        if full_groups:
+            evaluated, full_calls, full_rows = cls._pooled_evaluate(full_groups)
+            calls += full_calls
+            rows += full_rows
+            leaf_values.update(
+                {group_id: values[2] for group_id, values in evaluated.items()}
+            )
         results = {}
         for group_id, _, snapshots in groups:
             active_values = iter(leaf_values.get(group_id, []))
@@ -1882,20 +2029,13 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         leaf_value: float,
         potential: float,
     ) -> float:
-        """Score a leaf against the root, not against whatever reached it.
+        """Return the win-outcome continuation value without heuristic rewards.
 
-        Potential shaping telescopes only when every leaf of a search is
-        measured from the same origin.  Charging each level the difference
-        against its own parent would clamp the value once per level and pay the
-        search for a plan's first turn while hiding the rest of it, which is
-        exactly the multi-turn payoff depth was bought to see.
-
-        `potential` arrives precomputed because the caller holds every leaf of
-        the tree at once and prices them in a single batch.
+        Kept as a compatibility hook for audit tooling. The model learns raw
+        terminal returns, so adding a potential here changes its objective.
         """
-        if successor.done:
-            return leaf_value
-        return max(-1.0, min(1.0, leaf_value + potential - root_potential))
+        del root_potential, successor, potential
+        return leaf_value
 
     def _install_expansion(
         self,
@@ -1921,6 +2061,36 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             "tree_depth": self.config.max_depth,
             "tree_interior_nodes": self._interior_nodes,
             "tree_interior_divergences": self._interior_divergences,
+            "evaluation_side": self.evaluation_side,
+            "requested_leaf_evaluator": self.config.leaf_evaluator,
+            "leaf_evaluator": (
+                "distilled"
+                if self.config.leaf_evaluator == "distilled"
+                and all(
+                    bool(getattr(network.config, "distilled_leaf_evaluator", False))
+                    for network in (self.player_network, self.enemy_network)
+                )
+                else "full"
+            ),
+            "interior_evaluator": (
+                "distilled"
+                if self.config.leaf_evaluator == "distilled"
+                and all(
+                    bool(getattr(network.config, "distilled_leaf_policy", False))
+                    for network in (self.player_network, self.enemy_network)
+                )
+                else "full"
+            ),
+            "solver_backend_counts": ",".join(
+                f"{backend}:{count}"
+                for backend, count in sorted(self._solver_backends.items())
+            ),
+            "solver_matrix_count": sum(self._solver_backends.values()),
+            "solver_cuda_matrices": sum(
+                count
+                for backend, count in self._solver_backends.items()
+                if backend.startswith("triton-")
+            ),
             "chance_outcomes": self._chance_outcomes,
             "sampled_joint_coverage": (
                 self._sampled_joint_pairs / self._possible_joint_pairs
@@ -1944,10 +2114,9 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             diagnostics["root_online_exploitability"] = root.online_exploitability
             diagnostics["root_final_exploitability"] = root.exploitability
             diagnostics["root_equilibrium_iterations"] = self.config.regret_iterations
-            diagnostics["root_solver"] = solver_identity(
-                self.config.rmplus_backend,
-                self.config.cfr_plus_solves,
-                self.config.prior_anchor_temperature,
+            diagnostics["root_solver"] = root.solve_backend or "not-solved"
+            diagnostics["root_anchor_temperature"] = (
+                self.config.prior_anchor_temperature
             )
             if self.config.split_half_reliability:
                 diagnostics["root_split_half_available"] = self._split_half_available
@@ -2033,13 +2202,13 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             root.root_value,
             transitions,
             (
-                "simultaneous-tree-anchored-qre-v8"
+                "simultaneous-win-value-anchored-v9"
                 if self.config.prior_anchor_temperature > 0.0
-                else "simultaneous-tree-rust-cfrplus-v8"
+                else "simultaneous-win-value-cfrplus-v9"
                 if self.config.cfr_plus_solves
-                else "simultaneous-tree-rust-rmplus-v8"
+                else "simultaneous-win-value-rust-rmplus-v9"
                 if self.config.rmplus_backend == RUST_RMPLUS_BACKEND
-                else "simultaneous-tree-rmplus-v8"
+                else "simultaneous-win-value-rmplus-v9"
             ),
             exploitability,
             max(legal_payoffs) - min(legal_payoffs),
@@ -2140,10 +2309,30 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             if not frontier:
                 break
             levels.append(frontier)
-        root_potentials = _tactical_potentials(
-            [snapshot.player_features for snapshot in snapshots]
-        ).tolist()
-        transitions = cls._settle(searches, levels, root_potentials)
+        transitions = cls._settle(searches, levels)
+        root_jobs = []
+        root_slots = {}
+        for index, (search, root, is_good) in enumerate(
+            zip(searches, roots, good, strict=True)
+        ):
+            if not is_good or search._interior_divergences:
+                good[index] = False
+                continue
+            slots = [len(root_jobs)]
+            root_jobs.append((search, root, root.payoff))
+            if (
+                search.config.split_half_reliability
+                and root.half_payoff
+                and all(
+                    search._half_is_covered(root, half)
+                    for half in range(len(root.half_payoff))
+                )
+            ):
+                for payoff in root.half_payoff[:_SPLIT_HALVES]:
+                    slots.append(len(root_jobs))
+                    root_jobs.append((search, root, payoff))
+            root_slots[index] = slots
+        root_solutions = cls._solve_matrices(root_jobs)
         results: list[SearchResult | None] = [None] * len(searches)
         batch_size = len(searches)
         for index, (search, root, bounds, is_good) in enumerate(
@@ -2160,14 +2349,21 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     right - left,
                 )
                 continue
-            root.online_exploitability = root.exploitability
+            slots = root_slots[index]
             player_policy, enemy_policy, value, exploitability = (
-                search._root_equilibrium(root)
+                search._root_equilibrium(
+                    root,
+                    root_solutions[slots[0]],
+                    [root_solutions[slot] for slot in slots[1:]]
+                    if len(slots) > 1
+                    else None,
+                )
             )
             root.player_policy = list(player_policy)
             root.enemy_policy = list(enemy_policy)
             root.root_value = value
             root.exploitability = exploitability
+            root.solve_count = search.config.regret_iterations
             results[index] = search._finish_root(
                 root, transitions[index], sample_actions
             )
@@ -2206,19 +2402,28 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             (root, searches[root], snapshots)
             for root, snapshots in frontier_snapshots.items()
         ]
-        # The root keeps its encoder priors -- it is the answer we hand back --
-        # but every node below it is priced by the distilled trunk, and the
-        # choice is made for the whole level so no cell is refined further than
-        # the neighbours it will be compared against.
-        distilled = all(
-            bool(getattr(network.config, "distilled_leaf_policy", False))
-            for _, search, _ in frontier_groups
-            for network in (search.player_network, search.enemy_network)
-        )
-        if distilled:
-            evaluations, _, _ = cls._pooled_leaf_evaluate(frontier_groups)
-        else:
-            evaluations, _, _ = cls._pooled_evaluate(frontier_groups)
+        # Select the evaluator per controller, independently of the other
+        # searches sharing this batch. Full encoder evaluation is the default.
+        distilled_groups = [
+            group
+            for group in frontier_groups
+            if group[1].config.leaf_evaluator == "distilled"
+            and all(
+                bool(getattr(network.config, "distilled_leaf_policy", False))
+                for network in (group[1].player_network, group[1].enemy_network)
+            )
+        ]
+        distilled_ids = {group[0] for group in distilled_groups}
+        full_groups = [
+            group for group in frontier_groups if group[0] not in distilled_ids
+        ]
+        evaluations = {}
+        if distilled_groups:
+            result, _, _ = cls._pooled_leaf_evaluate(distilled_groups)
+            evaluations.update(result)
+        if full_groups:
+            result, _, _ = cls._pooled_evaluate(full_groups)
+            evaluations.update(result)
         slots = dict.fromkeys(frontier_snapshots, 0)
         seeds = {
             root: searches[root]._chance_seeds(
@@ -2263,7 +2468,6 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         cls,
         searches: list[SimultaneousTreeSearch],
         levels: list[list[_Expansion]],
-        root_potentials: list[float],
     ) -> dict[int, int]:
         """Price every leaf against its root, then fold the tree upwards.
 
@@ -2287,28 +2491,18 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     for root, snapshots in leaf_snapshots.items()
                 ]
             )
-            potentials = _tactical_potentials(
-                [
-                    expansion.successors[position].player_features
-                    for expansion, position in leaves
-                ]
-            ).tolist()
             slots = dict.fromkeys(leaf_snapshots, 0)
-            for index, (expansion, position) in enumerate(leaves):
+            for expansion, position in leaves:
                 slot = slots[expansion.root]
                 slots[expansion.root] = slot + 1
-                expansion.values[position] = searches[
-                    expansion.root
-                ]._shaped_leaf_value(
-                    root_potentials[expansion.root],
-                    expansion.successors[position],
-                    evaluated[expansion.root][slot][0],
-                    potentials[index],
-                )
+                expansion.values[position] = evaluated[expansion.root][slot][0]
         transitions: dict[int, int] = {}
         for depth, level in reversed(list(enumerate(levels))):
+            solved_level = []
             for expansion in level:
                 search = searches[expansion.root]
+                if search._interior_divergences:
+                    continue
                 for position, child in enumerate(expansion.children):
                     if child is not None:
                         expansion.values[position] = child.root_value
@@ -2322,13 +2516,12 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
                     cast(list[float], expansion.values),
                 )
                 if depth == 0:
-                    # The root keeps its warm online solve so `_finish_root` can
-                    # publish how far that fell short of the full one.
-                    search._solve_node(expansion.node)
                     continue
-                _, _, value, exploitability = search._solve_matrix(
-                    expansion.node, expansion.node.payoff
-                )
-                expansion.node.root_value = value
-                expansion.node.exploitability = exploitability
+                solved_level.append((search, expansion.node, expansion.node.payoff))
+            solutions = cls._solve_matrices(solved_level)
+            for (_, node, _), (_, _, value, exploitability) in zip(
+                solved_level, solutions, strict=True
+            ):
+                node.root_value = value
+                node.exploitability = exploitability
         return transitions

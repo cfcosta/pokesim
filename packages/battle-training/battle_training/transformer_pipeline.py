@@ -51,6 +51,7 @@ from .arena import (
     write_arena_reports_parallel,
 )
 from .artifacts import build_manifest, sha256, verify_manifest, write_json, write_new
+from .controller import ControllerDecision, search_controllers_many
 from .decision_quality import (
     DecisionQualityMetrics,
     classify_feature_decision,
@@ -166,6 +167,9 @@ class TransformerPipelineConfig:
     value_loss_weight: float = 0.25
     redundant_action_prior_scale: float = 0.25
     prior_anchor_temperature: float = 0.02
+    leaf_evaluator: str = "full"
+    solver_backend: str = "auto"
+    solver_precision: str = "fp32"
     balanced_final_species: bool = True
     generated_schedule_version: int = 4
     rmplus_backend: str = RUST_RMPLUS_BACKEND
@@ -174,6 +178,8 @@ class TransformerPipelineConfig:
 
 class _HeuristicNetwork:
     """Deterministic non-self-play policy with a neutral leaf value."""
+
+    search_assisted = False
 
     def __init__(self, style: str) -> None:
         self.style = style
@@ -281,7 +287,7 @@ def _pipeline_id(
     balanced_final_species: bool = True, generated_schedule_version: int = 4
 ) -> str:
     del balanced_final_species, generated_schedule_version
-    return "transformer-variable-party-bf16-rmplus-v32-banded-levels-5m-16k"
+    return "transformer-variable-party-v33-independent-win-search"
 
 
 def _serialized_network_config(config: TransformerConfig) -> dict[str, Any]:
@@ -537,6 +543,9 @@ def _new_search(
             cfr_plus_solves=config.cfr_plus_solves,
             split_half_reliability=config.split_half_reliability,
             prior_regret=config.prior_regret,
+            leaf_evaluator=config.leaf_evaluator,
+            solver_backend=config.solver_backend,
+            solver_precision=config.solver_precision,
         ),
         selection_rng,
         chance_rng,
@@ -575,6 +584,9 @@ def _arena_config(
         rmplus_backend=config.rmplus_backend,
         cfr_plus_solves=config.cfr_plus_solves,
         policy_only=policy_only,
+        leaf_evaluator=config.leaf_evaluator,
+        solver_backend=config.solver_backend,
+        solver_precision=config.solver_precision,
         matchup_value_cap=config.matchup_value_cap if matchup_filter else 0.0,
         matchup_filter_attempts=config.matchup_filter_attempts,
         popular_gate=config.popular_gate,
@@ -1550,10 +1562,10 @@ def _collect_rows_single(
         "entropy": ENTROPY,
         "actor_entropy": _ACTOR_ENTROPY_VERSION,
         "chance": "fresh-root-v1",
-        "solver": "simultaneous-tree-anchored-qre-v8",
+        "solver": "independent-win-search-v9",
         "rmplus_backend": config.rmplus_backend,
         "cfr_plus_solves": config.cfr_plus_solves,
-        "action_selector": ("simultaneous-tree-anchored-qre-every-decision-v8"),
+        "action_selector": ("independent-win-search-every-decision-v9"),
         "iteration": iteration,
         "episodes": len(episode_indices),
         "depth": config.search_depth,
@@ -1913,7 +1925,7 @@ def _collect_rows_single(
                             species_counts[key] = species_counts.get(key, 0) + 1
             for decision in range(config.episode_budget):
                 results: dict[int, SearchResult] = {}
-                actor_results = SimultaneousTreeSearch.search_many(
+                actor_decisions = search_controllers_many(
                     [
                         _new_search(
                             server,
@@ -1932,58 +1944,41 @@ def _collect_rows_single(
                     sample_actions=True,
                 )
                 searchable: list[_ActorEpisode] = []
-                available_results: list[SearchResult] = []
-                for actor, result in zip(active, actor_results, strict=True):
-                    if result.failure is not None:
+                available_decisions: list[ControllerDecision] = []
+                for actor, controller in zip(active, actor_decisions, strict=True):
+                    if controller.failure is not None:
                         actor.final = _compact_inspection(actor.inspection)
                         append_episode(
                             actor,
                             "semantic-divergence",
                             decision,
-                            reason=result.failure,
+                            reason=controller.failure,
                         )
                         semantic_divergences += 1
                     else:
                         searchable.append(actor)
-                        available_results.append(result)
+                        available_decisions.append(controller)
                 active = searchable
-                actor_results = available_results
+                actor_decisions = available_decisions
                 if not active:
                     break
-                for actor, result in zip(active, actor_results, strict=True):
-                    if actor.episode_kind == "heuristic-opponent":
-                        heuristic = (
-                            actor.enemy_network
-                            if actor.candidate_player
-                            else actor.player_network
-                        )
-                        features = (
-                            actor.snapshot.enemy_features
-                            if actor.candidate_player
-                            else actor.snapshot.player_features
-                        )
-                        mask = (
-                            actor.snapshot.enemy_mask
-                            if actor.candidate_player
-                            else actor.snapshot.player_mask
-                        )
-                        policy, _ = heuristic.evaluate([features], [mask])
-                        action = _sample_policy(policy[0], actor.opponent_rng)
-                        result = (
-                            replace(result, enemy_action=action)
-                            if actor.candidate_player
-                            else replace(result, player_action=action)
-                        )
+                controllers = {}
+                for actor, controller in zip(active, actor_decisions, strict=True):
+                    controllers[actor.episode] = controller
                     results[actor.episode] = _explore_search_result(
-                        result, actor, config, decision
+                        controller.executed(), actor, config, decision
                     )
                 for actor in active:
                     result = results[actor.episode]
+                    controller = controllers[actor.episode]
+                    player_target = controller.player
+                    enemy_target = controller.enemy
                     snapshot = actor.snapshot
                     if frontier.capacity:
                         actor.frontier_snapshots[decision] = snapshot
-                    valid_search_target = result.payoff_matrix is not None
-                    search_diagnostics = result.diagnostics or {}
+                    teacher = player_target if actor.candidate_player else enemy_target
+                    valid_search_target = teacher.payoff_matrix is not None
+                    search_diagnostics = teacher.diagnostics or {}
                     if valid_search_target:
                         target_kind = "joint-regret"
                     else:
@@ -2012,9 +2007,8 @@ def _collect_rows_single(
                             "request": snapshot.request,
                             "before": _compact_turn_inspection(actor.inspection),
                             "target_kind": target_kind,
-                            "root_value": result.root_value,
-                            "exploitability": result.exploitability,
-                            "payoff_spread": result.payoff_spread,
+                            "action_selector": result.solver,
+                            "controller_diagnostics": result.diagnostics,
                             "player_action": result.player_action,
                             "enemy_action": result.enemy_action,
                             "player_choice": player_choice,
@@ -2051,13 +2045,17 @@ def _collect_rows_single(
                         "state_hash": snapshot.player_hash,
                         "features": snapshot.player_features.tolist(),
                         "policy": _smoothed_policy(
-                            list(result.player_policy), snapshot.player_mask, smoothing
+                            list(player_target.player_policy),
+                            snapshot.player_mask,
+                            smoothing,
                         ),
                         "opponent_policy": _smoothed_policy(
-                            list(result.enemy_policy), snapshot.enemy_mask, smoothing
+                            list(player_target.enemy_policy),
+                            snapshot.enemy_mask,
+                            smoothing,
                         ),
                         "opponent_legal_mask": snapshot.enemy_mask,
-                        "search_value": result.root_value,
+                        "search_value": player_target.root_value,
                         "action": result.player_action,
                         "target_kind": target_kind,
                         "legal_mask": snapshot.player_mask,
@@ -2077,13 +2075,17 @@ def _collect_rows_single(
                         "state_hash": snapshot.enemy_hash,
                         "features": snapshot.enemy_features.tolist(),
                         "policy": _smoothed_policy(
-                            list(result.enemy_policy), snapshot.enemy_mask, smoothing
+                            list(enemy_target.enemy_policy),
+                            snapshot.enemy_mask,
+                            smoothing,
                         ),
                         "opponent_policy": _smoothed_policy(
-                            list(result.player_policy), snapshot.player_mask, smoothing
+                            list(enemy_target.player_policy),
+                            snapshot.player_mask,
+                            smoothing,
                         ),
                         "opponent_legal_mask": snapshot.player_mask,
-                        "search_value": -result.root_value,
+                        "search_value": -enemy_target.root_value,
                         "action": result.enemy_action,
                         "target_kind": target_kind,
                         "legal_mask": snapshot.enemy_mask,
@@ -2093,15 +2095,16 @@ def _collect_rows_single(
                     }
                     if enemy_setup is not None:
                         enemy_row["setup_move"] = enemy_setup
-                    if result.exploitability is not None:
-                        player_row["search_exploitability"] = result.exploitability
-                        enemy_row["search_exploitability"] = result.exploitability
-                        player_row["payoff_spread"] = result.payoff_spread
-                        enemy_row["payoff_spread"] = result.payoff_spread
-                    if result.diagnostics is not None:
-                        for name, value in result.diagnostics.items():
-                            player_row[name] = value
-                            enemy_row[name] = value
+                    for row, target in (
+                        (player_row, player_target),
+                        (enemy_row, enemy_target),
+                    ):
+                        row["search_controller"] = "own-evaluator-v1"
+                        if target.exploitability is not None:
+                            row["search_exploitability"] = target.exploitability
+                            row["payoff_spread"] = target.payoff_spread
+                        if target.diagnostics is not None:
+                            row.update(target.diagnostics)
                     if opponents:
                         player_row["episode_kind"] = actor.episode_kind
                         enemy_row["episode_kind"] = actor.episode_kind
@@ -2867,18 +2870,99 @@ def _rows_to_examples(rows: list[dict[str, Any]], floor: float = 1.0) -> Example
 
 
 def _example_rows(paths: list[Path]) -> list[dict[str, Any]]:
+    """Load examples with their original reset provenance, including replays.
+
+    Current shards put reset coordinates in episode records, which may follow
+    the examples. Joining by pair also covers compact shards that carry those
+    fields directly on examples. Older shards without reset coordinates use
+    recorded replay ancestry when available, then the original shard/pair.
+    """
     rows = []
+    origins: dict[tuple[int, int], tuple[str, int, int]] = {}
+    known_pairs: set[tuple[int, int]] = set()
     for path_index, path in enumerate(paths):
         raw_iteration = path.stem.removeprefix("iteration-")
         shard_iteration = (
             int(raw_iteration) if raw_iteration.isdigit() else path_index + 1
         )
+        shard_rows = []
+        shard_pairs = set()
+        provenance = []
         with path.open() as source:
             for line in source:
                 row = json.loads(line)
+                if row["type"] == "meta" and "iteration" in row:
+                    shard_iteration = int(row["iteration"])
                 if row["type"] == "example":
-                    row["shard_iteration"] = shard_iteration
-                    rows.append(row)
+                    shard_rows.append(row)
+                if row["type"] in ("example", "episode") and "episode" in row:
+                    pair = int(row.get("pair", int(row["episode"]) // 2))
+                    shard_pairs.add(pair)
+                    origin = None
+                    if "reset_seed" in row and "reset_episode" in row:
+                        origin = (
+                            "reset",
+                            int(row["reset_seed"]),
+                            int(row["reset_episode"]),
+                        )
+                    elif row.get("frontier_source"):
+                        source_ref = row["frontier_source"]
+                        origin = (
+                            "pair",
+                            int(source_ref["iteration"]),
+                            int(source_ref["episode"]) // 2,
+                        )
+                    elif row.get("team_replay_source"):
+                        source_ref = row["team_replay_source"]
+                        origin = (
+                            "pair",
+                            int(source_ref["iteration"]),
+                            int(source_ref["pair"]),
+                        )
+                    if origin is not None:
+                        provenance.append((pair, origin))
+        known_pairs.update((shard_iteration, pair) for pair in shard_pairs)
+        for pair, origin in provenance:
+            coordinate = (shard_iteration, pair)
+            previous = origins.setdefault(coordinate, origin)
+            if previous != origin:
+                raise ValueError(f"conflicting reset-pair provenance for {coordinate}")
+        for row in shard_rows:
+            row["shard_iteration"] = shard_iteration
+        rows.extend(shard_rows)
+
+    resolved: dict[tuple[int, int], tuple[str, int, int]] = {}
+
+    def original_reset(coordinate: tuple[int, int]) -> tuple[str, int, int]:
+        trail = set()
+        current = coordinate
+        while current not in resolved:
+            if current not in known_pairs:
+                raise ValueError(
+                    f"missing original reset-pair provenance for replay source {current}: "
+                    "include its source shard or recorded reset_seed/reset_episode"
+                )
+            if current in trail:
+                raise ValueError(f"cyclic reset-pair provenance for {coordinate}")
+            trail.add(current)
+            origin = origins.get(current, ("legacy", *current))
+            if origin[0] != "pair":
+                resolved[current] = origin
+                break
+            current = (origin[1], origin[2])
+        result = resolved[current]
+        for visited in trail:
+            resolved[visited] = result
+        return result
+
+    for row in rows:
+        if "episode" not in row:
+            continue
+        coordinate = (
+            int(row["shard_iteration"]),
+            int(row.get("pair", int(row["episode"]) // 2)),
+        )
+        row["diagnostic_reset_group"] = original_reset(coordinate)
     return rows
 
 
@@ -2890,20 +2974,35 @@ def _load_partitioned_examples(
     paths: list[Path],
     floor: float = 1.0,
 ) -> tuple[ExampleTensors, ExampleTensors, list[tuple[int, int]]]:
+    """Reserve every tenth original reset pair across all replay windows.
+
+    The original pair index fixes membership for swapped legs, frontier
+    descendants, and hard-team replays even after the source shard expires.
+    This deterministic sample is not guaranteed to balance battle strata.
+    Pairs zero and one give four-game smoke runs nonempty partitions. Sparse
+    inputs must include both partitions; moving a group to fill one would
+    allow previously trained resets into held-out diagnostics.
+    """
     training_rows = []
     heldout_rows = []
     heldout_battles = []
     for row in _example_rows(paths):
+        if "episode" not in row:
+            raise ValueError("reset-pair diagnostic split requires episode provenance")
         shard_iteration = int(row["shard_iteration"])
         episode = int(row["episode"])
-        heldout = episode % 10 == (shard_iteration - 1) % 10
+        heldout = row["diagnostic_reset_group"][2] % 10 == 0
         if heldout:
             heldout_rows.append(row)
             heldout_battles.append((shard_iteration, episode))
         else:
             training_rows.append(row)
     if not training_rows or not heldout_rows:
-        raise ValueError("whole-battle diagnostic split produced an empty partition")
+        raise ValueError(
+            "reset-pair diagnostic split produced an empty partition: "
+            "include completed original reset pairs with indices both divisible "
+            "and not divisible by ten; paired legs cannot be split"
+        )
     return (
         _rows_to_examples(training_rows, floor),
         _rows_to_examples(heldout_rows, floor),
@@ -2933,7 +3032,7 @@ def _heldout_diagnostics(
     policy_cross_entropy = 0.0
     leaf_policy_cross_entropy = 0.0
     target_entropy = 0.0
-    top_action_matches = 0
+    top_action_matches = 0.0
     weighted_policy_rows = 0.0
     network.eval()
     with torch.inference_mode():
@@ -2972,15 +3071,15 @@ def _heldout_diagnostics(
                 ((entropy + opponent_entropy) * batch_weights).sum()
             )
             weighted_policy_rows += 2.0 * float(batch_weights.sum())
-            top_action_matches += int(
+            top_action_matches += float(
                 (
                     (
-                        logits.argmax(dim=-1).eq(batch_policy.argmax(dim=-1))
-                        + opponent_logits.argmax(dim=-1).eq(
-                            batch_opponent_policy.argmax(dim=-1)
-                        )
+                        logits.argmax(dim=-1).eq(batch_policy.argmax(dim=-1)).float()
+                        + opponent_logits.argmax(dim=-1)
+                        .eq(batch_opponent_policy.argmax(dim=-1))
+                        .float()
                     )
-                    * batch_weights.bool()
+                    * batch_weights
                 )
                 .sum()
                 .item()
@@ -3030,10 +3129,14 @@ def _heldout_diagnostics(
         sum(errors) / len(errors) for errors in battle_errors.values()
     ) / len(battle_errors)
     zero_value_mse = float(target_value.square().mean())
-    mean_cross_entropy = policy_cross_entropy / max(1.0, weighted_policy_rows)
-    mean_target_entropy = target_entropy / max(1.0, weighted_policy_rows)
+    mean_cross_entropy = (
+        policy_cross_entropy / weighted_policy_rows if weighted_policy_rows else None
+    )
+    mean_target_entropy = (
+        target_entropy / weighted_policy_rows if weighted_policy_rows else None
+    )
     return {
-        "split": "whole-battle-shard-episode-mod10-v1",
+        "split": "original-reset-pair-mod10-v2",
         "rows": len(features),
         "battles": len(battle_errors),
         "value_mse_equal_row": row_value_mse,
@@ -3052,15 +3155,19 @@ def _heldout_diagnostics(
         ),
         "policy_cross_entropy": mean_cross_entropy,
         "leaf_policy_kl": (
-            leaf_policy_cross_entropy / max(1.0, weighted_policy_rows)
-            - mean_target_entropy
-            if network.config.distilled_leaf_policy
+            (leaf_policy_cross_entropy - target_entropy) / weighted_policy_rows
+            if network.config.distilled_leaf_policy and weighted_policy_rows
             else None
         ),
         "policy_target_entropy": mean_target_entropy,
-        "policy_kl": mean_cross_entropy - mean_target_entropy,
-        "policy_top_action_agreement": top_action_matches
-        / max(1.0, weighted_policy_rows),
+        "policy_kl": (
+            (policy_cross_entropy - target_entropy) / weighted_policy_rows
+            if weighted_policy_rows
+            else None
+        ),
+        "policy_top_action_agreement": (
+            top_action_matches / weighted_policy_rows if weighted_policy_rows else None
+        ),
     }
 
 
@@ -3482,7 +3589,7 @@ def _play_game(
     )
     for _ in range(config.episode_budget):
         search = _new_search(server, player, enemy, config, selection_rng, chance_rng)
-        result = search.search(snapshot, sample_actions=True)
+        result = search_controllers_many([search], [snapshot])[0].executed()
         if result.failure is not None:
             return None
         snapshot = server.episode_step(
@@ -3746,6 +3853,9 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("popular_gate", 64)
     normalized.setdefault("interior_actions_per_side", 3)
     normalized.setdefault("interior_chance_samples", 1)
+    normalized.setdefault("leaf_evaluator", "full")
+    normalized.setdefault("solver_backend", "auto")
+    normalized.setdefault("solver_precision", "fp32")
     return normalized
 
 
@@ -3811,6 +3921,26 @@ def _policy_gate_superior(
     if score is None or ci_low is None:
         return False
     return score >= minimum_score and ci_low >= 0.50
+
+
+def _search_gate_superior(
+    promotion: dict[str, Any], policy: str, minimum_score: float
+) -> bool:
+    """Require this candidate's search-assisted arena to demonstrate improvement.
+
+    Scores from earlier learners and network-only matches remain diagnostics.
+    A confidence interval touching 0.5, including an all-draw panel, provides
+    no evidence of improvement over the deployed controller.
+    """
+    if not promotion.get("data_quality_pass") or not promotion.get("quality_pass"):
+        return False
+    score, ci_low = _promotion_gate_scores(promotion, policy)
+    return (
+        score is not None
+        and ci_low is not None
+        and score >= minimum_score
+        and ci_low > 0.50
+    )
 
 
 def _pooled_promotion_evidence(
@@ -3922,6 +4052,12 @@ def run_transformer_pipeline(
         raise ValueError("selfplay_episodes must be a positive multiple of four")
     if config.search_every != 1:
         raise ValueError("RM+ action selection requires search_every = 1")
+    if config.leaf_evaluator not in {"full", "distilled"}:
+        raise ValueError("leaf_evaluator must be full or distilled")
+    if config.solver_backend not in {"auto", "rust", "cuda"}:
+        raise ValueError("solver_backend must be auto, rust or cuda")
+    if config.solver_precision not in {"fp32", "fp64"}:
+        raise ValueError("solver_precision must be fp32 or fp64")
     if config.rmplus_backend != RUST_RMPLUS_BACKEND or not config.cfr_plus_solves:
         raise ValueError("V26 requires the native Rust CFR+ solver")
     if not native_available():
@@ -4271,8 +4407,8 @@ def run_transformer_pipeline(
                 ),
                 "chance": "fresh-root-v1",
                 "rmplus": native_metadata(),
-                "search_solver": ("simultaneous-tree-anchored-qre-v8"),
-                "action_selector": ("simultaneous-tree-anchored-qre-every-decision-v8"),
+                "search_solver": ("independent-win-search-v9"),
+                "action_selector": ("independent-win-search-every-decision-v9"),
                 "collection_pairing": "same-reset-opposite-controller-sides-v1",
                 "learning_lineage": "persistent-shadow-v1",
                 "deployment_lineage": "quality-gated-incumbent-v1",
@@ -4617,11 +4753,8 @@ def run_transformer_pipeline(
         promotion_score, confidence_low = _promotion_gate_scores(
             promotion, config.promotion_nonfinish_policy
         )
-        statistically_superior = (
-            promotion_score is not None
-            and confidence_low is not None
-            and promotion_score >= config.minimum_promotion_score
-            and confidence_low >= 0.50
+        statistically_superior = _search_gate_superior(
+            promotion, config.promotion_nonfinish_policy, config.minimum_promotion_score
         )
         if config.promotion_pooled_z > 0.0:
             pooled_evidence = _pooled_promotion_evidence(
@@ -4631,9 +4764,8 @@ def run_transformer_pipeline(
                 config.minimum_promotion_score,
                 config.promotion_pooled_z,
             )
-            statistically_superior = (
-                statistically_superior or pooled_evidence["triggered"]
-            )
+            # Different learner checkpoints are different candidates. Historical
+            # pooled evidence cannot establish superiority of this checkpoint.
         else:
             pooled_evidence = None
         policy_superior = False
@@ -4659,15 +4791,10 @@ def run_transformer_pipeline(
                 policy_pooled_evidence = None
             policy_gate["superior"] = policy_superior
             policy_gate["pooled"] = policy_pooled_evidence
-            statistically_superior = statistically_superior or policy_superior
+            # Deployment uses search. Raw-policy improvement is diagnostic and
+            # cannot promote a weaker search-assisted controller.
         else:
             policy_pooled_evidence = None
-        bootstrap_waiver = _bootstrap_waiver_active(config, training)
-        superiority_satisfied = statistically_superior or (
-            bootstrap_waiver
-            and promotion_score is not None
-            and promotion_score >= config.minimum_promotion_score
-        )
         if config.enforce_quality_gate:
             accepted = (
                 collection_quality["pass"]
@@ -4679,7 +4806,7 @@ def run_transformer_pipeline(
                 and campaign_arena["campaign"]["pass"]
                 and probe_arena["data_quality_pass"]
                 and probe_arena["quality_pass"]
-                and superiority_satisfied
+                and statistically_superior
                 and probes["pass"]
             )
         else:
@@ -4697,13 +4824,10 @@ def run_transformer_pipeline(
         promotion["pooled"] = pooled_evidence
         promotion["policy_gate"] = policy_gate
         promotion["bootstrap_promotion"] = {
-            "eligible": bootstrap_waiver,
-            "applied": bool(
-                config.enforce_quality_gate
-                and accepted
-                and bootstrap_waiver
-                and not statistically_superior
-            ),
+            "eligible": False,
+            "applied": False,
+            "requested": config.bootstrap_promotion,
+            "reason": "current-search-evidence-required",
         }
         promotion["stratified_party_gate"] = promotion["strata"]["pass"]
         promotion["held_out_probes"] = probes
@@ -4946,7 +5070,7 @@ def run_transformer_pipeline(
         ),
         "device": str(device),
         "rmplus": native_metadata(),
-        "action_selector": ("simultaneous-tree-anchored-qre-every-decision-v8"),
+        "action_selector": ("independent-win-search-every-decision-v9"),
         "iterations": config.iterations,
         "selfplay_battles": config.iterations * config.selfplay_episodes,
         "mirror_battles": sum(item["mirror_episodes"] for item in collection),

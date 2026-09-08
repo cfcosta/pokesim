@@ -9,6 +9,7 @@ import selectors
 import struct
 import subprocess
 import threading
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, Self
 
@@ -192,25 +193,27 @@ class SearchServer:
         )
         self._request_id = 0
         self._request_lock = threading.Lock()
-        hello = self._request("ping")
-        if (
-            hello["profile"] != FULL_PROFILE
-            or hello["schema"] != FULL_SCHEMA
-            or hello["chance"] != "fresh-root-v1"
-            or hello["action_count"] != FULL_ACTION_COUNT
-            or hello["party_size"] != FULL_PARTY_SIZE
-            or hello["campaign_count"] != FULL_CAMPAIGN_COUNT
-        ):
-            self.close()
-            raise ValueError(f"native search protocol mismatch: {hello}")
         try:
+            hello = self._request("ping")
+            if (
+                hello["profile"] != FULL_PROFILE
+                or hello["schema"] != FULL_SCHEMA
+                or hello["chance"] != "fresh-root-v1"
+                or hello["action_count"] != FULL_ACTION_COUNT
+                or hello["party_size"] != FULL_PARTY_SIZE
+                or hello["campaign_count"] != FULL_CAMPAIGN_COUNT
+            ):
+                raise ValueError(f"native search protocol mismatch: {hello}")
             _require_popular_gate_support(popular_gate, hello)
-        except ValueError:
-            self.close()
+            self.feature_count = int(hello["feature_count"])
+            self.action_count = int(hello["action_count"])
+            self.campaign_count = int(hello["campaign_count"])
+        except BaseException:
+            # Keep the initialization failure if a malformed shutdown response
+            # also fails; close() still reaps and releases its streams.
+            with suppress(Exception):
+                self.close()
             raise
-        self.feature_count = int(hello["feature_count"])
-        self.action_count = int(hello["action_count"])
-        self.campaign_count = int(hello["campaign_count"])
 
     def _request(self, command: str) -> dict[str, Any]:
         with self._request_lock:
@@ -234,6 +237,7 @@ class SearchServer:
         if not ready:
             self.process.kill()
             self.process.wait()
+            self._close_streams()
             raise NativeRequestTimeout(operation, self.request_timeout)
         line = self.process.stdout.readline()
         if not line:
@@ -497,18 +501,29 @@ class SearchServer:
         self._dedup_window.clear()
         return compacted
 
+    def _close_streams(self) -> None:
+        """Release pipe objects after reaping, including broken buffered stdin."""
+        for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
+            if stream is not None and not stream.closed:
+                with suppress(OSError):
+                    stream.close()
+
     def close(self) -> None:
-        if self.process.poll() is None:
-            try:
-                self._request("quit")
-            except (BrokenPipeError, RuntimeError):
-                if self.process.poll() is None:
-                    self.process.terminate()
         try:
-            self.process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait()
+            if self.process.poll() is None:
+                try:
+                    self._request("quit")
+                except (BrokenPipeError, RuntimeError):
+                    if self.process.poll() is None:
+                        self.process.terminate()
+        finally:
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+            finally:
+                self._close_streams()
 
     def __enter__(self) -> Self:
         return self

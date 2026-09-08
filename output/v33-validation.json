@@ -1,0 +1,47 @@
+{
+  "schema": "v33-engineering-validation-v1",
+  "recorded_at_utc": "2026-09-08T05:02:13.177654+00:00",
+  "python": {
+    "command": "python -m unittest discover -s packages/battle-training/tests",
+    "passed": true,
+    "tests": 459,
+    "skipped": 0,
+    "log_sha256": "e34b3e8481bd17599e0cf8bf1382094b882949bc54d37abcaff967d98cfe719e"
+  },
+  "lean": {
+    "cwd": "packages/battle-lean",
+    "command": "lake build Battle battleRomFixture battleFixtures battleSearchServer",
+    "passed": true,
+    "jobs": 277,
+    "log_sha256": "96b3b02eca0d4eefa487edf77b4c80dd44672d7049bd7c8c86815868fe2f6d9d",
+    "native_fixtures_passed": 10
+  },
+  "canonical_rom": {
+    "rebuild_command": "python tools/check-pokered-build.py --rebuild --jobs 4 --output-rom /tmp/pokemon-v33-canonical.gbc",
+    "build_log_sha256": "774be3a540bb960471295a30470c546427976d6057274449b6bdb7cf9de7896d",
+    "sha256": "5ca7ba01642a3b27b0cc0b5349b52792795b62d3ed977e98a09390659af96b7b",
+    "bytes": 1048576,
+    "fixture_command": "packages/battle-lean/.lake/build/bin/battleRomFixture /tmp/pokemon-v33-canonical.gbc",
+    "fixture_stdout": "PASS canonical ROM fixture: 1048576 bytes, retained windows and battle tables agree",
+    "proof_source_sha256": {
+      "packages/battle-lean/Battle/Rom/MirrorMoveRoutine.lean": "4c2fbfbec68053df47f37f4cdf49499b6a7aca94e3dc27c7286a9343c07b5604",
+      "packages/battle-lean/Battle/Rom/NestedMoveRoutine.lean": "3fc50983c1a1eb8c79447126158a2176fb8656894ecd5f6f69c4187bdca24336"
+    }
+  },
+  "native_search_sha256": "ec371bba82f7e6003ed74b19e3ab98f271dc8a7a9df81d3c516ec7fedaf08cfa",
+  "training_report": "output/v33-training-smoke.json",
+  "solver_report": "output/cuda-solver-benchmark.json",
+  "fixed_work_search_report": "output/fixed-search-benchmark.json",
+  "decision_reports": [
+    "output/battle-decision-final-eager.json",
+    "output/battle-decision-final-compiled.json"
+  ],
+  "scope": "Engineering correctness and throughput; full production training and trained-checkpoint battle strength were not evaluated.",
+  "report_sha256": {
+    "output/v33-training-smoke.json": "25d34c9b991fdf3980cae56f00d775eaf820e31367a72c0ece5e43a708fa7053",
+    "output/cuda-solver-benchmark.json": "33fe8859d7eb583c87538abf7a43e6d2f468ef715c821a6954732e2e1b2858ab",
+    "output/fixed-search-benchmark.json": "fb9e7c5de199fa06aaff6f4f41d8bf9be2b5439060b697c7cd1fbd33bc9d89b2",
+    "output/battle-decision-final-eager.json": "d6c6d4f651c40f6e2774ce4225434a702e02cdcb916cf56ef2e2d96129f2c25f",
+    "output/battle-decision-final-compiled.json": "7322202422af89ab4a3b7cd2c92cc9f59bb71b9ed04c5f5145d887f0ae6c1054"
+  }
+}

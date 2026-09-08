@@ -4,6 +4,7 @@ These documents record twelve codebase, processor, and proof-architecture review
 
 ## Start here
 
+- [Current search-assisted controller](explanation/search-assisted-controller.md) — v33 independent decisions, terminal-value objective, CUDA solving, BF16, and three-second serving.
 - [Project specification](../SPEC.md) — requirements, proof contract, architecture, milestones, and definition of done.
 - [Current battle engine](explanation/current-battle-engine.md) — how the existing assembly organizes and executes battles.
 - [Formal verification strategy](explanation/formal-verification-strategy.md) — how the high-level Lean model will be connected to actual ROM bytes.
@@ -39,6 +40,8 @@ These documents record twelve codebase, processor, and proof-architecture review
 
 ## Research record
 
+- [V33 search validation](research/v33-search-validation.md) — corrected learning contracts, simulator regressions, CUDA differential checks, and complete decision/training measurements.
+- [Learning-signal investigation](research/learning-signal-investigation.md) — preserved pre-v33 objective, controller, and diagnostic failures.
 - [Codebase memory](research/codebase-memory.md) — pinned revisions, review notes, wiki findings, known hazards, and unanswered questions.
 - [Second-pass ASM audit](research/second-pass-asm-audit.md) — corrections found by rereading control flow, WRAM aliases, menu writes, items, and progression.
 - [Third-pass ASM audit](research/third-pass-asm-audit.md) — paired link state, complete item dispatch, and deeper PP/status/EXP/end-state findings.

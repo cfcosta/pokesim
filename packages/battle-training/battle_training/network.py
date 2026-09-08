@@ -15,6 +15,7 @@ import torch
 from torch import Tensor, nn
 
 from . import FEATURE_COUNT
+from .cuda_runtime import configure_triton_runtime
 
 _INFERENCE_BUCKETS = (2, 4, 8, 16, 32, 64, 96, 128, 192, 256)
 _COMPILED_RECOMPILE_LIMIT = 32
@@ -386,16 +387,7 @@ class BattleTransformer(nn.Module):
         )
 
     def forward(self, features: Tensor) -> tuple[Tensor, Tensor]:
-        if features.ndim != 2 or features.shape[1] != self.config.feature_count:
-            raise ValueError(f"expected [batch,{self.config.feature_count}] features")
-        if self.config.precision == "fp32":
-            return self._forward_impl(features)
-        device_type = features.device.type
-        if device_type == "cuda" and not torch.cuda.is_bf16_supported():
-            raise RuntimeError("bf16 precision requires a bf16-capable CUDA device")
-        if device_type not in {"cpu", "cuda"}:
-            raise RuntimeError(f"bf16 precision is unsupported on {device_type}")
-        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+        with self._precision_context(features):
             logits, values = self._forward_impl(features)
         # Keep policy normalization, losses, reductions, and search values in FP32.
         return logits.float(), values.float()
@@ -423,46 +415,37 @@ class BattleTransformer(nn.Module):
             self.leaf_value(pooled).squeeze(-1),
         )
 
-    def _leaf_autocast(self, features: Tensor) -> str | None:
-        """Name the autocast device for a leaf batch, or None to stay in FP32."""
+    def _precision_context(self, features: Tensor) -> torch.autocast:
+        """Use the same checked arithmetic for training and every evaluator.
+
+        FP32 explicitly disables any surrounding autocast. BF16 keeps model
+        parameters in FP32 and callers promote outputs before losses/reductions.
+        """
         if features.ndim != 2 or features.shape[1] != self.config.feature_count:
             raise ValueError(f"expected [batch,{self.config.feature_count}] features")
-        if self.config.precision == "fp32":
-            return None
         device_type = features.device.type
-        if device_type == "cuda" and not torch.cuda.is_bf16_supported():
-            raise RuntimeError("bf16 precision requires a bf16-capable CUDA device")
-        if device_type not in {"cpu", "cuda"}:
-            raise RuntimeError(f"bf16 precision is unsupported on {device_type}")
-        return device_type
+        enabled = self.config.precision == "bf16"
+        if enabled:
+            if device_type == "cuda" and not torch.cuda.is_bf16_supported():
+                raise RuntimeError("bf16 precision requires a bf16-capable CUDA device")
+            if device_type not in {"cpu", "cuda"}:
+                raise RuntimeError(f"bf16 precision is unsupported on {device_type}")
+        return torch.autocast(
+            device_type=device_type, dtype=torch.bfloat16, enabled=enabled
+        )
 
     def leaf_forward(self, features: Tensor) -> Tensor:
-        device_type = self._leaf_autocast(features)
-        if device_type is None:
-            return self._leaf_forward_impl(features)
-        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+        with self._precision_context(features):
             values = self._leaf_forward_impl(features)
         return values.float()
 
     def leaf_joint_forward(self, features: Tensor) -> tuple[Tensor, Tensor, Tensor]:
-        device_type = self._leaf_autocast(features)
-        if device_type is None:
-            return self._leaf_joint_forward_impl(features)
-        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+        with self._precision_context(features):
             own, opponent, values = self._leaf_joint_forward_impl(features)
         return own.float(), opponent.float(), values.float()
 
     def forward_joint(self, features: Tensor) -> tuple[Tensor, Tensor, Tensor]:
-        if features.ndim != 2 or features.shape[1] != self.config.feature_count:
-            raise ValueError(f"expected [batch,{self.config.feature_count}] features")
-        if self.config.precision == "fp32":
-            return self._forward_joint_impl(features)
-        device_type = features.device.type
-        if device_type == "cuda" and not torch.cuda.is_bf16_supported():
-            raise RuntimeError("bf16 precision requires a bf16-capable CUDA device")
-        if device_type not in {"cpu", "cuda"}:
-            raise RuntimeError(f"bf16 precision is unsupported on {device_type}")
-        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+        with self._precision_context(features):
             own, opponent, values = self._forward_joint_impl(features)
         return own.float(), opponent.float(), values.float()
 
@@ -496,18 +479,7 @@ class BattleTransformer(nn.Module):
         if selected == "compiled" and device.type != "cuda":
             raise ValueError("compiled inference requires CUDA")
         if selected == "compiled":
-            driver = Path("/run/opengl-driver/lib")
-            if "TRITON_LIBCUDA_PATH" not in os.environ and driver.is_dir():
-                os.environ["TRITON_LIBCUDA_PATH"] = str(driver)
-            cuda_home = Path(os.environ.get("CUDA_HOME", ""))
-            for tool, variable in (
-                ("ptxas", "TRITON_PTXAS_PATH"),
-                ("cuobjdump", "TRITON_CUOBJDUMP_PATH"),
-                ("nvdisasm", "TRITON_NVDISASM_PATH"),
-            ):
-                executable = cuda_home / "bin" / tool
-                if variable not in os.environ and executable.is_file():
-                    os.environ[variable] = str(executable)
+            configure_triton_runtime()
             # The ten intentional static batch shapes exceed Dynamo's default
             # eight-entry per-frame recompilation limit in production search.
             torch._dynamo.config.recompile_limit = max(
@@ -631,8 +603,7 @@ class BattleTransformer(nn.Module):
 
     def _evaluation_outputs(self, tensor: Tensor, mask_indexes: Tensor) -> Tensor:
         if self._inference_engine == "compiled":
-            device_type = tensor.device.type
-            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+            with self._precision_context(tensor):
                 logits, values = self._compiled_forward(tensor)
             logits, values = logits.float(), values.float()
         else:
@@ -642,8 +613,7 @@ class BattleTransformer(nn.Module):
 
     def _leaf_evaluation_outputs(self, tensor: Tensor) -> Tensor:
         if self._inference_engine == "compiled":
-            device_type = tensor.device.type
-            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+            with self._precision_context(tensor):
                 values = self._compiled_leaf_forward(tensor)
             return values.float()
         return self.leaf_forward(tensor)
@@ -652,8 +622,7 @@ class BattleTransformer(nn.Module):
         self, tensor: Tensor, own_masks: Tensor, opponent_masks: Tensor
     ) -> Tensor:
         if self._inference_engine == "compiled":
-            device_type = tensor.device.type
-            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+            with self._precision_context(tensor):
                 own, opponent, values = self._compiled_joint_forward(tensor)
             own, opponent, values = own.float(), opponent.float(), values.float()
         else:
@@ -664,8 +633,7 @@ class BattleTransformer(nn.Module):
         self, tensor: Tensor, own_masks: Tensor, opponent_masks: Tensor
     ) -> Tensor:
         if self._inference_engine == "compiled":
-            device_type = tensor.device.type
-            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+            with self._precision_context(tensor):
                 own, opponent, values = self._compiled_leaf_joint_forward(tensor)
             own, opponent, values = own.float(), opponent.float(), values.float()
         else:
@@ -1019,13 +987,20 @@ def save_network(
             Path(temporary_name).unlink(missing_ok=True)
 
 
-def load_network(path: Path, device: torch.device) -> BattleTransformer:
+def load_network(
+    path: Path, device: torch.device, *, state: str = "deployed"
+) -> BattleTransformer:
+    if state not in {"deployed", "learner"}:
+        raise ValueError("checkpoint state must be deployed or learner")
     payload = load_checkpoint(path, device)
     raw_config = dict(payload["config"])
     # Checkpoints written before precision became explicit executed in strict FP32.
     raw_config.setdefault("precision", "fp32")
     network = BattleTransformer(TransformerConfig(**raw_config)).to(device)
-    network.load_state_dict(payload["model"])
+    key = "model" if state == "deployed" else "learner_model"
+    if key not in payload:
+        raise ValueError(f"checkpoint does not contain requested {state} state")
+    network.load_state_dict(payload[key])
     network.eval()
     return network
 

@@ -1,0 +1,89 @@
+{
+  "schema": "anchored-cuda-solver-benchmark-v1",
+  "device": "NVIDIA GeForce RTX 3080 Ti",
+  "torch": "2.13.0+cu130",
+  "triton": "3.7.1",
+  "python": "3.12.13",
+  "native": {
+    "backend": "rust-rmplus-v1",
+    "abi": "battle-rmplus-c-abi-v1",
+    "library": "libbattle_rmplus.so",
+    "sha256": "9f95dd94831c205b6d3f4c471921891f244e057aec04e9eee92b8f768aa10a0c",
+    "upstream": "cfcosta/mcts@afc6e5d4ca6f0ce560a52add625e2b1d883b5456"
+  },
+  "iterations": 2048,
+  "temperature": 0.02,
+  "rounds": 3,
+  "timing": "Host-to-host includes validation, legal packing, allocation, H2D, kernel, D2H and policy scatter; synchronized before and after. CUDA events include only the resident-input kernel. JIT warmup excluded from steady samples.",
+  "caveat": "Synthetic matrix workload on the live desktop GPU; no end-to-end battle-strength or globally optimal hardware claim.",
+  "rows": [
+    {
+      "batch": 2048,
+      "legal_count": 3,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 263.59873799810885,
+      "rust_host_to_host": {
+        "median_ms": 733.1439290028356,
+        "p95_ms": 737.5530254008481,
+        "min_ms": 727.304569001717,
+        "max_ms": 738.0429250006273
+      },
+      "cuda_host_to_host": {
+        "median_ms": 5.876569000974996,
+        "p95_ms": 7.4176471011014655,
+        "min_ms": 5.558421999012353,
+        "max_ms": 7.588878001115518
+      },
+      "cuda_kernel_events": {
+        "median_ms": 3.368959903717041,
+        "p95_ms": 3.3706878900527952,
+        "min_ms": 3.3679358959198,
+        "max_ms": 3.370879888534546
+      },
+      "host_to_host_speedup": 124.75713786074799,
+      "max_absolute_error": {
+        "player_policy": 2.1422851437247203e-06,
+        "enemy_policy": 3.0279075114991727e-06,
+        "value": 2.15095883659977e-07,
+        "exploitability": 2.69685956774679e-07
+      },
+      "max_regularized_gap": 1.2139827155976947e-07,
+      "native_max_regularized_gap": 3.419486915845482e-16
+    },
+    {
+      "batch": 2048,
+      "legal_count": 9,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 14.876128003379563,
+      "rust_host_to_host": {
+        "median_ms": 1766.217903001234,
+        "p95_ms": 1864.4463717013423,
+        "min_ms": 1732.958388998668,
+        "max_ms": 1875.3606460013543
+      },
+      "cuda_host_to_host": {
+        "median_ms": 17.425930996978423,
+        "p95_ms": 21.398881101049483,
+        "min_ms": 14.724958000442712,
+        "max_ms": 21.840320001501823
+      },
+      "cuda_kernel_events": {
+        "median_ms": 9.12281608581543,
+        "p95_ms": 9.179033470153808,
+        "min_ms": 7.773183822631836,
+        "max_ms": 9.185279846191406
+      },
+      "host_to_host_speedup": 101.35572689387374,
+      "max_absolute_error": {
+        "player_policy": 1.1365937314378183e-06,
+        "enemy_policy": 1.3513950904431304e-06,
+        "value": 9.082800694892867e-08,
+        "exploitability": 4.433455089297711e-07
+      },
+      "max_regularized_gap": 5.495123614362996e-08,
+      "native_max_regularized_gap": 9.547918011776346e-17
+    }
+  ]
+}

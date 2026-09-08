@@ -1,0 +1,1109 @@
+{
+  "schema": "anchored-cuda-solver-benchmark-v1",
+  "device": "NVIDIA GeForce RTX 3080 Ti",
+  "torch": "2.13.0+cu130",
+  "triton": "3.7.1",
+  "python": "3.12.13",
+  "native": {
+    "backend": "rust-rmplus-v1",
+    "abi": "battle-rmplus-c-abi-v1",
+    "library": "libbattle_rmplus.so",
+    "sha256": "9f95dd94831c205b6d3f4c471921891f244e057aec04e9eee92b8f768aa10a0c",
+    "upstream": "cfcosta/mcts@afc6e5d4ca6f0ce560a52add625e2b1d883b5456"
+  },
+  "iterations": 2048,
+  "temperature": 0.02,
+  "rounds": 7,
+  "timing": "Host-to-host includes validation, legal packing, allocation, H2D, kernel, D2H and policy scatter; synchronized before and after. CUDA events include only the resident-input kernel. JIT warmup excluded from steady samples.",
+  "caveat": "Synthetic matrix workload on the live desktop GPU; no end-to-end battle-strength or globally optimal hardware claim.",
+  "rows": [
+    {
+      "batch": 1,
+      "legal_count": 3,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 440.94391200269456,
+      "rust_host_to_host": {
+        "median_ms": 0.35900700095226057,
+        "p95_ms": 0.503243300045142,
+        "min_ms": 0.3362179995747283,
+        "max_ms": 0.5229859998507891
+      },
+      "cuda_host_to_host": {
+        "median_ms": 1.5838289982639253,
+        "p95_ms": 1.7410330026905285,
+        "min_ms": 1.5649689994461369,
+        "max_ms": 1.7500480025773868
+      },
+      "cuda_kernel_events": {
+        "median_ms": 1.2789759635925293,
+        "p95_ms": 1.2928832173347473,
+        "min_ms": 1.2718080282211304,
+        "max_ms": 1.2940160036087036
+      },
+      "host_to_host_speedup": 0.2266703042726059,
+      "max_absolute_error": {
+        "player_policy": 9.934107481068821e-09,
+        "enemy_policy": 9.934107481068821e-09,
+        "value": 0.0,
+        "exploitability": 0.0
+      },
+      "max_regularized_gap": 1.192092913271381e-09,
+      "native_max_regularized_gap": 0.0
+    },
+    {
+      "batch": 1,
+      "legal_count": 3,
+      "precision": "fp64",
+      "backend": "triton-anchored-f64-v1",
+      "first_call_ms": 259.28656199903344,
+      "rust_host_to_host": {
+        "median_ms": 0.35900700095226057,
+        "p95_ms": 0.503243300045142,
+        "min_ms": 0.3362179995747283,
+        "max_ms": 0.5229859998507891
+      },
+      "cuda_host_to_host": {
+        "median_ms": 28.136714001448127,
+        "p95_ms": 32.35173699977167,
+        "min_ms": 27.58012900085305,
+        "max_ms": 34.108923999156104
+      },
+      "cuda_kernel_events": {
+        "median_ms": 19.391136169433594,
+        "p95_ms": 24.904141044616697,
+        "min_ms": 18.764799118041992,
+        "max_ms": 25.667072296142578
+      },
+      "host_to_host_speedup": 0.012759379113487929,
+      "max_absolute_error": {
+        "player_policy": 0.0,
+        "enemy_policy": 0.0,
+        "value": 0.0,
+        "exploitability": 0.0
+      },
+      "max_regularized_gap": 0.0,
+      "native_max_regularized_gap": 0.0
+    },
+    {
+      "batch": 16,
+      "legal_count": 3,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 1.6630179998173844,
+      "rust_host_to_host": {
+        "median_ms": 5.758560000685975,
+        "p95_ms": 6.030866299988702,
+        "min_ms": 5.589861000771634,
+        "max_ms": 6.035528000211343
+      },
+      "cuda_host_to_host": {
+        "median_ms": 1.3800000015180558,
+        "p95_ms": 1.4238850006222492,
+        "min_ms": 1.3677309980266728,
+        "max_ms": 1.4255800015234854
+      },
+      "cuda_kernel_events": {
+        "median_ms": 1.112064003944397,
+        "p95_ms": 1.115545630455017,
+        "min_ms": 1.1046719551086426,
+        "max_ms": 1.1161600351333618
+      },
+      "host_to_host_speedup": 4.172869561124149,
+      "max_absolute_error": {
+        "player_policy": 5.147631071400482e-07,
+        "enemy_policy": 9.646246867944797e-07,
+        "value": 6.641690497577457e-08,
+        "exploitability": 7.426290504763955e-08
+      },
+      "max_regularized_gap": 2.7199219312379343e-08,
+      "native_max_regularized_gap": 6.439293542825907e-17
+    },
+    {
+      "batch": 16,
+      "legal_count": 3,
+      "precision": "fp64",
+      "backend": "triton-anchored-f64-v1",
+      "first_call_ms": 18.679790999158286,
+      "rust_host_to_host": {
+        "median_ms": 5.758560000685975,
+        "p95_ms": 6.030866299988702,
+        "min_ms": 5.589861000771634,
+        "max_ms": 6.035528000211343
+      },
+      "cuda_host_to_host": {
+        "median_ms": 18.920139002148062,
+        "p95_ms": 20.63739220102434,
+        "min_ms": 18.73994000197854,
+        "max_ms": 20.83489600045141
+      },
+      "cuda_kernel_events": {
+        "median_ms": 19.934207916259766,
+        "p95_ms": 23.179775428771972,
+        "min_ms": 18.330623626708984,
+        "max_ms": 23.89708709716797
+      },
+      "host_to_host_speedup": 0.30436140030642417,
+      "max_absolute_error": {
+        "player_policy": 6.661338147750939e-16,
+        "enemy_policy": 1.4432899320127035e-15,
+        "value": 1.6653345369377348e-16,
+        "exploitability": 2.220446049250313e-16
+      },
+      "max_regularized_gap": 8.43769498715119e-17,
+      "native_max_regularized_gap": 6.439293542825907e-17
+    },
+    {
+      "batch": 64,
+      "legal_count": 3,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 1.6855789981491398,
+      "rust_host_to_host": {
+        "median_ms": 22.681722999550402,
+        "p95_ms": 56.959650100907275,
+        "min_ms": 22.14796599946567,
+        "max_ms": 71.53911400018842
+      },
+      "cuda_host_to_host": {
+        "median_ms": 1.3993909997225273,
+        "p95_ms": 1.4678403003927087,
+        "min_ms": 1.3851100011379458,
+        "max_ms": 1.4787990003242157
+      },
+      "cuda_kernel_events": {
+        "median_ms": 1.1048959493637085,
+        "p95_ms": 1.111247992515564,
+        "min_ms": 1.1035200357437134,
+        "max_ms": 1.1117759943008423
+      },
+      "host_to_host_speedup": 16.208281319550974,
+      "max_absolute_error": {
+        "player_policy": 1.3195966432344441e-06,
+        "enemy_policy": 7.06922953119804e-07,
+        "value": 9.202629436266818e-08,
+        "exploitability": 2.1553824847142522e-07
+      },
+      "max_regularized_gap": 8.822599667834829e-08,
+      "native_max_regularized_gap": 1.1990408665951691e-16
+    },
+    {
+      "batch": 64,
+      "legal_count": 3,
+      "precision": "fp64",
+      "backend": "triton-anchored-f64-v1",
+      "first_call_ms": 18.772729999909643,
+      "rust_host_to_host": {
+        "median_ms": 22.681722999550402,
+        "p95_ms": 56.959650100907275,
+        "min_ms": 22.14796599946567,
+        "max_ms": 71.53911400018842
+      },
+      "cuda_host_to_host": {
+        "median_ms": 20.238870001776377,
+        "p95_ms": 24.88069950013596,
+        "min_ms": 18.822549001924926,
+        "max_ms": 25.10886600066442
+      },
+      "cuda_kernel_events": {
+        "median_ms": 22.582271575927734,
+        "p95_ms": 22.881996726989748,
+        "min_ms": 20.69913673400879,
+        "max_ms": 22.949888229370117
+      },
+      "host_to_host_speedup": 1.120701056806018,
+      "max_absolute_error": {
+        "player_policy": 2.6645352591003757e-15,
+        "enemy_policy": 1.9984014443252818e-15,
+        "value": 2.220446049250313e-16,
+        "exploitability": 4.718447854656915e-16
+      },
+      "max_regularized_gap": 1.2656542480726786e-16,
+      "native_max_regularized_gap": 1.1990408665951691e-16
+    },
+    {
+      "batch": 256,
+      "legal_count": 3,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 1.938565997988917,
+      "rust_host_to_host": {
+        "median_ms": 91.10816799875465,
+        "p95_ms": 93.4673374009435,
+        "min_ms": 89.03903299869853,
+        "max_ms": 93.8210890017217
+      },
+      "cuda_host_to_host": {
+        "median_ms": 1.6135590012709145,
+        "p95_ms": 1.7032999992807163,
+        "min_ms": 1.580399002705235,
+        "max_ms": 1.7148679980891757
+      },
+      "cuda_kernel_events": {
+        "median_ms": 1.1233279705047607,
+        "p95_ms": 1.152409589290619,
+        "min_ms": 1.1212799549102783,
+        "max_ms": 1.159168004989624
+      },
+      "host_to_host_speedup": 56.46410693813713,
+      "max_absolute_error": {
+        "player_policy": 2.1527444056812506e-06,
+        "enemy_policy": 2.3559438651066245e-06,
+        "value": 1.7783361117018615e-07,
+        "exploitability": 3.18061107174028e-07
+      },
+      "max_regularized_gap": 9.072398404086358e-08,
+      "native_max_regularized_gap": 2.0317081350640365e-16
+    },
+    {
+      "batch": 256,
+      "legal_count": 3,
+      "precision": "fp64",
+      "backend": "triton-anchored-f64-v1",
+      "first_call_ms": 36.177428999508265,
+      "rust_host_to_host": {
+        "median_ms": 91.10816799875465,
+        "p95_ms": 93.4673374009435,
+        "min_ms": 89.03903299869853,
+        "max_ms": 93.8210890017217
+      },
+      "cuda_host_to_host": {
+        "median_ms": 36.40585800167173,
+        "p95_ms": 40.87571120180655,
+        "min_ms": 33.00866100107669,
+        "max_ms": 41.038325001863996
+      },
+      "cuda_kernel_events": {
+        "median_ms": 34.04083251953125,
+        "p95_ms": 38.87093238830566,
+        "min_ms": 33.51551818847656,
+        "max_ms": 39.19472122192383
+      },
+      "host_to_host_speedup": 2.502568899614206,
+      "max_absolute_error": {
+        "player_policy": 2.942091015256665e-15,
+        "enemy_policy": 4.440892098500626e-15,
+        "value": 3.3306690738754696e-16,
+        "exploitability": 7.494005416219807e-16
+      },
+      "max_regularized_gap": 2.486899575160351e-16,
+      "native_max_regularized_gap": 2.0317081350640365e-16
+    },
+    {
+      "batch": 1,
+      "legal_count": 9,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 219.73024700128008,
+      "rust_host_to_host": {
+        "median_ms": 0.7847349988878705,
+        "p95_ms": 0.8124622996547259,
+        "min_ms": 0.7740649998595472,
+        "max_ms": 0.8196439994208049
+      },
+      "cuda_host_to_host": {
+        "median_ms": 1.9272169993200805,
+        "p95_ms": 2.0191259991406696,
+        "min_ms": 1.9133370005874895,
+        "max_ms": 2.0501459985098336
+      },
+      "cuda_kernel_events": {
+        "median_ms": 1.670143961906433,
+        "p95_ms": 1.6725792050361634,
+        "min_ms": 1.6650240421295166,
+        "max_ms": 1.6728960275650024
+      },
+      "host_to_host_speedup": 0.40718559413118705,
+      "max_absolute_error": {
+        "player_policy": 8.278422947149977e-10,
+        "enemy_policy": 8.278422947149977e-10,
+        "value": 0.0,
+        "exploitability": 0.0
+      },
+      "max_regularized_gap": 2.9802322498717613e-10,
+      "native_max_regularized_gap": 0.0
+    },
+    {
+      "batch": 1,
+      "legal_count": 9,
+      "precision": "fp64",
+      "backend": "triton-anchored-f64-v1",
+      "first_call_ms": 450.4388679997646,
+      "rust_host_to_host": {
+        "median_ms": 0.7847349988878705,
+        "p95_ms": 0.8124622996547259,
+        "min_ms": 0.7740649998595472,
+        "max_ms": 0.8196439994208049
+      },
+      "cuda_host_to_host": {
+        "median_ms": 51.45159300082014,
+        "p95_ms": 56.23211079873727,
+        "min_ms": 45.58477400132688,
+        "max_ms": 57.362952997209504
+      },
+      "cuda_kernel_events": {
+        "median_ms": 47.0118408203125,
+        "p95_ms": 53.36228790283203,
+        "min_ms": 45.11449432373047,
+        "max_ms": 53.58505630493164
+      },
+      "host_to_host_speedup": 0.015251908699413093,
+      "max_absolute_error": {
+        "player_policy": 0.0,
+        "enemy_policy": 0.0,
+        "value": 0.0,
+        "exploitability": 0.0
+      },
+      "max_regularized_gap": 0.0,
+      "native_max_regularized_gap": 0.0
+    },
+    {
+      "batch": 16,
+      "legal_count": 9,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 2.238875000330154,
+      "rust_host_to_host": {
+        "median_ms": 13.308927998878062,
+        "p95_ms": 15.832187998967127,
+        "min_ms": 12.88775099965278,
+        "max_ms": 16.233746999205323
+      },
+      "cuda_host_to_host": {
+        "median_ms": 1.9385369996598456,
+        "p95_ms": 2.0209562990203267,
+        "min_ms": 1.9204660020477604,
+        "max_ms": 2.0382059992698487
+      },
+      "cuda_kernel_events": {
+        "median_ms": 1.670143961906433,
+        "p95_ms": 1.6791200041770935,
+        "min_ms": 1.6629760265350342,
+        "max_ms": 1.6794559955596924
+      },
+      "host_to_host_speedup": 6.865449563879036,
+      "max_absolute_error": {
+        "player_policy": 5.848799996543974e-07,
+        "enemy_policy": 5.153065941732038e-07,
+        "value": 3.098821822755671e-08,
+        "exploitability": 1.8792362692365838e-07
+      },
+      "max_regularized_gap": 1.4828548002832064e-08,
+      "native_max_regularized_gap": 2.886579864025407e-17
+    },
+    {
+      "batch": 16,
+      "legal_count": 9,
+      "precision": "fp64",
+      "backend": "triton-anchored-f64-v1",
+      "first_call_ms": 45.545184999355115,
+      "rust_host_to_host": {
+        "median_ms": 13.308927998878062,
+        "p95_ms": 15.832187998967127,
+        "min_ms": 12.88775099965278,
+        "max_ms": 16.233746999205323
+      },
+      "cuda_host_to_host": {
+        "median_ms": 51.20295500091743,
+        "p95_ms": 57.68526069805375,
+        "min_ms": 47.229133000655565,
+        "max_ms": 58.495353998296196
+      },
+      "cuda_kernel_events": {
+        "median_ms": 50.920318603515625,
+        "p95_ms": 55.822449111938475,
+        "min_ms": 45.12870407104492,
+        "max_ms": 56.467041015625
+      },
+      "host_to_host_speedup": 0.25992499844275785,
+      "max_absolute_error": {
+        "player_policy": 1.1657341758564144e-15,
+        "enemy_policy": 8.881784197001252e-16,
+        "value": 8.326672684688674e-17,
+        "exploitability": 4.3021142204224816e-16
+      },
+      "max_regularized_gap": 4.4408920985006264e-17,
+      "native_max_regularized_gap": 2.886579864025407e-17
+    },
+    {
+      "batch": 64,
+      "legal_count": 9,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 2.3571640012960415,
+      "rust_host_to_host": {
+        "median_ms": 54.6485910017509,
+        "p95_ms": 56.892357100878144,
+        "min_ms": 52.92222300340654,
+        "max_ms": 57.23457400017651
+      },
+      "cuda_host_to_host": {
+        "median_ms": 2.0177859987597913,
+        "p95_ms": 2.076719001343008,
+        "min_ms": 1.9873359997291118,
+        "max_ms": 2.0878460018138867
+      },
+      "cuda_kernel_events": {
+        "median_ms": 1.6579519510269165,
+        "p95_ms": 1.665231966972351,
+        "min_ms": 1.656831979751587,
+        "max_ms": 1.6669119596481323
+      },
+      "host_to_host_speedup": 27.08344246383909,
+      "max_absolute_error": {
+        "player_policy": 7.27024315305691e-07,
+        "enemy_policy": 8.358491829785208e-07,
+        "value": 6.822057529998204e-08,
+        "exploitability": 2.3648841161738599e-07
+      },
+      "max_regularized_gap": 2.722641752717081e-08,
+      "native_max_regularized_gap": 6.217248937900877e-17
+    },
+    {
+      "batch": 64,
+      "legal_count": 9,
+      "precision": "fp64",
+      "backend": "triton-anchored-f64-v1",
+      "first_call_ms": 45.521184998506214,
+      "rust_host_to_host": {
+        "median_ms": 54.6485910017509,
+        "p95_ms": 56.892357100878144,
+        "min_ms": 52.92222300340654,
+        "max_ms": 57.23457400017651
+      },
+      "cuda_host_to_host": {
+        "median_ms": 46.89649500141968,
+        "p95_ms": 51.67124999788939,
+        "min_ms": 45.58851399997366,
+        "max_ms": 52.55088599733426
+      },
+      "cuda_kernel_events": {
+        "median_ms": 45.124385833740234,
+        "p95_ms": 45.485751724243165,
+        "min_ms": 45.10201644897461,
+        "max_ms": 45.63542556762695
+      },
+      "host_to_host_speedup": 1.1653022470036736,
+      "max_absolute_error": {
+        "player_policy": 1.887379141862766e-15,
+        "enemy_policy": 1.8318679906315083e-15,
+        "value": 1.1102230246251565e-16,
+        "exploitability": 7.077671781985373e-16
+      },
+      "max_regularized_gap": 5.551115123125783e-17,
+      "native_max_regularized_gap": 6.217248937900877e-17
+    },
+    {
+      "batch": 256,
+      "legal_count": 9,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 2.6794019977387507,
+      "rust_host_to_host": {
+        "median_ms": 214.0048779983772,
+        "p95_ms": 220.5047980976815,
+        "min_ms": 212.5431780004874,
+        "max_ms": 221.19559699785896
+      },
+      "cuda_host_to_host": {
+        "median_ms": 2.4158029991667718,
+        "p95_ms": 2.4348899994947715,
+        "min_ms": 2.3310840006161015,
+        "max_ms": 2.438133000396192
+      },
+      "cuda_kernel_events": {
+        "median_ms": 1.7326079607009888,
+        "p95_ms": 1.744752037525177,
+        "min_ms": 1.7254400253295898,
+        "max_ms": 1.745568037033081
+      },
+      "host_to_host_speedup": 88.58540124016282,
+      "max_absolute_error": {
+        "player_policy": 6.419684753788957e-07,
+        "enemy_policy": 7.618093159078576e-07,
+        "value": 6.427468923764224e-08,
+        "exploitability": 3.2736555397039346e-07
+      },
+      "max_regularized_gap": 2.964828191176494e-08,
+      "native_max_regularized_gap": 7.549516567451065e-17
+    },
+    {
+      "batch": 256,
+      "legal_count": 9,
+      "precision": "fp64",
+      "backend": "triton-anchored-f64-v1",
+      "first_call_ms": 84.62234399848967,
+      "rust_host_to_host": {
+        "median_ms": 214.0048779983772,
+        "p95_ms": 220.5047980976815,
+        "min_ms": 212.5431780004874,
+        "max_ms": 221.19559699785896
+      },
+      "cuda_host_to_host": {
+        "median_ms": 82.34426000126405,
+        "p95_ms": 89.19776789916796,
+        "min_ms": 79.74574800027767,
+        "max_ms": 91.06506899843225
+      },
+      "cuda_kernel_events": {
+        "median_ms": 93.00371551513672,
+        "p95_ms": 99.63755416870117,
+        "min_ms": 82.17945861816406,
+        "max_ms": 100.69401550292969
+      },
+      "host_to_host_speedup": 2.5989046230434525,
+      "max_absolute_error": {
+        "player_policy": 1.3183898417423734e-15,
+        "enemy_policy": 1.3600232051658168e-15,
+        "value": 1.3877787807814457e-16,
+        "exploitability": 6.661338147750939e-16
+      },
+      "max_regularized_gap": 6.217248937900877e-17,
+      "native_max_regularized_gap": 7.549516567451065e-17
+    },
+    {
+      "batch": 1,
+      "legal_count": 13,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 224.4468760000018,
+      "rust_host_to_host": {
+        "median_ms": 1.219961999595398,
+        "p95_ms": 1.3031339993176516,
+        "min_ms": 1.182481999421725,
+        "max_ms": 1.3230209988250863
+      },
+      "cuda_host_to_host": {
+        "median_ms": 1.979046002816176,
+        "p95_ms": 2.22636630096531,
+        "min_ms": 1.9544969982234761,
+        "max_ms": 2.2775940014980733
+      },
+      "cuda_kernel_events": {
+        "median_ms": 1.7473280429840088,
+        "p95_ms": 1.7583999633789062,
+        "min_ms": 1.7377279996871948,
+        "max_ms": 1.7612799406051636
+      },
+      "host_to_host_speedup": 0.6164394348890304,
+      "max_absolute_error": {
+        "player_policy": 2.8656079176236915e-09,
+        "enemy_policy": 2.8656079176236915e-09,
+        "value": 0.0,
+        "exploitability": 0.0
+      },
+      "max_regularized_gap": 1.490116156022125e-09,
+      "native_max_regularized_gap": 8.881784197001253e-18
+    },
+    {
+      "batch": 1,
+      "legal_count": 13,
+      "precision": "fp64",
+      "backend": "triton-anchored-f64-v1",
+      "first_call_ms": 450.9412670013262,
+      "rust_host_to_host": {
+        "median_ms": 1.219961999595398,
+        "p95_ms": 1.3031339993176516,
+        "min_ms": 1.182481999421725,
+        "max_ms": 1.3230209988250863
+      },
+      "cuda_host_to_host": {
+        "median_ms": 46.19584000101895,
+        "p95_ms": 51.103969799078186,
+        "min_ms": 42.287816999305505,
+        "max_ms": 52.61305499880109
+      },
+      "cuda_kernel_events": {
+        "median_ms": 41.94406509399414,
+        "p95_ms": 43.23653564453125,
+        "min_ms": 41.93791961669922,
+        "max_ms": 43.78825759887695
+      },
+      "host_to_host_speedup": 0.026408481793349557,
+      "max_absolute_error": {
+        "player_policy": 0.0,
+        "enemy_policy": 0.0,
+        "value": 0.0,
+        "exploitability": 0.0
+      },
+      "max_regularized_gap": 8.881784197001253e-18,
+      "native_max_regularized_gap": 8.881784197001253e-18
+    },
+    {
+      "batch": 16,
+      "legal_count": 13,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 2.218173998699058,
+      "rust_host_to_host": {
+        "median_ms": 19.633034000435146,
+        "p95_ms": 19.764834000670817,
+        "min_ms": 19.432536002568668,
+        "max_ms": 19.798263001575833
+      },
+      "cuda_host_to_host": {
+        "median_ms": 2.017146001890069,
+        "p95_ms": 2.0558809981594095,
+        "min_ms": 1.9992359993921127,
+        "max_ms": 2.0620459981728345
+      },
+      "cuda_kernel_events": {
+        "median_ms": 1.756160020828247,
+        "p95_ms": 1.7620991826057435,
+        "min_ms": 1.7541120052337646,
+        "max_ms": 1.763327956199646
+      },
+      "host_to_host_speedup": 9.73307533616256,
+      "max_absolute_error": {
+        "player_policy": 3.910687089159204e-07,
+        "enemy_policy": 2.4532486227191175e-07,
+        "value": 2.491678445515344e-08,
+        "exploitability": 1.5801925265512828e-07
+      },
+      "max_regularized_gap": 8.891985676662274e-09,
+      "native_max_regularized_gap": 1.7763568394002505e-17
+    },
+    {
+      "batch": 16,
+      "legal_count": 13,
+      "precision": "fp64",
+      "backend": "triton-anchored-f64-v1",
+      "first_call_ms": 42.39939599938225,
+      "rust_host_to_host": {
+        "median_ms": 19.633034000435146,
+        "p95_ms": 19.764834000670817,
+        "min_ms": 19.432536002568668,
+        "max_ms": 19.798263001575833
+      },
+      "cuda_host_to_host": {
+        "median_ms": 42.27960700154654,
+        "p95_ms": 47.406454998781555,
+        "min_ms": 42.22351800126489,
+        "max_ms": 48.73655299888924
+      },
+      "cuda_kernel_events": {
+        "median_ms": 42.4365119934082,
+        "p95_ms": 47.1779067993164,
+        "min_ms": 41.93174362182617,
+        "max_ms": 47.21254348754883
+      },
+      "host_to_host_speedup": 0.46436179030039215,
+      "max_absolute_error": {
+        "player_policy": 8.326672684688674e-16,
+        "enemy_policy": 9.43689570931383e-16,
+        "value": 8.326672684688674e-17,
+        "exploitability": 8.465450562766819e-16
+      },
+      "max_regularized_gap": 2.2204460492503132e-17,
+      "native_max_regularized_gap": 1.7763568394002505e-17
+    },
+    {
+      "batch": 64,
+      "legal_count": 13,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 2.428602998406859,
+      "rust_host_to_host": {
+        "median_ms": 78.24658800018369,
+        "p95_ms": 83.99661320108862,
+        "min_ms": 77.0173969976895,
+        "max_ms": 85.42722800120828
+      },
+      "cuda_host_to_host": {
+        "median_ms": 2.317493999726139,
+        "p95_ms": 3.027664002365782,
+        "min_ms": 2.0927459991071373,
+        "max_ms": 3.035779001947958
+      },
+      "cuda_kernel_events": {
+        "median_ms": 1.7500159740447998,
+        "p95_ms": 1.7612383604049682,
+        "min_ms": 1.745919942855835,
+        "max_ms": 1.7660479545593262
+      },
+      "host_to_host_speedup": 33.76344793532591,
+      "max_absolute_error": {
+        "player_policy": 4.004362230136671e-07,
+        "enemy_policy": 4.1133088024558617e-07,
+        "value": 3.7977704231417775e-08,
+        "exploitability": 2.136556287724023e-07
+      },
+      "max_regularized_gap": 1.3964884404416012e-08,
+      "native_max_regularized_gap": 3.1086244689504386e-17
+    },
+    {
+      "batch": 64,
+      "legal_count": 13,
+      "precision": "fp64",
+      "backend": "triton-anchored-f64-v1",
+      "first_call_ms": 44.58515100122895,
+      "rust_host_to_host": {
+        "median_ms": 78.24658800018369,
+        "p95_ms": 83.99661320108862,
+        "min_ms": 77.0173969976895,
+        "max_ms": 85.42722800120828
+      },
+      "cuda_host_to_host": {
+        "median_ms": 48.75456200170447,
+        "p95_ms": 51.57476899912581,
+        "min_ms": 42.617464998329524,
+        "max_ms": 52.00990999946953
+      },
+      "cuda_kernel_events": {
+        "median_ms": 42.20127868652344,
+        "p95_ms": 46.297498321533205,
+        "min_ms": 41.99193572998047,
+        "max_ms": 47.08454513549805
+      },
+      "host_to_host_speedup": 1.604908028861959,
+      "max_absolute_error": {
+        "player_policy": 1.0547118733938987e-15,
+        "enemy_policy": 1.0685896612017132e-15,
+        "value": 1.3877787807814457e-16,
+        "exploitability": 6.38378239159465e-16
+      },
+      "max_regularized_gap": 3.9968028886505634e-17,
+      "native_max_regularized_gap": 3.1086244689504386e-17
+    },
+    {
+      "batch": 256,
+      "legal_count": 13,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 3.6101949990552384,
+      "rust_host_to_host": {
+        "median_ms": 312.08857000092394,
+        "p95_ms": 323.00897800087114,
+        "min_ms": 307.3866020022251,
+        "max_ms": 324.79087300089304
+      },
+      "cuda_host_to_host": {
+        "median_ms": 3.178848997777095,
+        "p95_ms": 3.412231701076962,
+        "min_ms": 2.9936989994894248,
+        "max_ms": 3.4171070001320913
+      },
+      "cuda_kernel_events": {
+        "median_ms": 2.1440958976745605,
+        "p95_ms": 2.1663456916809083,
+        "min_ms": 2.1391360759735107,
+        "max_ms": 2.1719040870666504
+      },
+      "host_to_host_speedup": 98.17659480496279,
+      "max_absolute_error": {
+        "player_policy": 8.395723253840082e-07,
+        "enemy_policy": 6.548990905963503e-07,
+        "value": 6.588940742319194e-08,
+        "exploitability": 2.6907475658699553e-07
+      },
+      "max_regularized_gap": 2.3315404233947847e-08,
+      "native_max_regularized_gap": 8.881784197001253e-17
+    },
+    {
+      "batch": 256,
+      "legal_count": 13,
+      "precision": "fp64",
+      "backend": "triton-anchored-f64-v1",
+      "first_call_ms": 89.76343899848871,
+      "rust_host_to_host": {
+        "median_ms": 312.08857000092394,
+        "p95_ms": 323.00897800087114,
+        "min_ms": 307.3866020022251,
+        "max_ms": 324.79087300089304
+      },
+      "cuda_host_to_host": {
+        "median_ms": 91.65085600034217,
+        "p95_ms": 99.15721979850787,
+        "min_ms": 84.77750299789477,
+        "max_ms": 100.24878599870135
+      },
+      "cuda_kernel_events": {
+        "median_ms": 81.68553924560547,
+        "p95_ms": 85.24749450683593,
+        "min_ms": 76.97920227050781,
+        "max_ms": 85.70470428466797
+      },
+      "host_to_host_speedup": 3.4051899089710496,
+      "max_absolute_error": {
+        "player_policy": 1.3183898417423734e-15,
+        "enemy_policy": 9.992007221626409e-16,
+        "value": 1.6653345369377348e-16,
+        "exploitability": 8.049116928532385e-16
+      },
+      "max_regularized_gap": 7.105427357601002e-17,
+      "native_max_regularized_gap": 8.881784197001253e-17
+    },
+    {
+      "batch": 1,
+      "legal_count": 0,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 153.7270160006301,
+      "rust_host_to_host": {
+        "median_ms": 0.43778699910035357,
+        "p95_ms": 0.4488980022870237,
+        "min_ms": 0.4141770004935097,
+        "max_ms": 0.45037700328975916
+      },
+      "cuda_host_to_host": {
+        "median_ms": 1.171081999927992,
+        "p95_ms": 1.2927009996928973,
+        "min_ms": 1.1589720015763305,
+        "max_ms": 1.3040710000495892
+      },
+      "cuda_kernel_events": {
+        "median_ms": 0.9461759924888611,
+        "p95_ms": 0.9512959718704224,
+        "min_ms": 0.9277439713478088,
+        "max_ms": 0.9512959718704224
+      },
+      "host_to_host_speedup": 0.37383120834174927,
+      "max_absolute_error": {
+        "player_policy": 0.0,
+        "enemy_policy": 6.3862119481505886e-09,
+        "value": 0.0,
+        "exploitability": 0.0
+      },
+      "max_regularized_gap": 8.940696871739814e-10,
+      "native_max_regularized_gap": -4.4408920985006255e-18
+    },
+    {
+      "batch": 1,
+      "legal_count": 0,
+      "precision": "fp64",
+      "backend": "triton-anchored-f64-v1",
+      "first_call_ms": 238.3561019996705,
+      "rust_host_to_host": {
+        "median_ms": 0.43778699910035357,
+        "p95_ms": 0.4488980022870237,
+        "min_ms": 0.4141770004935097,
+        "max_ms": 0.45037700328975916
+      },
+      "cuda_host_to_host": {
+        "median_ms": 21.57825100221089,
+        "p95_ms": 23.12526099922252,
+        "min_ms": 21.329062998120207,
+        "max_ms": 23.171529999672202
+      },
+      "cuda_kernel_events": {
+        "median_ms": 21.001216888427734,
+        "p95_ms": 21.174374961853026,
+        "min_ms": 20.987775802612305,
+        "max_ms": 21.245952606201172
+      },
+      "host_to_host_speedup": 0.02028834491986854,
+      "max_absolute_error": {
+        "player_policy": 0.0,
+        "enemy_policy": 0.0,
+        "value": 0.0,
+        "exploitability": 0.0
+      },
+      "max_regularized_gap": -4.4408920985006255e-18,
+      "native_max_regularized_gap": -4.4408920985006255e-18
+    },
+    {
+      "batch": 16,
+      "legal_count": 0,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 2.265904000523733,
+      "rust_host_to_host": {
+        "median_ms": 12.736102002236294,
+        "p95_ms": 12.938422998195165,
+        "min_ms": 12.542543998279143,
+        "max_ms": 12.944449998030905
+      },
+      "cuda_host_to_host": {
+        "median_ms": 2.0480059974943288,
+        "p95_ms": 2.064099002382136,
+        "min_ms": 2.02831600108766,
+        "max_ms": 2.0696160027000587
+      },
+      "cuda_kernel_events": {
+        "median_ms": 1.76419198513031,
+        "p95_ms": 1.770905613899231,
+        "min_ms": 1.7589119672775269,
+        "max_ms": 1.7715200185775757
+      },
+      "host_to_host_speedup": 6.218781594301245,
+      "max_absolute_error": {
+        "player_policy": 6.606665634567577e-07,
+        "enemy_policy": 1.118758788026808e-06,
+        "value": 5.030016281271088e-08,
+        "exploitability": 1.1142912270667438e-07
+      },
+      "max_regularized_gap": 2.2499124234798272e-08,
+      "native_max_regularized_gap": 1.2323475573339239e-16
+    },
+    {
+      "batch": 16,
+      "legal_count": 0,
+      "precision": "fp64",
+      "backend": "triton-anchored-f64-v1",
+      "first_call_ms": 53.8550370001758,
+      "rust_host_to_host": {
+        "median_ms": 12.736102002236294,
+        "p95_ms": 12.938422998195165,
+        "min_ms": 12.542543998279143,
+        "max_ms": 12.944449998030905
+      },
+      "cuda_host_to_host": {
+        "median_ms": 54.42109399882611,
+        "p95_ms": 55.980746297791484,
+        "min_ms": 53.80976800006465,
+        "max_ms": 56.05190299684182
+      },
+      "cuda_kernel_events": {
+        "median_ms": 66.33977508544922,
+        "p95_ms": 73.70086364746093,
+        "min_ms": 53.41388702392578,
+        "max_ms": 74.65779113769531
+      },
+      "host_to_host_speedup": 0.23402877572639422,
+      "max_absolute_error": {
+        "player_policy": 5.689893001203927e-16,
+        "enemy_policy": 7.216449660063518e-16,
+        "value": 3.3306690738754696e-16,
+        "exploitability": 3.3306690738754696e-16
+      },
+      "max_regularized_gap": 4.218847493575595e-17,
+      "native_max_regularized_gap": 1.2323475573339239e-16
+    },
+    {
+      "batch": 64,
+      "legal_count": 0,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 2.4646229976497125,
+      "rust_host_to_host": {
+        "median_ms": 41.501612999127246,
+        "p95_ms": 42.9291672015097,
+        "min_ms": 41.09806500127888,
+        "max_ms": 43.507539001439
+      },
+      "cuda_host_to_host": {
+        "median_ms": 2.2645839999313466,
+        "p95_ms": 2.346394699634402,
+        "min_ms": 2.1371950024331454,
+        "max_ms": 2.3501239993493073
+      },
+      "cuda_kernel_events": {
+        "median_ms": 1.7687679529190063,
+        "p95_ms": 1.7771296143531798,
+        "min_ms": 1.7650560140609741,
+        "max_ms": 1.778656005859375
+      },
+      "host_to_host_speedup": 18.32637385073171,
+      "max_absolute_error": {
+        "player_policy": 1.591688200908159e-06,
+        "enemy_policy": 1.4216212367856862e-06,
+        "value": 9.83709280699685e-08,
+        "exploitability": 2.1679778332978072e-07
+      },
+      "max_regularized_gap": 1.0040384939458136e-07,
+      "native_max_regularized_gap": 3.1974423109204507e-16
+    },
+    {
+      "batch": 64,
+      "legal_count": 0,
+      "precision": "fp64",
+      "backend": "triton-anchored-f64-v1",
+      "first_call_ms": 64.73370199819328,
+      "rust_host_to_host": {
+        "median_ms": 41.501612999127246,
+        "p95_ms": 42.9291672015097,
+        "min_ms": 41.09806500127888,
+        "max_ms": 43.507539001439
+      },
+      "cuda_host_to_host": {
+        "median_ms": 59.42005900215008,
+        "p95_ms": 67.5281156978599,
+        "min_ms": 55.7550049998099,
+        "max_ms": 68.72240399752627
+      },
+      "cuda_kernel_events": {
+        "median_ms": 61.0805778503418,
+        "p95_ms": 68.79879913330078,
+        "min_ms": 55.90118408203125,
+        "max_ms": 69.84809875488281
+      },
+      "host_to_host_speedup": 0.6984444932581695,
+      "max_absolute_error": {
+        "player_policy": 1.3322676295501878e-15,
+        "enemy_policy": 1.4988010832439613e-15,
+        "value": 3.3306690738754696e-16,
+        "exploitability": 4.718447854656915e-16
+      },
+      "max_regularized_gap": 2.6645352591003756e-16,
+      "native_max_regularized_gap": 3.1974423109204507e-16
+    },
+    {
+      "batch": 256,
+      "legal_count": 0,
+      "precision": "fp32",
+      "backend": "triton-anchored-f32-v1",
+      "first_call_ms": 2.9015000000072177,
+      "rust_host_to_host": {
+        "median_ms": 171.0317879987997,
+        "p95_ms": 182.34016820097168,
+        "min_ms": 169.60171699975035,
+        "max_ms": 185.14193000009982
+      },
+      "cuda_host_to_host": {
+        "median_ms": 2.7395309989515226,
+        "p95_ms": 2.793442297843285,
+        "min_ms": 2.653722000104608,
+        "max_ms": 2.797629997076001
+      },
+      "cuda_kernel_events": {
+        "median_ms": 1.8452479839324951,
+        "p95_ms": 1.873308789730072,
+        "min_ms": 1.814527988433838,
+        "max_ms": 1.8756799697875977
+      },
+      "host_to_host_speedup": 62.431046797520175,
+      "max_absolute_error": {
+        "player_policy": 2.7596722749767544e-06,
+        "enemy_policy": 1.7391424034784997e-06,
+        "value": 1.2504712820771147e-07,
+        "exploitability": 2.732012599204747e-07
+      },
+      "max_regularized_gap": 6.86237722824501e-08,
+      "native_max_regularized_gap": 2.3980817331903383e-16
+    },
+    {
+      "batch": 256,
+      "legal_count": 0,
+      "precision": "fp64",
+      "backend": "triton-anchored-f64-v1",
+      "first_call_ms": 96.37362400098937,
+      "rust_host_to_host": {
+        "median_ms": 171.0317879987997,
+        "p95_ms": 182.34016820097168,
+        "min_ms": 169.60171699975035,
+        "max_ms": 185.14193000009982
+      },
+      "cuda_host_to_host": {
+        "median_ms": 96.98888899947633,
+        "p95_ms": 103.91057519991591,
+        "min_ms": 91.33036799903493,
+        "max_ms": 104.11931099952199
+      },
+      "cuda_kernel_events": {
+        "median_ms": 88.52787017822266,
+        "p95_ms": 93.40910491943359,
+        "min_ms": 88.10320281982422,
+        "max_ms": 94.95526123046875
+      },
+      "host_to_host_speedup": 1.7634163022500768,
+      "max_absolute_error": {
+        "player_policy": 5.218048215738236e-15,
+        "enemy_policy": 2.6645352591003757e-15,
+        "value": 3.3306690738754696e-16,
+        "exploitability": 1.3877787807814457e-15
+      },
+      "max_regularized_gap": 1.5987211554602254e-16,
+      "native_max_regularized_gap": 2.3980817331903383e-16
+    }
+  ]
+}

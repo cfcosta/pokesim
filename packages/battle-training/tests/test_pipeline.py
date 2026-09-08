@@ -9,7 +9,6 @@ import random
 import sys
 import tempfile
 import unittest
-from collections.abc import Sequence
 from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,7 +18,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 import torch
-
 from battle_training import (
     FULL_PARTY_SIZE,
     generated_level100,
@@ -193,6 +191,7 @@ from battle_training.transformer_pipeline import (
     _resumed_pooled_evidence,
     _rows_to_examples,
     _scheduled_for_opponent,
+    _search_gate_superior,
     _select_training_opponent,
     _serialized_network_config,
     _serialized_snapshot,
@@ -1871,10 +1870,8 @@ class TransformerTests(unittest.TestCase):
             random.Random(11),
         )
         result = search.search(server._snapshot(0), sample_actions=False)
-        self.assertEqual(result.solver, "simultaneous-tree-anchored-qre-v8")
-        self.assertEqual(
-            result.diagnostics["root_solver"], "rust-anchored-f64-v1-t0.02"
-        )
+        self.assertEqual(result.solver, "simultaneous-win-value-anchored-v9")
+        self.assertEqual(result.diagnostics["root_solver"], "rust-anchored-f64-v1")
         self.assertEqual(result.diagnostics["root_joint_actions"], 4)
         # Every cell is stepped, so no cell is estimated from fewer samples than
         # any other and the solve reads a matrix that is balanced by construction.
@@ -2010,7 +2007,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.arena_episodes, 1024)
         self.assertEqual(arguments.search_depth, 2)
         self.assertEqual(arguments.interior_actions_per_side, 3)
-        self.assertEqual(arguments.interior_chance_samples, 1)
+        self.assertEqual(arguments.interior_chance_samples, 2)
         self.assertEqual(arguments.budget, 512)
         self.assertEqual(arguments.search_every, 1)
         self.assertEqual(arguments.epochs, 1)
@@ -2025,7 +2022,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.promotion_policy_games, 2048)
         self.assertEqual(arguments.probe_games, 256)
         self.assertEqual(arguments.campaign_games, 288)
-        self.assertEqual(arguments.chance_samples_per_joint, 2)
+        self.assertEqual(arguments.chance_samples_per_joint, 4)
         self.assertEqual(arguments.regret_iterations, 2048)
         self.assertEqual(arguments.tree_regret_iterations, 16)
         self.assertEqual(arguments.actor_batch_size, 64)
@@ -2041,8 +2038,11 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.leaf_ema_decay, 0.995)
         self.assertEqual(arguments.leaf_loss_weight, 0.25)
         self.assertEqual(arguments.promotion_nonfinish_policy, "losses")
-        self.assertEqual(arguments.promotion_pooled_z, 1.96)
-        self.assertTrue(arguments.bootstrap_promotion)
+        self.assertEqual(arguments.promotion_pooled_z, 0.0)
+        self.assertFalse(arguments.bootstrap_promotion)
+        self.assertEqual(arguments.leaf_evaluator, "full")
+        self.assertEqual(arguments.solver_backend, "auto")
+        self.assertEqual(arguments.solver_precision, "fp32")
         self.assertEqual(arguments.lr_schedule, "step")
         self.assertEqual(arguments.lr_milestones, (10, 20))
         self.assertEqual(arguments.lr_decay_factor, 0.1)
@@ -2923,11 +2923,48 @@ class TransformerTests(unittest.TestCase):
         self.assertTrue(gate_config.policy_only)
         self.assertFalse(_arena_config(config, 4, 99, 2).policy_only)
 
+    def test_deployment_requires_this_candidates_search_improvement(self) -> None:
+        strong_other_evidence = {
+            "policy_gate": {"superior": True, "score_with_nonfinishes_as_losses": 0.95},
+            "pooled": {"triggered": True, "mean": 0.95},
+            "bootstrap_promotion": {"eligible": True},
+        }
+        report = {
+            "data_quality_pass": True,
+            "quality_pass": True,
+            "score_with_nonfinishes_as_losses": 0.45,
+            "paired_score_ci95": [0.42, 0.48],
+            **strong_other_evidence,
+        }
+        self.assertFalse(_search_gate_superior(report, "losses", 0.50))
+        report.update(
+            score_with_nonfinishes_as_losses=0.55, paired_score_ci95=[0.49, 0.61]
+        )
+        self.assertFalse(_search_gate_superior(report, "losses", 0.50))
+        report.update(
+            score_with_nonfinishes_as_losses=0.5, paired_score_ci95=[0.5, 0.5]
+        )
+        self.assertFalse(_search_gate_superior(report, "losses", 0.50))
+        report.update(
+            score_with_nonfinishes_as_losses=0.55, paired_score_ci95=[0.52, 0.58]
+        )
+        self.assertTrue(_search_gate_superior(report, "losses", 0.50))
+        self.assertFalse(_search_gate_superior(report, "losses", 0.56))
+        for field in ("data_quality_pass", "quality_pass"):
+            self.assertFalse(
+                _search_gate_superior({**report, field: False}, "losses", 0.50)
+            )
+        report.update(
+            score_excluding_nonfinish_pairs=None,
+            paired_score_ci95_excluding_nonfinish_pairs=[None, None],
+        )
+        self.assertFalse(_search_gate_superior(report, "exclude-pairs", 0.50))
+
     def test_bootstrap_promotion_flows_from_the_cli(self) -> None:
         arguments = training_parser().parse_args(
             ["transformer-train", "--output", "/tmp/bootstrap"]
         )
-        self.assertTrue(arguments.bootstrap_promotion)
+        self.assertFalse(arguments.bootstrap_promotion)
         disabled = training_parser().parse_args(
             [
                 "transformer-train",
@@ -3777,11 +3814,11 @@ class TransformerTests(unittest.TestCase):
     def test_training_schedule_pairs_every_reset_and_side_assignment(self) -> None:
         self.assertEqual(
             _pipeline_id(),
-            "transformer-variable-party-bf16-rmplus-v32-banded-levels-5m-16k",
+            "transformer-variable-party-v33-independent-win-search",
         )
         self.assertEqual(
             _pipeline_id(False, 2),
-            "transformer-variable-party-bf16-rmplus-v32-banded-levels-5m-16k",
+            "transformer-variable-party-v33-independent-win-search",
         )
         for episode in range(0, 128, 2):
             self.assertEqual(_training_pair(episode), _training_pair(episode + 1))
@@ -4203,7 +4240,7 @@ class TransformerTests(unittest.TestCase):
             random.Random(2),
         ).search(server._snapshot(0), sample_actions=False)
         self.assertEqual(result.nodes, 20)
-        self.assertEqual(result.solver, "simultaneous-tree-anchored-qre-v8")
+        self.assertEqual(result.solver, "simultaneous-win-value-anchored-v9")
         self.assertIsNotNone(result.payoff_matrix)
         for key in (
             "adaptive_deep_selected",
@@ -4244,6 +4281,7 @@ class TransformerTests(unittest.TestCase):
             network,
             JointSearchConfig(
                 max_depth=1,
+                leaf_evaluator="distilled",
             ),
             random.Random(1),
             random.Random(2),
@@ -5351,37 +5389,23 @@ class SolvedInteriorMatrixTest(unittest.TestCase):
         self.assertEqual(len(server.seeds[1]), 16)
         self.assertEqual(len(set(server.seeds[1])), 1)
 
-    def test_the_whole_tree_is_priced_in_one_batched_potential_pass(self) -> None:
-        """Per-leaf shaping was the largest single cost of a second ply.
-
-        ``_settle`` already gathers every leaf before pricing any of them, so
-        the potential is a matrix operation over that batch. Charging it once
-        per leaf instead made a Python scan, not the solver depth was bought
-        for, the thing that grew as the tree did.
-        """
-
-        batches: list[int] = []
-        original = joint_search._tactical_potentials
-
-        def counted(batch: Sequence[Sequence[int]]) -> object:
-            rows = list(batch)
-            batches.append(len(rows))
-            return original(rows)
-
-        with mock.patch.object(joint_search, "_tactical_potentials", counted):
+    def test_win_objective_search_never_computes_tactical_potentials(self) -> None:
+        with mock.patch.object(
+            joint_search,
+            "_tactical_potentials",
+            side_effect=AssertionError("win-value search computed a tactical bonus"),
+        ):
             self._result(_ToyServer())
-        # One pass for the root, one for every leaf of every level at once.
-        self.assertEqual(batches, [1, 16])
 
-    def test_leaf_shaping_is_measured_against_the_root(self) -> None:
+    def test_leaf_hp_improvement_does_not_change_continuation_win_value(self) -> None:
         server = _PotentialLadderToyServer()
         root = _tactical_potential(server._snapshot(0).player_features)
         result = self._result(server)
         leaf = next(handle for handle, state in server.states.items() if state[0] == 2)
         rise = _tactical_potential(server._snapshot(leaf).player_features) - root
-        # Two rungs of chip, not one: a parent-relative leaf would score 0.25.
         self.assertAlmostEqual(rise, 0.5, places=6)
-        self.assertAlmostEqual(result.root_value, rise, places=3)
+        # HP rose by 0.5, but the evaluator's win outcome remained zero.
+        self.assertAlmostEqual(result.root_value, 0.0, places=3)
 
 
 class DistilledInteriorPriorsTest(unittest.TestCase):
@@ -5407,6 +5431,7 @@ class DistilledInteriorPriorsTest(unittest.TestCase):
             "max_depth": 2,
             "max_actions_per_side": 2,
             "interior_actions_per_side": 1,
+            "leaf_evaluator": "distilled",
         }
         settings.update(overrides)
         return SimultaneousTreeSearch(
@@ -5605,16 +5630,19 @@ class SplitHalfReliabilityTest(unittest.TestCase):
             delta=self._AVERAGING_SLACK,
         )
 
-    def test_split_half_hedges_the_published_policy(self) -> None:
+    def test_split_half_diagnostics_preserve_the_mean_matrix_policy(self) -> None:
         result = self._search(_ChanceSplitToyServer())
-        # Prior is pure on action 0 and the mean matrix is flat, so the plain
-        # solve republishes the prior; the two halves are pure on opposite
-        # actions, leaving a two-thirds/one-third hedge.
+        plain = self._search(_ChanceSplitToyServer(), split_half_reliability=False)
+        self.assertEqual(result.player_policy, plain.player_policy)
+        self.assertEqual(result.enemy_policy, plain.enemy_policy)
+        self.assertEqual(result.root_value, plain.root_value)
+        # The mean matrix is flat and retains the prior. Disagreeing worlds
+        # report uncertainty without changing that expected-payoff solution.
         self.assertAlmostEqual(
-            result.player_policy[0], 2.0 / 3.0, delta=self._AVERAGING_SLACK
+            result.player_policy[0], 1.0, delta=self._AVERAGING_SLACK
         )
         self.assertAlmostEqual(
-            result.player_policy[1], 1.0 / 3.0, delta=self._AVERAGING_SLACK
+            result.player_policy[1], 0.0, delta=self._AVERAGING_SLACK
         )
 
     def test_agreeing_chance_worlds_report_no_disagreement(self) -> None:

@@ -96,6 +96,17 @@ def _load_library() -> tuple[ctypes.CDLL, Path]:
         except OSError as error:
             errors.append(f"{candidate}: {error}")
             continue
+        required = (
+            "battle_rmplus_solve_cold_v1",
+            "battle_rmplus_solve_anchored_v1",
+            "battle_rmplus_solve_warm_v1",
+        )
+        missing = [symbol for symbol in required if not hasattr(library, symbol)]
+        if missing:
+            errors.append(
+                f"{candidate}: incompatible ABI, missing {', '.join(missing)}"
+            )
+            continue
         pointer = ctypes.c_void_p
         library.battle_rmplus_solve_cold_v1.argtypes = [
             ctypes.c_uint32,

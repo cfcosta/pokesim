@@ -2,6 +2,12 @@
 
 <!-- mode: explanation -->
 
+For the current executable v33 contracts and defaults, use the
+[search-assisted controller](search-assisted-controller.md). The implementation
+snapshots and performance claims below describe earlier lineages; in particular,
+the shared evaluator, split-half policy averaging, and distilled defaults have
+been replaced.
+
 This page proposes a training architecture around the theorem-backed high-level `Battle` model. It describes boundaries and sequencing; it is not an implementation guide. The supporting literature survey is [Self-play, reinforcement learning, and search research](../research/self-play-rl-search-literature.md).
 
 ## Decision
