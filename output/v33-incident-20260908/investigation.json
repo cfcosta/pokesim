@@ -1,0 +1,57 @@
+{
+  "run": "/media/pokemon-training/v33-bf16-20260908-021523/run",
+  "original_source": "edd3046010c751519dab28fb4c638f35d85e36bd",
+  "rom_sha256": "5ca7ba01642a3b27b0cc0b5349b52792795b62d3ed977e98a09390659af96b7b",
+  "replays_verified_before_fix": {
+    "868": 3,
+    "869": 45
+  },
+  "oom_local_time": "2026-09-08T03:41:39-03:00",
+  "original_evaluation": {
+    "processes": 12,
+    "live_games_per_worker": 86,
+    "total_live_games": 1032,
+    "neural_controller_roots": 2064
+  },
+  "new_defaults": {
+    "processes": 4,
+    "live_games_per_worker_max": 16,
+    "total_live_games_max": 64,
+    "neural_controller_roots_max": 128
+  },
+  "memory_probes_limit_gib": 14,
+  "memory_probe_checkpoint": "initial checkpoint; the trained candidate was lost during OOM",
+  "validation": {
+    "python_tests": 462,
+    "python_skips": 0,
+    "lean_build_targets": 279,
+    "model_fixtures": "10/10",
+    "cartridge_dispatch_cases": "both sides, all 256 effect bytes, functional and physical SM83",
+    "rom_fixture": "PASS: 1048576-byte canonical ROM; retained windows and battle tables agree",
+    "ruff": "PASS",
+    "whitespace": "PASS"
+  },
+  "corrected_native_sha256": "f98203e16b27b5e218b52c6db6bc23c1e69391a62e2f03ecdab81a610b193da0",
+  "four_worker_probe": {
+    "processes": 4,
+    "games": 64,
+    "decision_budget": 1,
+    "precision": "bf16",
+    "engine": "compiled",
+    "seconds": 33.15822149498854,
+    "episodes": 64,
+    "semantic_divergences": 0,
+    "peak_bytes": 12819812352
+  },
+  "preliminary_probe86": {
+    "measurement_complete": true,
+    "process_exit_code": 1,
+    "reporting_error": "AttributeError: SearchServer.native_search_rows does not exist; corrected to search_rows_requested - search_rows_deduplicated for subsequent successful probes"
+  },
+  "source_sha256": {
+    "packages/battle-lean/Battle/Full/Engine.lean": "4234bff97041c20bf80755eb1fcb6e47e49be9a9c730a287160c0660e4fca416",
+    "packages/battle-lean/Battle/Rom/ChargeDispatchRoutine.lean": "efd14a39253e474e27b5f84f865bba8f214c8e189caf6b11479eaf54bf9e5dee",
+    "packages/battle-training/battle_training/arena.py": "f0a7eaca9413369be11722e2d9c58212c31abe88b1c2fdc5cf18a499edfbb3ad",
+    "packages/battle-training/battle_training/cli.py": "19dee785d4020afc6643a9f230c428e5385736572b8fda21d10f063bb03b9930"
+  }
+}

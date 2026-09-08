@@ -2027,7 +2027,7 @@ class TransformerTests(unittest.TestCase):
         self.assertEqual(arguments.tree_regret_iterations, 16)
         self.assertEqual(arguments.actor_batch_size, 64)
         self.assertEqual(arguments.actor_processes, 8)
-        self.assertEqual(arguments.eval_processes, 12)
+        self.assertEqual(arguments.eval_processes, 4)
         self.assertEqual(arguments.token_group_size, 1)
         self.assertEqual(arguments.token_layout, "semantic-entity-v1")
         self.assertTrue(arguments.joint_policy_heads)

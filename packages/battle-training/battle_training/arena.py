@@ -96,6 +96,11 @@ _SUCCESS_EVENTS = {
 }
 
 
+# Two independent controller trees are live for every searched battle.
+# Keep the simulator frontier bounded separately from neural inference batches.
+ARENA_SEARCH_BATCH_SIZE = 16
+
+
 @dataclass(frozen=True)
 class ArenaConfig:
     games: int
@@ -1431,7 +1436,7 @@ def _run_fast_arena_games(
     baseline: BattleTransformer,
     config: ArenaConfig,
     campaign: bool,
-    batch_size: int = 128,
+    batch_size: int = ARENA_SEARCH_BATCH_SIZE,
     capture_details: bool = False,
     processes: int = 1,
     pool: ArenaEvaluationPool | None = None,
@@ -2211,9 +2216,9 @@ def _run_traced_arena_batched(
         replay_dir.mkdir(parents=True, exist_ok=True)
     parallelism = pool.processes if pool is not None else processes
     batch_size = (
-        _arena_parallel_batch_size(config.games, 64, parallelism)
+        _arena_parallel_batch_size(config.games, ARENA_SEARCH_BATCH_SIZE, parallelism)
         if parallelism > 1
-        else 64
+        else ARENA_SEARCH_BATCH_SIZE
     )
     spans = _arena_batch_spans(config.games, batch_size)
     if pool is not None:

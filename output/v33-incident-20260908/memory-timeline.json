@@ -1,0 +1,334 @@
+[
+  {
+    "time": "2026-09-08T06:38:06.928744+00:00",
+    "status": {
+      "battles": 2048,
+      "iteration": 1,
+      "message": "Collecting 2048 self-play battles",
+      "pid": 295191,
+      "stage": "collection",
+      "started_at": "2026-09-08T05:15:42.594031Z",
+      "updated_at": "2026-09-08T05:32:06.483832Z"
+    },
+    "service": {
+      "ActiveState": "active",
+      "FreezerState": "running",
+      "SubState": "running",
+      "ExecMainStatus": "0",
+      "MemoryCurrent": "40567214080",
+      "CPUUsageNSec": "63968060141000"
+    },
+    "gpu": {
+      "code": 0,
+      "output": "0, 8260, 12288, 62",
+      "error": ""
+    },
+    "terminal": null
+  },
+  {
+    "time": "2026-09-08T06:38:38.862428+00:00",
+    "status": {
+      "battles": 2048,
+      "iteration": 1,
+      "message": "Collecting 2048 self-play battles",
+      "pid": 295191,
+      "stage": "collection",
+      "started_at": "2026-09-08T05:15:42.594031Z",
+      "updated_at": "2026-09-08T05:32:06.483832Z"
+    },
+    "service": {
+      "ActiveState": "active",
+      "FreezerState": "running",
+      "SubState": "running",
+      "ExecMainStatus": "0",
+      "MemoryCurrent": "40566878208",
+      "CPUUsageNSec": "63999536420000"
+    },
+    "gpu": {
+      "code": 0,
+      "output": "0, 8256, 12288, 62",
+      "error": ""
+    },
+    "terminal": null
+  },
+  {
+    "time": "2026-09-08T06:39:10.932691+00:00",
+    "status": {
+      "battles": 2048,
+      "iteration": 1,
+      "message": "Collecting 2048 self-play battles",
+      "pid": 295191,
+      "stage": "collection",
+      "started_at": "2026-09-08T05:15:42.594031Z",
+      "updated_at": "2026-09-08T05:32:06.483832Z"
+    },
+    "service": {
+      "ActiveState": "active",
+      "FreezerState": "running",
+      "SubState": "running",
+      "ExecMainStatus": "0",
+      "MemoryCurrent": "40566431744",
+      "CPUUsageNSec": "64031112009000"
+    },
+    "gpu": {
+      "code": 0,
+      "output": "2, 8256, 12288, 63",
+      "error": ""
+    },
+    "terminal": null
+  },
+  {
+    "time": "2026-09-08T06:39:43.025672+00:00",
+    "status": {
+      "battles": 2048,
+      "iteration": 1,
+      "message": "Collecting 2048 self-play battles",
+      "pid": 295191,
+      "stage": "collection",
+      "started_at": "2026-09-08T05:15:42.594031Z",
+      "updated_at": "2026-09-08T05:32:06.483832Z"
+    },
+    "service": {
+      "ActiveState": "active",
+      "FreezerState": "running",
+      "SubState": "running",
+      "ExecMainStatus": "0",
+      "MemoryCurrent": "7925014528",
+      "CPUUsageNSec": "64082111822000"
+    },
+    "gpu": {
+      "code": 0,
+      "output": "0, 3995, 12288, 62",
+      "error": ""
+    },
+    "terminal": null
+  },
+  {
+    "time": "2026-09-08T06:40:13.058254+00:00",
+    "status": {
+      "games": 2048,
+      "iteration": 1,
+      "message": "Running 2,048 paired promotion games",
+      "pid": 295191,
+      "stage": "promotion",
+      "started_at": "2026-09-08T05:15:42.594031Z",
+      "training_diagnostics": {
+        "epoch": 0,
+        "gradient": {
+          "cosine_samples": 7,
+          "mean_cosine": 0.003981731581207628,
+          "negative_cosine_fraction": 0.5714285714285714,
+          "policy_trunk_norm": 0.002893058437621221,
+          "samples": 8,
+          "value_loss_weight": 0.25,
+          "value_policy_norm_ratio": 1.4244814062220037,
+          "value_trunk_norm": 0.00412110795150511,
+          "weighted_value_policy_norm_ratio": 0.3561203515555009,
+          "weighted_value_trunk_norm": 0.0010302769878762774
+        },
+        "heldout": {
+          "battles": 206,
+          "leaf_main_distillation_mse": 0.5887584178380996,
+          "leaf_policy_kl": 0.0653085774811912,
+          "leaf_value_mse": 0.8296050489988145,
+          "policy_cross_entropy": 1.4216956440034565,
+          "policy_kl": 0.06584792284871067,
+          "policy_target_entropy": 1.355847721154746,
+          "policy_top_action_agreement": 0.39271203656678516,
+          "rows": 11814,
+          "split": "original-reset-pair-mod10-v2",
+          "value_mse_equal_battle": 0.9130038291493332,
+          "value_mse_equal_row": 0.9171775304587012,
+          "value_mse_vs_zero_equal_row": -0.0828224695412988,
+          "zero_value_mse": 1.0
+        }
+      },
+      "updated_at": "2026-09-08T06:40:05.626332Z"
+    },
+    "service": {
+      "ActiveState": "active",
+      "FreezerState": "running",
+      "SubState": "running",
+      "ExecMainStatus": "0",
+      "MemoryCurrent": "15192666112",
+      "CPUUsageNSec": "64223473835000"
+    },
+    "gpu": {
+      "code": 0,
+      "output": "0, 8385, 12288, 65",
+      "error": ""
+    },
+    "terminal": null
+  },
+  {
+    "time": "2026-09-08T06:40:43.100757+00:00",
+    "status": {
+      "games": 2048,
+      "iteration": 1,
+      "message": "Running 2,048 paired promotion games",
+      "pid": 295191,
+      "stage": "promotion",
+      "started_at": "2026-09-08T05:15:42.594031Z",
+      "training_diagnostics": {
+        "epoch": 0,
+        "gradient": {
+          "cosine_samples": 7,
+          "mean_cosine": 0.003981731581207628,
+          "negative_cosine_fraction": 0.5714285714285714,
+          "policy_trunk_norm": 0.002893058437621221,
+          "samples": 8,
+          "value_loss_weight": 0.25,
+          "value_policy_norm_ratio": 1.4244814062220037,
+          "value_trunk_norm": 0.00412110795150511,
+          "weighted_value_policy_norm_ratio": 0.3561203515555009,
+          "weighted_value_trunk_norm": 0.0010302769878762774
+        },
+        "heldout": {
+          "battles": 206,
+          "leaf_main_distillation_mse": 0.5887584178380996,
+          "leaf_policy_kl": 0.0653085774811912,
+          "leaf_value_mse": 0.8296050489988145,
+          "policy_cross_entropy": 1.4216956440034565,
+          "policy_kl": 0.06584792284871067,
+          "policy_target_entropy": 1.355847721154746,
+          "policy_top_action_agreement": 0.39271203656678516,
+          "rows": 11814,
+          "split": "original-reset-pair-mod10-v2",
+          "value_mse_equal_battle": 0.9130038291493332,
+          "value_mse_equal_row": 0.9171775304587012,
+          "value_mse_vs_zero_equal_row": -0.0828224695412988,
+          "zero_value_mse": 1.0
+        }
+      },
+      "updated_at": "2026-09-08T06:40:05.626332Z"
+    },
+    "service": {
+      "ActiveState": "active",
+      "FreezerState": "running",
+      "SubState": "running",
+      "ExecMainStatus": "0",
+      "MemoryCurrent": "54031368192",
+      "CPUUsageNSec": "65002568535000"
+    },
+    "gpu": {
+      "code": 0,
+      "output": "0, 9608, 12288, 61",
+      "error": ""
+    },
+    "terminal": null
+  },
+  {
+    "time": "2026-09-08T06:41:13.176469+00:00",
+    "status": {
+      "games": 2048,
+      "iteration": 1,
+      "message": "Running 2,048 paired promotion games",
+      "pid": 295191,
+      "stage": "promotion",
+      "started_at": "2026-09-08T05:15:42.594031Z",
+      "training_diagnostics": {
+        "epoch": 0,
+        "gradient": {
+          "cosine_samples": 7,
+          "mean_cosine": 0.003981731581207628,
+          "negative_cosine_fraction": 0.5714285714285714,
+          "policy_trunk_norm": 0.002893058437621221,
+          "samples": 8,
+          "value_loss_weight": 0.25,
+          "value_policy_norm_ratio": 1.4244814062220037,
+          "value_trunk_norm": 0.00412110795150511,
+          "weighted_value_policy_norm_ratio": 0.3561203515555009,
+          "weighted_value_trunk_norm": 0.0010302769878762774
+        },
+        "heldout": {
+          "battles": 206,
+          "leaf_main_distillation_mse": 0.5887584178380996,
+          "leaf_policy_kl": 0.0653085774811912,
+          "leaf_value_mse": 0.8296050489988145,
+          "policy_cross_entropy": 1.4216956440034565,
+          "policy_kl": 0.06584792284871067,
+          "policy_target_entropy": 1.355847721154746,
+          "policy_top_action_agreement": 0.39271203656678516,
+          "rows": 11814,
+          "split": "original-reset-pair-mod10-v2",
+          "value_mse_equal_battle": 0.9130038291493332,
+          "value_mse_equal_row": 0.9171775304587012,
+          "value_mse_vs_zero_equal_row": -0.0828224695412988,
+          "zero_value_mse": 1.0
+        }
+      },
+      "updated_at": "2026-09-08T06:40:05.626332Z"
+    },
+    "service": {
+      "ActiveState": "active",
+      "FreezerState": "running",
+      "SubState": "running",
+      "ExecMainStatus": "0",
+      "MemoryCurrent": "125885300736",
+      "CPUUsageNSec": "65523173081000"
+    },
+    "gpu": {
+      "code": 0,
+      "output": "100, 6484, 12288, 69",
+      "error": ""
+    },
+    "terminal": null
+  },
+  {
+    "time": "2026-09-08T06:41:43.236558+00:00",
+    "status": {
+      "games": 2048,
+      "iteration": 1,
+      "message": "Running 2,048 paired promotion games",
+      "pid": 295191,
+      "stage": "promotion",
+      "started_at": "2026-09-08T05:15:42.594031Z",
+      "training_diagnostics": {
+        "epoch": 0,
+        "gradient": {
+          "cosine_samples": 7,
+          "mean_cosine": 0.003981731581207628,
+          "negative_cosine_fraction": 0.5714285714285714,
+          "policy_trunk_norm": 0.002893058437621221,
+          "samples": 8,
+          "value_loss_weight": 0.25,
+          "value_policy_norm_ratio": 1.4244814062220037,
+          "value_trunk_norm": 0.00412110795150511,
+          "weighted_value_policy_norm_ratio": 0.3561203515555009,
+          "weighted_value_trunk_norm": 0.0010302769878762774
+        },
+        "heldout": {
+          "battles": 206,
+          "leaf_main_distillation_mse": 0.5887584178380996,
+          "leaf_policy_kl": 0.0653085774811912,
+          "leaf_value_mse": 0.8296050489988145,
+          "policy_cross_entropy": 1.4216956440034565,
+          "policy_kl": 0.06584792284871067,
+          "policy_target_entropy": 1.355847721154746,
+          "policy_top_action_agreement": 0.39271203656678516,
+          "rows": 11814,
+          "split": "original-reset-pair-mod10-v2",
+          "value_mse_equal_battle": 0.9130038291493332,
+          "value_mse_equal_row": 0.9171775304587012,
+          "value_mse_vs_zero_equal_row": -0.0828224695412988,
+          "zero_value_mse": 1.0
+        }
+      },
+      "updated_at": "2026-09-08T06:40:05.626332Z"
+    },
+    "service": {
+      "ActiveState": "failed",
+      "FreezerState": "running",
+      "SubState": "failed",
+      "ExecMainStatus": "15",
+      "MemoryCurrent": "[not set]",
+      "CPUUsageNSec": "65849395585000"
+    },
+    "gpu": {
+      "code": 0,
+      "output": "0, 320, 12288, 64",
+      "error": ""
+    },
+    "terminal": "failed_or_stopped"
+  }
+]

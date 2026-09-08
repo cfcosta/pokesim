@@ -47,6 +47,12 @@ three actions per side at interior nodes, and two interior chance worlds. Every
 neural decision uses search. Full transformer evaluation is the default;
 `--leaf-evaluator distilled` is an explicit approximation to evaluate separately.
 
+Evaluation defaults to four workers and at most sixteen simultaneous battles
+per worker. Search frontiers live in CPU RAM as well as GPU tensors; increasing
+worker count or battle batch width multiplies that memory. Use a cgroup RAM
+limit when launching long runs. The [OOM investigation](../../docs/research/v33-oom-and-division-freezes.md)
+records the measured limits and the cartridge-backed charging fix.
+
 `--solver-backend auto --solver-precision fp32` batches compatible games on CUDA
 when measurements justify the transfer and launch cost, and uses Rust FP64
 otherwise. `--solver-backend rust` selects the reference path.

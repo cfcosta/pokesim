@@ -278,7 +278,7 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
     parser.add_argument("--tree-regret-iterations", type=int, default=16)
     parser.add_argument("--actor-batch-size", type=int, default=16 if smoke else 64)
     parser.add_argument("--actor-processes", type=int, default=1 if smoke else 8)
-    parser.add_argument("--eval-processes", type=int, default=1 if smoke else 12)
+    parser.add_argument("--eval-processes", type=int, default=1 if smoke else 4)
     parser.add_argument("--opponent-checkpoint", type=Path, action="append", default=[])
     parser.add_argument("--opponent-fraction", type=float, default=0.67)
     parser.add_argument("--model-opponent-share", type=float, default=0.5)

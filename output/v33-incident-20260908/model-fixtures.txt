@@ -1,0 +1,11 @@
+PASS  wild-single-turn
+PASS  wild-capture
+PASS  trainer-victory
+PASS  trainer-ai-switch
+PASS  safari-bait-run
+PASS  oldman-tutorial
+PASS  link-mutual-attack
+PASS  faint-switch
+PASS  level-up
+PASS  raw-glitch
+PASS  10/10 fixtures

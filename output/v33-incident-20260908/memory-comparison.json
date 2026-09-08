@@ -1,0 +1,14 @@
+{
+  "cohort_games": 86,
+  "max_policy_error": 2.413988109378762e-06,
+  "actions_identical": true,
+  "native_transitions_identical": true,
+  "native_transitions": 176402,
+  "batch86_peak_gib": 8.060848236083984,
+  "batch16_peak_gib": 4.205528259277344,
+  "peak_reduction_fraction": 0.47827720655358497,
+  "batch86_seconds": 42.42552139899635,
+  "batch16_seconds": 51.37590197198733,
+  "latency_ratio": 1.210966896289051,
+  "caveat": "single-worker, first decision over same 86 initial-checkpoint games; desktop/game activity and compilation included; not a full-iteration throughput benchmark"
+}
