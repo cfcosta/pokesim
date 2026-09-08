@@ -210,32 +210,18 @@ private def sideName : Side → String
   | .player => "player"
   | .enemy => "enemy"
 
-private def defenderLastMove (state : Full.Environment.State) : Side → MoveId
-  | .player => state.engine.enemyLastMove
-  | .enemy => state.engine.playerLastMove
-
-/-- Generated Mirror Move against a recorded Mirror Move recurs without
-consuming chance or returning to the turn driver. Classify that concrete cycle
-as silent divergence instead of using the native call stack as fuel. -/
-private def nestedMirrorCycle (state : Full.Environment.State) (actor : Side)
-    (move : MoveId) : Bool :=
-  move == 119 && defenderLastMove state actor == 119
-
-private def nestedCycleProbe : Full.Environment.State :=
+private def nativeEffectProbe : Full.Environment.State :=
   let state := Full.Environment.resetSized Wram.partyLength
     (Training.linkRng 1 1 Training.generatorStream)
     (Training.linkRng 1 1 Training.battleStream)
   { state with engine := { state.engine with playerLastMove := 119 } }
-
-#guard nestedMirrorCycle nestedCycleProbe .enemy 119
-#guard !nestedMirrorCycle nestedCycleProbe .enemy 118
 
 /-- A concrete witness for the `AnyMoveToSelect` PP-Up anomaly: slot two is
 Disabled, all other slots have zero current PP, but their packed PP-Up bits keep
 the cartridge move menu open. Link forfeit is outside this training profile, so
 there is no policy action that can return from the menu. -/
 private def ppUpNestedOpenProbe : SearchState :=
-  let state := nestedCycleProbe
+  let state := nativeEffectProbe
   let prior := state.engine.battle.player
   let mon := { prior.active.active with
     moves := #[1, 2, 3, 4]
@@ -257,11 +243,8 @@ private partial def normalizeResult (prior : List Full.Engine.Event) :
   | .transitioned state events =>
       .transitioned (classifyOpenState
         (.battle (Full.Environment.settle state) (prior ++ events)))
-  | .nestedMove state actor move events =>
-      if nestedMirrorCycle state actor move then
-        .transitioned (.diverged state "nested-mirror-move-cycle" (prior ++ events))
-      else
-        normalizeResult (prior ++ events) (Full.Environment.resumeNested state actor move)
+  | .nestedMove state actor move next events =>
+      normalizeResult (prior ++ events) (Full.Environment.resumeNested state actor move next)
   | .mimicPending state actor source next events =>
       .transitioned (classifyOpenState
         (.mimic state actor source next (prior ++ events)))
@@ -285,9 +268,9 @@ private def nativeDivergenceReason : NativeStep → Option String
   | _ => none
 
 #guard nativeDivergenceReason
-  (normalizeResult [] (.rngStuck nestedCycleProbe [])) == some "rng-stuck"
+  (normalizeResult [] (.rngStuck nativeEffectProbe [])) == some "rng-stuck"
 #guard nativeDivergenceReason
-  (normalizeResult [] (.divisionFreeze nestedCycleProbe [])) == some "division-freeze"
+  (normalizeResult [] (.divisionFreeze nativeEffectProbe [])) == some "division-freeze"
 
 private def firstOrdinaryAction (state : Full.Environment.State) (side : Side) :
     Option Full.Action :=

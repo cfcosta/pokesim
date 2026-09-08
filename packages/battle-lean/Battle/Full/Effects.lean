@@ -659,7 +659,10 @@ def applyBefore (effect : UInt8) (hit : Bool) (context : Context) : Outcome :=
   | .attackTwice | .twineedle =>
       ⟨context, .repeatHits 2, [.signal (.repeatHits 2)]⟩
   | .mirrorMove =>
-      if context.defenderLastMove == 0 then ⟨context, .failed, []⟩
+      -- MirrorMoveCopyMove rejects a target's failed Mirror Move as well as
+      -- an empty move history (pokered/engine/battle/core.asm).
+      if context.defenderLastMove == 0 || context.defenderLastMove == 119 then
+        ⟨context, .failed, []⟩
       else ⟨context, .callMove context.defenderLastMove,
         [.signal (.callMove context.defenderLastMove)]⟩
   | .statUp stat amount =>
@@ -1311,6 +1314,24 @@ effect context, including any incoming recharge bit, is left unchanged. -/
     (applyAfter Data.Effect.hyperBeam TypeChart.normal true true damage context).context =
       context := by
   change context = context
+  rfl
+
+/-- Mirror Move cannot recursively copy a failed Mirror Move. Its effect
+leaves battle state and RNG untouched while the turn engine handles PP. -/
+@[simp] theorem mirrorMove_rejects_itself (context : Context) (hit : Bool) :
+    applyBefore 0x09 hit { context with defenderLastMove := 119 } =
+      ⟨{ context with defenderLastMove := 119 }, .failed, []⟩ := by
+  rfl
+
+@[simp] theorem mirrorMove_rejects_empty_history (context : Context) (hit : Bool) :
+    applyBefore 0x09 hit { context with defenderLastMove := 0 } =
+      ⟨{ context with defenderLastMove := 0 }, .failed, []⟩ := by
+  rfl
+
+/-- Rejecting Mirror Move preserves ordinary copying, including Counter. -/
+@[simp] theorem mirrorMove_copies_counter (context : Context) (hit : Bool) :
+    applyBefore 0x09 hit { context with defenderLastMove := 68 } =
+      ⟨{ context with defenderLastMove := 68 }, .callMove 68, [.signal (.callMove 68)]⟩ := by
   rfl
 
 end Battle.Full.Effects

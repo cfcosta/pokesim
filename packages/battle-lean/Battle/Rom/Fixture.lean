@@ -6,6 +6,8 @@ import Battle.Rom.HazeDispatchRoutine
 import Battle.Rom.AccuracyRoutine
 import Battle.Rom.CriticalHitRoutine
 import Battle.Rom.HyperBeamRoutine
+import Battle.Rom.MirrorMoveRoutine
+import Battle.Rom.NestedMoveRoutine
 import Battle.Rom.FlyRoutine
 import Battle.Rom.StruggleRoutine
 import Battle.Rom.DamageApplyRoutine
@@ -55,6 +57,8 @@ def retainedLayoutMatches (rom : CanonicalRom) : Bool :=
     AccuracyRoutine.windowAgrees rom.bytes &&
     CriticalHitRoutine.windowAgrees rom.bytes &&
     HyperBeamRoutine.windowAgrees rom.bytes &&
+    MirrorMoveRoutine.windowAgrees rom.bytes &&
+    NestedMoveRoutine.windowAgrees rom.bytes &&
     EffectPrefixes.prefixWindowsAgree rom.bytes &&
     ExplodeRoutine.windowAgrees rom.bytes &&
     ConversionRoutine.windowAgrees rom.bytes &&

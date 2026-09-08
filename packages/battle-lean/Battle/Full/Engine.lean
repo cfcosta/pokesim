@@ -72,7 +72,8 @@ inductive StepResult where
   | capturePending (state : State) (ball : UInt8) (events : List Event)
   | rngStuck (state : State) (events : List Event)
   | divisionFreeze (state : State) (events : List Event)
-  | nestedMove (state : State) (side : Side) (move : MoveId) (events : List Event)
+  | nestedMove (state : State) (side : Side) (move : MoveId)
+      (nextAction : Option Full.Action) (events : List Event)
   | mimicPending (state : State) (side : Side) (sourceSlot : Fin 4)
       (nextAction : Option Full.Action) (events : List Event)
   | runPending (state : State) (side : Side) (opponentAction : Full.Action)
@@ -999,8 +1000,8 @@ private def prependMoveExecuted (who : Side) (move : MoveId) : StepResult → St
       .capturePending state ball (.moveExecuted who move :: events)
   | .rngStuck state events => .rngStuck state (.moveExecuted who move :: events)
   | .divisionFreeze state events => .divisionFreeze state (.moveExecuted who move :: events)
-  | .nestedMove state side nested events =>
-      .nestedMove state side nested (.moveExecuted who move :: events)
+  | .nestedMove state side nested next events =>
+      .nestedMove state side nested next (.moveExecuted who move :: events)
   | .mimicPending state side slot next events =>
       .mimicPending state side slot next (.moveExecuted who move :: events)
   | .runPending state side next events =>
@@ -1090,7 +1091,7 @@ match damageResult with
         .transitioned { state with battle := { state.battle with phase := .ending terminal } }
           (before.events.map .effect ++ [.terminal terminal])
     | .callMove nested => .nestedMove (recordExecutedMove state who moveId generated) who nested
-        (before.events.map .effect)
+        none (before.events.map .effect)
     | .mimicChoice => .mimicPending state who slot none (before.events.map .effect)
     | .failed =>
         let state := recordExecutedMove state who moveId generated
@@ -1411,7 +1412,8 @@ private def prependAction (who : Side) (action : Full.Action) : StepResult → S
   | .capturePending state ball events => .capturePending state ball (.action who action :: events)
   | .rngStuck state events => .rngStuck state (.action who action :: events)
   | .divisionFreeze state events => .divisionFreeze state (.action who action :: events)
-  | .nestedMove state side move events => .nestedMove state side move (.action who action :: events)
+  | .nestedMove state side move next events =>
+      .nestedMove state side move next (.action who action :: events)
   | .mimicPending state side slot next events =>
       .mimicPending state side slot next (.action who action :: events)
   | .runPending state side next events => .runPending state side next (.action who action :: events)
@@ -1440,7 +1442,8 @@ private def prependEvents (prior : List Event) : StepResult → StepResult
   | .capturePending state ball events => .capturePending state ball (prior ++ events)
   | .rngStuck state events => .rngStuck state (prior ++ events)
   | .divisionFreeze state events => .divisionFreeze state (prior ++ events)
-  | .nestedMove state side move events => .nestedMove state side move (prior ++ events)
+  | .nestedMove state side move next events =>
+      .nestedMove state side move next (prior ++ events)
   | .mimicPending state side slot next events =>
       .mimicPending state side slot next (prior ++ events)
   | .runPending state side action events => .runPending state side action (prior ++ events)
@@ -1550,6 +1553,9 @@ private def executePair (state : State) (playerAction enemyAction : Full.Action)
   | .disobediencePending state machine _ events =>
       let next := if first == .player then some enemyAction else none
       .disobediencePending state machine next (prior ++ events)
+  | .nestedMove state side move _ events =>
+      let next := if first == .player then some enemyAction else some playerAction
+      .nestedMove state side move next (prior ++ events)
   | .mimicPending state side slot _ events =>
       let next := if first == .player then some enemyAction else some playerAction
       .mimicPending state side slot next (prior ++ events)
@@ -1822,10 +1828,66 @@ theorem generated_tackle_counter_eligible (state : State) (who : Side)
 /-- Continue a Mirror Move or Metronome request in the same action. Status gating
 is not repeated. The wrapper increment and generated decrement remain separate;
 another nested signal is an explicit continuation, so recursive Metronome is not
-fuel-bounded. -/
-def resumeNested (state : State) (who : Side) (move : MoveId) : StepResult :=
+fuel-bounded. The already committed opposing action stays attached until this
+action completes; the enclosing turn is finished exactly once. -/
+def resumeNested (state : State) (who : Side) (move : MoveId)
+    (nextAction : Option Full.Action) : StepResult :=
   let state := installGeneratedLoadedMove (incrementNestedPp state who) who move
-  attack state who (.fight 0) (some move) true
+  match attack state who (.fight 0) (some move) true with
+  | .transitioned state events =>
+      match nextAction with
+      | none => .transitioned (finishTurn state) events
+      | some action =>
+          if state.forcedReplacement.isSome || state.battle.phase.isTerminal then
+            .transitioned state events
+          else
+            match executeCommitted state who.other action with
+            | .transitioned state more =>
+                .transitioned (finishTurn state) (events ++ more)
+            | result => prependEvents events result
+  | .nestedMove state actor nested _ events =>
+      .nestedMove state actor nested nextAction events
+  | .mimicPending state actor slot _ events =>
+      .mimicPending state actor slot nextAction events
+  | result => result
+
+/-- Recursive move wrappers preserve the same unexecuted opposing action.
+The ROM control-flow counterpart is `NestedMoveRoutine`: a generated move
+tail-jumps within its actor's existing outer turn-driver call frame. -/
+theorem nested_resume_retains_opposing_action (state resumed : State) (who actor : Side)
+    (move generated : MoveId) (next ignored : Option Full.Action) (events : List Event)
+    (nested : attack (installGeneratedLoadedMove (incrementNestedPp state who) who move)
+      who (.fight 0) (some move) true = .nestedMove resumed actor generated ignored events) :
+    resumeNested state who move next = .nestedMove resumed actor generated next events := by
+  simp only [resumeNested, nested]
+
+/-- An explicit generated Mimic menu suspends the current action without
+consuming the already committed opposing action. -/
+theorem nested_mimic_retains_opposing_action (state resumed : State) (who actor : Side)
+    (move : MoveId) (slot : Fin 4) (next ignored : Option Full.Action) (events : List Event)
+    (pending : attack (installGeneratedLoadedMove (incrementNestedPp state who) who move)
+      who (.fight 0) (some move) true = .mimicPending resumed actor slot ignored events) :
+    resumeNested state who move next = .mimicPending resumed actor slot next events := by
+  simp only [resumeNested, pending]
+
+/-- Completing the final ordered action increments the model's turn counter
+once; nested wrappers themselves introduce no extra policy-turn boundary. -/
+theorem nested_final_action_finishes_once (state resumed : State) (who : Side)
+    (move : MoveId) (events : List Event)
+    (completed : attack (installGeneratedLoadedMove (incrementNestedPp state who) who move)
+      who (.fight 0) (some move) true = .transitioned resumed events) :
+    resumeNested state who move none = .transitioned (finishTurn resumed) events := by
+  simp only [resumeNested, completed]
+
+/-- A nested first action that faints a combatant or ends the battle retains
+that boundary and does not execute the pending action. -/
+theorem nested_first_action_preserves_interrupt (state resumed : State) (who : Side)
+    (move : MoveId) (next : Full.Action) (events : List Event)
+    (completed : attack (installGeneratedLoadedMove (incrementNestedPp state who) who move)
+      who (.fight 0) (some move) true = .transitioned resumed events)
+    (interrupted : (resumed.forcedReplacement.isSome || resumed.battle.phase.isTerminal) = true) :
+    resumeNested state who move (some next) = .transitioned resumed events := by
+  simp only [resumeNested, completed, interrupted, if_true]
 
 /-- Legal actions are exposed directly from the engine state. -/
 def legalActions (state : State) (who : Side) : Array Full.Action :=

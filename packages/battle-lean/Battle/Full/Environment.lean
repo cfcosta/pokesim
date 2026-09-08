@@ -662,7 +662,8 @@ inductive StepResult where
   | capturePending (state : State) (ball : UInt8) (events : List Engine.Event)
   | rngStuck (state : State) (events : List Engine.Event)
   | divisionFreeze (state : State) (events : List Engine.Event)
-  | nestedMove (state : State) (side : Side) (move : MoveId) (events : List Engine.Event)
+  | nestedMove (state : State) (side : Side) (move : MoveId)
+      (nextAction : Option Full.Action) (events : List Engine.Event)
   | mimicPending (state : State) (side : Side) (sourceSlot : Fin 4)
       (nextAction : Option Full.Action) (events : List Engine.Event)
   | runPending (state : State) (side : Side) (opponentAction : Full.Action)
@@ -946,7 +947,8 @@ private def lift (outer : State) : Engine.StepResult → StepResult
   | .capturePending engine ball events => .capturePending { outer with engine } ball events
   | .rngStuck engine events => .rngStuck { outer with engine } events
   | .divisionFreeze engine events => .divisionFreeze { outer with engine } events
-  | .nestedMove engine side move events => .nestedMove { outer with engine } side move events
+  | .nestedMove engine side move next events =>
+      .nestedMove { outer with engine } side move next events
   | .mimicPending engine side slot next events =>
       .mimicPending { outer with engine } side slot next events
   | .runPending engine side action events => .runPending { outer with engine } side action events
@@ -1011,8 +1013,9 @@ def executeTrainerPlan (player : Full.Action) : TrainerPlan → Option StepResul
       some (step { state with engine } player (.item { item := itemId, partyTarget := target }))
   | .choosingMove _ _ | .invalidClass _ => none
 
-def resumeNested (state : State) (who : Side) (move : MoveId) : StepResult :=
-  lift state (Engine.resumeNested state.engine who move)
+def resumeNested (state : State) (who : Side) (move : MoveId)
+    (nextAction : Option Full.Action) : StepResult :=
+  lift state (Engine.resumeNested state.engine who move nextAction)
 
 /-- Typed ordinary-player Mimic menu response. -/
 def resumeMimic (state : State) (who : Side) (sourceSlot targetSlot : Fin 4)

@@ -1,0 +1,236 @@
+{
+  "status": "historical failure reproduced before fixes; all listed paths now succeed",
+  "root": {
+    "seed": 772131,
+    "episode": 2,
+    "player_party_size": 6,
+    "enemy_party_size": 6,
+    "level100": true,
+    "balanced_final_species": true,
+    "player_hash": "12363229570963607645",
+    "enemy_hash": "2822405831385976790"
+  },
+  "search": {
+    "decision_seed": 772133,
+    "selection_rng_xor": "0x53454C454354",
+    "chance_rng_xor": "0x4348414E4345",
+    "max_depth": 2,
+    "chance_samples_per_joint": 2,
+    "interior_actions_per_side": 3,
+    "interior_chance_samples": 1
+  },
+  "before": {
+    "failure": "search-semantic-divergence",
+    "interior_divergences": 4,
+    "native_sha256": null,
+    "source_sha256": null,
+    "hash_availability": "Original capture did not record pre-fix binary or source hashes."
+  },
+  "fixes": [
+    "Mirror Move rejects last move zero and119, matching pokered/engine/battle/core.asm MirrorMoveCopyMove.",
+    "Nested Mirror Move and Metronome preserve committed opposing action and finish enclosing turn once."
+  ],
+  "after": {
+    "native_sha256": "ec371bba82f7e6003ed74b19e3ab98f271dc8a7a9df81d3c516ec7fedaf08cfa",
+    "source_sha256": {
+      "packages/battle-lean/Battle/Full/Effects.lean": "6a9b0a73d3bed37c2385810fe8c9bb17a5121c86c3b7d5934dc2e7b6738a44cc",
+      "packages/battle-lean/Battle/Full/Engine.lean": "61cb709f1b62eb28f931f9f272c744a8e8cf34a138c2b5bd4e664a16271be329",
+      "packages/battle-lean/Battle/Full/Environment.lean": "8ab7e8f0afcb7799eb2f0e20359af74b092858e16ddf04b0b5e08e4c12a4c7a6",
+      "packages/battle-lean/Battle/RL/FullSearchServerMain.lean": "5d1f5bb35a3f47f5c32a6bdd85dd17157000fd3158b3b5e1f67d30d29b738972",
+      "packages/battle-lean/Battle/Rom/NestedMoveRoutine.lean": "3fc50983c1a1eb8c79447126158a2176fb8656894ecd5f6f69c4187bdca24336"
+    },
+    "full_search_evidence": "output/divergence-reproduction-fixed.json",
+    "validation": {
+      "native_regression_tests": 4,
+      "lean_mechanics_guards": [
+        "Metronome first actor retains opposing action",
+        "recursive Mirror Move to Metronome retains opposing action",
+        "generated nonlink Mimic menu retains pending opposing action",
+        "generated self-KO preserves forced replacement"
+      ],
+      "nested_cartridge_proof_module": "Battle.Rom.NestedMoveRoutine",
+      "nested_cartridge_theorems": [
+        "canonical_nested_control_exact",
+        "canonical_nested_physical_exact",
+        "canonical_outer_driver_exact"
+      ],
+      "proof_scope": "Exact CALL/JP/RET nested control windows and both outer turn-driver windows. Picker/effect bodies remain separate. Outer nonterminal helper returns explicitly preserve selected actions; escape and target-faint branches are checked before these helpers."
+    }
+  },
+  "paths": [
+    {
+      "steps": [
+        {
+          "player_action": 6,
+          "enemy_action": 8,
+          "chance_seed": 8332583627480706287,
+          "after_player_hash": "",
+          "after_enemy_hash": "",
+          "after_turn": 1,
+          "after_divergence": null
+        },
+        {
+          "player_action": 1,
+          "enemy_action": 1,
+          "chance_seed": 7847643833579780240,
+          "after_player_hash": "",
+          "after_enemy_hash": "",
+          "after_turn": 2,
+          "after_divergence": null
+        }
+      ],
+      "before_reason": "nested-mirror-move-cycle",
+      "representative_before_failed_state": {
+        "request": "silent-divergence",
+        "sides": {
+          "player": {
+            "species": "Spearow",
+            "hp": 196,
+            "last_move": 119,
+            "mirror_move_pp": 23
+          },
+          "enemy": {
+            "species": "Spearow",
+            "hp": 194,
+            "last_move": 119,
+            "mirror_move_pp": 19
+          }
+        },
+        "events": [
+          {
+            "kind": "action",
+            "side": 0,
+            "action": 1
+          },
+          {
+            "kind": "move-executed",
+            "side": 0,
+            "move_id": 119,
+            "move": "Mirror Move"
+          },
+          {
+            "kind": "action",
+            "side": 1,
+            "action": 1
+          },
+          {
+            "kind": "move-executed",
+            "side": 1,
+            "move_id": 119,
+            "move": "Mirror Move"
+          }
+        ]
+      },
+      "representative_after_completed_state": {
+        "request": "battle",
+        "sides": {
+          "player": {
+            "species": "Spearow",
+            "hp": 196,
+            "last_move": 119,
+            "mirror_move_pp": 23
+          },
+          "enemy": {
+            "species": "Spearow",
+            "hp": 194,
+            "last_move": 119,
+            "mirror_move_pp": 19
+          }
+        },
+        "events": [
+          {
+            "kind": "action",
+            "side": 0,
+            "action": 1
+          },
+          {
+            "kind": "move-executed",
+            "side": 0,
+            "move_id": 119,
+            "move": "Mirror Move"
+          },
+          {
+            "kind": "action",
+            "side": 1,
+            "action": 1
+          },
+          {
+            "kind": "move-executed",
+            "side": 1,
+            "move_id": 119,
+            "move": "Mirror Move"
+          }
+        ]
+      }
+    },
+    {
+      "steps": [
+        {
+          "player_action": 6,
+          "enemy_action": 8,
+          "chance_seed": 243432512997280765,
+          "after_player_hash": "",
+          "after_enemy_hash": "",
+          "after_turn": 1,
+          "after_divergence": null
+        },
+        {
+          "player_action": 1,
+          "enemy_action": 1,
+          "chance_seed": 7847643833579780240,
+          "after_player_hash": "",
+          "after_enemy_hash": "",
+          "after_turn": 2,
+          "after_divergence": null
+        }
+      ],
+      "before_reason": "nested-mirror-move-cycle"
+    },
+    {
+      "steps": [
+        {
+          "player_action": 9,
+          "enemy_action": 8,
+          "chance_seed": 8332583627480706287,
+          "after_player_hash": "",
+          "after_enemy_hash": "",
+          "after_turn": 1,
+          "after_divergence": null
+        },
+        {
+          "player_action": 1,
+          "enemy_action": 1,
+          "chance_seed": 7847643833579780240,
+          "after_player_hash": "",
+          "after_enemy_hash": "",
+          "after_turn": 2,
+          "after_divergence": null
+        }
+      ],
+      "before_reason": "nested-mirror-move-cycle"
+    },
+    {
+      "steps": [
+        {
+          "player_action": 9,
+          "enemy_action": 8,
+          "chance_seed": 243432512997280765,
+          "after_player_hash": "",
+          "after_enemy_hash": "",
+          "after_turn": 1,
+          "after_divergence": null
+        },
+        {
+          "player_action": 1,
+          "enemy_action": 1,
+          "chance_seed": 7847643833579780240,
+          "after_player_hash": "",
+          "after_enemy_hash": "",
+          "after_turn": 2,
+          "after_divergence": null
+        }
+      ],
+      "before_reason": "nested-mirror-move-cycle"
+    }
+  ]
+}

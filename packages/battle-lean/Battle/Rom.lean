@@ -15,6 +15,8 @@ import Battle.Rom.InitBattleRoutine
 import Battle.Rom.OuterReturnRoutine
 import Battle.Rom.DriverClosure
 import Battle.Rom.EffectRoutines
+import Battle.Rom.MirrorMoveRoutine
+import Battle.Rom.NestedMoveRoutine
 import Battle.Rom.EffectPrefixes
 import Battle.Rom.ExplodeRoutine
 import Battle.Rom.ConversionRoutine

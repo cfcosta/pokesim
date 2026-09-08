@@ -101,7 +101,7 @@ def LinkSnapshot.ofPair (pair : Full.Link.Pair)
 
 inductive TranscriptCommand where
   | turn (player enemy : Full.Action)
-  | nested (side : Side) (move : MoveId)
+  | nested (side : Side) (move : MoveId) (next : Option Full.Action)
   | mimic (side : Side) (source target : Fin 4) (next : Option Full.Action)
   | captureName (response : Full.CaptureProtocol.NameResponse)
   | learning (index : Nat) (machine : Full.Learning.Machine)
@@ -126,7 +126,7 @@ private def stateOfStep :
     Full.Environment.StepResult → Full.Environment.State
   | .transitioned state _ | .ineffectiveAction state _ | .invalidAction state _
   | .capturePending state _ _ | .rngStuck state _ | .divisionFreeze state _
-  | .nestedMove state _ _ _ | .mimicPending state _ _ _ _
+  | .nestedMove state _ _ _ _ | .mimicPending state _ _ _ _
   | .runPending state _ _ _ | .wildFaintRunPending state _
   | .disobediencePending state _ _ _ | .inactive state => state
 
@@ -142,8 +142,8 @@ def replayCommand (transcript : TranscriptState) : TranscriptCommand → Transcr
   | .turn player enemy =>
       let state := stateOfStep (Full.Environment.step transcript.state player enemy)
       { transcript with state := state }
-  | .nested side move =>
-      let state := stateOfStep (Full.Environment.resumeNested transcript.state side move)
+  | .nested side move next =>
+      let state := stateOfStep (Full.Environment.resumeNested transcript.state side move next)
       { transcript with state := state }
   | .mimic side source target next =>
       let state := stateOfStep

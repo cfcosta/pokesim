@@ -69,6 +69,8 @@ import Battle.Rom.EffectRoutines
 import Battle.Rom.AccuracyRoutine
 import Battle.Rom.CriticalHitRoutine
 import Battle.Rom.HyperBeamRoutine
+import Battle.Rom.MirrorMoveRoutine
+import Battle.Rom.NestedMoveRoutine
 import Battle.Rom.EffectPrefixes
 import Battle.Rom.ExplodeRoutine
 import Battle.Rom.ConversionRoutine

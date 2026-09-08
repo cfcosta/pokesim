@@ -77,9 +77,9 @@ private def handleResult : Nat → Environment.StepResult →
   | _, .capturePending state _ events => (state, events, .capturePending)
   | _, .rngStuck state events => (state, events, .rngStuck)
   | _, .divisionFreeze state events => (state, events, .divisionFreeze)
-  | 0, .nestedMove state _ _ events => (state, events, .nestedOpen)
-  | remaining + 1, .nestedMove state side move events =>
-      let (state, more, reason) := handleResult remaining (Environment.resumeNested state side move)
+  | 0, .nestedMove state _ _ _ events => (state, events, .nestedOpen)
+  | remaining + 1, .nestedMove state side move next events =>
+      let (state, more, reason) := handleResult remaining (Environment.resumeNested state side move next)
       (state, events ++ more, reason)
   | _, .mimicPending state _ _ _ events => (state, events, .nestedOpen)
   | _, .runPending state _ _ events => (state, events, .externalRandomRequired)
