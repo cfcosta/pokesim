@@ -1,0 +1,6 @@
+/tmp/pokemon-v33-charge-proof-negative/EngineBeforeFix.lean:1974:2: error: Tactic `native_decide` evaluated that the proposition
+  (match result with
+    | Full.Engine.StepResult.transitioned state events => true
+    | x => false) =
+    true
+is false

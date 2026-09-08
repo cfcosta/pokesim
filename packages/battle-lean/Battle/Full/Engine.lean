@@ -1026,7 +1026,8 @@ def startsCharging (effect : UInt8) (action : Full.Action) : Bool :=
   simp [startsCharging]
   split <;> rfl
 
-private def executeMove (state : State) (who : Side) (action : Full.Action)
+/-- Actual move executor, after status gating; exposed for refinement theorems. -/
+def executeMove (state : State) (who : Side) (action : Full.Action)
     (moveId : MoveId) (slot : Fin 4) (attacker : Battle.SideState)
     (attackerFull defenderFull : Full.SideState) (rng : Rng.LinkRng)
     (generated : Bool := false) : StepResult :=
@@ -1171,6 +1172,53 @@ match damageResult with
           else
             let (state, residualEvents) := applyResidual state who
             .transitioned state (events ++ residualEvents)
+
+/-- Specification of first-turn charging at the move-execution boundary.
+The supplied attacker and RNG have already passed status gating. Only the
+charging/invulnerability bits change after installing those prepared inputs.
+This specification is not used by the runtime executor. -/
+def chargeSetupState (state : State) (who : Side) (attacker : Battle.SideState)
+    (attackerFull : Full.SideState) (rng : Rng.LinkRng) (invulnerable : Bool) : State :=
+  let status := attacker.volatile.status1 ||| 0x10
+  let status := if invulnerable then status ||| 0x40 else status
+  let attacker := { attacker with volatile := { attacker.volatile with status1 := status } }
+  { state with battle :=
+      ({ state.battle with rng }).setSide who { attackerFull with active := attacker } }
+
+/-- For arbitrary states, stats, screens, RNG streams, sides, slots, and
+generated moves, initial charging returns exactly the setup transition.
+In particular it cannot return divisionFreeze or consume critical/damage/
+accuracy RNG. No nonzero-divisor hypothesis is needed. -/
+theorem executeMove_initial_charge_exact (state : State) (who : Side)
+    (action : Full.Action) (moveId : MoveId) (slot : Fin 4)
+    (attacker : Battle.SideState) (attackerFull defenderFull : Full.SideState)
+    (rng : Rng.LinkRng) (generated effectInvulnerable : Bool)
+    (charge : (EffectPlan.plan (Data.moveData moveId).effect).mechanic =
+      .charge effectInvulnerable)
+    (initial : (action != .noAction) = true) :
+    executeMove state who action moveId slot attacker attackerFull defenderFull rng generated =
+      .transitioned
+        (chargeSetupState state who attacker attackerFull rng
+          (effectInvulnerable || moveId == 91))
+        [.effect (.signal (.charging (effectInvulnerable || moveId == 91)))] := by
+  simp only [executeMove, startsCharging, charge, initial, ↓reduceIte]
+  rw [Effects.charge_before_exact _ _ _ _ charge]
+  cases who <;> rfl
+
+/-- Whole-mon equality preserves HP, PP, moves and combat stats. The opposing
+full side and the acting party storage also remain unchanged. -/
+theorem chargeSetupState_preserves (state : State) (who : Side)
+    (attacker : Battle.SideState) (attackerFull : Full.SideState)
+    (rng : Rng.LinkRng) (invulnerable : Bool) :
+    let after := chargeSetupState state who attacker attackerFull rng invulnerable
+    after.battle.rng = rng ∧
+    (after.battle.side who).active.active = attacker.active ∧
+    (after.battle.side who).party = attackerFull.party ∧
+    (after.battle.side who.other) = state.battle.side who.other ∧
+    after.sharedDamage = state.sharedDamage ∧
+    after.playerSelection = state.playerSelection ∧
+    after.enemySelection = state.enemySelection := by
+  cases who <;> exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 def confusionSelfHitPower : UInt8 := 40
 

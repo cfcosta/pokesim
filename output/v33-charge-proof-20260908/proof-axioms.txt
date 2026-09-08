@@ -1,0 +1,16 @@
+'Battle.Full.Effects.charge_before_exact' depends on axioms: [propext, Quot.sound]
+'Battle.Full.Engine.executeMove_initial_charge_exact' depends on axioms: [propext, Quot.sound]
+'Battle.Full.Engine.chargeSetupState_preserves' depends on axioms: [propext, Quot.sound]
+'Battle.Rom.ChargeDispatchRoutine.engine_charge_exact' depends on axioms: [propext, Quot.sound]
+'Battle.Rom.ChargeDispatchRoutine.cartridge_charge_refines_executor' depends on axioms: [propext,
+ Quot.sound,
+ Battle.Rom.ChargeDispatchRoutine.cartridge_dispatch_matches_model._native.native_decide.ax_1_2,
+ Battle.Rom.ChargeDispatchRoutine.cartridge_dispatch_matches_model._native.native_decide.ax_1_3,
+ Battle.Rom.ChargeDispatchRoutine.exhaustive_checked._native.native_decide.ax_1_1✝,
+ Battle.Rom.ChargeRoutine.setup_matrix_checked._native.native_decide.ax_1_1✝]
+'Battle.Rom.ChargeDispatchRoutine.incident_release_still_freezes' depends on axioms: [propext,
+ Quot.sound,
+ Battle.Rom.ChargeDispatchRoutine.incident_release_still_freezes._native.native_decide.ax_1_1,
+ Battle.Rom.ChargeDispatchRoutine.incident_release_still_freezes._native.native_decide.ax_1_2,
+ Battle.Rom.ChargeDispatchRoutine.incident_release_still_freezes._native.native_decide.ax_1_3,
+ Battle.Rom.ChargeDispatchRoutine.incident_release_still_freezes._native.native_decide.ax_1_4]

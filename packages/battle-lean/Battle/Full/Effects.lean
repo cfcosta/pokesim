@@ -1011,6 +1011,23 @@ theorem bide_thrash_lock_witnesses (context : Context) :
     startLock, setAttackerVolatile, withAttacker, storing_set_bit, thrashing_set_bit,
     Wram.rnsConsumed]
 
+/-- Exact whole-context charge setup, including preservation of RNG, HP, PP,
+the defender, and every field other than the attacker's first status byte. -/
+theorem charge_before_exact (effect : UInt8) (effectInvulnerable hit : Bool)
+    (context : Context)
+    (charge : (plan effect).mechanic = .charge effectInvulnerable) :
+    applyBefore effect hit context =
+      let invulnerable := effectInvulnerable || context.move == 91
+      let status := context.attacker.volatile.status1 ||| 0x10
+      let status := if invulnerable then status ||| 0x40 else status
+      { context := { context with attacker := { context.attacker with
+          volatile := { context.attacker.volatile with status1 := status } } },
+        signal := .charging invulnerable,
+        events := [.signal (.charging invulnerable)] } := by
+  simp only [applyBefore, charge, setAttackerVolatile, withAttacker,
+    setBit, mask, Wram.BattleStatus1.chargingUp, Wram.BattleStatus1.invulnerable]
+  rfl
+
 /-- Fly and Dig set both charging and invulnerability. Other moves sharing
 `CHARGE_EFFECT` set only charging. Dig is distinguished by canonical move ID
 `$5b`, exactly as the ROM does after its effect comparison. -/

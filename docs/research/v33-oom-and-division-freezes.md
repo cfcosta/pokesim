@@ -51,6 +51,10 @@ effect dispatcher/presentation is an explicit boundary; the existing
 `ChargeRoutine` separately proves setup writes and continuation clearing.
 The ROM fixture now checks these additional windows in the hash-verified ROM.
 This is routine-boundary evidence, not a claim of whole-battle ROM bisimulation.
+The subsequent [executor proof](v33-charge-executor-proof.md) closes the gap
+between that dispatch predicate and the actual Lean executor with universal
+whole-result equality, a cartridge setup connection, and a negative control
+against the old executor.
 
 ## Why RAM reached 119 GiB
 

@@ -107,22 +107,24 @@ private def expectedStatus (case : CanonicalMove) (status : UInt8) : UInt8 :=
   let charged := status ||| 0x10
   if case.invulnerable then charged ||| 0x40 else charged
 
-private def setupMemory (case : CanonicalMove) (enemyTurn : Bool)
+private def setupMemoryWith (bytes : List Byte) (case : CanonicalMove) (enemyTurn : Bool)
     (status other : UInt8) : FlatMemory :=
-  let memory := install default setupEntry setupBytes
+  let memory := install default setupEntry bytes
   let memory := memory.write (actingStatus enemyTurn) (Byte.ofNat status.toNat)
   let memory := memory.write (otherStatus enemyTurn) (Byte.ofNat other.toNat)
   let memory := memory.write (actingMove enemyTurn) (Byte.ofNat case.move.toNat)
   memory.write (actingEffect enemyTurn) (Byte.ofNat case.effect.toNat)
 
-private def setupInitial (case : CanonicalMove) (enemyTurn : Bool)
+private def setupInitialWith (bytes : List Byte) (case : CanonicalMove) (enemyTurn : Bool)
     (status other : UInt8) : FunctionalState :=
   let registers := ((default : Registers).setHL (actingStatus enemyTurn)).setDE
     (actingEffect enemyTurn)
   let registers := registers.set8 .b
     (Byte.ofNat (incomingAnimation enemyTurn).toNat)
   { registers := { registers with pc := setupEntry }
-    memory := setupMemory case enemyTurn status other }
+    memory := setupMemoryWith bytes case enemyTurn status other }
+
+private def setupInitial := setupInitialWith setupBytes
 
 private def setupStop (state : FunctionalState) : Bool :=
   state.registers.pc == setupEnd
@@ -308,6 +310,32 @@ structure RequiredChargeBytes (rom : Array Byte) : Prop where
 structure CanonicalChargeBytes (sha256 : Sha256) (rom : CanonicalRom) : Prop where
   identity : rom.Valid sha256
   charge : RequiredChargeBytes rom.bytes
+
+/-- Observe the acting status byte after executing the caller's actual ROM
+setup window. Entry is the shared effect routine, exit is presentation. -/
+def cartridgeSetupStatus (rom : Array Byte) (case : CanonicalMove)
+    (enemyTurn : Bool) (status : UInt8) : UInt8 :=
+  let bytes := (Tables.tableBytes rom (romOffset 0x0F setupEntry) setupBytes.length).map
+    (fun byte => Byte.ofNat byte.toNat)
+  let result := Program.runUntil setupStop 16
+    (setupInitialWith bytes case enemyTurn status 0xA5) [] 0
+  Driver.toByte ((Driver.finalState result).memory.read (actingStatus enemyTurn))
+
+/-- Tie the computed setup observation to supplied cartridge bytes, rather
+than merely comparing the model with a hand-written status formula. -/
+theorem cartridge_setup_status_exact {rom : Array Byte}
+    (required : RequiredChargeBytes rom) (case : CanonicalMove)
+    (enemyTurn : Bool) (status : UInt8) :
+    cartridgeSetupStatus rom case enemyTurn status =
+      (if case.invulnerable then status ||| 0x10 ||| 0x40 else status ||| 0x10) := by
+  have bytes : (Tables.tableBytes rom (romOffset 0x0F setupEntry) setupBytes.length).map
+      (fun byte => Byte.ofNat byte.toNat) = setupBytes := by
+    rw [required.setup]
+    rfl
+  have checked := (charge_setup_exact case enemyTurn status).1
+  simp only [setupHolds, Bool.and_eq_true, beq_iff_eq] at checked
+  simpa only [cartridgeSetupStatus, bytes, setupRun, setupInitial, expectedStatus]
+    using checked.1.1.1.1.2
 
 def windowAgrees (rom : Array Byte) : Bool :=
   decide (Tables.tableBytes rom (romOffset 0x0F setupEntry) setupBytes.length =

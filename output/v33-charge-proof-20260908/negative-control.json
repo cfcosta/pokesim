@@ -1,0 +1,16 @@
+{
+  "old_executor_commit": "edd3046010c751519dab28fb4c638f35d85e36bd",
+  "old_initial_charge_freeze_assertion": "passed",
+  "required_transition_assertion": "rejected as false",
+  "errors": 1,
+  "isolated_source": "/tmp/pokemon-v33-charge-proof-negative/EngineBeforeFix.lean",
+  "command": [
+    "lake",
+    "-d",
+    "packages/battle-lean",
+    "env",
+    "lean",
+    "/tmp/pokemon-v33-charge-proof-negative/EngineBeforeFix.lean"
+  ],
+  "source_note": "Current Engine.lean with pre-fix executeMove body and without the new universal proof; appended incident definitions and positive-freeze/negative-transition assertions."
+}

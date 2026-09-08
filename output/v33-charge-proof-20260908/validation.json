@@ -1,0 +1,28 @@
+{
+  "lean_build": {
+    "status": "passed",
+    "targets": 279
+  },
+  "python_tests": {
+    "status": "passed",
+    "count": 462,
+    "skipped": 0
+  },
+  "battle_fixtures": {
+    "status": "passed",
+    "count": 10
+  },
+  "rom_fixture": {
+    "status": "passed",
+    "result": "PASS canonical ROM fixture: 1048576 bytes, retained windows and battle tables agree"
+  },
+  "rom_sha256": "5ca7ba01642a3b27b0cc0b5349b52792795b62d3ed977e98a09390659af96b7b",
+  "source_sha256": {
+    "packages/battle-lean/Battle/Full/Engine.lean": "54195992d5e07f1bb1f9a3d833cb663392e8292b17e8e3affc81cfdecd669eb9",
+    "packages/battle-lean/Battle/Full/Effects.lean": "41edfc8231ef1971e2091d7049824ddda9f15ba00c7d61d55679c42e763faf64",
+    "packages/battle-lean/Battle/Rom/ChargeRoutine.lean": "47ff6b81c5b45a6f1e370f733ceac02867aaeb2565172675be5f8697aae1aab2",
+    "packages/battle-lean/Battle/Rom/ChargeDispatchRoutine.lean": "3f3f22e9cee2c8e533d51a7786944de9c6c1bdff03a97b6d94f060aad7d4d3e8"
+  },
+  "canonical_source_check": "PASS canonical Red retained: symbols=21136, rom_sha1=ea9bcae617fdf159b045185467ae58b2e4a48b9a, rgbds=1.0.2+hotfix",
+  "negative_control": "Old executor freeze assertion passed; required charging transition rejected as false."
+}
