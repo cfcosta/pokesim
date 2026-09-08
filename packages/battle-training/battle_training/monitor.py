@@ -137,6 +137,7 @@ def _aggregate_actor_progress(actors: list[dict[str, Any]]) -> dict[str, Any] | 
     summed = (
         "completed",
         "total",
+        "active_battles",
         "finished",
         "truncated",
         "semantic_divergences",

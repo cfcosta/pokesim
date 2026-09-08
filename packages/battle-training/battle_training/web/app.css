@@ -213,6 +213,7 @@ main { width: min(1520px, 100%); margin: 0 auto; padding: 24px clamp(16px, 3vw, 
 .actor-copy { display: flex; justify-content: space-between; font-size: 0.72rem; }
 .actor-copy span { color: var(--muted); }
 .actor-copy strong { font-variant-numeric: tabular-nums; }
+.actor-activity { color: var(--muted); font-size: 0.72rem; }
 .actor-track { height: 6px; border-radius: 4px; background: rgba(255,255,255,0.07); overflow: hidden; }
 .actor-track span { display: block; height: 100%; background: var(--blue); border-radius: inherit; transition: width 220ms ease-out; }
 

@@ -343,6 +343,9 @@ function renderActors(data) {
     fill.style.width = `${Math.min(100, ratio * 100)}%`;
     track.append(fill);
     row.append(copy, track);
+    if (actor.active_battles != null) {
+      row.append(element("span", "actor-activity", `${number(actor.active_battles)} active · ${number(actor.decision)} decisions completed`));
+    }
     root.append(row);
   }
 }
@@ -413,7 +416,7 @@ function renderSelfplay(data) {
   const total = collection?.total ?? completed;
   const ratio = total ? completed / total : 0;
   $("collection-progress-bar").style.width = `${Math.min(100, ratio * 100)}%`;
-  text($("collection-record"), collection ? `${number(completed)} / ${number(total)} battles · ${number(collection.finished)} returned` : "Waiting for results");
+  text($("collection-record"), collection ? `${number(completed)} / ${number(total)} battles · ${number(collection.active_battles)} active · ${number(collection.finished)} returned` : "Waiting for results");
 
   const summaries = [
     ["Player W–L–D", collection ? `${number(collection.player_wins)}–${number(collection.enemy_wins)}–${number(collection.draws)}` : "—"],

@@ -1553,7 +1553,6 @@ def _collect_rows_single(
         write_actor_progress(
             progress_path, process, 0, len(episode_indices), iteration=iteration
         )
-    completed_episodes = 0
     meta: dict[str, Any] = {
         "type": "meta",
         "format": "variable-party-joint-regret-policy-value-jsonl-v4",
@@ -1646,6 +1645,50 @@ def _collect_rows_single(
         config, iteration, len(replay_entries), exclude=restart_plan
     )
     team_replay_episodes = 0
+
+    def publish_progress(active_battles: int, decision: int) -> None:
+        completed_episodes = finished + truncated + semantic_divergences
+        if progress_path is not None:
+            write_actor_progress(
+                progress_path,
+                process,
+                completed_episodes,
+                len(episode_indices),
+                iteration=iteration,
+                active_battles=active_battles,
+                decision=decision,
+                finished=finished,
+                truncated=truncated,
+                semantic_divergences=semantic_divergences,
+                transitions=transitions,
+                examples=examples,
+                player_wins=player_wins,
+                enemy_wins=enemy_wins,
+                draws=draws,
+                candidate_wins=candidate_wins,
+                candidate_losses=candidate_losses,
+                candidate_draws=candidate_draws,
+                mean_decisions=total_decisions / max(1, completed_episodes),
+                voluntary_switches=voluntary_switches,
+                ordinary_actions=ordinary_actions,
+                voluntary_switch_rate=voluntary_switches / max(1, ordinary_actions),
+                setup_uses=setup_uses,
+                setup_use_rate=setup_uses / max(1, ordinary_actions),
+                setup_move_counts=setup_move_counts,
+                species_counts=species_counts,
+                species_schedule=meta["species_schedule"],
+                decision_quality_version="static-active-context-v1",
+                **decision_quality.report(),
+                mirror_episodes=mirror_episodes,
+                opponent_episodes=opponent_episodes,
+                model_opponent_episodes=model_opponent_episodes,
+                heuristic_opponent_episodes=heuristic_opponent_episodes,
+                opponent_counts=opponent_counts,
+                party_size_counts=party_size_counts,
+                six_vs_six_battles=party_size_counts.get("6v6", 0),
+                level100_six_vs_six_battles=scheduled_level100_six_vs_six,
+                recent_battles=recent_battles,
+            )
 
     def append_episode(
         actor: _ActorEpisode,
@@ -1923,6 +1966,7 @@ def _collect_rows_single(
                         for mon in inspection[side]["party"]:
                             key = f"{int(mon['dex']):03d}:{mon['name']}"
                             species_counts[key] = species_counts.get(key, 0) + 1
+            publish_progress(len(active), 0)
             for decision in range(config.episode_budget):
                 results: dict[int, SearchResult] = {}
                 actor_decisions = search_controllers_many(
@@ -2190,6 +2234,7 @@ def _collect_rows_single(
                         actor.snapshot = snapshot
                         survivors.append(actor)
                 active = survivors
+                publish_progress(len(active), decision + 1)
                 if not active:
                     break
                 compacted = server.compact_many([actor.snapshot for actor in active])
@@ -2204,46 +2249,7 @@ def _collect_rows_single(
                     reason=f"decision-horizon-{config.episode_budget}",
                 )
                 truncated += 1
-            completed_episodes += len(batch)
-            if progress_path is not None:
-                write_actor_progress(
-                    progress_path,
-                    process,
-                    completed_episodes,
-                    len(episode_indices),
-                    iteration=iteration,
-                    finished=finished,
-                    truncated=truncated,
-                    semantic_divergences=semantic_divergences,
-                    transitions=transitions,
-                    examples=examples,
-                    player_wins=player_wins,
-                    enemy_wins=enemy_wins,
-                    draws=draws,
-                    candidate_wins=candidate_wins,
-                    candidate_losses=candidate_losses,
-                    candidate_draws=candidate_draws,
-                    mean_decisions=total_decisions / completed_episodes,
-                    voluntary_switches=voluntary_switches,
-                    ordinary_actions=ordinary_actions,
-                    voluntary_switch_rate=voluntary_switches / max(1, ordinary_actions),
-                    setup_uses=setup_uses,
-                    setup_use_rate=setup_uses / max(1, ordinary_actions),
-                    setup_move_counts=setup_move_counts,
-                    species_counts=species_counts,
-                    species_schedule=meta["species_schedule"],
-                    decision_quality_version="static-active-context-v1",
-                    **decision_quality.report(),
-                    mirror_episodes=mirror_episodes,
-                    opponent_episodes=opponent_episodes,
-                    model_opponent_episodes=model_opponent_episodes,
-                    heuristic_opponent_episodes=heuristic_opponent_episodes,
-                    opponent_counts=opponent_counts,
-                    party_size_counts=party_size_counts,
-                    six_vs_six_battles=party_size_counts.get("6v6", 0),
-                    level100_six_vs_six_battles=scheduled_level100_six_vs_six,
-                    recent_battles=recent_battles,
-                )
+            publish_progress(0, decision + 1)
     _jsonl(path, rows)
     if not examples:
         raise ValueError("full-party search produced no terminal training examples")
