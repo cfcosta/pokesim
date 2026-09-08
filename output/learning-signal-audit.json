@@ -1,0 +1,347 @@
+{
+  "scope": "synthetic inputs through current production functions",
+  "heldout_pair_leakage": {
+    "training_rows": 18,
+    "heldout_rows": 2,
+    "heldout_pair_ids": [
+      0,
+      5
+    ],
+    "heldout_pairs_also_in_training": [
+      0,
+      5
+    ]
+  },
+  "perfect_policy_reported_agreement_by_row_weight": {
+    "1.0": 0.5,
+    "0.25": 2.0
+  },
+  "same_candidate_leaf_value_by_opponent_kind": {
+    "mirror": 0.8,
+    "heuristic": 0.4
+  },
+  "shaping_rank_reversal": {
+    "better_action_true_value": 0.6,
+    "better_action_potential_delta": -0.2,
+    "better_action_search_score": 0.39999999999999997,
+    "worse_action_true_value": 0.4,
+    "worse_action_potential_delta": 0.2,
+    "worse_action_search_score": 0.6000000000000001
+  },
+  "split_half_changes_mean_matrix_solution": {
+    "chance_world_payoffs": [
+      [
+        0.9,
+        0.1
+      ],
+      [
+        -0.5,
+        0.1
+      ]
+    ],
+    "mean_payoffs": [
+      0.2,
+      0.1
+    ],
+    "anchor_temperature": 0.02,
+    "mean_matrix_player_policy": [
+      0.9933071490757148,
+      0.006692850924285234
+    ],
+    "published_player_policy": [
+      0.6644357163586028,
+      0.33556428364139723
+    ],
+    "mean_matrix_value": 0.1993307149075715,
+    "published_value": 0.16644357163586027,
+    "published_exploitability": 0.033556428364139745
+  },
+  "current_cli_defaults": {
+    "search_depth": 2,
+    "chance_samples_per_joint": 2,
+    "interior_chance_samples": 1,
+    "interior_actions_per_side": 3,
+    "split_half_reliability": true,
+    "policy_reliability_floor": 1.0,
+    "shadow_opponent_window": 6,
+    "collection_epsilon": 0.05,
+    "collection_dirichlet_alpha": 0.6,
+    "collection_dirichlet_total": 10.0,
+    "promotion_policy_games": 2048
+  },
+  "source_sha256": {
+    "packages/battle-training/battle_training/transformer_pipeline.py": "a2d614eb4c369ef7d3d423d91e6c5e2263a623af4281aa910ded218a9f99f16b",
+    "packages/battle-training/battle_training/joint_search.py": "49a16a3c5c88e1fb9d573f1baa63b0116a6ad615b9580663beedbfb62c6857f4",
+    "packages/battle-training/battle_training/network.py": "1d064afe4a965b50fb704a317f4a36d52309a0185a02c6543e330252f41537b5",
+    "packages/battle-training/battle_training/cli.py": "91db44c70521796d3cb67efce6b85921002cd8e92dfdc0775e4376bfc4398502",
+    "packages/battle-lean/.lake/build/bin/battleSearchServer": "03be842d0e95f8d79b4e91a742500bbd42f456432fb1a466090155edd7297984"
+  },
+  "native_sampling": {
+    "scope": "level-100 6v6 initial roots; frozen aggressive priors, zero leaf value; depth 1; Python reference anchored solver; 64-world estimate is not ground truth",
+    "roots": [
+      {
+        "episode": 0,
+        "root_potential": -0.00078125,
+        "reference_argmax": 3,
+        "reference_own_best_response_gap": 0.005982188257894025,
+        "trials": [
+          {
+            "argmax": 3,
+            "tv_vs_reference": 0.05175294235577845,
+            "reference_matrix_best_response_gap": 0.0034718542956252985,
+            "split_half_distance": 0.051034377326567446
+          },
+          {
+            "argmax": 3,
+            "tv_vs_reference": 0.06649552781263204,
+            "reference_matrix_best_response_gap": 0.0027815274221026087,
+            "split_half_distance": 0.004477903725465307
+          },
+          {
+            "argmax": 3,
+            "tv_vs_reference": 0.11897584675711369,
+            "reference_matrix_best_response_gap": 0.011964837648763646,
+            "split_half_distance": 0.616543389672561
+          },
+          {
+            "argmax": 3,
+            "tv_vs_reference": 0.04443248979631232,
+            "reference_matrix_best_response_gap": 0.0038203883336520514,
+            "split_half_distance": 0.053055317349984636
+          }
+        ]
+      },
+      {
+        "episode": 1,
+        "root_potential": 0.0,
+        "reference_argmax": 5,
+        "reference_own_best_response_gap": 0.06050549178271602,
+        "trials": [
+          {
+            "argmax": 5,
+            "tv_vs_reference": 0.03200354184055399,
+            "reference_matrix_best_response_gap": 0.05719024159763833,
+            "split_half_distance": 0.009564016107949944
+          },
+          {
+            "argmax": 5,
+            "tv_vs_reference": 0.03299288615682818,
+            "reference_matrix_best_response_gap": 0.057088929397519285,
+            "split_half_distance": 0.004474780803073809
+          },
+          {
+            "argmax": 5,
+            "tv_vs_reference": 0.04143605013320456,
+            "reference_matrix_best_response_gap": 0.05621727596101538,
+            "split_half_distance": 0.0009426189144296027
+          },
+          {
+            "argmax": 5,
+            "tv_vs_reference": 0.030415071667295963,
+            "reference_matrix_best_response_gap": 0.05735499317192627,
+            "split_half_distance": 0.009893633812797821
+          }
+        ]
+      },
+      {
+        "episode": 2,
+        "root_potential": 0.000390625,
+        "reference_argmax": 3,
+        "reference_own_best_response_gap": 0.0003076147955658054,
+        "trials": [
+          {
+            "argmax": 3,
+            "tv_vs_reference": 0.002040653730540366,
+            "reference_matrix_best_response_gap": 0.00024468606149445626,
+            "split_half_distance": 0.0016386334609186594
+          },
+          {
+            "argmax": 3,
+            "tv_vs_reference": 0.016911527690123065,
+            "reference_matrix_best_response_gap": 0.0009574216774811822,
+            "split_half_distance": 0.04865013981622815
+          },
+          {
+            "argmax": 3,
+            "tv_vs_reference": 0.001273772467049124,
+            "reference_matrix_best_response_gap": 0.00037075026616431583,
+            "split_half_distance": 0.003335225130352411
+          },
+          {
+            "argmax": 3,
+            "tv_vs_reference": 0.0027162417526155748,
+            "reference_matrix_best_response_gap": 0.00020983416199117644,
+            "split_half_distance": 0.00033878488344463273
+          }
+        ]
+      },
+      {
+        "episode": 3,
+        "root_potential": -0.0010416666666666686,
+        "reference_argmax": 1,
+        "reference_own_best_response_gap": 0.007492954986773832,
+        "trials": [
+          {
+            "argmax": 3,
+            "tv_vs_reference": 0.24699707540212051,
+            "reference_matrix_best_response_gap": 0.014092118576126265,
+            "split_half_distance": 0.3103473649727204
+          },
+          {
+            "argmax": 1,
+            "tv_vs_reference": 0.18393146975310246,
+            "reference_matrix_best_response_gap": 0.01221554021594385,
+            "split_half_distance": 0.03951155946286991
+          },
+          {
+            "argmax": 3,
+            "tv_vs_reference": 0.3168176371125724,
+            "reference_matrix_best_response_gap": 0.015841578559003172,
+            "split_half_distance": 0.2431149025449659
+          },
+          {
+            "argmax": 1,
+            "tv_vs_reference": 0.1437926595824364,
+            "reference_matrix_best_response_gap": 0.004147300010953425,
+            "split_half_distance": 0.156283740624906
+          }
+        ]
+      },
+      {
+        "episode": 4,
+        "root_potential": 0.0001302083333333315,
+        "reference_argmax": 3,
+        "reference_own_best_response_gap": 7.513056847399668e-05,
+        "trials": [
+          {
+            "argmax": 3,
+            "tv_vs_reference": 0.00010821792371117092,
+            "reference_matrix_best_response_gap": 6.0300564391130296e-05,
+            "split_half_distance": 2.3058467408315858e-06
+          },
+          {
+            "argmax": 3,
+            "tv_vs_reference": 0.00014171918061448558,
+            "reference_matrix_best_response_gap": 5.560644431482076e-05,
+            "split_half_distance": 1.1901809021203923e-05
+          },
+          {
+            "argmax": 3,
+            "tv_vs_reference": 0.0001539830130788035,
+            "reference_matrix_best_response_gap": 5.382114653329495e-05,
+            "split_half_distance": 0.0007088843837573655
+          },
+          {
+            "argmax": 3,
+            "tv_vs_reference": 0.000658595750329799,
+            "reference_matrix_best_response_gap": 0.0001663755934007971,
+            "split_half_distance": 0.0017344114448551312
+          }
+        ]
+      },
+      {
+        "episode": 5,
+        "root_potential": -0.003776041666666669,
+        "reference_argmax": 0,
+        "reference_own_best_response_gap": 0.00020648287117561604,
+        "trials": [
+          {
+            "argmax": 0,
+            "tv_vs_reference": 0.0005105348765198519,
+            "reference_matrix_best_response_gap": 0.0001882805293422175,
+            "split_half_distance": 0.00033250241344974204
+          },
+          {
+            "argmax": 0,
+            "tv_vs_reference": 0.000276716744749133,
+            "reference_matrix_best_response_gap": 0.00022871467128877422,
+            "split_half_distance": 0.0012598649651966742
+          },
+          {
+            "argmax": 0,
+            "tv_vs_reference": 0.00034173452014540467,
+            "reference_matrix_best_response_gap": 0.00022411736356761029,
+            "split_half_distance": 0.0010834860978285335
+          },
+          {
+            "argmax": 0,
+            "tv_vs_reference": 0.0004478264352435125,
+            "reference_matrix_best_response_gap": 0.0002336560997817181,
+            "split_half_distance": 0.0009272998376162666
+          }
+        ]
+      },
+      {
+        "episode": 6,
+        "root_potential": 0.0002604166666666685,
+        "reference_argmax": 0,
+        "reference_own_best_response_gap": 0.012959689829670669,
+        "trials": [
+          {
+            "argmax": 0,
+            "tv_vs_reference": 0.05867493637520394,
+            "reference_matrix_best_response_gap": 0.014055142612895852,
+            "split_half_distance": 0.2930260663039297
+          },
+          {
+            "argmax": 0,
+            "tv_vs_reference": 0.020011045049008077,
+            "reference_matrix_best_response_gap": 0.012593409171827524,
+            "split_half_distance": 0.4750257391610469
+          },
+          {
+            "argmax": 0,
+            "tv_vs_reference": 0.15982678972910205,
+            "reference_matrix_best_response_gap": 0.009979128754070445,
+            "split_half_distance": 0.16587196924185296
+          },
+          {
+            "argmax": 0,
+            "tv_vs_reference": 0.16361828810821472,
+            "reference_matrix_best_response_gap": 0.009908456493091803,
+            "split_half_distance": 0.19582507951399625
+          }
+        ]
+      },
+      {
+        "episode": 7,
+        "root_potential": 0.0010416666666666686,
+        "reference_argmax": 1,
+        "reference_own_best_response_gap": 0.09596942959348911,
+        "trials": [
+          {
+            "argmax": 1,
+            "tv_vs_reference": 0.013120318256958105,
+            "reference_matrix_best_response_gap": 0.0960237820100964,
+            "split_half_distance": 0.3857128962769147
+          },
+          {
+            "argmax": 1,
+            "tv_vs_reference": 0.1639493391925375,
+            "reference_matrix_best_response_gap": 0.07987769511414186,
+            "split_half_distance": 0.07588784446426926
+          },
+          {
+            "argmax": 1,
+            "tv_vs_reference": 0.23188146098741927,
+            "reference_matrix_best_response_gap": 0.07328645481264826,
+            "split_half_distance": 0.0407459533418993
+          },
+          {
+            "argmax": 1,
+            "tv_vs_reference": 0.13770045995321842,
+            "reference_matrix_best_response_gap": 0.08245442750854079,
+            "split_half_distance": 0.022613955733488147
+          }
+        ]
+      }
+    ],
+    "aggregate": {
+      "trials": 32,
+      "argmax_disagreements": 2,
+      "tv_vs_reference": 0.07138773000332292,
+      "reference_matrix_best_response_gap": 0.021167457695229187,
+      "split_half_distance": 0.10043676717015934
+    }
+  }
+}
