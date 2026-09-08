@@ -1014,6 +1014,18 @@ private def prependMoveExecuted (who : Side) (move : MoveId) : StepResult → St
   | .ineffectiveAction state side => .ineffectiveAction state side
   | .inactive state => .inactive state
 
+/-- Cartridge charge dispatch precedes critical-hit, damage and accuracy work.
+The retained no-action command is the release turn and follows the normal path. -/
+def startsCharging (effect : UInt8) (action : Full.Action) : Bool :=
+  match (EffectPlan.plan effect).mechanic with
+  | .charge _ => action != .noAction
+  | _ => false
+
+@[simp] theorem charge_release_does_not_restart (effect : UInt8) :
+    startsCharging effect .noAction = false := by
+  simp [startsCharging]
+  split <;> rfl
+
 private def executeMove (state : State) (who : Side) (action : Full.Action)
     (moveId : MoveId) (slot : Fin 4) (attacker : Battle.SideState)
     (attackerFull defenderFull : Full.SideState) (rng : Rng.LinkRng)
@@ -1023,6 +1035,13 @@ let state := setSide { state with battle := { state.battle with rng } } who
 let move := resolveMove moveId
 let effect := (Data.moveData moveId).effect
 let mechanic := (EffectPlan.plan effect).mechanic
+if startsCharging effect action then
+  let context := effectsContext state who moveId slot
+    (side state who).active (side state who.other).active rng
+  let before := Effects.applyBefore effect true context
+  .transitioned (installEffectsContext state who before.context)
+    (before.events.map .effect)
+else
 let state := if mechanic == .bide && action != .noAction then
   clearBothLoadedEffects state else state
 let state := if decrementsPpNow mechanic action then

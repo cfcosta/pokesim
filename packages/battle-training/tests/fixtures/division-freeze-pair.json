@@ -1,0 +1,328 @@
+[
+  {
+    "episode": 868,
+    "reset_seed": 9161383714335430984,
+    "reset_episode": 434,
+    "steps": [
+      {
+        "player_action": 0,
+        "enemy_action": 5,
+        "player_state_hash": "7247139175276067169",
+        "enemy_state_hash": "12627532339152537956"
+      },
+      {
+        "player_action": 0,
+        "enemy_action": 3,
+        "player_state_hash": "12237946116356460518",
+        "enemy_state_hash": "18264806626919413653"
+      },
+      {
+        "player_action": 0,
+        "enemy_action": 1,
+        "player_state_hash": "14067001368309320953",
+        "enemy_state_hash": "2851127566758269146"
+      }
+    ],
+    "search_steps": [
+      {
+        "player_action": 8,
+        "enemy_action": 1,
+        "chance_seed": 3189362926829201569
+      },
+      {
+        "player_action": 0,
+        "enemy_action": 2,
+        "chance_seed": 4375344552860206872
+      }
+    ]
+  },
+  {
+    "episode": 869,
+    "reset_seed": 9161383714335430984,
+    "reset_episode": 434,
+    "steps": [
+      {
+        "player_action": 0,
+        "enemy_action": 2,
+        "player_state_hash": "7247139175276067169",
+        "enemy_state_hash": "12627532339152537956"
+      },
+      {
+        "player_action": 5,
+        "enemy_action": 10,
+        "player_state_hash": "5605019066018734298",
+        "enemy_state_hash": "13118534399747501252"
+      },
+      {
+        "player_action": 0,
+        "enemy_action": 1,
+        "player_state_hash": "18045468142142028019",
+        "enemy_state_hash": "445364346892838742"
+      },
+      {
+        "player_action": 1,
+        "enemy_action": 0,
+        "player_state_hash": "14578951042221684145",
+        "enemy_state_hash": "17672554179812234452"
+      },
+      {
+        "player_action": 6,
+        "enemy_action": 10,
+        "player_state_hash": "3014153266750311546",
+        "enemy_state_hash": "15702029029183566583"
+      },
+      {
+        "player_action": 10,
+        "enemy_action": 8,
+        "player_state_hash": "17691406384639196614",
+        "enemy_state_hash": "16151644058152542131"
+      },
+      {
+        "player_action": 1,
+        "enemy_action": 1,
+        "player_state_hash": "11711138196124174078",
+        "enemy_state_hash": "10343822983696413715"
+      },
+      {
+        "player_action": 7,
+        "enemy_action": 0,
+        "player_state_hash": "14742611893430034661",
+        "enemy_state_hash": "1297306926356188252"
+      },
+      {
+        "player_action": 2,
+        "enemy_action": 1,
+        "player_state_hash": "4222858022208387301",
+        "enemy_state_hash": "7969913018125960403"
+      },
+      {
+        "player_action": 0,
+        "enemy_action": 6,
+        "player_state_hash": "12793246754871803677",
+        "enemy_state_hash": "9468468435362498807"
+      },
+      {
+        "player_action": 3,
+        "enemy_action": 0,
+        "player_state_hash": "1554720792154738522",
+        "enemy_state_hash": "8241200009645592328"
+      },
+      {
+        "player_action": 6,
+        "enemy_action": 10,
+        "player_state_hash": "4852625599297472657",
+        "enemy_state_hash": "10846283457071861880"
+      },
+      {
+        "player_action": 3,
+        "enemy_action": 1,
+        "player_state_hash": "15320333758824662080",
+        "enemy_state_hash": "1910239658543667245"
+      },
+      {
+        "player_action": 3,
+        "enemy_action": 3,
+        "player_state_hash": "17056172735875411891",
+        "enemy_state_hash": "12951751755536128538"
+      },
+      {
+        "player_action": 1,
+        "enemy_action": 0,
+        "player_state_hash": "17908762649478969940",
+        "enemy_state_hash": "11488043965877756969"
+      },
+      {
+        "player_action": 0,
+        "enemy_action": 8,
+        "player_state_hash": "17515877790492631664",
+        "enemy_state_hash": "5815519683530842265"
+      },
+      {
+        "player_action": 1,
+        "enemy_action": 3,
+        "player_state_hash": "474967930856430314",
+        "enemy_state_hash": "14362648713696974759"
+      },
+      {
+        "player_action": 1,
+        "enemy_action": 1,
+        "player_state_hash": "1938730675961958524",
+        "enemy_state_hash": "8433808673955683757"
+      },
+      {
+        "player_action": 2,
+        "enemy_action": 2,
+        "player_state_hash": "12636875291178446380",
+        "enemy_state_hash": "3172754928107191401"
+      },
+      {
+        "player_action": 3,
+        "enemy_action": 2,
+        "player_state_hash": "8776837669786477152",
+        "enemy_state_hash": "6346590699566576777"
+      },
+      {
+        "player_action": 2,
+        "enemy_action": 7,
+        "player_state_hash": "17178725116800331515",
+        "enemy_state_hash": "8049355214253236354"
+      },
+      {
+        "player_action": 2,
+        "enemy_action": 2,
+        "player_state_hash": "3567556246456758939",
+        "enemy_state_hash": "9658457387232216329"
+      },
+      {
+        "player_action": 0,
+        "enemy_action": 8,
+        "player_state_hash": "3991558460357593230",
+        "enemy_state_hash": "5555673783952567992"
+      },
+      {
+        "player_action": 1,
+        "enemy_action": 0,
+        "player_state_hash": "11716632280977321775",
+        "enemy_state_hash": "4778421875106643378"
+      },
+      {
+        "player_action": 1,
+        "enemy_action": 2,
+        "player_state_hash": "7214276329769466064",
+        "enemy_state_hash": "16577503190908633625"
+      },
+      {
+        "player_action": 2,
+        "enemy_action": 3,
+        "player_state_hash": "7978037244502832099",
+        "enemy_state_hash": "5871538834066769134"
+      },
+      {
+        "player_action": 3,
+        "enemy_action": 5,
+        "player_state_hash": "9298373839885310882",
+        "enemy_state_hash": "11042563554091219219"
+      },
+      {
+        "player_action": 0,
+        "enemy_action": 3,
+        "player_state_hash": "14943316629551153332",
+        "enemy_state_hash": "5752502059864467092"
+      },
+      {
+        "player_action": 0,
+        "enemy_action": 8,
+        "player_state_hash": "11283447302714309203",
+        "enemy_state_hash": "17282237877444620135"
+      },
+      {
+        "player_action": 3,
+        "enemy_action": 0,
+        "player_state_hash": "14524347079808060579",
+        "enemy_state_hash": "13545035855450215210"
+      },
+      {
+        "player_action": 1,
+        "enemy_action": 2,
+        "player_state_hash": "13337785171499555030",
+        "enemy_state_hash": "9551588265006923407"
+      },
+      {
+        "player_action": 2,
+        "enemy_action": 0,
+        "player_state_hash": "14486465572845024019",
+        "enemy_state_hash": "10275618930812997490"
+      },
+      {
+        "player_action": 3,
+        "enemy_action": 0,
+        "player_state_hash": "12148604748034451757",
+        "enemy_state_hash": "14187628788744775744"
+      },
+      {
+        "player_action": 0,
+        "enemy_action": 2,
+        "player_state_hash": "18405743736830272813",
+        "enemy_state_hash": "6999983115881553260"
+      },
+      {
+        "player_action": 2,
+        "enemy_action": 0,
+        "player_state_hash": "11727643731741151630",
+        "enemy_state_hash": "8108025367929589123"
+      },
+      {
+        "player_action": 2,
+        "enemy_action": 6,
+        "player_state_hash": "13740991781377210428",
+        "enemy_state_hash": "15053689780928877349"
+      },
+      {
+        "player_action": 1,
+        "enemy_action": 0,
+        "player_state_hash": "18071781185986679282",
+        "enemy_state_hash": "8658636423602821623"
+      },
+      {
+        "player_action": 2,
+        "enemy_action": 5,
+        "player_state_hash": "10938944430070663582",
+        "enemy_state_hash": "8353395851427859103"
+      },
+      {
+        "player_action": 2,
+        "enemy_action": 3,
+        "player_state_hash": "6263626665710085434",
+        "enemy_state_hash": "10546271513613658934"
+      },
+      {
+        "player_action": 3,
+        "enemy_action": 9,
+        "player_state_hash": "14418106343709851870",
+        "enemy_state_hash": "8614660701031089090"
+      },
+      {
+        "player_action": 0,
+        "enemy_action": 0,
+        "player_state_hash": "3456675380448061827",
+        "enemy_state_hash": "15479146135821463927"
+      },
+      {
+        "player_action": 3,
+        "enemy_action": 10,
+        "player_state_hash": "12099538519697679948",
+        "enemy_state_hash": "861042803705936460"
+      },
+      {
+        "player_action": 0,
+        "enemy_action": 2,
+        "player_state_hash": "7180436201255688105",
+        "enemy_state_hash": "10995788595707576745"
+      },
+      {
+        "player_action": 1,
+        "enemy_action": 5,
+        "player_state_hash": "7261682859376540393",
+        "enemy_state_hash": "3167983681626543501"
+      },
+      {
+        "player_action": 8,
+        "enemy_action": 1,
+        "player_state_hash": "4552271177189189440",
+        "enemy_state_hash": "12809952388722775240"
+      }
+    ],
+    "search_steps": [
+      {
+        "player_action": 0,
+        "enemy_action": 1,
+        "chance_seed": 3189362926829201569
+      },
+      {
+        "player_action": 10,
+        "enemy_action": 2,
+        "chance_seed": 4375344552860206872
+      }
+    ]
+  }
+]
