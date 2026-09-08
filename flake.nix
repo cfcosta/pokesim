@@ -169,6 +169,23 @@
           '';
         };
 
+        searchNative = pkgs.rustPlatform.buildRustPackage {
+          pname = "battle-search";
+          version = "0.1.0";
+          src = lib.cleanSource ./packages/search-rs;
+          cargoLock.lockFile = ./packages/search-rs/Cargo.lock;
+          doCheck = true;
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out/lib
+            find target -type f -not -path '*/deps/*' \
+              \( -name 'libbattle_search.so' -o -name 'libbattle_search.dylib' -o -name 'battle_search.dll' \) \
+              -exec cp -v {} $out/lib/ \;
+            test -n "$(find $out/lib -type f -print -quit)"
+            runHook postInstall
+          '';
+        };
+
         formatter =
           (treefmt-nix.lib.evalModule pkgs {
             projectRootFile = "flake.nix";
@@ -207,6 +224,7 @@
           rgbds = rgbds-1_0_2-hotfix;
           battle-training = trainingEnvironment;
           battle-rmplus = rmplusNative;
+          battle-search = searchNative;
           default = rgbds-1_0_2-hotfix;
         };
 
@@ -219,6 +237,9 @@
             lean4
             rgbds-1_0_2-hotfix
             rmplusNative
+            searchNative
+            cargo
+            rustc
             trainingVirtualenv
             uv
           ];
@@ -229,6 +250,7 @@
             CUDA_HOME = if pkgs.stdenv.isLinux then "${cuda}" else "";
             CUDA_PATH = if pkgs.stdenv.isLinux then "${cuda}" else "";
             BATTLE_RMPLUS_LIB = "${rmplusNative}/lib";
+            BATTLE_SEARCH_LIB = "${searchNative}/lib";
             LD_LIBRARY_PATH =
               "${trainingPythonSet.nvidia-cudnn-cu13}/${pkgs.python312.sitePackages}/nvidia/cudnn/lib:"
               + lib.makeLibraryPath [

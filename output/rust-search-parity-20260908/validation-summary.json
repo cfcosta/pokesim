@@ -1,0 +1,45 @@
+{
+  "normal_suite": {
+    "passed": 477,
+    "seconds": 39.304
+  },
+  "existing_suite_forced_rust": {
+    "passed": 462,
+    "seconds": 36.968
+  },
+  "differential_suite": {
+    "passed": 15,
+    "nix_library_passed": 15
+  },
+  "rust_unit_tests": {
+    "passed": 6
+  },
+  "source_sha256": {
+    "packages/search-rs/src/lib.rs": "52b11412ba1f07b71790a63490d3d708d13592e603b2c7e75097e5845e9582ba",
+    "packages/battle-training/battle_training/search_native.py": "7dc8be6daefc4f96c838ffa402a79e0695d8bc5dbd4528db282a31920254ee00",
+    "tools/check-search-parity.py": "abdeff93d0b245636af7d1f8597d4580da29255306521486de6e2cb14f70bfe7"
+  },
+  "real_simulator": [
+    {
+      "artifact": "native-cuda.json",
+      "parity": true,
+      "paired_batches": 4,
+      "controller_results_compared": 32,
+      "requested_rows_per_backend": 146688
+    },
+    {
+      "artifact": "native-cuda-depth3.json",
+      "parity": true,
+      "paired_batches": 3,
+      "controller_results_compared": 6,
+      "requested_rows_per_backend": 38454
+    }
+  ],
+  "nix_package": "/nix/store/8q8ldl0q2pizs60l4g25cc8rjafprqld-battle-search-0.1.0",
+  "commands": [
+    "cargo test --release --manifest-path packages/search-rs/Cargo.toml",
+    "python -m unittest discover -s packages/battle-training/tests",
+    "python tools/test-rust-search-contract.py",
+    "nix build .#battle-search"
+  ]
+}

@@ -126,6 +126,7 @@ class ArenaConfig:
     leaf_evaluator: str = "full"
     solver_backend: str = "auto"
     solver_precision: str = "fp32"
+    orchestration_backend: str = "python"
     matchup_value_cap: float = 0.9
     matchup_filter_attempts: int = 4
     matchup_plan: dict[int, int] | None = None
@@ -363,6 +364,7 @@ def _joint_search_config(config: ArenaConfig) -> JointSearchConfig:
         leaf_evaluator=config.leaf_evaluator,
         solver_backend=config.solver_backend,
         solver_precision=config.solver_precision,
+        orchestration_backend=config.orchestration_backend,
     )
 
 

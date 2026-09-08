@@ -110,6 +110,9 @@ def _transformer_parser(subparsers: argparse._SubParsersAction, name: str) -> No
         "--leaf-evaluator", choices=("full", "distilled"), default="full"
     )
     parser.add_argument(
+        "--orchestration-backend", choices=("python", "rust"), default="rust"
+    )
+    parser.add_argument(
         "--solver-backend", choices=("auto", "rust", "cuda"), default="auto"
     )
     parser.add_argument("--solver-precision", choices=("fp32", "fp64"), default="fp32")
@@ -344,6 +347,9 @@ def parser() -> argparse.ArgumentParser:
         "--leaf-evaluator", choices=("full", "distilled"), default="full"
     )
     arena.add_argument(
+        "--orchestration-backend", choices=("python", "rust"), default="rust"
+    )
+    arena.add_argument(
         "--solver-backend", choices=("auto", "rust", "cuda"), default="auto"
     )
     arena.add_argument("--solver-precision", choices=("fp32", "fp64"), default="fp32")
@@ -423,6 +429,7 @@ def main(argv: list[str] | None = None) -> int:
                 leaf_evaluator=arguments.leaf_evaluator,
                 solver_backend=arguments.solver_backend,
                 solver_precision=arguments.solver_precision,
+                orchestration_backend=arguments.orchestration_backend,
                 policy_only=arguments.policy_only,
                 regret_iterations=arguments.regret_iterations,
                 inference_batch_size=arguments.inference_batch_size,
@@ -470,6 +477,7 @@ def main(argv: list[str] | None = None) -> int:
             leaf_evaluator=arguments.leaf_evaluator,
             solver_backend=arguments.solver_backend,
             solver_precision=arguments.solver_precision,
+            orchestration_backend=arguments.orchestration_backend,
             epochs=arguments.epochs,
             batch_size=arguments.batch_size,
             learning_rate=arguments.learning_rate,

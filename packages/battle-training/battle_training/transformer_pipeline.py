@@ -80,6 +80,7 @@ from .red_ai_heuristics import (
     trainer_profile_for_style,
 )
 from .rmplus_native import RUST_RMPLUS_BACKEND, native_available, native_metadata
+from .search_native import orchestration_metadata
 
 
 @dataclass(frozen=True)
@@ -170,6 +171,7 @@ class TransformerPipelineConfig:
     leaf_evaluator: str = "full"
     solver_backend: str = "auto"
     solver_precision: str = "fp32"
+    orchestration_backend: str = "python"
     balanced_final_species: bool = True
     generated_schedule_version: int = 4
     rmplus_backend: str = RUST_RMPLUS_BACKEND
@@ -546,6 +548,7 @@ def _new_search(
             leaf_evaluator=config.leaf_evaluator,
             solver_backend=config.solver_backend,
             solver_precision=config.solver_precision,
+            orchestration_backend=config.orchestration_backend,
         ),
         selection_rng,
         chance_rng,
@@ -587,6 +590,7 @@ def _arena_config(
         leaf_evaluator=config.leaf_evaluator,
         solver_backend=config.solver_backend,
         solver_precision=config.solver_precision,
+        orchestration_backend=config.orchestration_backend,
         matchup_value_cap=config.matchup_value_cap if matchup_filter else 0.0,
         matchup_filter_attempts=config.matchup_filter_attempts,
         popular_gate=config.popular_gate,
@@ -3860,6 +3864,7 @@ def _normalized_saved_config(raw_config: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("interior_actions_per_side", 3)
     normalized.setdefault("interior_chance_samples", 1)
     normalized.setdefault("leaf_evaluator", "full")
+    normalized.setdefault("orchestration_backend", "python")
     normalized.setdefault("solver_backend", "auto")
     normalized.setdefault("solver_precision", "fp32")
     return normalized
@@ -4060,6 +4065,12 @@ def run_transformer_pipeline(
         raise ValueError("RM+ action selection requires search_every = 1")
     if config.leaf_evaluator not in {"full", "distilled"}:
         raise ValueError("leaf_evaluator must be full or distilled")
+    if config.orchestration_backend not in {"python", "rust"}:
+        raise ValueError("orchestration_backend must be python or rust")
+    if config.orchestration_backend == "rust":
+        from .search_native import _library
+
+        _library()
     if config.solver_backend not in {"auto", "rust", "cuda"}:
         raise ValueError("solver_backend must be auto, rust or cuda")
     if config.solver_precision not in {"fp32", "fp64"}:
@@ -4413,6 +4424,9 @@ def run_transformer_pipeline(
                 ),
                 "chance": "fresh-root-v1",
                 "rmplus": native_metadata(),
+                "search_orchestration": orchestration_metadata(
+                    config.orchestration_backend
+                ),
                 "search_solver": ("independent-win-search-v9"),
                 "action_selector": ("independent-win-search-every-decision-v9"),
                 "collection_pairing": "same-reset-opposite-controller-sides-v1",
@@ -5076,6 +5090,7 @@ def run_transformer_pipeline(
         ),
         "device": str(device),
         "rmplus": native_metadata(),
+        "search_orchestration": orchestration_metadata(config.orchestration_backend),
         "action_selector": ("independent-win-search-every-decision-v9"),
         "iterations": config.iterations,
         "selfplay_battles": config.iterations * config.selfplay_episodes,

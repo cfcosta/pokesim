@@ -1,0 +1,14 @@
+[package]
+name = "battle-search"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Batched simultaneous matrix-tree orchestration with Python search parity"
+
+[lib]
+name = "battle_search"
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

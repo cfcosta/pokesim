@@ -108,6 +108,7 @@ class JointSearchConfig:
     leaf_evaluator: str = "full"
     solver_backend: str = "auto"
     solver_precision: str = "fp32"
+    orchestration_backend: str = "python"
 
 
 def legal_actions(mask: int, action_count: int) -> list[int]:
@@ -858,6 +859,8 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
             raise ValueError("solver_backend must be auto, rust or cuda")
         if config.solver_precision not in {"fp32", "fp64"}:
             raise ValueError("solver_precision must be fp32 or fp64")
+        if config.orchestration_backend not in {"python", "rust"}:
+            raise ValueError("orchestration_backend must be python or rust")
         self.evaluation_side = evaluation_side
         if config.regret_iterations_per_update < 1:
             raise ValueError("tree regret iterations per update must be positive")
@@ -2227,6 +2230,15 @@ class SimultaneousTreeSearch(BatchedJointRegretSearch):
         sample_actions: bool = True,
     ) -> list[SearchResult]:
         """Batch root transitions and inference across independent live roots."""
+        backends = {search.config.orchestration_backend for search in searches}
+        if len(backends) > 1:
+            raise ValueError("cross-root batches require one orchestration backend")
+        if backends == {"rust"}:
+            from .search_native import RustSimultaneousTreeSearch
+
+            return RustSimultaneousTreeSearch.search_many(
+                searches, snapshots, sample_actions
+            )
         if not searches or len(searches) != len(snapshots):
             raise ValueError("search_many requires one search per snapshot")
         first = searches[0]
