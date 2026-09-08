@@ -1,0 +1,38 @@
+{
+  "freeze_time_utc": "2026-09-08T19:48:50.243645+00:00",
+  "free_bytes_at_freeze": {
+    "/": 8261808128,
+    "/media/pokemon-training/v33-bf16-20260908-154254": 78951190528
+  },
+  "freeze_result": {
+    "code": 0,
+    "output": "",
+    "error": ""
+  },
+  "primary_real_cohorts": "b1, b4, b16: training active",
+  "normal_replay": "b1 and b4: active; b16 and b4-paused: frozen",
+  "other_cohorts": "b4-startup, memory-python, memory-rust, b4-no-gc, profile-clean: frozen",
+  "source": "systemd journal and watchdog paused-low-disk.json",
+  "relocated_generated_files": [
+    {
+      "source": "/tmp/pokemon-native-live.perf.data",
+      "destination": "/media/pokemon-training/benchmark-archives/20260908/pokemon-native-live.perf.data"
+    },
+    {
+      "source": "/tmp/pokemon-perf-isolated",
+      "destination": "/media/pokemon-training/benchmark-archives/20260908/pokemon-perf-isolated"
+    },
+    {
+      "source": "/tmp/torchinductor_cfcosta",
+      "destination": "/media/pokemon-training/benchmark-archives/20260908/torchinductor_cfcosta"
+    }
+  ],
+  "root_free_bytes_after_relocation": 9151655936,
+  "thaw_requested_at_utc": "2026-09-08T19:58:15.397939+00:00",
+  "resume_verified_at_utc": "2026-09-08T19:58:40.766064+00:00",
+  "resume_evidence": {
+    "FreezerState": "running",
+    "completed": 1467,
+    "collection_updated_at": "2026-09-08T19:58:25.659754Z"
+  }
+}

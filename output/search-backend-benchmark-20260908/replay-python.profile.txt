@@ -1,0 +1,51 @@
+         497850 function calls (497818 primitive calls) in 0.160 seconds
+
+   Ordered by: cumulative time
+   List reduced from 91 to 45 due to restriction <45>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.017    0.017    0.161    0.161 controller.py:96(search_controllers_many)
+        1    0.003    0.003    0.144    0.144 joint_search.py:2225(search_many)
+        1    0.019    0.019    0.077    0.077 joint_search.py:2478(_settle)
+        1    0.007    0.007    0.062    0.062 joint_search.py:2386(_open_subgames)
+     2384    0.009    0.000    0.046    0.000 joint_search.py:2043(_install_expansion)
+     2384    0.025    0.000    0.039    0.000 joint_search.py:914(_make_node)
+    42096    0.025    0.000    0.027    0.000 joint_search.py:1294(_record_value)
+     4768    0.002    0.000    0.012    0.000 joint_search.py:908(_legal_from_priors)
+     2384    0.007    0.000    0.009    0.000 joint_search.py:2011(_expansion_spec)
+     4771    0.004    0.000    0.009    0.000 {built-in method builtins.any}
+     2386    0.004    0.000    0.008    0.000 {built-in method fromkeys}
+     4776    0.005    0.000    0.007    0.000 {built-in method builtins.sorted}
+   103361    0.007    0.000    0.007    0.000 {method 'append' of 'list' objects}
+    44480    0.004    0.000    0.004    0.000 joint_search.py:2050(<genexpr>)
+    86488    0.004    0.000    0.004    0.000 {built-in method builtins.len}
+     4776    0.003    0.000    0.003    0.000 joint_search.py:114(legal_actions)
+    42096    0.003    0.000    0.003    0.000 {method 'setdefault' of 'dict' objects}
+    39746    0.002    0.000    0.002    0.000 joint_search.py:912(<lambda>)
+    42096    0.002    0.000    0.002    0.000 joint_search.py:2470(<genexpr>)
+    44480    0.002    0.000    0.002    0.000 joint_search.py:2521(<genexpr>)
+     2384    0.001    0.000    0.002    0.000 <string>:2(__init__)
+     2384    0.001    0.000    0.001    0.000 joint_search.py:1994(_expansion_pairs)
+     2384    0.001    0.000    0.001    0.000 joint_search.py:810(__post_init__)
+        8    0.000    0.000    0.001    0.000 joint_search.py:1234(_root_equilibrium)
+     2384    0.001    0.000    0.001    0.000 {method 'update' of 'set' objects}
+       24    0.000    0.000    0.001    0.000 joint_search.py:1202(_prior_regret)
+        8    0.001    0.000    0.001    0.000 benchmark-search-backends.py:117(measured)
+     2376    0.001    0.000    0.001    0.000 {method 'extend' of 'list' objects}
+        8    0.000    0.000    0.000    0.000 joint_search.py:2168(_finish_root)
+        8    0.000    0.000    0.000    0.000 joint_search.py:2061(_diagnostics)
+    48/16    0.000    0.000    0.000    0.000 {built-in method builtins.all}
+       32    0.000    0.000    0.000    0.000 joint_search.py:1170(_half_is_covered)
+       96    0.000    0.000    0.000    0.000 joint_search.py:276(_normalized_prior)
+      168    0.000    0.000    0.000    0.000 {built-in method numpy.asarray}
+     2384    0.000    0.000    0.000    0.000 {method 'get' of 'dict' objects}
+       24    0.000    0.000    0.000    0.000 _index_tricks_impl.py:31(ix_)
+     2384    0.000    0.000    0.000    0.000 joint_search.py:2304(<genexpr>)
+       24    0.000    0.000    0.000    0.000 joint_search.py:2338(<genexpr>)
+     2408    0.000    0.000    0.000    0.000 joint_search.py:1172(<genexpr>)
+       24    0.000    0.000    0.000    0.000 joint_search.py:1256(<genexpr>)
+     2385    0.000    0.000    0.000    0.000 typing.py:2187(cast)
+       96    0.000    0.000    0.000    0.000 {method 'sum' of 'numpy.ndarray' objects}
+       40    0.000    0.000    0.000    0.000 {built-in method builtins.sum}
+       16    0.000    0.000    0.000    0.000 random.py:126(__init__)
+       96    0.000    0.000    0.000    0.000 _methods.py:47(_sum)

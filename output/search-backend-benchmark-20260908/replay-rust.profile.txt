@@ -1,0 +1,51 @@
+         328092 function calls (328076 primitive calls) in 0.145 seconds
+
+   Ordered by: cumulative time
+   List reduced from 99 to 45 due to restriction <45>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    0.145    0.145 controller.py:96(search_controllers_many)
+        1    0.000    0.000    0.145    0.145 joint_search.py:2225(search_many)
+        1    0.028    0.028    0.144    0.144 search_native.py:359(search_many)
+     2392    0.007    0.000    0.048    0.000 search_native.py:299(node)
+        3    0.014    0.005    0.028    0.009 search_native.py:173(_metas)
+     9568    0.004    0.000    0.027    0.000 search_native.py:304(vector)
+    12024    0.007    0.000    0.027    0.000 _ctypeslib.py:520(as_array)
+    42107    0.014    0.000    0.014    0.000 search_native.py:175(<genexpr>)
+     2456    0.001    0.000    0.013    0.000 search_native.py:307(matrix)
+        2    0.008    0.004    0.013    0.006 search_native.py:340(_groups)
+        7    0.012    0.002    0.012    0.002 search_native.py:273(view)
+    12024    0.008    0.000    0.008    0.000 {method 'tolist' of 'numpy.ndarray' objects}
+    12024    0.007    0.000    0.007    0.000 _ctypeslib.py:357(_ctype_ndarray)
+    12024    0.007    0.000    0.007    0.000 __init__.py:517(cast)
+    86704    0.005    0.000    0.005    0.000 {method 'append' of 'list' objects}
+    12194    0.003    0.000    0.003    0.000 {built-in method numpy.asarray}
+    42104    0.003    0.000    0.003    0.000 {method 'get' of 'dict' objects}
+        3    0.002    0.001    0.003    0.001 search_native.py:331(submit_doubles)
+        5    0.000    0.000    0.003    0.001 search_native.py:188(_doubles)
+        5    0.003    0.001    0.003    0.001 {built-in method numpy.ascontiguousarray}
+    42128    0.003    0.000    0.003    0.000 {method 'setdefault' of 'dict' objects}
+        1    0.000    0.000    0.002    0.002 search_native.py:270(__exit__)
+        1    0.002    0.002    0.002    0.002 search_native.py:262(close)
+    12224    0.001    0.000    0.001    0.000 {built-in method builtins.isinstance}
+        2    0.001    0.000    0.001    0.001 search_native.py:347(_ordered_evaluations)
+        7    0.001    0.000    0.001    0.000 benchmark-search-backends.py:117(measured)
+        8    0.000    0.000    0.001    0.000 joint_search.py:1234(_root_equilibrium)
+       24    0.000    0.000    0.001    0.000 joint_search.py:1202(_prior_regret)
+    12045    0.001    0.000    0.001    0.000 {built-in method _ctypes.POINTER}
+     2504    0.001    0.000    0.001    0.000 {method 'reshape' of 'numpy.ndarray' objects}
+        8    0.000    0.000    0.000    0.000 joint_search.py:2168(_finish_root)
+        8    0.000    0.000    0.000    0.000 joint_search.py:2061(_diagnostics)
+     4885    0.000    0.000    0.000    0.000 {built-in method builtins.len}
+     2429    0.000    0.000    0.000    0.000 {built-in method _ctypes.byref}
+       96    0.000    0.000    0.000    0.000 joint_search.py:276(_normalized_prior)
+        1    0.000    0.000    0.000    0.000 search_native.py:210(__init__)
+       24    0.000    0.000    0.000    0.000 _index_tricks_impl.py:31(ix_)
+     2414    0.000    0.000    0.000    0.000 search_native.py:253(check)
+     24/8    0.000    0.000    0.000    0.000 {built-in method builtins.all}
+       24    0.000    0.000    0.000    0.000 joint_search.py:1256(<genexpr>)
+       16    0.000    0.000    0.000    0.000 joint_search.py:1170(_half_is_covered)
+        2    0.000    0.000    0.000    0.000 {method 'extend' of 'list' objects}
+       96    0.000    0.000    0.000    0.000 {method 'sum' of 'numpy.ndarray' objects}
+       40    0.000    0.000    0.000    0.000 {built-in method builtins.sum}
+     1204    0.000    0.000    0.000    0.000 joint_search.py:1172(<genexpr>)

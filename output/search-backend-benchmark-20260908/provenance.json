@@ -1,0 +1,13 @@
+{
+  "source_commit": "6380aed8ed7f",
+  "benchmark_sha256": "7b39ff7561bc82cdc86c2bfc6dd353fe519d1efb3ef622c25f5d470b960f01ae",
+  "host": "Linux battlecruiser 6.18.49 #1-NixOS SMP PREEMPT_DYNAMIC Wed Sep  2 12:31:51 UTC 2026 x86_64 GNU/Linux",
+  "gpu": "NVIDIA GeForce RTX 3080 Ti, 595.45.04, 12288 MiB",
+  "limits": {
+    "benchmark_memory_max_gib": 12,
+    "benchmark_nice": 10,
+    "one_benchmark_process_at_a_time": true,
+    "training_continues": false,
+    "training_state_note": "Started active; disk guard froze at 19:48:50 UTC. See runtime-conditions.json for cohort conditions."
+  }
+}

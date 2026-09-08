@@ -1,0 +1,84 @@
+{
+  "verified_at": 1788897520.766272,
+  "source_hash_unchanged": true,
+  "reports": {
+    "b1.json.gz": {
+      "complete": true,
+      "trials": 55,
+      "same_result_and_rng_within_process": true,
+      "fresh_rows_constant_within_process": true,
+      "sha256": "5d0d3b7b0fb8aa34c49eb304d041d99f74d19860a434fed75f91a4ba1ceb98dd"
+    },
+    "b16.json.gz": {
+      "complete": true,
+      "trials": 39,
+      "same_result_and_rng_within_process": true,
+      "fresh_rows_constant_within_process": true,
+      "sha256": "9c77208fec6f468ea13fb51e57b9cf5109b4e93fc492e98caae702e91626dd12"
+    },
+    "b4-no-gc.json.gz": {
+      "complete": true,
+      "trials": 57,
+      "same_result_and_rng_within_process": true,
+      "fresh_rows_constant_within_process": true,
+      "sha256": "d15e84810e4b58f6506abbbab21019b5866ad899ed117219df9c2ffc4d003800"
+    },
+    "b4-startup.json.gz": {
+      "complete": true,
+      "trials": 20,
+      "same_result_and_rng_within_process": true,
+      "fresh_rows_constant_within_process": true,
+      "sha256": "d20f279067b66b5b5826dba5c05c0629b9164544d1ce8e86c59045f5d523582a"
+    },
+    "b4.json.gz": {
+      "complete": true,
+      "trials": 63,
+      "same_result_and_rng_within_process": true,
+      "fresh_rows_constant_within_process": true,
+      "sha256": "84b918ddff214cf388d9f834532c01099b44d07c06a85265ff01bddee4ef8d96"
+    },
+    "check2.json.gz": {
+      "complete": true,
+      "trials": 9,
+      "same_result_and_rng_within_process": true,
+      "fresh_rows_constant_within_process": true,
+      "sha256": "fa140b349d8f8263a24abe5ac48f9f08ffddb0f1967e89fad850c6fb6fbed8d5"
+    },
+    "memory-python.json.gz": {
+      "complete": true,
+      "trials": 5,
+      "same_result_and_rng_within_process": true,
+      "fresh_rows_constant_within_process": true,
+      "sha256": "4f2e1e83f2b19d7f4057d4f3287156c6cba369ff0cdd83e83de79e82ada13464"
+    },
+    "memory-rust.json.gz": {
+      "complete": true,
+      "trials": 5,
+      "same_result_and_rng_within_process": true,
+      "fresh_rows_constant_within_process": true,
+      "sha256": "49218315e0ededd3743c3dc3521de37f7879c3dc0dbfc92efa2a47c30421569e"
+    },
+    "profile-clean.json.gz": {
+      "complete": true,
+      "trials": 9,
+      "same_result_and_rng_within_process": true,
+      "fresh_rows_constant_within_process": true,
+      "sha256": "3f9ca030ccf9bc92dd2ea3d9ba8f3b7410dc207ae8e2f216f4c8baf3edd0a367"
+    },
+    "b4-paused.json.gz": {
+      "complete": true,
+      "trials": 57,
+      "same_result_and_rng_within_process": true,
+      "fresh_rows_constant_within_process": true,
+      "sha256": "490c05a21369cbfeaa60c1868a4de606fb351b1b36269f9a19dd26152e865b45"
+    }
+  },
+  "training_during_recorded_trials": {
+    "oom_kill_counter_delta": 0,
+    "memory_high_event_counter_delta": 0,
+    "memory_current_range_bytes": [
+      45433204736,
+      46909194240
+    ]
+  }
+}
