@@ -168,11 +168,23 @@ def _require_popular_gate_support(popular_gate: int, hello: dict[str, Any]) -> N
 class SearchServer:
     """Owns one Lean process and addresses immutable states by integer handle."""
 
-    def __init__(self, request_timeout: float = 60.0, popular_gate: int = 26) -> None:
+    def __init__(
+        self,
+        request_timeout: float = 60.0,
+        popular_gate: int = 26,
+        transport_backend: str = "python",
+    ) -> None:
         if request_timeout <= 0:
             raise ValueError("request_timeout must be positive")
         if not 0 <= popular_gate <= 256:
             raise ValueError("popular_gate must be in [0, 256]")
+        if transport_backend not in {"python", "rust"}:
+            raise ValueError("transport_backend must be python or rust")
+        if transport_backend == "rust":
+            from .simulator_transport import library
+
+            library()  # Reject stale deployments before starting a child.
+        self.transport_backend = transport_backend
         self.request_timeout = request_timeout
         self.popular_gate = popular_gate
         # Deterministic engine: states with equal construction lineage are
@@ -430,6 +442,8 @@ class SearchServer:
     ) -> list[Snapshot]:
         if not requests:
             return []
+        if getattr(self, "transport_backend", "python") == "rust":
+            return self._rust_batch(requests, episode=False)
         payload = ";".join(
             f"{handle},{player},{enemy},{seed}"
             for handle, player, enemy, seed in requests
@@ -440,6 +454,43 @@ class SearchServer:
             raise RuntimeError("native batch response length mismatch")
         return snapshots
 
+    def _rust_batch(self, requests, *, episode):
+        from .simulator_transport import TransportTimeout, batch
+
+        operation = "batch-episode" if episode else "batch"
+        with self._request_lock:
+            if self.process.stdin is None or self.process.stdout is None:
+                raise RuntimeError("search server pipes are unavailable")
+            # Administrative requests still use the synchronous Python reader.
+            # There is exactly one response per request and no pipelining, so
+            # its text buffer has no unread next response when ownership passes.
+            self.process.stdin.flush()
+            self._request_id += 1
+            try:
+                return batch(
+                    self.process.stdin.fileno(),
+                    self.process.stdout.fileno(),
+                    self._request_id,
+                    episode,
+                    requests,
+                    self.feature_count,
+                    self.request_timeout,
+                )
+            except TransportTimeout:
+                self.process.kill()
+                self.process.wait()
+                self._close_streams()
+                raise NativeRequestTimeout(operation, self.request_timeout) from None
+            except RuntimeError:
+                # A failed exchange may have consumed only part of a response.
+                # Do not reuse a potentially desynchronized stream or block on
+                # Python's administrative reader during shutdown.
+                if self.process.poll() is None:
+                    self.process.kill()
+                self.process.wait()
+                self._close_streams()
+                raise
+
     def episode_step(
         self, handle: int, player_action: int, enemy_action: int
     ) -> Snapshot:
@@ -448,11 +499,17 @@ class SearchServer:
     def episode_steps(self, requests: list[tuple[int, int, int]]) -> list[Snapshot]:
         if not requests:
             return []
-        payload = ";".join(
-            f"{handle},{player},{enemy},0" for handle, player, enemy in requests
-        )
-        response = self._request(f"batch-episode|{payload}")
-        snapshots = [self._snapshot(row) for row in response["snapshots"]]
+        if getattr(self, "transport_backend", "python") == "rust":
+            snapshots = self._rust_batch(
+                [(handle, player, enemy, 0) for handle, player, enemy in requests],
+                episode=True,
+            )
+        else:
+            payload = ";".join(
+                f"{handle},{player},{enemy},0" for handle, player, enemy in requests
+            )
+            response = self._request(f"batch-episode|{payload}")
+            snapshots = [self._snapshot(row) for row in response["snapshots"]]
         if len(snapshots) != len(requests):
             raise RuntimeError("native episode batch response length mismatch")
         self._dedup_window.clear()

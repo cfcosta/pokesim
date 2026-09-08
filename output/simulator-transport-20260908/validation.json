@@ -1,0 +1,24 @@
+{
+  "verified_at": 1788899320.1557803,
+  "python_tests": 493,
+  "transport_tests_included": 16,
+  "forced_rust_regressions": 462,
+  "rust_unit_tests": 8,
+  "clippy_warnings_denied": "passed",
+  "nix_package": "built",
+  "reports": {
+    "b4": {
+      "trials": 20,
+      "fresh_native_rows": 38436,
+      "exact_result_and_rng_parity": true,
+      "sha256": "8b94d8e9b3f9fec4a31ce9a5702172f89d2208fd030675c4aa577390e57eedfc"
+    },
+    "b16": {
+      "trials": 16,
+      "fresh_native_rows": 155670,
+      "exact_result_and_rng_parity": true,
+      "sha256": "cdf3b653c1183be2997cd76cf09c3a48274ace0ac4c4837f1c09ca54fb6d9f01"
+    }
+  },
+  "simulator_unchanged": true
+}

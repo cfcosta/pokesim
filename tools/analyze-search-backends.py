@@ -60,6 +60,15 @@ def paired_summary(records, mode):
                 for name in ("simulator", "evaluation", "solver")
             },
             "gc_seconds_total": sum(r["gc_seconds"] for r in rs),
+            "actor_pss_median_bytes": statistics.median(
+                r["pss_after"][0]["Pss"] for r in rs
+            ),
+            "native_pss_median_bytes": statistics.median(
+                r["pss_after"][1]["Pss"] for r in rs
+            ),
+            "combined_sampled_rss_peak_bytes": max(
+                r["combined_rss_peak_bytes"] for r in rs
+            ),
             "gc_generations": {
                 str(g): sum(gen == g for r in rs for gen, _ in r["gc_events"])
                 for g in range(3)
@@ -128,6 +137,10 @@ def main():
             }
             continue
         summary["workloads"][name] = {
+            "comparison": d["arguments"].get("compare", "orchestration"),
+            "variant_names": d.get(
+                "variant_names", {"python": "Python", "rust": "Rust"}
+            ),
             "batch": d["arguments"]["batch"],
             "perturbed_heads": d["arguments"]["perturb_heads"],
             "gc_mode": d["arguments"]["gc_mode"],

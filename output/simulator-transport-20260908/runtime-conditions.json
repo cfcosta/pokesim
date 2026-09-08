@@ -1,0 +1,9 @@
+{
+  "training_failed_at_utc": "2026-09-08T20:23:05Z",
+  "completed_battles": 1979,
+  "requested_battles": 2048,
+  "error": "NativeRequestTimeout: native search operation 'batch' exceeded 60.0s",
+  "transport_in_traceback": "original Python _search_steps_native -> _request",
+  "training_restarted": false,
+  "note": "Initial allocating-decoder cohorts ran with training active. Final borrowed-decoder warm samples must be interpreted using cgroup.freeze presence and failure time; missing cgroup files after failure are not an active-training indication. The cause of the legacy simulator timeout was not isolated."
+}

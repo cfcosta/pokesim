@@ -1,0 +1,59 @@
+{
+  "comparison": "Python versus Rust batch transport, Rust orchestration fixed",
+  "library": "/nix/store/m4k20dzcmlhnaxaszcr65p4wqmzxjbng-battle-search-0.1.0/lib/libbattle_search.so",
+  "library_sha256": "bc7a59ea6143adfa1a09972bf8a8662dbbae127942b1c1759a85af164427c48e",
+  "benchmark_sha256": "a35c254caedcafcd30f862b1517f3ea28f88da655591ccad28587f7ad9f2549b",
+  "native_binary_sha256": "17ad884ba408f360834efec40a6e4fa4ee72774a3b6feafe888db670b01f9a0a",
+  "benchmark_memory_cap_gib": 12,
+  "benchmark_nice": 10,
+  "one_benchmark_worker_at_a_time": true,
+  "replay_enabled": false,
+  "training_frozen_checked_per_trial": "telemetry_before/after cgroup.freeze",
+  "final_library": "/nix/store/fr1b3xkgmcwsp2g8r4kgnigqwwxbf1lb-battle-search-0.1.0/lib/libbattle_search.so",
+  "final_library_sha256": "05c90150897feb3b7502d8aad2d11c2b9d490ac8b063cf60229f4d3b92c76b99",
+  "final_build_difference": "Lint-equivalent remainder check and platform PIPE_BUF constant; all disassembled instructions identical except relocated loads of identical error-message constants.",
+  "verified_constant_relocations": [
+    {
+      "instruction": "137ad",
+      "old_constant_address": "66fec",
+      "new_constant_address": "67017",
+      "identical_loaded_bytes": "6665617475726520636f756e74206f76"
+    },
+    {
+      "instruction": "1383e",
+      "old_constant_address": "67022",
+      "new_constant_address": "6704d",
+      "identical_loaded_bytes": "7420646966666572732066726f6d2073"
+    },
+    {
+      "instruction": "13849",
+      "old_constant_address": "67012",
+      "new_constant_address": "6703d",
+      "identical_loaded_bytes": "617465206665617475726520636f756e"
+    },
+    {
+      "instruction": "13854",
+      "old_constant_address": "67002",
+      "new_constant_address": "6702d",
+      "identical_loaded_bytes": "6e617469766520736561726368207374"
+    },
+    {
+      "instruction": "138ab",
+      "old_constant_address": "67052",
+      "new_constant_address": "67007",
+      "identical_loaded_bytes": "206f64642062797465206c656e677468"
+    },
+    {
+      "instruction": "138b6",
+      "old_constant_address": "67047",
+      "new_constant_address": "66ffc",
+      "identical_loaded_bytes": "6174757265732068617665206f646420"
+    },
+    {
+      "instruction": "138c1",
+      "old_constant_address": "67037",
+      "new_constant_address": "66fec",
+      "identical_loaded_bytes": "7061636b6564206e6174697665206665"
+    }
+  ]
+}

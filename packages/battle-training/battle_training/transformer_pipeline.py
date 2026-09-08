@@ -1779,7 +1779,9 @@ def _collect_rows_single(
         )
         del recent_battles[:-64]
 
-    with SearchServer(popular_gate=config.popular_gate) as server:
+    with SearchServer(
+        popular_gate=config.popular_gate, transport_backend=config.orchestration_backend
+    ) as server:
         for batch_start in range(0, len(episode_indices), config.actor_batch_size):
             batch = episode_indices[batch_start : batch_start + config.actor_batch_size]
             active: list[_ActorEpisode] = []
@@ -2737,7 +2739,10 @@ def _collect_rows(
             len(_team_replay_entries(team_source)),
             exclude=restart_pairs,
         )
-        with SearchServer(popular_gate=config.popular_gate) as probe_server:
+        with SearchServer(
+            popular_gate=config.popular_gate,
+            transport_backend=config.orchestration_backend,
+        ) as probe_server:
             matchup_plan, matchup_stats = _matchup_filter_plan(
                 probe_server,
                 network,
@@ -3620,7 +3625,9 @@ def _arena(
     chance_rng = random.Random(config.seed + 0xA7E9B)
     wins = losses = draws = truncated = 0
     games: list[dict[str, Any]] = []
-    with SearchServer(popular_gate=config.popular_gate) as server:
+    with SearchServer(
+        popular_gate=config.popular_gate, transport_backend=config.orchestration_backend
+    ) as server:
         for episode in range(config.arena_episodes):
             candidate_player = episode % 2 == 0
             result = _play_game(
@@ -4237,7 +4244,9 @@ def run_transformer_pipeline(
     if config.shadow_opponent_window < 0:
         raise ValueError("shadow_opponent_window must be nonnegative")
     build_search_server()
-    with SearchServer(popular_gate=config.popular_gate) as protocol:
+    with SearchServer(
+        popular_gate=config.popular_gate, transport_backend=config.orchestration_backend
+    ) as protocol:
         feature_count = protocol.feature_count
         action_count = protocol.action_count
     configure_determinism(config.seed)

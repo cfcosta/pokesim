@@ -1,4 +1,4 @@
-"""Checked C-ABI adapter for Rust-owned simultaneous tree orchestration.
+"""PyO3 adapter for Rust-owned simultaneous tree orchestration.
 
 Python supplies existing batched simulator/evaluator/solver services and RNGs.
 Rust owns nodes, expansion, chance request scheduling, leaf collection, backup,
@@ -7,80 +7,16 @@ and split-half matrices. There is no fallback to Python when Rust is requested.
 
 from __future__ import annotations
 
-import ctypes as C
 import hashlib
+import importlib.machinery
+import importlib.util
 import os
 import sys
 from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 
-import numpy as np
-
 from .joint_search import SimultaneousTreeSearch, _dirichlet_noised_priors
-
-U = C.c_uint64
-F = C.c_double
-P = C.c_void_p
-
-
-def _struct(name, fields):
-    return type(name, (C.Structure,), {"_fields_": fields})
-
-
-Config = _struct(
-    "Config",
-    [
-        (n, U)
-        for n in (
-            "owner",
-            "depth",
-            "root_width",
-            "interior_width",
-            "root_chances",
-            "interior_chances",
-            "split",
-            "initial_divergences",
-        )
-    ],
-)
-SnapshotMeta = _struct(
-    "SnapshotMeta",
-    [(n, U) for n in ("handle", "player_mask", "enemy_mask", "done", "divergent")],
-)
-Row = _struct("Row", [("root", U), ("snapshot", U)])
-Request = _struct("Request", [(n, U) for n in ("handle", "player", "enemy", "seed")])
-Job = _struct("Job", [(n, U) for n in ("root", "node", "half")])
-Status = _struct(
-    "Status", [(n, U) for n in ("stage", "rows", "requests", "jobs", "seed_count")]
-)
-RootStatus = _struct(
-    "RootStatus",
-    [
-        (n, U)
-        for n in (
-            "good",
-            "transitions",
-            "root_leaves",
-            "expanded",
-            "possible_pairs",
-            "sampled_pairs",
-            "chance_outcomes",
-            "interior_nodes",
-            "interior_divergences",
-        )
-    ],
-)
-NodeView = _struct(
-    "NodeView",
-    [(n, U) for n in ("root", "snapshot", "player_len", "enemy_len")]
-    + [(n, C.POINTER(F)) for n in ("player", "enemy")]
-    + [(n, C.POINTER(U)) for n in ("legal_player", "legal_enemy")]
-    + [("payoff", C.POINTER(F)), ("counts", C.POINTER(U))]
-    + [(n, C.POINTER(F)) for n in ("half0", "half1")]
-    + [(n, C.POINTER(U)) for n in ("counts0", "counts1")]
-    + [(n, F) for n in ("leaf", "value", "exploitability")],
-)
 
 
 class NativeSearchError(RuntimeError):
@@ -92,6 +28,20 @@ def _library():
     suffix = "dylib" if sys.platform == "darwin" else "so"
     filename = "battle_search.dll" if os.name == "nt" else f"libbattle_search.{suffix}"
     configured = os.environ.get("BATTLE_SEARCH_LIB")
+    if not configured:
+        try:
+            import battle_search
+        except ModuleNotFoundError as error:
+            if error.name != "battle_search":
+                raise NativeSearchError(str(error)) from error
+        except ImportError as error:
+            raise NativeSearchError(str(error)) from error
+        else:
+            # Maturin wheels re-export the extension from a package __init__.
+            battle_search = getattr(battle_search, "battle_search", battle_search)
+            if getattr(battle_search, "API_VERSION", None) != 1:
+                raise NativeSearchError("incompatible installed Rust search API")
+            return battle_search
     root = Path(__file__).resolve().parents[2] / "search-rs" / "target"
     candidates = ([Path(configured)] if configured else []) + [
         root / p / filename for p in ("release", "debug")
@@ -106,40 +56,21 @@ def _library():
     errors = []
     for path in candidates:
         try:
-            lib = C.CDLL(str(path))
-            signatures = {
-                "abi": ([], U),
-                "new": (
-                    [
-                        C.c_size_t,
-                        P,
-                        P,
-                        C.c_size_t,
-                        P,
-                        C.c_size_t,
-                        P,
-                        C.c_size_t,
-                        C.POINTER(P),
-                    ],
-                    C.c_int,
+            spec = importlib.util.spec_from_file_location(
+                "battle_search",
+                path,
+                loader=importlib.machinery.ExtensionFileLoader(
+                    "battle_search", str(path)
                 ),
-                "free": ([P], None),
-                "steps": ([P, P, C.c_size_t], C.c_int),
-                "values": ([P, P, C.c_size_t], C.c_int),
-                "solutions": ([P, P, C.c_size_t], C.c_int),
-                "evaluations": ([P, P, C.c_size_t, P, C.c_size_t], C.c_int),
-                "view": ([P, P, P, P, P], C.c_int),
-                "node": ([P, C.c_size_t, P], C.c_int),
-                "root": ([P, C.c_size_t, P], C.c_int),
-                "error": ([P, P, C.c_size_t], C.c_size_t),
-            }
-            for name, (args, result) in signatures.items():
-                fn = getattr(lib, f"battle_search_{name}_v1")
-                fn.argtypes, fn.restype = args, result
-            if lib.battle_search_abi_v1() != 1:
-                raise NativeSearchError("incompatible Rust search ABI")
+            )
+            if spec is None or spec.loader is None:
+                raise ImportError("cannot load Python extension")
+            lib = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(lib)
+            if lib.API_VERSION != 1:
+                raise NativeSearchError("incompatible Rust search API")
             return lib
-        except (OSError, AttributeError, NativeSearchError) as error:
+        except (ImportError, OSError, AttributeError, NativeSearchError) as error:
             errors.append(f"{path}: {error}")
     raise NativeSearchError(
         "Rust search unavailable; build packages/search-rs or set BATTLE_SEARCH_LIB. "
@@ -153,10 +84,11 @@ def orchestration_metadata(backend):
     if backend != "rust":
         raise ValueError("orchestration_backend must be python or rust")
     library = _library()
-    path = Path(library._name).resolve()
+    path = Path(library.__file__).resolve()
     return {
         "backend": "rust-matrix-tree-v1",
-        "abi": library.battle_search_abi_v1(),
+        "api": library.API_VERSION,
+        "bridge": "pyo3",
         "library": str(path),
         "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
     }
@@ -171,37 +103,28 @@ def native_available():
 
 
 def _metas(snapshots):
-    return (SnapshotMeta * len(snapshots))(
-        *(
-            SnapshotMeta(
-                s.handle,
-                s.player_mask,
-                s.enemy_mask,
-                bool(s.done),
-                s.divergence is not None,
-            )
-            for s in snapshots
+    return [
+        (
+            s.handle,
+            s.player_mask,
+            s.enemy_mask,
+            int(s.done),
+            int(s.divergence is not None),
         )
-    )
-
-
-def _doubles(values):
-    return np.ascontiguousarray(values, dtype=np.float64)
+        for s in snapshots
+    ]
 
 
 def _seeds(searches, roots, interior):
-    return np.asarray(
-        [
-            seed
-            for root in roots
-            for seed in searches[root]._chance_seeds(
-                searches[root].config.interior_chance_samples
-                if interior
-                else searches[root].config.chance_samples_per_joint
-            )
-        ],
-        dtype=np.uint64,
-    )
+    return [
+        seed
+        for root in roots
+        for seed in searches[root]._chance_seeds(
+            searches[root].config.interior_chance_samples
+            if interior
+            else searches[root].config.chance_samples_per_joint
+        )
+    ]
 
 
 class _Engine:
@@ -209,7 +132,7 @@ class _Engine:
 
     def __init__(self, searches, snapshots, evaluations):
         self.lib = _library()
-        self.handle = P()
+        self.handle = None
         self.snapshots = list(snapshots)
         self.actions = searches[0].action_count
         owners = {}
@@ -217,14 +140,14 @@ class _Engine:
         for i, search in enumerate(searches):
             c = search.config
             configs.append(
-                Config(
+                (
                     owners.setdefault(id(search), i),
                     c.max_depth,
                     c.max_actions_per_side,
                     c.interior_actions_per_side,
                     c.chance_samples_per_joint,
                     c.interior_chance_samples,
-                    c.split_half_reliability,
+                    int(c.split_half_reliability),
                     search._interior_divergences,
                 )
             )
@@ -234,35 +157,27 @@ class _Engine:
             raise NativeSearchError(
                 "evaluation action count does not match search schema"
             )
-        data = _doubles([v for p, e, value in evaluations for v in (*p, *e, value)])
+        data = [v for p, e, value in evaluations for v in (*p, *e, value)]
         seeds = _seeds(searches, range(len(searches)), False)
-        self.check(
-            self.lib.battle_search_new_v1(
-                self.actions,
-                (Config * len(configs))(*configs),
-                _metas(snapshots),
-                len(searches),
-                data.ctypes.data,
-                data.size,
-                seeds.ctypes.data,
-                seeds.size,
-                C.byref(self.handle),
+        try:
+            self.handle = self.lib.Engine(
+                self.actions, configs, _metas(snapshots), data, seeds
             )
-        )
+        except (RuntimeError, ValueError, TypeError, OverflowError) as error:
+            raise NativeSearchError(str(error)) from error
 
-    def check(self, code):
-        if code:
-            message = C.create_string_buffer(1024)
-            self.lib.battle_search_error_v1(self.handle, message, len(message))
-            raise NativeSearchError(
-                message.value.decode()
-                or f"native search rejected input (status {code})"
-            )
+    def call(self, method, *args):
+        if self.handle is None:
+            raise NativeSearchError("native search is closed")
+        try:
+            return getattr(self.handle, method)(*args)
+        except (RuntimeError, ValueError, TypeError, OverflowError) as error:
+            raise NativeSearchError(str(error)) from error
 
     def close(self):
-        if self.handle:
-            self.lib.battle_search_free_v1(self.handle)
-            self.handle = P()
+        if self.handle is not None:
+            self.handle.close()
+            self.handle = None
 
     def __enter__(self):
         return self
@@ -271,70 +186,20 @@ class _Engine:
         self.close()
 
     def view(self):
-        status = Status()
-        rows, requests, jobs = C.POINTER(Row)(), C.POINTER(Request)(), C.POINTER(Job)()
-        self.check(
-            self.lib.battle_search_view_v1(
-                self.handle,
-                C.byref(status),
-                C.byref(rows),
-                C.byref(requests),
-                C.byref(jobs),
-            )
-        )
-        # Copy only the event payload before any mutation invalidates the views.
-        if status.stage == 1:
-            data = [
-                (r.handle, r.player, r.enemy, r.seed)
-                for r in requests[: status.requests]
-            ]
-        elif status.stage in (2, 3):
-            data = [(r.root, r.snapshot) for r in rows[: status.rows]]
-        elif status.stage == 4:
-            data = [(j.root, j.node, j.half) for j in jobs[: status.jobs]]
-        else:
-            data = []
-        return status.stage, data
+        return self.call("view")
 
     def node(self, index, full=False):
-        view = NodeView()
-        self.check(self.lib.battle_search_node_v1(self.handle, index, C.byref(view)))
-        a = self.actions
-
-        def vector(ptr, size):
-            return np.ctypeslib.as_array(ptr, shape=(size,)).tolist()
-
-        def matrix(ptr):
-            return np.ctypeslib.as_array(ptr, shape=(a * a,)).reshape(a, a).tolist()
-
-        node = SimpleNamespace(
-            snapshot=self.snapshots[view.snapshot],
-            player_priors=vector(view.player, a),
-            enemy_priors=vector(view.enemy, a),
-            player_legal=vector(view.legal_player, view.player_len),
-            enemy_legal=vector(view.legal_enemy, view.enemy_len),
-            payoff=matrix(view.payoff),
-            leaf_value=view.leaf,
-            root_value=view.value,
-            exploitability=view.exploitability,
+        fields = self.call("node", index, full)
+        fields["snapshot"] = self.snapshots[fields["snapshot"]]
+        return SimpleNamespace(
+            **fields,
             online_exploitability=0.0,
             solve_count=0,
             solve_backend="",
-            half_payoff=[],
-            half_counts=[],
         )
-        if full and view.half0:
-            node.half_payoff = [matrix(view.half0), matrix(view.half1)]
-            node.half_counts = [matrix(view.counts0), matrix(view.counts1)]
-        return node
 
     def submit_doubles(self, kind, values):
-        data = _doubles(values)
-        self.check(
-            getattr(self.lib, f"battle_search_{kind}_v1")(
-                self.handle, data.ctypes.data, data.size
-            )
-        )
+        self.call(kind, values)
 
 
 def _groups(searches, snapshots, rows):
@@ -392,11 +257,7 @@ class RustSimultaneousTreeSearch(SimultaneousTreeSearch):
                     break
                 if stage == 1:
                     successors = first.server.search_steps(rows)
-                    engine.check(
-                        engine.lib.battle_search_steps_v1(
-                            engine.handle, _metas(successors), len(successors)
-                        )
-                    )
+                    engine.call("steps", _metas(successors))
                     engine.snapshots.extend(successors)
                 elif stage == 2:
                     groups = _groups(searches, engine.snapshots, rows)
@@ -424,18 +285,8 @@ class RustSimultaneousTreeSearch(SimultaneousTreeSearch):
                         searches[root]._evaluation_cache[
                             engine.snapshots[index].handle
                         ] = evaluation
-                    data = _doubles(
-                        [v for p, e, value in ordered for v in (*p, *e, value)]
-                    )
-                    engine.check(
-                        engine.lib.battle_search_evaluations_v1(
-                            engine.handle,
-                            data.ctypes.data,
-                            data.size,
-                            seeds.ctypes.data,
-                            seeds.size,
-                        )
-                    )
+                    data = [v for p, e, value in ordered for v in (*p, *e, value)]
+                    engine.call("evaluations", data, seeds)
                 elif stage == 3:
                     result, _, _ = cls._pooled_successor_values(
                         _groups(searches, engine.snapshots, rows)
@@ -479,10 +330,7 @@ class RustSimultaneousTreeSearch(SimultaneousTreeSearch):
             # is reused across calls or appears more than once in the same batch.
             statuses, updated = [], set()
             for i, search in enumerate(searches):
-                status = RootStatus()
-                engine.check(
-                    engine.lib.battle_search_root_v1(engine.handle, i, C.byref(status))
-                )
+                status = SimpleNamespace(**engine.call("root", i))
                 statuses.append(status)
                 if id(search) not in updated:
                     updated.add(id(search))

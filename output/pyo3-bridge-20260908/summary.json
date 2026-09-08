@@ -1,0 +1,171 @@
+{
+  "scope": "Only complete files and warm trials. Paired bootstrap resamples same-position trial pairs; it describes this contended experiment, not independent positions or a guaranteed speedup. P95 is observed nearest-rank over small samples. Replay supplies cached service results and is not battle throughput.",
+  "workloads": {
+    "b16": {
+      "comparison": "bridge",
+      "variant_names": {
+        "python": "ctypes reference",
+        "rust": "PyO3"
+      },
+      "batch": 16,
+      "perturbed_heads": true,
+      "gc_mode": "normal",
+      "exact_parity": true,
+      "real": {
+        "pairs": 4,
+        "paired_geometric_speedup": 1.0630063726011854,
+        "paired_bootstrap_95_interval": [
+          1.0444740321670323,
+          1.0768505308783434
+        ],
+        "rust_faster_pairs": 4,
+        "backends": {
+          "python": {
+            "median_seconds": 11.253936287503166,
+            "mean_seconds": 11.254584387745126,
+            "observed_p95_seconds": 11.266632741986541,
+            "mean_actor_cpu_seconds": 7.13041090675,
+            "median_orchestration_seconds": 1.2589844529939,
+            "mean_orchestration_seconds": 1.2627739630006545,
+            "mean_services_seconds": {
+              "simulator": 6.13434851400234,
+              "evaluation": 3.6090360844973475,
+              "solver": 0.24842582624478382
+            },
+            "gc_seconds_total": 8.690891456863028,
+            "actor_pss_median_bytes": 2245195776.0,
+            "native_pss_median_bytes": 5504999936.0,
+            "combined_sampled_rss_peak_bytes": 8401801216,
+            "gc_generations": {
+              "0": 14954,
+              "1": 1358,
+              "2": 30
+            },
+            "native_rows": [
+              155686
+            ]
+          },
+          "rust": {
+            "median_seconds": 10.539010407497699,
+            "mean_seconds": 10.588849850748375,
+            "observed_p95_seconds": 10.868064101989148,
+            "mean_actor_cpu_seconds": 6.475374638249999,
+            "median_orchestration_seconds": 0.6040574099970399,
+            "mean_orchestration_seconds": 0.6011364582518581,
+            "mean_services_seconds": {
+              "simulator": 6.0427908457459125,
+              "evaluation": 3.695255888003885,
+              "solver": 0.2496666587467189
+            },
+            "gc_seconds_total": 7.802540280245012,
+            "actor_pss_median_bytes": 2245593088.0,
+            "native_pss_median_bytes": 5501793792.0,
+            "combined_sampled_rss_peak_bytes": 8407719936,
+            "gc_generations": {
+              "0": 13120,
+              "1": 1194,
+              "2": 26
+            },
+            "native_rows": [
+              155686
+            ]
+          }
+        },
+        "ratio_of_medians": 1.067836148970576
+      },
+      "replay": null
+    },
+    "b4": {
+      "comparison": "bridge",
+      "variant_names": {
+        "python": "ctypes reference",
+        "rust": "PyO3"
+      },
+      "batch": 4,
+      "perturbed_heads": true,
+      "gc_mode": "normal",
+      "exact_parity": true,
+      "real": {
+        "pairs": 6,
+        "paired_geometric_speedup": 1.1189975610845513,
+        "paired_bootstrap_95_interval": [
+          1.066912974017112,
+          1.1641383297019727
+        ],
+        "rust_faster_pairs": 6,
+        "backends": {
+          "python": {
+            "median_seconds": 2.859319693990983,
+            "mean_seconds": 2.8352240699969116,
+            "observed_p95_seconds": 2.9302902780036675,
+            "mean_actor_cpu_seconds": 1.7791051291666653,
+            "median_orchestration_seconds": 0.3011518504936248,
+            "mean_orchestration_seconds": 0.3297546413280846,
+            "mean_services_seconds": {
+              "simulator": 1.5501509108338116,
+              "evaluation": 0.8967805951712459,
+              "solver": 0.05853792266376937
+            },
+            "gc_seconds_total": 3.488310665212339,
+            "actor_pss_median_bytes": 1483008000.0,
+            "native_pss_median_bytes": 1462999040.0,
+            "combined_sampled_rss_peak_bytes": 3276910592,
+            "gc_generations": {
+              "0": 5363,
+              "1": 486,
+              "2": 20
+            },
+            "native_rows": [
+              38436
+            ]
+          },
+          "rust": {
+            "median_seconds": 2.4849049179974827,
+            "mean_seconds": 2.5342153803333836,
+            "observed_p95_seconds": 2.6735470270068618,
+            "mean_actor_cpu_seconds": 1.502133677333334,
+            "median_orchestration_seconds": 0.09943974499037722,
+            "mean_orchestration_seconds": 0.1009871566639049,
+            "mean_services_seconds": {
+              "simulator": 1.4503218046641753,
+              "evaluation": 0.9253743820033075,
+              "solver": 0.05753203700199568
+            },
+            "gc_seconds_total": 2.4902180634380784,
+            "actor_pss_median_bytes": 1483028480.0,
+            "native_pss_median_bytes": 1463396352.0,
+            "combined_sampled_rss_peak_bytes": 3249176576,
+            "gc_generations": {
+              "0": 4721,
+              "1": 430,
+              "2": 13
+            },
+            "native_rows": [
+              38436
+            ]
+          }
+        },
+        "ratio_of_medians": 1.1506756951872552
+      },
+      "replay": null
+    }
+  },
+  "memory": {},
+  "runtime_conditions": {
+    "training": "failed before this benchmark, at 1979/2048 collection games; partial data preserved",
+    "training_failure_utc": "2026-09-08 20:23:05 UTC",
+    "host": "Ryzen 7950X3D / RTX 3080 Ti 12 GB",
+    "resource_limits": {
+      "MemoryMax": "12G",
+      "MemorySwapMax": 0,
+      "Nice": 10,
+      "workers": 1
+    },
+    "contention": "Nix builds and Python validation partly overlapped benchmark execution; no active training process",
+    "variant_names": {
+      "python": "ctypes reference",
+      "rust": "PyO3"
+    },
+    "source_note": "Batch-four imported the adapter before an import-loader-only hardening change; runtime search and transport code are identical. Final Nix packaging and benchmark binaries have identical SHA256."
+  }
+}

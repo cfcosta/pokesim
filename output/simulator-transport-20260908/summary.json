@@ -1,0 +1,271 @@
+{
+  "scope": "Only complete files and warm trials. Paired bootstrap resamples same-position trial pairs; it describes this contended experiment, not independent positions or a guaranteed speedup. P95 is observed nearest-rank over small samples. Replay supplies cached service results and is not battle throughput.",
+  "workloads": {
+    "b16": {
+      "comparison": "transport",
+      "batch": 16,
+      "perturbed_heads": true,
+      "gc_mode": "normal",
+      "exact_parity": true,
+      "real": {
+        "pairs": 6,
+        "paired_geometric_speedup": 1.0566911780909956,
+        "paired_bootstrap_95_interval": [
+          1.0446192397054264,
+          1.0708924271531546
+        ],
+        "rust_faster_pairs": 6,
+        "backends": {
+          "python": {
+            "median_seconds": 11.574107653992542,
+            "mean_seconds": 11.56639703233183,
+            "observed_p95_seconds": 11.957232663000468,
+            "mean_actor_cpu_seconds": 7.547298347166667,
+            "median_orchestration_seconds": 1.290868086485716,
+            "mean_orchestration_seconds": 1.289453661488854,
+            "mean_services_seconds": {
+              "simulator": 6.476313194337611,
+              "evaluation": 3.559450647505097,
+              "solver": 0.2411795290002677
+            },
+            "gc_seconds_total": 12.895744540001033,
+            "gc_generations": {
+              "0": 22445,
+              "1": 2041,
+              "2": 48
+            },
+            "native_rows": [
+              155670
+            ]
+          },
+          "rust": {
+            "median_seconds": 10.959698139995453,
+            "mean_seconds": 10.944343690328727,
+            "observed_p95_seconds": 11.070831431992701,
+            "mean_actor_cpu_seconds": 6.973536086166668,
+            "median_orchestration_seconds": 1.2969695359861362,
+            "mean_orchestration_seconds": 1.270283347994943,
+            "mean_services_seconds": {
+              "simulator": 5.867282495501665,
+              "evaluation": 3.5656709753287337,
+              "solver": 0.24110687150338586
+            },
+            "gc_seconds_total": 12.922996743145632,
+            "gc_generations": {
+              "0": 22433,
+              "1": 2039,
+              "2": 48
+            },
+            "native_rows": [
+              155670
+            ]
+          }
+        },
+        "ratio_of_medians": 1.0560608062511239
+      },
+      "replay": null
+    },
+    "b4": {
+      "comparison": "transport",
+      "batch": 4,
+      "perturbed_heads": true,
+      "gc_mode": "normal",
+      "exact_parity": true,
+      "real": {
+        "pairs": 8,
+        "paired_geometric_speedup": 1.0515483376388355,
+        "paired_bootstrap_95_interval": [
+          1.0445794874122762,
+          1.05866092445643
+        ],
+        "rust_faster_pairs": 8,
+        "backends": {
+          "python": {
+            "median_seconds": 2.823719476502447,
+            "mean_seconds": 2.8365262832485314,
+            "observed_p95_seconds": 2.9260492589964997,
+            "mean_actor_cpu_seconds": 1.8507397896249997,
+            "median_orchestration_seconds": 0.4539533224888146,
+            "mean_orchestration_seconds": 0.45622591749270214,
+            "mean_services_seconds": {
+              "simulator": 1.6097517967500607,
+              "evaluation": 0.7144024376320885,
+              "solver": 0.056146131373679964
+            },
+            "gc_seconds_total": 4.136820177780464,
+            "gc_generations": {
+              "0": 7152,
+              "1": 652,
+              "2": 24
+            },
+            "native_rows": [
+              38436
+            ]
+          },
+          "rust": {
+            "median_seconds": 2.6971161979963654,
+            "mean_seconds": 2.697372688746327,
+            "observed_p95_seconds": 2.7354932379967067,
+            "mean_actor_cpu_seconds": 1.706810730125,
+            "median_orchestration_seconds": 0.4586309884907678,
+            "mean_orchestration_seconds": 0.45635202749872406,
+            "mean_services_seconds": {
+              "simulator": 1.478850496625455,
+              "evaluation": 0.7062286781256262,
+              "solver": 0.055941486496521975
+            },
+            "gc_seconds_total": 4.106416952723521,
+            "gc_generations": {
+              "0": 7148,
+              "1": 648,
+              "2": 24
+            },
+            "native_rows": [
+              38436
+            ]
+          }
+        },
+        "ratio_of_medians": 1.0469402388373674
+      },
+      "replay": null
+    },
+    "initial-b16": {
+      "comparison": "transport",
+      "batch": 16,
+      "perturbed_heads": true,
+      "gc_mode": "normal",
+      "exact_parity": true,
+      "real": {
+        "pairs": 6,
+        "paired_geometric_speedup": 1.023857980343245,
+        "paired_bootstrap_95_interval": [
+          1.0046566866853395,
+          1.0434262547648516
+        ],
+        "rust_faster_pairs": 4,
+        "backends": {
+          "python": {
+            "median_seconds": 13.29967932451109,
+            "mean_seconds": 13.327741745667785,
+            "observed_p95_seconds": 13.716481840005144,
+            "mean_actor_cpu_seconds": 8.714491550000002,
+            "median_orchestration_seconds": 1.4913652270115563,
+            "mean_orchestration_seconds": 1.4726515335059958,
+            "mean_services_seconds": {
+              "simulator": 7.414535179831243,
+              "evaluation": 4.163736683665775,
+              "solver": 0.276818348664771
+            },
+            "gc_seconds_total": 14.902925958682317,
+            "gc_generations": {
+              "0": 22446,
+              "1": 2040,
+              "2": 48
+            },
+            "native_rows": [
+              155670
+            ]
+          },
+          "rust": {
+            "median_seconds": 13.02511593599047,
+            "mean_seconds": 13.01905595149583,
+            "observed_p95_seconds": 13.422002881008666,
+            "mean_actor_cpu_seconds": 8.204782297833333,
+            "median_orchestration_seconds": 1.5307114449969959,
+            "mean_orchestration_seconds": 1.5271189316724,
+            "mean_services_seconds": {
+              "simulator": 7.025599353165792,
+              "evaluation": 4.167100661329944,
+              "solver": 0.29923700532769243
+            },
+            "gc_seconds_total": 15.206022519167163,
+            "gc_generations": {
+              "0": 22434,
+              "1": 2040,
+              "2": 48
+            },
+            "native_rows": [
+              155670
+            ]
+          }
+        },
+        "ratio_of_medians": 1.0210795350974156
+      },
+      "replay": null
+    },
+    "initial-b4": {
+      "comparison": "transport",
+      "batch": 4,
+      "perturbed_heads": true,
+      "gc_mode": "normal",
+      "exact_parity": true,
+      "real": {
+        "pairs": 8,
+        "paired_geometric_speedup": 1.0912571904361388,
+        "paired_bootstrap_95_interval": [
+          1.035752784103956,
+          1.1662923695031002
+        ],
+        "rust_faster_pairs": 8,
+        "backends": {
+          "python": {
+            "median_seconds": 3.827419026994903,
+            "mean_seconds": 3.899019253498409,
+            "observed_p95_seconds": 4.29767965200881,
+            "mean_actor_cpu_seconds": 2.372220839250001,
+            "median_orchestration_seconds": 0.5774626370184706,
+            "mean_orchestration_seconds": 0.585930514625943,
+            "mean_services_seconds": {
+              "simulator": 2.2961650552460924,
+              "evaluation": 0.9421359317530005,
+              "solver": 0.07478775187337305
+            },
+            "gc_seconds_total": 5.479645739222178,
+            "gc_generations": {
+              "0": 7152,
+              "1": 652,
+              "2": 24
+            },
+            "native_rows": [
+              38436
+            ]
+          },
+          "rust": {
+            "median_seconds": 3.626758393496857,
+            "mean_seconds": 3.5721122293743974,
+            "observed_p95_seconds": 3.7779100900079357,
+            "mean_actor_cpu_seconds": 2.112394556375,
+            "median_orchestration_seconds": 0.5721864910010481,
+            "mean_orchestration_seconds": 0.5732653611212299,
+            "mean_services_seconds": {
+              "simulator": 1.999277662123859,
+              "evaluation": 0.9257589860026201,
+              "solver": 0.07381022012668836
+            },
+            "gc_seconds_total": 5.388477658925694,
+            "gc_generations": {
+              "0": 7148,
+              "1": 648,
+              "2": 24
+            },
+            "native_rows": [
+              38436
+            ]
+          }
+        },
+        "ratio_of_medians": 1.0553278194262543
+      },
+      "replay": null
+    }
+  },
+  "memory": {},
+  "runtime_conditions": {
+    "training_failed_at_utc": "2026-09-08T20:23:05Z",
+    "completed_battles": 1979,
+    "requested_battles": 2048,
+    "error": "NativeRequestTimeout: native search operation 'batch' exceeded 60.0s",
+    "transport_in_traceback": "original Python _search_steps_native -> _request",
+    "training_restarted": false,
+    "note": "Initial allocating-decoder cohorts ran with training active. Final borrowed-decoder warm samples must be interpreted using cgroup.freeze presence and failure time; missing cgroup files after failure are not an active-training indication. The cause of the legacy simulator timeout was not isolated."
+  }
+}

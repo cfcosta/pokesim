@@ -1,0 +1,24 @@
+{
+  "library": "/nix/store/h0fvk96jpsxngrjlx028ch24jmd9nm3y-battle-search-0.1.0/lib/libbattle_search.so",
+  "library_sha256": "0ff3f41615031280e66f1a797d61c1836836426b6575ba51d180bca1d39d9f36",
+  "reference_library": "/nix/store/hylm316k1w4qcghcslivddkrs206pw0m-battle-search-0.1.0/lib/libbattle_search.so",
+  "reference_library_sha256": "41773f89c10e32826a7bacb0210fe7826b30e39a334aef0a6f143459851eb57d",
+  "reference_source": "/nix/store/kbip5ivqhbbxj6p0m729l4dlir9hasv4-source",
+  "reference_source_archive_sha256": "9e531e7ae26a189eae2f830ee7f7f3188e8d3dad53d7b71ebad372dea2139558",
+  "final_source_sha256": {
+    "packages/search-rs/src/python.rs": "d630ef215b43e001df980cddcd6af51d7c2cd41af56d2125f7b584a642967a8d",
+    "packages/search-rs/src/transport.rs": "b4673a585d88249ad00dc8ed43e7176c020cdd9fc652394ba9a318447e886443",
+    "packages/search-rs/src/lib.rs": "7124581ad9f0be834b402c61a8d17d5b7a2e17741ba2106d416e1f05fe62eaea",
+    "packages/search-rs/Cargo.toml": "1bdb38325545cfe8afbc0e7e006654159d1b0f73924ff216aecaf5cc643f7e3b",
+    "packages/search-rs/Cargo.lock": "4c3d34420f57c45f674c24a07a07370606c3f3c3e6600d9f9f91071505aa6cec",
+    "packages/search-rs/pyproject.toml": "a70ba615caf997d3385bc0938879ff0f8692b35ee26882ebe2ac2197351ba6cc",
+    "flake.nix": "0df23ad09fcbd70586cf5bbf229cfecd5bc8590e45ae75be57f4119817864506",
+    "packages/battle-training/battle_training/search_native.py": "6f595c0e464b0ebc3357f74199d00394981894dc6858daac515f1fd8b232c11e",
+    "packages/battle-training/battle_training/simulator_transport.py": "3ccd46ff6ea0ae80a8b3d64fa145d89203dd409c2951bbc12480b35f3628d008",
+    "packages/battle-training/battle_training/native.py": "8bba60783b00cd0755b7df00609277a8241fbd17a0e06e505f60f6b14c0f0518",
+    "tools/benchmark-search-backends.py": "39f78f1790a02f1f9c286c1fb2e56c10e830b1942e009443fda17416aed44bef",
+    "tools/analyze-search-backends.py": "78f1d89d74bda9436dde4fbac6b0abb15ade959d3738f19383e16ea25bccbf80"
+  },
+  "wheel_sha256": "da73dce6a29ad5d37f73e9904ea7a1abf332343703b17a575f92f523ff0f83ec",
+  "simulator_sha256": "17ad884ba408f360834efec40a6e4fa4ee72774a3b6feafe888db670b01f9a0a"
+}

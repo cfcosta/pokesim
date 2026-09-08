@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.8,<2"]
+build-backend = "maturin"
+
+[project]
+name = "battle-search"
+version = "0.1.0"
+requires-python = ">=3.12"
+description = "Rust matrix-tree search and Lean simulator transport"
+
+[tool.maturin]
+features = ["extension-module"]
+module-name = "battle_search"

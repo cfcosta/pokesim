@@ -6,6 +6,9 @@
 //! arithmetic-ordered backups, split halves, and work counters. It never calls
 //! Python, selects a new search algorithm, or changes evaluator/solver arithmetic.
 
+mod python;
+mod transport;
+
 use std::{
     panic::{catch_unwind, AssertUnwindSafe},
     slice,

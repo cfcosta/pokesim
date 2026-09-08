@@ -1,0 +1,17 @@
+{
+  "training": "failed before this benchmark, at 1979/2048 collection games; partial data preserved",
+  "training_failure_utc": "2026-09-08 20:23:05 UTC",
+  "host": "Ryzen 7950X3D / RTX 3080 Ti 12 GB",
+  "resource_limits": {
+    "MemoryMax": "12G",
+    "MemorySwapMax": 0,
+    "Nice": 10,
+    "workers": 1
+  },
+  "contention": "Nix builds and Python validation partly overlapped benchmark execution; no active training process",
+  "variant_names": {
+    "python": "ctypes reference",
+    "rust": "PyO3"
+  },
+  "source_note": "Batch-four imported the adapter before an import-loader-only hardening change; runtime search and transport code are identical. Final Nix packaging and benchmark binaries have identical SHA256."
+}

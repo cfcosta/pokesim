@@ -14,6 +14,7 @@ import argparse
 import functools
 import gc
 import hashlib
+import importlib.util
 import json
 import os
 import random
@@ -203,6 +204,55 @@ class Services:
             setattr(cls, method, descriptor)
 
 
+class BridgeComparison:
+    """Load an explicitly supplied previous adapter for paired bridge trials."""
+
+    names = ("battle_training.search_native", "battle_training.simulator_transport")
+
+    def __init__(self, reference, library):
+        import battle_training.simulator_transport  # noqa: F401
+
+        self.current = [sys.modules[name] for name in self.names]
+        self.reference = []
+        previous = os.environ.get("BATTLE_SEARCH_LIB")
+        try:
+            os.environ["BATTLE_SEARCH_LIB"] = str(library)
+            for name in self.names:
+                source = reference / (name.rsplit(".", 1)[-1] + ".py")
+                spec = importlib.util.spec_from_file_location(name, source)
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[name] = module
+                spec.loader.exec_module(module)
+                self.reference.append(module)
+            self.reference[0]._library()
+            self.reference[1].library()
+            self.metadata = self.reference[0].orchestration_metadata("rust")
+            self.sources = {
+                str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in (Path(m.__file__) for m in self.reference)
+            }
+        finally:
+            if previous is None:
+                os.environ.pop("BATTLE_SEARCH_LIB", None)
+            else:
+                os.environ["BATTLE_SEARCH_LIB"] = previous
+            self.select("rust")
+
+    def select(self, backend):
+        for name, module in zip(
+            self.names,
+            self.reference if backend == "python" else self.current,
+            strict=True,
+        ):
+            sys.modules[name] = module
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.select("rust")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--run", type=Path, required=True)
@@ -214,11 +264,32 @@ def main():
     p.add_argument("--perturb-heads", action="store_true")
     p.add_argument("--gc-mode", choices=("normal", "disabled"), default="normal")
     p.add_argument("--backend", choices=("paired", "python", "rust"), default="paired")
+    p.add_argument(
+        "--compare",
+        choices=("orchestration", "transport", "bridge"),
+        default="orchestration",
+    )
+    p.add_argument(
+        "--reference-adapters",
+        type=Path,
+        help="Previous search_native.py and simulator_transport.py directory, for --compare bridge",
+    )
+    p.add_argument(
+        "--reference-library",
+        type=Path,
+        help="Previous Rust library, for --compare bridge",
+    )
     p.add_argument("--training-cgroup", type=Path)
     a = p.parse_args()
     if min(a.batch, a.repeats, a.warmups) < 1 or a.replay_repeats < 0:
         p.error(
             "batch, repeats and warmups must be positive; replay repeats nonnegative"
+        )
+    if a.compare == "bridge" and (
+        a.reference_adapters is None or a.reference_library is None
+    ):
+        p.error(
+            "bridge comparison requires --reference-adapters and --reference-library"
         )
     torch.set_num_threads(1)
     torch.set_num_interop_threads(1)
@@ -246,7 +317,7 @@ def main():
         "config": asdict(cfg),
         "network_config": asdict(net.config),
         "records": [],
-        "scope": "Fixed initial level100 6v6 roots, both controllers, no root noise, deterministic actions. One shared warmed network and one native server; fresh request dedup per trial. Paired order alternates. Training continues. Sampled RSS at 50ms; PSS only at boundaries; memory between paired variants shares allocator history. Replay removes recorded simulator/evaluation/solver work, retaining host adapters and diagnostics. All result fields and RNG states checked outside timing.",
+        "scope": "Fixed initial level100 6v6 roots, both controllers, no root noise, deterministic actions. One shared warmed network and one native server; fresh request dedup per trial. Paired order alternates. Training state is recorded when a cgroup is supplied. Sampled RSS at 50ms; PSS only at boundaries; memory between paired variants shares allocator history. Replay removes recorded simulator/evaluation/solver work, retaining host adapters and diagnostics. All result fields and RNG states checked outside timing.",
     }
     a.output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -261,6 +332,7 @@ def main():
                 "memory.events",
                 "memory.pressure",
                 "cpu.pressure",
+                "cgroup.freeze",
             ):
                 try:
                     result[name] = (a.training_cgroup / name).read_text().strip()
@@ -277,6 +349,17 @@ def main():
         return result
 
     with ExitStack() as stack:
+        bridge = (
+            stack.enter_context(
+                BridgeComparison(a.reference_adapters, a.reference_library)
+            )
+            if a.compare == "bridge"
+            else None
+        )
+        if bridge:
+            report["reference_rust"] = bridge.metadata
+            report["reference_adapters"] = bridge.sources
+            report["variant_names"] = {"python": "ctypes reference", "rust": "PyO3"}
         server = stack.enter_context(
             SearchServer(request_timeout=180, popular_gate=cfg.popular_gate)
         )
@@ -313,6 +396,11 @@ def main():
 
         def trial(backend, mode, index, kind):
             nonlocal expected, roots, gc_active
+            if bridge:
+                bridge.select(backend)
+            server.transport_backend = (
+                "rust" if bridge else backend if a.compare == "transport" else "python"
+            )
             if mode != "replay":
                 roots = server.compact_many(roots)
             templates = [
@@ -320,7 +408,12 @@ def main():
                     server,
                     net,
                     net,
-                    replace(cfg, orchestration_backend=backend),
+                    replace(
+                        cfg,
+                        orchestration_backend="rust"
+                        if a.compare in ("transport", "bridge")
+                        else backend,
+                    ),
                     random.Random(1000 + i),
                     random.Random(2000 + i),
                 )

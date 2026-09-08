@@ -1,0 +1,14 @@
+{
+  "comparison": "Python versus Rust batch transport with Rust orchestration fixed",
+  "library": "/nix/store/hylm316k1w4qcghcslivddkrs206pw0m-battle-search-0.1.0/lib/libbattle_search.so",
+  "library_sha256": "41773f89c10e32826a7bacb0210fe7826b30e39a334aef0a6f143459851eb57d",
+  "benchmark_sha256": "a35c254caedcafcd30f862b1517f3ea28f88da655591ccad28587f7ad9f2549b",
+  "transport_source_sha256": "39005c8921f9dba3df712b378ef17e15df4e21fc634f684278ddd71c39df55a7",
+  "native_binary_sha256": "17ad884ba408f360834efec40a6e4fa4ee72774a3b6feafe888db670b01f9a0a",
+  "benchmark_memory_cap_gib": 12,
+  "benchmark_nice": 10,
+  "one_benchmark_worker_at_a_time": true,
+  "replay_enabled": false,
+  "training_frozen_checked_per_trial": "telemetry_before/after cgroup.freeze",
+  "initial_cohorts": "initial-b*.json.gz and initial-provenance.json: initial allocating decoder, retained to document allocation finding"
+}

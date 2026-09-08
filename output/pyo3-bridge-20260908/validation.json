@@ -1,0 +1,43 @@
+{
+  "full_python_suite": {
+    "tests": 499,
+    "passed": true,
+    "log_tail": [
+      "----------------------------------------------------------------------",
+      "Ran 499 tests in 19.180s",
+      "",
+      "OK"
+    ]
+  },
+  "forced_rust_suite": {
+    "tests": 468,
+    "passed": true,
+    "log_tail": [
+      "----------------------------------------------------------------------",
+      "Ran 468 tests in 18.446s",
+      "",
+      "OK"
+    ]
+  },
+  "nix_package": {
+    "rust_tests": 8,
+    "install_import_check": true,
+    "passed": true,
+    "derivation": "/nix/store/wamysqkznab6m9lmryckmsf74y6r4v3b-battle-search-0.1.0.drv"
+  },
+  "clippy": "all-targets with -D warnings passed",
+  "ruff": "all 10 changed Python files lint and format passed",
+  "nix_format": "passed",
+  "wheel": "Maturin abi3 CPython 3.12 wheel built and imported from extracted installation; native binary provenance verified",
+  "benchmarks": {
+    "b4": {
+      "warm_pairs": 6,
+      "all_result_rng_parity": true
+    },
+    "b16": {
+      "warm_pairs": 4,
+      "all_result_rng_parity": true
+    }
+  },
+  "lean": "No source or simulator binary changes; no new formal proof claimed"
+}

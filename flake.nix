@@ -174,6 +174,9 @@
           version = "0.1.0";
           src = lib.cleanSource ./packages/search-rs;
           cargoLock.lockFile = ./packages/search-rs/Cargo.lock;
+          nativeBuildInputs = [ pkgs.python312 ];
+          PYO3_PYTHON = "${pkgs.python312}/bin/python3";
+          cargoBuildFlags = [ "--features=extension-module" ];
           doCheck = true;
           installPhase = ''
             runHook preInstall
@@ -183,6 +186,10 @@
               -exec cp -v {} $out/lib/ \;
             test -n "$(find $out/lib -type f -print -quit)"
             runHook postInstall
+          '';
+          doInstallCheck = true;
+          installCheckPhase = ''
+            ${pkgs.python312}/bin/python3 -c "import importlib.util, importlib.machinery; path = '$out/lib/libbattle_search${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}'; s = importlib.util.spec_from_file_location('battle_search', path, loader=importlib.machinery.ExtensionFileLoader('battle_search', path)); m = importlib.util.module_from_spec(s); s.loader.exec_module(m); assert m.API_VERSION == 1 and m.TRANSPORT_API_VERSION == 1"
           '';
         };
 

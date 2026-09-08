@@ -1491,7 +1491,9 @@ def _run_fast_arena_spans(
     seed = config.seed
     seed_count = config.seed_count
     completed: list[_FastArenaEpisode] = []
-    server = SearchServer(popular_gate=config.popular_gate)
+    server = SearchServer(
+        popular_gate=config.popular_gate, transport_backend=config.orchestration_backend
+    )
     try:
         for batch_start, batch_stop in spans:
             episodes = []
@@ -1674,7 +1676,10 @@ def _run_fast_arena_spans(
                     if episode.stop == "truncated":
                         episode.stop = "mechanics-timeout"
                 server.close()
-                server = SearchServer(popular_gate=config.popular_gate)
+                server = SearchServer(
+                    popular_gate=config.popular_gate,
+                    transport_backend=config.orchestration_backend,
+                )
             if episode_progress is not None:
                 episode_progress(episodes)
             completed.extend(episodes)
@@ -1718,7 +1723,10 @@ def run_paired_arena(
         # hard-rejects lopsided generated pairs before any game is played. A
         # caller-supplied plan already fixes the resets, and re-probing would
         # overwrite it with whatever this incumbent happens to prefer.
-        with SearchServer(popular_gate=config.popular_gate) as probe_server:
+        with SearchServer(
+            popular_gate=config.popular_gate,
+            transport_backend=config.orchestration_backend,
+        ) as probe_server:
             matchup_plan, matchup_stats = _arena_matchup_plan(
                 probe_server, baseline, config
             )
@@ -1988,7 +1996,9 @@ def _run_traced_arena_spans(
 ) -> list[_TracedArenaEpisode]:
     """Play the given server-level batches on one native search server."""
     all_episodes: list[_TracedArenaEpisode] = []
-    server = SearchServer(popular_gate=config.popular_gate)
+    server = SearchServer(
+        popular_gate=config.popular_gate, transport_backend=config.orchestration_backend
+    )
     try:
         for batch_start, batch_stop in spans:
             episodes = []
@@ -2196,7 +2206,10 @@ def _run_traced_arena_spans(
                         if episode.replay_path is not None:
                             episode.replay_path.write_text(episode.replay.text())
                 server.close()
-                server = SearchServer(popular_gate=config.popular_gate)
+                server = SearchServer(
+                    popular_gate=config.popular_gate,
+                    transport_backend=config.orchestration_backend,
+                )
             all_episodes.extend(episodes)
     finally:
         server.close()
@@ -2367,7 +2380,10 @@ def _run_traced_arena_sequential(
         try:
             # A fresh process makes a timed-out mechanics state disposable; no
             # opaque native handle is ever reconstructed or mislabeled.
-            with SearchServer(popular_gate=config.popular_gate) as server:
+            with SearchServer(
+                popular_gate=config.popular_gate,
+                transport_backend=config.orchestration_backend,
+            ) as server:
                 root_seed, reset_episode = _paired_coordinates(
                     config.seed, config.seed_count, episode
                 )
