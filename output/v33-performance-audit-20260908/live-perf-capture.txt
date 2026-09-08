@@ -1,0 +1,2 @@
+[ perf record: Woken up 1030 times to write data ]
+[ perf record: Captured and wrote 265.958 MB /tmp/pokemon-native-live.perf.data (33078 samples) ]

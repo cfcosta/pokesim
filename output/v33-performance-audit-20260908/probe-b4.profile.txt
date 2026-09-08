@@ -1,0 +1,129 @@
+         3722847 function calls (3701605 primitive calls) in 3.187 seconds
+
+   Ordered by: cumulative time
+   List reduced from 463 to 65 due to restriction <65>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        2    0.056    0.028    1.497    0.749 native.py:391(search_steps)
+        2    0.005    0.003    1.274    0.637 native.py:428(_search_steps_native)
+        2    0.000    0.000    0.879    0.440 native.py:218(_request)
+        2    0.000    0.000    0.875    0.438 native.py:222(_request_unlocked)
+        2    0.000    0.000    0.761    0.381 selectors.py:451(select)
+        2    0.761    0.381    0.761    0.381 {method 'poll' of 'select.epoll' objects}
+       73    0.010    0.000    0.395    0.005 network.py:77(result)
+       73    0.000    0.000    0.377    0.005 streams.py:245(synchronize)
+       73    0.377    0.005    0.377    0.005 {function Event.synchronize at 0x783ccf9d80e0}
+    36568    0.220    0.000    0.348    0.000 decision_quality.py:217(shape_redundant_action_priors)
+    21048    0.009    0.000    0.348    0.000 native.py:253(_snapshot)
+    21048    0.041    0.000    0.336    0.000 native.py:118(from_response)
+     2384    0.255    0.000    0.279    0.000 joint_search.py:911(_make_node)
+    42096    0.052    0.000    0.243    0.000 native.py:63(_decode_features)
+    42096    0.011    0.000    0.155    0.000 base64.py:65(b64decode)
+    42096    0.012    0.000    0.125    0.000 native.py:55(_search_lineage)
+    42096    0.118    0.000    0.118    0.000 {built-in method binascii.a2b_base64}
+        3    0.022    0.007    0.109    0.036 joint_search.py:1084(_solve_matrices)
+    42096    0.059    0.000    0.108    0.000 native.py:43(_lineage_digest)
+       73    0.000    0.000    0.094    0.001 _contextlib.py:120(decorate_context)
+       73    0.001    0.000    0.093    0.001 grad_mode.py:294(__exit__)
+       73    0.001    0.000    0.093    0.001 network.py:742(_begin_joint)
+       73    0.002    0.000    0.089    0.001 network.py:621(_joint_evaluation_outputs)
+        2    0.000    0.000    0.063    0.032 __init__.py:299(loads)
+        2    0.000    0.000    0.063    0.032 decoder.py:333(decode)
+        2    0.063    0.032    0.063    0.032 decoder.py:344(raw_decode)
+    36611    0.035    0.000    0.061    0.000 {built-in method builtins.sum}
+   422664    0.060    0.000    0.060    0.000 {method 'get' of 'dict' objects}
+     2384    0.011    0.000    0.050    0.000 joint_search.py:2040(_install_expansion)
+        2    0.041    0.021    0.049    0.025 {method 'readline' of '_io.TextIOWrapper' objects}
+   106358    0.031    0.000    0.045    0.000 decision_quality.py:193(_statically_redundant_move)
+    42104    0.022    0.000    0.042    0.000 joint_search.py:486(_feature_identity)
+      5/3    0.324    0.065    0.042    0.014 network.py:826(begin_evaluate_joint)
+       73    0.001    0.000    0.041    0.001 network.py:530(_compiled_joint_forward)
+        2    0.001    0.000    0.039    0.019 solver_cuda.py:276(solve_anchored_batch)
+       73    0.001    0.000    0.037    0.001 eval_frame.py:1076(compile_wrapper)
+   457791    0.034    0.000    0.034    0.000 {built-in method builtins.len}
+   356785    0.031    0.000    0.031    0.000 {method 'append' of 'list' objects}
+     2400    0.012    0.000    0.030    0.000 solver_cuda.py:43(row)
+        2    0.000    0.000    0.029    0.015 solver_cuda.py:228(_validate)
+       20    0.029    0.001    0.029    0.001 {built-in method numpy.ascontiguousarray}
+    42096    0.026    0.000    0.028    0.000 joint_search.py:1291(_record_value)
+   306294    0.026    0.000    0.026    0.000 decision_quality.py:250(<genexpr>)
+    42096    0.010    0.000    0.026    0.000 base64.py:34(_bytes_from_decode_data)
+    42096    0.025    0.000    0.025    0.000 {built-in method numpy.frombuffer}
+    65480    0.022    0.000    0.022    0.000 {built-in method builtins.id}
+      4/2    0.000    0.000    0.022    0.011 network.py:838(evaluate_joint)
+     2384    0.019    0.000    0.021    0.000 joint_search.py:2008(_expansion_spec)
+   252576    0.020    0.000    0.020    0.000 {method 'update' of '_blake2.blake2b' objects}
+      219    0.002    0.000    0.020    0.000 eval_frame.py:1423(_fn)
+     4768    0.003    0.000    0.017    0.000 joint_search.py:905(_legal_from_priors)
+     5092    0.004    0.000    0.017    0.000 module.py:2665(parameters)
+       73    0.001    0.000    0.016    0.000 network.py:667(_arrays)
+       73    0.000    0.000    0.016    0.000 aot_autograd.py:1269(forward)
+       73    0.000    0.000    0.015    0.000 runtime_wrappers.py:2547(__call__)
+       73    0.000    0.000    0.015    0.000 runtime_wrappers.py:1129(runtime_wrapper)
+     4772    0.007    0.000    0.015    0.000 {built-in method builtins.any}
+       73    0.001    0.000    0.014    0.000 output_code.py:721(__call__)
+    42266    0.003    0.000    0.014    0.000 {built-in method builtins.next}
+    42481    0.014    0.000    0.014    0.000 {method 'encode' of 'str' objects}
+       73    0.012    0.000    0.013    0.000 shape_base.py:378(stack)
+    42104    0.013    0.000    0.013    0.000 {method 'tobytes' of 'numpy.ndarray' objects}
+       71    0.000    0.000    0.013    0.000 cf6d24n7vdwnwrwkpzcnnssnqrynrqysovnzviihie63eqh5n3xt.py:6312(call)
+       73    0.000    0.000    0.013    0.000 compile_fx.py:1919(run)
+       73    0.000    0.000    0.012    0.000 cudagraph_trees.py:430(deferred_cudagraphify)
+
+
+         3722847 function calls (3701605 primitive calls) in 3.187 seconds
+
+   Ordered by: internal time
+   List reduced from 463 to 50 due to restriction <50>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        2    0.761    0.381    0.761    0.381 {method 'poll' of 'select.epoll' objects}
+       73    0.377    0.005    0.377    0.005 {function Event.synchronize at 0x783ccf9d80e0}
+      5/3    0.324    0.065    0.042    0.014 network.py:826(begin_evaluate_joint)
+     2384    0.255    0.000    0.279    0.000 joint_search.py:911(_make_node)
+    36568    0.220    0.000    0.348    0.000 decision_quality.py:217(shape_redundant_action_priors)
+    42096    0.118    0.000    0.118    0.000 {built-in method binascii.a2b_base64}
+        2    0.063    0.032    0.063    0.032 decoder.py:344(raw_decode)
+   422664    0.060    0.000    0.060    0.000 {method 'get' of 'dict' objects}
+    42096    0.059    0.000    0.108    0.000 native.py:43(_lineage_digest)
+        2    0.056    0.028    1.497    0.749 native.py:391(search_steps)
+    42096    0.052    0.000    0.243    0.000 native.py:63(_decode_features)
+        2    0.041    0.021    0.049    0.025 {method 'readline' of '_io.TextIOWrapper' objects}
+    21048    0.041    0.000    0.336    0.000 native.py:118(from_response)
+  21060/0    0.040    0.000    0.000          pokemon-performance-probe.py:21(measured)
+    36611    0.035    0.000    0.061    0.000 {built-in method builtins.sum}
+   457791    0.034    0.000    0.034    0.000 {built-in method builtins.len}
+   356785    0.031    0.000    0.031    0.000 {method 'append' of 'list' objects}
+   106358    0.031    0.000    0.045    0.000 decision_quality.py:193(_statically_redundant_move)
+       20    0.029    0.001    0.029    0.001 {built-in method numpy.ascontiguousarray}
+    42096    0.026    0.000    0.028    0.000 joint_search.py:1291(_record_value)
+   306294    0.026    0.000    0.026    0.000 decision_quality.py:250(<genexpr>)
+    42096    0.025    0.000    0.025    0.000 {built-in method numpy.frombuffer}
+    65480    0.022    0.000    0.022    0.000 {built-in method builtins.id}
+        3    0.022    0.007    0.109    0.036 joint_search.py:1084(_solve_matrices)
+    42104    0.022    0.000    0.042    0.000 joint_search.py:486(_feature_identity)
+   252576    0.020    0.000    0.020    0.000 {method 'update' of '_blake2.blake2b' objects}
+     2384    0.019    0.000    0.021    0.000 joint_search.py:2008(_expansion_spec)
+    42481    0.014    0.000    0.014    0.000 {method 'encode' of 'str' objects}
+    42104    0.013    0.000    0.013    0.000 {method 'tobytes' of 'numpy.ndarray' objects}
+       73    0.012    0.000    0.013    0.000 shape_base.py:378(stack)
+    42096    0.012    0.000    0.125    0.000 native.py:55(_search_lineage)
+   126288    0.012    0.000    0.012    0.000 {method 'to_bytes' of 'int' objects}
+     2400    0.012    0.000    0.030    0.000 solver_cuda.py:43(row)
+    42096    0.011    0.000    0.155    0.000 base64.py:65(b64decode)
+     2384    0.011    0.000    0.050    0.000 joint_search.py:2040(_install_expansion)
+    42096    0.010    0.000    0.010    0.000 {method 'digest' of '_blake2.blake2b' objects}
+   151040    0.010    0.000    0.010    0.000 {built-in method builtins.isinstance}
+    36576    0.010    0.000    0.010    0.000 {built-in method builtins.min}
+    42096    0.010    0.000    0.026    0.000 base64.py:34(_bytes_from_decode_data)
+       73    0.010    0.000    0.395    0.005 network.py:77(result)
+    33600    0.009    0.000    0.009    0.000 solver_cuda.py:48(<genexpr>)
+    21048    0.009    0.000    0.348    0.000 native.py:253(_snapshot)
+    33600    0.009    0.000    0.009    0.000 solver_cuda.py:49(<genexpr>)
+      219    0.007    0.000    0.007    0.000 {method 'tolist' of 'numpy.ndarray' objects}
+     4772    0.007    0.000    0.015    0.000 {built-in method builtins.any}
+     7390    0.007    0.000    0.007    0.000 {built-in method _codecs.utf_8_decode}
+    85070    0.007    0.000    0.007    0.000 {built-in method builtins.getattr}
+     4776    0.006    0.000    0.010    0.000 {built-in method builtins.sorted}
+    21050    0.006    0.000    0.006    0.000 native.py:433(<genexpr>)
+    62780    0.006    0.000    0.006    0.000 {method 'setdefault' of 'dict' objects}

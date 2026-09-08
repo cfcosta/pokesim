@@ -1,0 +1,22 @@
+{
+  "samples": 90,
+  "seconds": 178.00944596200134,
+  "completed_delta": 77,
+  "transitions_delta": 3704,
+  "mean_active_battles": 89.33333333333333,
+  "nominal_capacity": 128,
+  "occupancy": 0.6979166666666666,
+  "mean_cores_by_role": {
+    "trainer": 0.0012358894709832541,
+    "other": 0.0,
+    "actor": 5.784018900995765,
+    "native": 12.092897589600465
+  },
+  "memory_peak_bytes": 42909310976,
+  "last_memory_events": "low 0\nhigh 343\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+  "last_cpu_pressure": "some avg10=1.67 avg60=1.27 avg300=0.98 total=7956840\nfull avg10=0.15 avg60=0.08 avg300=0.02 total=1488067",
+  "first_time": "2026-09-08T18:48:52.749577+00:00",
+  "last_time": "2026-09-08T18:51:50.759022+00:00",
+  "completed_per_second": 0.43256131484413896,
+  "transitions_per_second": 20.80788454782715
+}

@@ -1,0 +1,34 @@
+{
+  "time": "2026-09-08T19:10:00.558247+00:00",
+  "alerts": [],
+  "service": {
+    "ActiveState": "active",
+    "FreezerState": "running",
+    "SubState": "running",
+    "ExecMainStatus": "0",
+    "MemoryCurrent": "44455870464",
+    "MemoryPeak": "44896473088",
+    "CPUUsageNSec": "19016986839000",
+    "MemoryMax": "51539607552"
+  },
+  "free_bytes": {
+    "/": 23692349440,
+    "/media/pokemon-training/v33-bf16-20260908-154254": 78946455552
+  },
+  "status": {
+    "battles": 2048,
+    "iteration": 1,
+    "message": "Collecting 2048 self-play battles",
+    "pid": 457848,
+    "stage": "collection",
+    "started_at": "2026-09-08T18:44:49.279355Z",
+    "updated_at": "2026-09-08T18:44:50.634654Z"
+  },
+  "collection": {
+    "completed": 535,
+    "total": 2048,
+    "active_battles": 73,
+    "semantic_divergences": 0,
+    "transitions": 22851
+  }
+}

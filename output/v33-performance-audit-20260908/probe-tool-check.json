@@ -1,0 +1,1107 @@
+{
+  "arguments": {
+    "run": "/media/pokemon-training/v33-bf16-20260908-154254/run",
+    "batch": 1,
+    "repeats": 1,
+    "engine": "compiled",
+    "leaf": "full",
+    "solver": "auto",
+    "depth": 2,
+    "output": "output/v33-performance-audit-20260908/probe-tool-check.json",
+    "profile": false,
+    "binary": null,
+    "compare_binary": "/tmp/pokemon-perf-isolated/battle-lean/.lake/build/bin/battleSearchServer",
+    "python_optimizations": true,
+    "perturb_heads": true
+  },
+  "started_at": 1788894046.5099702,
+  "checkpoint": "/media/pokemon-training/v33-bf16-20260908-154254/run/checkpoints/policy-000.pt",
+  "load_seconds": 0.8388056160038104,
+  "records": [
+    {
+      "python_optimizations": false,
+      "repeat": 0,
+      "trial": 0,
+      "binary": "/home/cfcosta/Code/_tmp/pokemon/gpt/packages/battle-lean/.lake/build/bin/battleSearchServer",
+      "kind": "cold",
+      "seconds": 10.849879346991656,
+      "python_cpu_seconds": 9.872044854999999,
+      "native_rows_requested": 12312,
+      "native_rows_deduplicated": 1108,
+      "stages": {
+        "BattleTransformer.evaluate_joint": {
+          "calls": 18,
+          "inclusive_seconds": 10.165536760003306,
+          "exclusive_seconds": 10.165536760003306,
+          "rows": 3935
+        },
+        "SimultaneousTreeSearch._pooled_evaluate": {
+          "calls": 3,
+          "inclusive_seconds": 10.238858932003495,
+          "exclusive_seconds": 0.07332217200018931,
+          "rows": 0
+        },
+        "SearchServer._request_unlocked": {
+          "calls": 2,
+          "inclusive_seconds": 0.3632785650115693,
+          "exclusive_seconds": 0.3632785650115693,
+          "rows": 0
+        },
+        "SearchServer._snapshot": {
+          "calls": 11204,
+          "inclusive_seconds": 0.1140968259278452,
+          "exclusive_seconds": 0.1140968259278452,
+          "rows": 0
+        },
+        "SearchServer._search_steps_native": {
+          "calls": 2,
+          "inclusive_seconds": 0.4894345689972397,
+          "exclusive_seconds": 0.012059178057825193,
+          "rows": 11204
+        },
+        "SearchServer.search_steps": {
+          "calls": 2,
+          "inclusive_seconds": 0.5062754779937677,
+          "exclusive_seconds": 0.016840908996528015,
+          "rows": 12312
+        },
+        "SimultaneousTreeSearch._open_subgames": {
+          "calls": 1,
+          "inclusive_seconds": 2.1628985149873188,
+          "exclusive_seconds": 0.024230167997302487,
+          "rows": 0
+        },
+        "SimultaneousTreeSearch._solve_matrices": {
+          "calls": 3,
+          "inclusive_seconds": 0.054026866986532696,
+          "exclusive_seconds": 0.054026866986532696,
+          "rows": 654
+        },
+        "SimultaneousTreeSearch._settle": {
+          "calls": 1,
+          "inclusive_seconds": 1.027700022998033,
+          "exclusive_seconds": 0.0159416840178892,
+          "rows": 0
+        }
+      },
+      "inference_batches": [
+        {
+          "method": "evaluate_joint",
+          "rows": 2,
+          "seconds": 7.623032513001817
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 1.052510714987875
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 62,
+          "seconds": 0.5922025420004502
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.024690823993296362
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004384211002616212
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004324301000451669
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004131252004299313
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00430190100451
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004227921002893709
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004165612001088448
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004454330002772622
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004485869998461567
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004102341990801506
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004041523003252223
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.005127174998051487
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0043656400084728375
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.2284088989981683
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 31,
+          "seconds": 0.5925791890040273
+        }
+      ],
+      "results": [
+        {
+          "player_action": 1,
+          "enemy_action": 5,
+          "player_policy": [
+            0.11442285499902578,
+            0.13892785871738103,
+            0.10069059570731981,
+            0.10128155723250185,
+            0.0,
+            0.1387713505968419,
+            0.12958966909817823,
+            0.061449931343645035,
+            0.10013200578735322,
+            0.1147341765177532,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.1008185867431844,
+            0.12187400057466895,
+            0.1242030915303779,
+            0.12278149963150035,
+            0.0,
+            0.14596169502379136,
+            0.11973552930530602,
+            0.08420229236187197,
+            0.09117751332634774,
+            0.08924579150295127,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "rust-anchored-f64-v1:3,triton-anchored-f32-v1:324",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 324,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 2,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 4249,
+            "inference_cache_misses": 1908,
+            "inference_cache_hit_rate": 0.6901088192301446,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.004678256782115656,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "rust-anchored-f64-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.002321036335080174,
+            "root_split_half_enemy_distance": 0.001096664623530641,
+            "root_split_half_value_gap": 8.23891978967567e-06,
+            "root_prior_regret": 0.0001458981382395949,
+            "root_enemy_prior_regret": 0.00015628519192025712,
+            "root_prior_regret_noise": 5.81428676369643e-07,
+            "root_enemy_prior_regret_noise": 5.360016193947404e-06
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "rust-anchored-f64-v1:3,triton-anchored-f32-v1:324",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 324,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 2,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 4130,
+            "inference_cache_misses": 2027,
+            "inference_cache_hit_rate": 0.670781224622381,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.022931152087608236,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "rust-anchored-f64-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.003558076825932441,
+            "root_split_half_enemy_distance": 0.0017119033330090933,
+            "root_split_half_value_gap": 2.5149434713864216e-05,
+            "root_prior_regret": 0.004463732520117927,
+            "root_enemy_prior_regret": 0.0004803580976948083,
+            "root_prior_regret_noise": 4.413446179016376e-05,
+            "root_enemy_prior_regret_noise": 1.9212199920240524e-06
+          }
+        }
+      ],
+      "python_peak_rss_kib": 1544204,
+      "cuda_allocated": 20219392,
+      "cuda_reserved": 111149056
+    },
+    {
+      "python_optimizations": true,
+      "repeat": 1,
+      "trial": 0,
+      "binary": "/tmp/pokemon-perf-isolated/battle-lean/.lake/build/bin/battleSearchServer",
+      "kind": "cold",
+      "seconds": 0.7639567510050256,
+      "python_cpu_seconds": 0.5972970029999995,
+      "native_rows_requested": 12312,
+      "native_rows_deduplicated": 1108,
+      "stages": {
+        "BattleTransformer.evaluate_joint": {
+          "calls": 18,
+          "inclusive_seconds": 0.08021826397452969,
+          "exclusive_seconds": 0.08021826397452969,
+          "rows": 3935
+        },
+        "SimultaneousTreeSearch._pooled_evaluate": {
+          "calls": 3,
+          "inclusive_seconds": 0.3514434150129091,
+          "exclusive_seconds": 0.2712251510383794,
+          "rows": 0
+        },
+        "SearchServer._request_unlocked": {
+          "calls": 2,
+          "inclusive_seconds": 0.2267839910055045,
+          "exclusive_seconds": 0.2267839910055045,
+          "rows": 0
+        },
+        "SearchServer._snapshot": {
+          "calls": 11204,
+          "inclusive_seconds": 0.10576525851502083,
+          "exclusive_seconds": 0.10576525851502083,
+          "rows": 0
+        },
+        "SearchServer._search_steps_native": {
+          "calls": 2,
+          "inclusive_seconds": 0.3439705859927926,
+          "exclusive_seconds": 0.011421336472267285,
+          "rows": 11204
+        },
+        "SearchServer.search_steps": {
+          "calls": 2,
+          "inclusive_seconds": 0.35995806798746344,
+          "exclusive_seconds": 0.015987481994670816,
+          "rows": 12312
+        },
+        "SimultaneousTreeSearch._open_subgames": {
+          "calls": 1,
+          "inclusive_seconds": 0.3832399809907656,
+          "exclusive_seconds": 0.015174856991507113,
+          "rows": 0
+        },
+        "SimultaneousTreeSearch._solve_matrices": {
+          "calls": 3,
+          "inclusive_seconds": 0.018948993005324155,
+          "exclusive_seconds": 0.018948993005324155,
+          "rows": 654
+        },
+        "SimultaneousTreeSearch._settle": {
+          "calls": 1,
+          "inclusive_seconds": 0.3497667170013301,
+          "exclusive_seconds": 0.011586592998355627,
+          "rows": 0
+        }
+      },
+      "inference_batches": [
+        {
+          "method": "evaluate_joint",
+          "rows": 2,
+          "seconds": 0.006489106002845801
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006362517990055494
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 62,
+          "seconds": 0.008508173006703146
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004590898999595083
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003812825001659803
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0036458959948504344
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003701836001710035
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0036746259866049513
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0036355460033519194
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0044036799954483286
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004133942013140768
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0036779249930987135
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0036797050124732777
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0036598549922928214
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003617834998294711
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0036430259933695197
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0037211159942671657
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 31,
+          "seconds": 0.005259754994767718
+        }
+      ],
+      "results": [
+        {
+          "player_action": 1,
+          "enemy_action": 5,
+          "player_policy": [
+            0.11442285499902578,
+            0.13892785871738103,
+            0.10069059570731981,
+            0.10128155723250185,
+            0.0,
+            0.1387713505968419,
+            0.12958966909817823,
+            0.061449931343645035,
+            0.10013200578735322,
+            0.1147341765177532,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.1008185867431844,
+            0.12187400057466895,
+            0.1242030915303779,
+            0.12278149963150035,
+            0.0,
+            0.14596169502379136,
+            0.11973552930530602,
+            0.08420229236187197,
+            0.09117751332634774,
+            0.08924579150295127,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "rust-anchored-f64-v1:3,triton-anchored-f32-v1:324",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 324,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 2,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 4249,
+            "inference_cache_misses": 1908,
+            "inference_cache_hit_rate": 0.6901088192301446,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.004678256782115656,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "rust-anchored-f64-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.002321036335080174,
+            "root_split_half_enemy_distance": 0.001096664623530641,
+            "root_split_half_value_gap": 8.23891978967567e-06,
+            "root_prior_regret": 0.0001458981382395949,
+            "root_enemy_prior_regret": 0.00015628519192025712,
+            "root_prior_regret_noise": 5.81428676369643e-07,
+            "root_enemy_prior_regret_noise": 5.360016193947404e-06
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "rust-anchored-f64-v1:3,triton-anchored-f32-v1:324",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 324,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 2,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 4130,
+            "inference_cache_misses": 2027,
+            "inference_cache_hit_rate": 0.670781224622381,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.022931152087608236,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "rust-anchored-f64-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.003558076825932441,
+            "root_split_half_enemy_distance": 0.0017119033330090933,
+            "root_split_half_value_gap": 2.5149434713864216e-05,
+            "root_prior_regret": 0.004463732520117927,
+            "root_enemy_prior_regret": 0.0004803580976948083,
+            "root_prior_regret_noise": 4.413446179016376e-05,
+            "root_enemy_prior_regret_noise": 1.9212199920240524e-06
+          }
+        }
+      ],
+      "python_peak_rss_kib": 1577664,
+      "cuda_allocated": 20222464,
+      "cuda_reserved": 111149056
+    },
+    {
+      "python_optimizations": false,
+      "repeat": 2,
+      "trial": 1,
+      "binary": "/home/cfcosta/Code/_tmp/pokemon/gpt/packages/battle-lean/.lake/build/bin/battleSearchServer",
+      "kind": "warm",
+      "seconds": 0.9242142870061798,
+      "python_cpu_seconds": 0.602415272,
+      "native_rows_requested": 12312,
+      "native_rows_deduplicated": 1108,
+      "stages": {
+        "BattleTransformer.evaluate_joint": {
+          "calls": 18,
+          "inclusive_seconds": 0.06101178300741594,
+          "exclusive_seconds": 0.06101178300741594,
+          "rows": 3935
+        },
+        "SimultaneousTreeSearch._pooled_evaluate": {
+          "calls": 3,
+          "inclusive_seconds": 0.13051257499319036,
+          "exclusive_seconds": 0.06950079198577441,
+          "rows": 0
+        },
+        "SearchServer._request_unlocked": {
+          "calls": 2,
+          "inclusive_seconds": 0.36816434300271794,
+          "exclusive_seconds": 0.36816434300271794,
+          "rows": 0
+        },
+        "SearchServer._snapshot": {
+          "calls": 11204,
+          "inclusive_seconds": 0.10616825253237039,
+          "exclusive_seconds": 0.10616825253237039,
+          "rows": 0
+        },
+        "SearchServer._search_steps_native": {
+          "calls": 2,
+          "inclusive_seconds": 0.4856138360191835,
+          "exclusive_seconds": 0.011281240484095179,
+          "rows": 11204
+        },
+        "SearchServer.search_steps": {
+          "calls": 2,
+          "inclusive_seconds": 0.5015984180063242,
+          "exclusive_seconds": 0.0159845819871407,
+          "rows": 12312
+        },
+        "SimultaneousTreeSearch._open_subgames": {
+          "calls": 1,
+          "inclusive_seconds": 0.5172162439994281,
+          "exclusive_seconds": 0.025358700993820094,
+          "rows": 0
+        },
+        "SimultaneousTreeSearch._solve_matrices": {
+          "calls": 3,
+          "inclusive_seconds": 0.01856613499694504,
+          "exclusive_seconds": 0.01856613499694504,
+          "rows": 654
+        },
+        "SimultaneousTreeSearch._settle": {
+          "calls": 1,
+          "inclusive_seconds": 0.37135075200058054,
+          "exclusive_seconds": 0.23962808499345556,
+          "rows": 0
+        }
+      },
+      "inference_batches": [
+        {
+          "method": "evaluate_joint",
+          "rows": 2,
+          "seconds": 0.001397579995682463
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00454753999656532
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 62,
+          "seconds": 0.0016371189994970337
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004311422002501786
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00370023499999661
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0036391960020409897
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0036932859948137775
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0036773859901586547
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0036313150048954412
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0036690850101877004
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0036581759923137724
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0036305060057202354
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0036792949977098033
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003731095013790764
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003707064999616705
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0037609050050377846
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003688366006826982
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 31,
+          "seconds": 0.0012522109900601208
+        }
+      ],
+      "results": [
+        {
+          "player_action": 1,
+          "enemy_action": 5,
+          "player_policy": [
+            0.11442285499902578,
+            0.13892785871738103,
+            0.10069059570731981,
+            0.10128155723250185,
+            0.0,
+            0.1387713505968419,
+            0.12958966909817823,
+            0.061449931343645035,
+            0.10013200578735322,
+            0.1147341765177532,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.1008185867431844,
+            0.12187400057466895,
+            0.1242030915303779,
+            0.12278149963150035,
+            0.0,
+            0.14596169502379136,
+            0.11973552930530602,
+            0.08420229236187197,
+            0.09117751332634774,
+            0.08924579150295127,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "rust-anchored-f64-v1:3,triton-anchored-f32-v1:324",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 324,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 2,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 4249,
+            "inference_cache_misses": 1908,
+            "inference_cache_hit_rate": 0.6901088192301446,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.004678256782115656,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "rust-anchored-f64-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.002321036335080174,
+            "root_split_half_enemy_distance": 0.001096664623530641,
+            "root_split_half_value_gap": 8.23891978967567e-06,
+            "root_prior_regret": 0.0001458981382395949,
+            "root_enemy_prior_regret": 0.00015628519192025712,
+            "root_prior_regret_noise": 5.81428676369643e-07,
+            "root_enemy_prior_regret_noise": 5.360016193947404e-06
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "rust-anchored-f64-v1:3,triton-anchored-f32-v1:324",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 324,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 2,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 4130,
+            "inference_cache_misses": 2027,
+            "inference_cache_hit_rate": 0.670781224622381,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.022931152087608236,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "rust-anchored-f64-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.003558076825932441,
+            "root_split_half_enemy_distance": 0.0017119033330090933,
+            "root_split_half_value_gap": 2.5149434713864216e-05,
+            "root_prior_regret": 0.004463732520117927,
+            "root_enemy_prior_regret": 0.0004803580976948083,
+            "root_prior_regret_noise": 4.413446179016376e-05,
+            "root_enemy_prior_regret_noise": 1.9212199920240524e-06
+          }
+        }
+      ],
+      "python_peak_rss_kib": 1607724,
+      "cuda_allocated": 20222464,
+      "cuda_reserved": 111149056
+    },
+    {
+      "python_optimizations": true,
+      "repeat": 3,
+      "trial": 1,
+      "binary": "/tmp/pokemon-perf-isolated/battle-lean/.lake/build/bin/battleSearchServer",
+      "kind": "warm",
+      "seconds": 0.47253559400269296,
+      "python_cpu_seconds": 0.3337349080000003,
+      "native_rows_requested": 12312,
+      "native_rows_deduplicated": 1108,
+      "stages": {
+        "BattleTransformer.evaluate_joint": {
+          "calls": 18,
+          "inclusive_seconds": 0.064969149971148,
+          "exclusive_seconds": 0.064969149971148,
+          "rows": 3935
+        },
+        "SimultaneousTreeSearch._pooled_evaluate": {
+          "calls": 3,
+          "inclusive_seconds": 0.1050770139991073,
+          "exclusive_seconds": 0.040107864027959295,
+          "rows": 0
+        },
+        "SearchServer._request_unlocked": {
+          "calls": 2,
+          "inclusive_seconds": 0.18264337598520797,
+          "exclusive_seconds": 0.18264337598520797,
+          "rows": 0
+        },
+        "SearchServer._snapshot": {
+          "calls": 11204,
+          "inclusive_seconds": 0.10658741636143532,
+          "exclusive_seconds": 0.10658741636143532,
+          "rows": 0
+        },
+        "SearchServer._search_steps_native": {
+          "calls": 2,
+          "inclusive_seconds": 0.29959852299361955,
+          "exclusive_seconds": 0.01036773064697627,
+          "rows": 11204
+        },
+        "SearchServer.search_steps": {
+          "calls": 2,
+          "inclusive_seconds": 0.315382126980694,
+          "exclusive_seconds": 0.015783603987074457,
+          "rows": 12312
+        },
+        "SimultaneousTreeSearch._open_subgames": {
+          "calls": 1,
+          "inclusive_seconds": 0.3233106240077177,
+          "exclusive_seconds": 0.013567640009569004,
+          "rows": 0
+        },
+        "SimultaneousTreeSearch._solve_matrices": {
+          "calls": 3,
+          "inclusive_seconds": 0.021446236001793295,
+          "exclusive_seconds": 0.021446236001793295,
+          "rows": 654
+        },
+        "SimultaneousTreeSearch._settle": {
+          "calls": 1,
+          "inclusive_seconds": 0.12093706999439746,
+          "exclusive_seconds": 0.011622863996308297,
+          "rows": 0
+        }
+      },
+      "inference_batches": [
+        {
+          "method": "evaluate_joint",
+          "rows": 2,
+          "seconds": 0.00144473000545986
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004120072000660002
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 62,
+          "seconds": 0.0016290390049107373
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004597149003529921
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004074071999639273
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003943764007999562
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004001203997177072
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003996183993876912
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003946463999454863
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0039996629930101335
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004033652992802672
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003956423999625258
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0039913139917189255
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003988593991380185
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003955234002205543
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003995663995738141
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003996143990661949
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 31,
+          "seconds": 0.0012997820012969896
+        }
+      ],
+      "results": [
+        {
+          "player_action": 1,
+          "enemy_action": 5,
+          "player_policy": [
+            0.11442285499902578,
+            0.13892785871738103,
+            0.10069059570731981,
+            0.10128155723250185,
+            0.0,
+            0.1387713505968419,
+            0.12958966909817823,
+            0.061449931343645035,
+            0.10013200578735322,
+            0.1147341765177532,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.1008185867431844,
+            0.12187400057466895,
+            0.1242030915303779,
+            0.12278149963150035,
+            0.0,
+            0.14596169502379136,
+            0.11973552930530602,
+            0.08420229236187197,
+            0.09117751332634774,
+            0.08924579150295127,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "rust-anchored-f64-v1:3,triton-anchored-f32-v1:324",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 324,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 2,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 4249,
+            "inference_cache_misses": 1908,
+            "inference_cache_hit_rate": 0.6901088192301446,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.004678256782115656,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "rust-anchored-f64-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.002321036335080174,
+            "root_split_half_enemy_distance": 0.001096664623530641,
+            "root_split_half_value_gap": 8.23891978967567e-06,
+            "root_prior_regret": 0.0001458981382395949,
+            "root_enemy_prior_regret": 0.00015628519192025712,
+            "root_prior_regret_noise": 5.81428676369643e-07,
+            "root_enemy_prior_regret_noise": 5.360016193947404e-06
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "rust-anchored-f64-v1:3,triton-anchored-f32-v1:324",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 324,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 2,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 4130,
+            "inference_cache_misses": 2027,
+            "inference_cache_hit_rate": 0.670781224622381,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.022931152087608236,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "rust-anchored-f64-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.003558076825932441,
+            "root_split_half_enemy_distance": 0.0017119033330090933,
+            "root_split_half_value_gap": 2.5149434713864216e-05,
+            "root_prior_regret": 0.004463732520117927,
+            "root_enemy_prior_regret": 0.0004803580976948083,
+            "root_prior_regret_noise": 4.413446179016376e-05,
+            "root_enemy_prior_regret_noise": 1.9212199920240524e-06
+          }
+        }
+      ],
+      "python_peak_rss_kib": 1607724,
+      "cuda_allocated": 20222464,
+      "cuda_reserved": 111149056
+    }
+  ],
+  "scope": "One isolated CUDA actor while training continues; two independent neural controllers per 6v6 root. Same roots/chance seeds each repetition; compact clears native dedup. Wall time includes contention; profiler repetition excluded from warm timing.",
+  "roots": [
+    {
+      "player_hash": "578523581729025802",
+      "enemy_hash": "12552402028832494551",
+      "legal_joint_actions": 81
+    }
+  ],
+  "ended_at": 1788894059.6655474
+}

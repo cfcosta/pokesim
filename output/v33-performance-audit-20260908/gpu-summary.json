@@ -1,0 +1,8 @@
+{
+  "profiled_evaluations": 3,
+  "batch": 256,
+  "kernel_count": 615,
+  "kernel_duration_us": 9462.719,
+  "memcpy_duration_us": 47.392,
+  "notes": "Actual GPU kernel and memcpy events only; compiled-region annotations overlap and are deliberately excluded. Durations are sums of GPU event durations, not whole-decision wall time."
+}

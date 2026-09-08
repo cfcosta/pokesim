@@ -1,0 +1,4321 @@
+{
+  "arguments": {
+    "batch": 4,
+    "repeats": 3,
+    "engine": "compiled",
+    "leaf": "full",
+    "solver": "auto",
+    "depth": 2,
+    "output": "/home/cfcosta/Code/_tmp/pokemon/gpt/output/v33-performance-audit-20260908/probe-b4.json",
+    "profile": true
+  },
+  "started_at": 1788893513.4235015,
+  "checkpoint": "/media/pokemon-training/v33-bf16-20260908-154254/run/checkpoints/policy-000.pt",
+  "load_seconds": 0.9295024890016066,
+  "records": [
+    {
+      "repeat": 0,
+      "kind": "cold",
+      "seconds": 9.211447694004164,
+      "python_cpu_seconds": 7.34861492,
+      "native_rows_requested": 42096,
+      "native_rows_deduplicated": 21048,
+      "stages": {
+        "BattleTransformer.evaluate_joint": {
+          "calls": 73,
+          "inclusive_seconds": 5.875485336029669,
+          "exclusive_seconds": 5.875485336029669,
+          "rows": 18284
+        },
+        "SimultaneousTreeSearch._pooled_evaluate": {
+          "calls": 3,
+          "inclusive_seconds": 6.662180902989348,
+          "exclusive_seconds": 0.7866955669596791,
+          "rows": 0
+        },
+        "SearchServer._request_unlocked": {
+          "calls": 2,
+          "inclusive_seconds": 1.467869329993846,
+          "exclusive_seconds": 1.467869329993846,
+          "rows": 0
+        },
+        "SearchServer._snapshot": {
+          "calls": 21048,
+          "inclusive_seconds": 0.29606808893731795,
+          "exclusive_seconds": 0.29606808893731795,
+          "rows": 0
+        },
+        "SearchServer._search_steps_native": {
+          "calls": 2,
+          "inclusive_seconds": 1.7948377979919314,
+          "exclusive_seconds": 0.03090037906076759,
+          "rows": 21048
+        },
+        "SearchServer.search_steps": {
+          "calls": 2,
+          "inclusive_seconds": 1.872496031006449,
+          "exclusive_seconds": 0.07765823301451746,
+          "rows": 42096
+        },
+        "SimultaneousTreeSearch._open_subgames": {
+          "calls": 1,
+          "inclusive_seconds": 3.687365249003051,
+          "exclusive_seconds": 0.48226813501969445,
+          "rows": 0
+        },
+        "SimultaneousTreeSearch._solve_matrices": {
+          "calls": 3,
+          "inclusive_seconds": 0.10173238698916975,
+          "exclusive_seconds": 0.10173238698916975,
+          "rows": 2400
+        },
+        "SimultaneousTreeSearch._settle": {
+          "calls": 1,
+          "inclusive_seconds": 2.50225792999845,
+          "exclusive_seconds": 0.05322816199623048,
+          "rows": 0
+        }
+      },
+      "inference_batches": [
+        {
+          "method": "evaluate_joint",
+          "rows": 8,
+          "seconds": 2.854297054000199
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 1.3699600450054277
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.040528370009269565
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004425028993864544
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0044071489974157885
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 198,
+          "seconds": 0.0042009910102933645
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.011708207995980047
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.01114852300088387
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010321289009880275
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010712675008107908
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010900324996327981
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010800666001159698
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0107026159967063
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010825614997884259
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.01079423500050325
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010757515003206208
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.01079625501006376
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010749206005129963
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010684336011763662
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009540854007354937
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.011596858996199444
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.008434891002252698
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.01448308999533765
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.012221534998388961
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.013320137994014658
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.016076439002063125
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009962620999431238
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.015643430990166962
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.014423440006794408
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010763574988231994
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010443817998748273
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.012810481988708489
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009415776003152132
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009819941988098435
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.012861611001426354
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009484734007855877
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009751361998496577
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.012904011004138738
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009165586001472548
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00836574200366158
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.01064766600029543
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00713143999746535
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00841451199084986
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010206538994680159
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00972405199718196
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007073840999510139
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00857632099359762
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.012829971994506195
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009424404997844249
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009373344990308397
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010973404001560993
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.005664730997523293
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007009431996266358
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007070731007843278
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006433356000343338
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0038689030043315142
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0038484630058519542
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003839602999505587
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003930403006961569
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003887293001753278
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0038128239975776523
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004479149007238448
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0038825230003567412
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0038937830104259774
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0038749240047764033
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003937462999601848
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004029812000226229
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004096760996617377
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004145430997596122
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0040226220007753
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004072802010341547
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004079021993675269
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 158,
+          "seconds": 1.0170197690022178
+        }
+      ],
+      "results": [
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.0,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.0,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3710,
+            "inference_cache_misses": 2447,
+            "inference_cache_hit_rate": 0.6025661848302745,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3710,
+            "inference_cache_misses": 2447,
+            "inference_cache_hit_rate": 0.6025661848302745,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        },
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.0,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.0,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5340,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3326,
+            "inference_cache_misses": 2015,
+            "inference_cache_hit_rate": 0.6227298258753042,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5340,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3326,
+            "inference_cache_misses": 2015,
+            "inference_cache_hit_rate": 0.6227298258753042,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        },
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.25466832518577576,
+            0.06366709619760513,
+            0.25466832518577576,
+            0.25466832518577576,
+            0.0,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.0,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5460,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 2765,
+            "inference_cache_misses": 2696,
+            "inference_cache_hit_rate": 0.5063175242629555,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5460,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 2765,
+            "inference_cache_misses": 2696,
+            "inference_cache_hit_rate": 0.5063175242629555,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        },
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.0,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.5964179635047913,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 217,
+            "tree_depth": 2,
+            "tree_interior_nodes": 216,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:219",
+            "solver_matrix_count": 219,
+            "solver_cuda_matrices": 219,
+            "chance_outcomes": 4092,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 216,
+            "inference_cache_hits": 2109,
+            "inference_cache_misses": 1984,
+            "inference_cache_hit_rate": 0.5152699731248473,
+            "root_joint_actions": 54,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 217,
+            "tree_depth": 2,
+            "tree_interior_nodes": 216,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:219",
+            "solver_matrix_count": 219,
+            "solver_cuda_matrices": 219,
+            "chance_outcomes": 4092,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 216,
+            "inference_cache_hits": 2109,
+            "inference_cache_misses": 1984,
+            "inference_cache_hit_rate": 0.5152699731248473,
+            "root_joint_actions": 54,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        }
+      ],
+      "python_peak_rss_kib": 1579928,
+      "cuda_allocated": 20218880,
+      "cuda_reserved": 106954752
+    },
+    {
+      "repeat": 1,
+      "kind": "warm",
+      "seconds": 3.4353776950010797,
+      "python_cpu_seconds": 2.425381311999999,
+      "native_rows_requested": 42096,
+      "native_rows_deduplicated": 21048,
+      "stages": {
+        "BattleTransformer.evaluate_joint": {
+          "calls": 73,
+          "inclusive_seconds": 0.3783749869762687,
+          "exclusive_seconds": 0.3783749869762687,
+          "rows": 18284
+        },
+        "SimultaneousTreeSearch._pooled_evaluate": {
+          "calls": 3,
+          "inclusive_seconds": 1.2973265429900493,
+          "exclusive_seconds": 0.9189515560137806,
+          "rows": 0
+        },
+        "SearchServer._request_unlocked": {
+          "calls": 2,
+          "inclusive_seconds": 1.152192435998586,
+          "exclusive_seconds": 1.152192435998586,
+          "rows": 0
+        },
+        "SearchServer._snapshot": {
+          "calls": 21048,
+          "inclusive_seconds": 0.3475818256411003,
+          "exclusive_seconds": 0.3475818256411003,
+          "rows": 0
+        },
+        "SearchServer._search_steps_native": {
+          "calls": 2,
+          "inclusive_seconds": 1.5360739310126519,
+          "exclusive_seconds": 0.03629966937296558,
+          "rows": 21048
+        },
+        "SearchServer.search_steps": {
+          "calls": 2,
+          "inclusive_seconds": 1.6110077540070051,
+          "exclusive_seconds": 0.07493382299435325,
+          "rows": 42096
+        },
+        "SimultaneousTreeSearch._open_subgames": {
+          "calls": 1,
+          "inclusive_seconds": 1.826308396004606,
+          "exclusive_seconds": 0.3257207790011307,
+          "rows": 0
+        },
+        "SimultaneousTreeSearch._solve_matrices": {
+          "calls": 3,
+          "inclusive_seconds": 0.0944244979909854,
+          "exclusive_seconds": 0.0944244979909854,
+          "rows": 2400
+        },
+        "SimultaneousTreeSearch._settle": {
+          "calls": 1,
+          "inclusive_seconds": 1.368677041013143,
+          "exclusive_seconds": 0.06564098602393642,
+          "rows": 0
+        }
+      },
+      "inference_batches": [
+        {
+          "method": "evaluate_joint",
+          "rows": 8,
+          "seconds": 0.014647709002019837
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004644638000172563
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0080137849872699
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.005625550998956896
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003969133002101444
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 198,
+          "seconds": 0.003841003999696113
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.005752409997512586
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006799843002227135
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007100930990418419
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006853761995444074
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007162060996051878
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00732683899695985
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004343900000094436
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006975940996198915
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007268660003319383
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006978531993809156
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.008351073003723286
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007625668004038744
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0063939660030882806
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004127242005779408
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.005161024004337378
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004318010003771633
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.005071274994406849
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004080682003404945
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004023071989649907
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004091891998541541
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004122512007597834
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004025172995170578
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00407302200619597
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0041292810055892915
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0040191320003941655
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004130450994125567
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004129670996917412
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003996211991761811
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004075182005180977
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004059651997522451
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003984972005127929
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004076191995409317
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0049372359935659915
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004096012009540573
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004312099990784191
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006921241991221905
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0054106519964989275
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004254170999047346
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004346879999502562
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0042294209997635335
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004078031997778453
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004066162000526674
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003984513008617796
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004051741998409852
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004063201995450072
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006440924989874475
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0048157559940591455
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0068616530043073
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007130800993763842
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007319768992601894
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0060703180060954764
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004020732012577355
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004114672003197484
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004100341000594199
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004030142008559778
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004075492004631087
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004069371992954984
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003998832005891018
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00407571200048551
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004227440993417986
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004020931999548338
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004065902001457289
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004108251989237033
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004012282006442547
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004088611007318832
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004098642006283626
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 158,
+          "seconds": 0.010506988008273765
+        }
+      ],
+      "results": [
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.0,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.0,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3710,
+            "inference_cache_misses": 2447,
+            "inference_cache_hit_rate": 0.6025661848302745,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3710,
+            "inference_cache_misses": 2447,
+            "inference_cache_hit_rate": 0.6025661848302745,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        },
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.0,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.0,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5340,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3326,
+            "inference_cache_misses": 2015,
+            "inference_cache_hit_rate": 0.6227298258753042,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5340,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3326,
+            "inference_cache_misses": 2015,
+            "inference_cache_hit_rate": 0.6227298258753042,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        },
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.25466832518577576,
+            0.06366709619760513,
+            0.25466832518577576,
+            0.25466832518577576,
+            0.0,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.0,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5460,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 2765,
+            "inference_cache_misses": 2696,
+            "inference_cache_hit_rate": 0.5063175242629555,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5460,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 2765,
+            "inference_cache_misses": 2696,
+            "inference_cache_hit_rate": 0.5063175242629555,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        },
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.0,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.5964179635047913,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 217,
+            "tree_depth": 2,
+            "tree_interior_nodes": 216,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:219",
+            "solver_matrix_count": 219,
+            "solver_cuda_matrices": 219,
+            "chance_outcomes": 4092,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 216,
+            "inference_cache_hits": 2109,
+            "inference_cache_misses": 1984,
+            "inference_cache_hit_rate": 0.5152699731248473,
+            "root_joint_actions": 54,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 217,
+            "tree_depth": 2,
+            "tree_interior_nodes": 216,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:219",
+            "solver_matrix_count": 219,
+            "solver_cuda_matrices": 219,
+            "chance_outcomes": 4092,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 216,
+            "inference_cache_hits": 2109,
+            "inference_cache_misses": 1984,
+            "inference_cache_hit_rate": 0.5152699731248473,
+            "root_joint_actions": 54,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        }
+      ],
+      "python_peak_rss_kib": 1594992,
+      "cuda_allocated": 20220928,
+      "cuda_reserved": 106954752
+    },
+    {
+      "repeat": 2,
+      "kind": "warm",
+      "seconds": 2.9331344529928174,
+      "python_cpu_seconds": 2.2352858270000002,
+      "native_rows_requested": 42096,
+      "native_rows_deduplicated": 21048,
+      "stages": {
+        "BattleTransformer.evaluate_joint": {
+          "calls": 73,
+          "inclusive_seconds": 0.4986709110235097,
+          "exclusive_seconds": 0.4986709110235097,
+          "rows": 18284
+        },
+        "SimultaneousTreeSearch._pooled_evaluate": {
+          "calls": 3,
+          "inclusive_seconds": 1.271217207002337,
+          "exclusive_seconds": 0.7725462959788274,
+          "rows": 0
+        },
+        "SearchServer._request_unlocked": {
+          "calls": 2,
+          "inclusive_seconds": 0.8116618799977005,
+          "exclusive_seconds": 0.8116618799977005,
+          "rows": 0
+        },
+        "SearchServer._snapshot": {
+          "calls": 21048,
+          "inclusive_seconds": 0.3163856443861732,
+          "exclusive_seconds": 0.3163856443861732,
+          "rows": 0
+        },
+        "SearchServer._search_steps_native": {
+          "calls": 2,
+          "inclusive_seconds": 1.1558702719921712,
+          "exclusive_seconds": 0.027822747608297504,
+          "rows": 21048
+        },
+        "SearchServer.search_steps": {
+          "calls": 2,
+          "inclusive_seconds": 1.2278313949791482,
+          "exclusive_seconds": 0.07196112298697699,
+          "rows": 42096
+        },
+        "SimultaneousTreeSearch._open_subgames": {
+          "calls": 1,
+          "inclusive_seconds": 1.4807010080112377,
+          "exclusive_seconds": 0.29183301301964093,
+          "rows": 0
+        },
+        "SimultaneousTreeSearch._solve_matrices": {
+          "calls": 3,
+          "inclusive_seconds": 0.052094390004640445,
+          "exclusive_seconds": 0.052094390004640445,
+          "rows": 2400
+        },
+        "SimultaneousTreeSearch._settle": {
+          "calls": 1,
+          "inclusive_seconds": 1.3299576710123802,
+          "exclusive_seconds": 0.05178506299853325,
+          "rows": 0
+        }
+      },
+      "inference_batches": [
+        {
+          "method": "evaluate_joint",
+          "rows": 8,
+          "seconds": 0.0014423200045712292
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004279401007806882
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003724095004145056
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0037925630022073165
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003814684008830227
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 198,
+          "seconds": 0.003937101995688863
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007383169009699486
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.008457892006845213
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00962208399141673
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006741984005202539
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.008486922000884078
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.011605010004132055
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.008483960991725326
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.012737162003759295
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.01225342600082513
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.008412741997744888
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.011913207999896258
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.013821154003380798
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009899301003315486
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.012835130997700617
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010469008004292846
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007172830999479629
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.011358422008925118
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009247166002751328
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0070932310045463964
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.008602981004514731
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010494668007595465
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.01058727700728923
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0072089599998435006
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.008383271997445263
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00917030700657051
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007214219993329607
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.008359851999557577
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009194225989631377
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00719068999751471
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.008377502002986148
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009174616992822848
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007158950000302866
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00839547200303059
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009163236987660639
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007216029989649542
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.008378372993320227
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007373449014266953
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00499376498919446
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.008564841002225876
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.005272284004604444
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00786309600516688
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004669618007028475
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00430655998934526
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0041811109986156225
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004113971997867338
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0040368830086663365
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004141560988500714
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00413284199021291
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004500049006310292
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004771987005369738
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0047876969911158085
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004485158991883509
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004317810002248734
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004352350006229244
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0042086710018338636
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004780426999786869
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.005154785001650453
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003890694002620876
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003873082998325117
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0038882429944351315
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0038810230034869164
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004490488994633779
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004274291000911035
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004120680998312309
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004179160998319276
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004183370998362079
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 158,
+          "seconds": 0.0036263549991417676
+        }
+      ],
+      "results": [
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.0,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.0,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3710,
+            "inference_cache_misses": 2447,
+            "inference_cache_hit_rate": 0.6025661848302745,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3710,
+            "inference_cache_misses": 2447,
+            "inference_cache_hit_rate": 0.6025661848302745,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        },
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.0,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.0,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5340,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3326,
+            "inference_cache_misses": 2015,
+            "inference_cache_hit_rate": 0.6227298258753042,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5340,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3326,
+            "inference_cache_misses": 2015,
+            "inference_cache_hit_rate": 0.6227298258753042,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        },
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.25466832518577576,
+            0.06366709619760513,
+            0.25466832518577576,
+            0.25466832518577576,
+            0.0,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.0,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5460,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 2765,
+            "inference_cache_misses": 2696,
+            "inference_cache_hit_rate": 0.5063175242629555,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5460,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 2765,
+            "inference_cache_misses": 2696,
+            "inference_cache_hit_rate": 0.5063175242629555,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        },
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.0,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.5964179635047913,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 217,
+            "tree_depth": 2,
+            "tree_interior_nodes": 216,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:219",
+            "solver_matrix_count": 219,
+            "solver_cuda_matrices": 219,
+            "chance_outcomes": 4092,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 216,
+            "inference_cache_hits": 2109,
+            "inference_cache_misses": 1984,
+            "inference_cache_hit_rate": 0.5152699731248473,
+            "root_joint_actions": 54,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 217,
+            "tree_depth": 2,
+            "tree_interior_nodes": 216,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:219",
+            "solver_matrix_count": 219,
+            "solver_cuda_matrices": 219,
+            "chance_outcomes": 4092,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 216,
+            "inference_cache_hits": 2109,
+            "inference_cache_misses": 1984,
+            "inference_cache_hit_rate": 0.5152699731248473,
+            "root_joint_actions": 54,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        }
+      ],
+      "python_peak_rss_kib": 1612168,
+      "cuda_allocated": 20220928,
+      "cuda_reserved": 106954752
+    },
+    {
+      "repeat": 3,
+      "kind": "warm",
+      "seconds": 3.190646756993374,
+      "python_cpu_seconds": 2.2867059079999983,
+      "native_rows_requested": 42096,
+      "native_rows_deduplicated": 21048,
+      "stages": {
+        "BattleTransformer.evaluate_joint": {
+          "calls": 73,
+          "inclusive_seconds": 0.448214068019297,
+          "exclusive_seconds": 0.448214068019297,
+          "rows": 18284
+        },
+        "SimultaneousTreeSearch._pooled_evaluate": {
+          "calls": 3,
+          "inclusive_seconds": 1.0041297730058432,
+          "exclusive_seconds": 0.5559157049865462,
+          "rows": 0
+        },
+        "SearchServer._request_unlocked": {
+          "calls": 2,
+          "inclusive_seconds": 1.0563707730034366,
+          "exclusive_seconds": 1.0563707730034366,
+          "rows": 0
+        },
+        "SearchServer._snapshot": {
+          "calls": 21048,
+          "inclusive_seconds": 0.32851337213651277,
+          "exclusive_seconds": 0.32851337213651277,
+          "rows": 0
+        },
+        "SearchServer._search_steps_native": {
+          "calls": 2,
+          "inclusive_seconds": 1.4185405099997297,
+          "exclusive_seconds": 0.0336563648597803,
+          "rows": 21048
+        },
+        "SearchServer.search_steps": {
+          "calls": 2,
+          "inclusive_seconds": 1.4942391169897746,
+          "exclusive_seconds": 0.07569860699004494,
+          "rows": 42096
+        },
+        "SimultaneousTreeSearch._open_subgames": {
+          "calls": 1,
+          "inclusive_seconds": 1.7603054790088208,
+          "exclusive_seconds": 0.2878759120067116,
+          "rows": 0
+        },
+        "SimultaneousTreeSearch._solve_matrices": {
+          "calls": 3,
+          "inclusive_seconds": 0.05688094600918703,
+          "exclusive_seconds": 0.05688094600918703,
+          "rows": 2400
+        },
+        "SimultaneousTreeSearch._settle": {
+          "calls": 1,
+          "inclusive_seconds": 1.3273777900030836,
+          "exclusive_seconds": 0.31389391199627426,
+          "rows": 0
+        }
+      },
+      "inference_batches": [
+        {
+          "method": "evaluate_joint",
+          "rows": 8,
+          "seconds": 0.0015719889925094321
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004174750996753573
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0040063920023385435
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.008015475003048778
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003909932987880893
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 198,
+          "seconds": 0.003654585001640953
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00701912101067137
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004564098999253474
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006369406008161604
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003974242994445376
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003868632993544452
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003956933011068031
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003981222995207645
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0038692640082444996
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004779096998390742
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003957342996727675
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003879173003952019
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003990803001215681
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004351089999545366
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003999202002887614
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004011551995063201
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0039061930001480505
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0039001030090730637
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0038288630021270365
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0038448830018751323
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003822173996013589
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003973133003455587
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003954712999984622
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0038986330037005246
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.003945522999856621
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0039090330101316795
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0037617140042129904
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007691947001148947
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0061866670002928
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006890521995956078
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010663926004781388
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0106375460018171
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010568996993242763
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.01078797499940265
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.01021854899590835
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010639656000421382
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.010276158995111473
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00702010199893266
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007025892002275214
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006475585003499873
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004792587002157234
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006917562990565784
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007031752000330016
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007018402000539936
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0070577419974142686
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007292289999895729
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00408679099928122
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0064529950032010674
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007047891995171085
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0070976409915601835
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006916131998877972
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007046030994388275
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007108731006155722
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009334586007753387
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009527554997475818
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00711796099494677
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006505074998131022
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009349594998639077
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007186540009570308
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007757507002679631
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007156231004046276
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007008001004578546
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006981511993217282
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007971234997967258
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00617170799523592
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0069974910002201796
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007102581002982333
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 158,
+          "seconds": 0.006447146006394178
+        }
+      ],
+      "results": [
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.0,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.0,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3710,
+            "inference_cache_misses": 2447,
+            "inference_cache_hit_rate": 0.6025661848302745,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3710,
+            "inference_cache_misses": 2447,
+            "inference_cache_hit_rate": 0.6025661848302745,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        },
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.0,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.0,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5340,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3326,
+            "inference_cache_misses": 2015,
+            "inference_cache_hit_rate": 0.6227298258753042,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5340,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3326,
+            "inference_cache_misses": 2015,
+            "inference_cache_hit_rate": 0.6227298258753042,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        },
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.25466832518577576,
+            0.06366709619760513,
+            0.25466832518577576,
+            0.25466832518577576,
+            0.0,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.0,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5460,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 2765,
+            "inference_cache_misses": 2696,
+            "inference_cache_hit_rate": 0.5063175242629555,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5460,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 2765,
+            "inference_cache_misses": 2696,
+            "inference_cache_hit_rate": 0.5063175242629555,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        },
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.0,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.5964179635047913,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 217,
+            "tree_depth": 2,
+            "tree_interior_nodes": 216,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:219",
+            "solver_matrix_count": 219,
+            "solver_cuda_matrices": 219,
+            "chance_outcomes": 4092,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 216,
+            "inference_cache_hits": 2109,
+            "inference_cache_misses": 1984,
+            "inference_cache_hit_rate": 0.5152699731248473,
+            "root_joint_actions": 54,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 217,
+            "tree_depth": 2,
+            "tree_interior_nodes": 216,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:219",
+            "solver_matrix_count": 219,
+            "solver_cuda_matrices": 219,
+            "chance_outcomes": 4092,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 216,
+            "inference_cache_hits": 2109,
+            "inference_cache_misses": 1984,
+            "inference_cache_hit_rate": 0.5152699731248473,
+            "root_joint_actions": 54,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        }
+      ],
+      "python_peak_rss_kib": 1627792,
+      "cuda_allocated": 20220928,
+      "cuda_reserved": 106954752
+    },
+    {
+      "repeat": 4,
+      "kind": "profiled",
+      "seconds": 3.761027512999135,
+      "python_cpu_seconds": 2.9879083320000035,
+      "native_rows_requested": 42096,
+      "native_rows_deduplicated": 21048,
+      "stages": {
+        "BattleTransformer.evaluate_joint": {
+          "calls": 73,
+          "inclusive_seconds": 0.4894658090925077,
+          "exclusive_seconds": 0.4894658090925077,
+          "rows": 18284
+        },
+        "SimultaneousTreeSearch._pooled_evaluate": {
+          "calls": 3,
+          "inclusive_seconds": 1.4269797859888058,
+          "exclusive_seconds": 0.9375139768962981,
+          "rows": 0
+        },
+        "SearchServer._request_unlocked": {
+          "calls": 2,
+          "inclusive_seconds": 0.8792551340156933,
+          "exclusive_seconds": 0.8792551340156933,
+          "rows": 0
+        },
+        "SearchServer._snapshot": {
+          "calls": 21048,
+          "inclusive_seconds": 0.36162827858061064,
+          "exclusive_seconds": 0.36162827858061064,
+          "rows": 0
+        },
+        "SearchServer._search_steps_native": {
+          "calls": 2,
+          "inclusive_seconds": 1.2804090750141768,
+          "exclusive_seconds": 0.03952566241787281,
+          "rows": 21048
+        },
+        "SearchServer.search_steps": {
+          "calls": 2,
+          "inclusive_seconds": 1.498351119007566,
+          "exclusive_seconds": 0.21794204399338923,
+          "rows": 42096
+        },
+        "SimultaneousTreeSearch._open_subgames": {
+          "calls": 1,
+          "inclusive_seconds": 1.7765286579960957,
+          "exclusive_seconds": 0.3188811259897193,
+          "rows": 0
+        },
+        "SimultaneousTreeSearch._solve_matrices": {
+          "calls": 3,
+          "inclusive_seconds": 0.10893010800646152,
+          "exclusive_seconds": 0.10893010800646152,
+          "rows": 2400
+        },
+        "SimultaneousTreeSearch._settle": {
+          "calls": 1,
+          "inclusive_seconds": 1.7922258139878977,
+          "exclusive_seconds": 0.3475971389998449,
+          "rows": 0
+        }
+      },
+      "inference_batches": [
+        {
+          "method": "evaluate_joint",
+          "rows": 8,
+          "seconds": 0.001782817009370774
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0062721659924136475
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006681314000161365
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.008517270995071158
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.005714800005080178
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 198,
+          "seconds": 0.006756123009836301
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0050448649999452755
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0066150850034318864
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0069356619933387265
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006792043001041748
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006906541995704174
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0069845620018895715
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006890202988870442
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006863713002530858
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006987671993556432
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007057331997202709
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006805192999308929
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007020112010650337
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.008111293995170854
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.005837640012032352
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007061641008476727
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00698732199089136
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006936172998393886
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007063191005727276
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006991762013058178
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006963941996218637
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007061611002427526
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0069785020023118705
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007009491993812844
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007147791009629145
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006844482995802537
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006972382005187683
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007046721002552658
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006946462002815679
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006974431002163328
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007048330997349694
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.008582059992477298
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.005197553997277282
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007065181009238586
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006917402002727613
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006943041997146793
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00784265500260517
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006841193011496216
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006924832006916404
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007044411002425477
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0066475640051066875
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006936472011147998
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006980741993174888
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006915581994690001
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007276160002220422
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.009113366992096417
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006754784000804648
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007103971001924947
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0074107480031671
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.011612250003963709
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0057082310086116195
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007021730998530984
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0069221719895722345
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006817353001679294
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006993792005232535
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006820213005994447
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006943451997358352
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007104941003490239
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.00698686100076884
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004177120994427241
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.0042288109980290756
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004219800001010299
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.004199431001325138
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.007274340008734725
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.006936423000297509
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.005346553007257171
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 256,
+          "seconds": 0.005162164001376368
+        },
+        {
+          "method": "evaluate_joint",
+          "rows": 158,
+          "seconds": 0.003881804004777223
+        }
+      ],
+      "results": [
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.0,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.0,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3710,
+            "inference_cache_misses": 2447,
+            "inference_cache_hit_rate": 0.6025661848302745,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 6156,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3710,
+            "inference_cache_misses": 2447,
+            "inference_cache_hit_rate": 0.6025661848302745,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        },
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.0,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.0,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5340,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3326,
+            "inference_cache_misses": 2015,
+            "inference_cache_hit_rate": 0.6227298258753042,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5340,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 3326,
+            "inference_cache_misses": 2015,
+            "inference_cache_hit_rate": 0.6227298258753042,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        },
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.25466832518577576,
+            0.06366709619760513,
+            0.25466832518577576,
+            0.25466832518577576,
+            0.0,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.03446561098098755,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.21382705867290497,
+            0.0,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.02893834561109543,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5460,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 2765,
+            "inference_cache_misses": 2696,
+            "inference_cache_hit_rate": 0.5063175242629555,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 325,
+            "tree_depth": 2,
+            "tree_interior_nodes": 324,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:327",
+            "solver_matrix_count": 327,
+            "solver_cuda_matrices": 327,
+            "chance_outcomes": 5460,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 324,
+            "inference_cache_hits": 2765,
+            "inference_cache_misses": 2696,
+            "inference_cache_hit_rate": 0.5063175242629555,
+            "root_joint_actions": 81,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        },
+        {
+          "player_action": 0,
+          "enemy_action": 0,
+          "player_policy": [
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.21382708847522736,
+            0.0,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.028938349336385727,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "enemy_policy": [
+            0.5964179635047913,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.08071639388799667,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "failure": null,
+          "player_diagnostics": {
+            "tree_nodes": 217,
+            "tree_depth": 2,
+            "tree_interior_nodes": 216,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "player",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:219",
+            "solver_matrix_count": 219,
+            "solver_cuda_matrices": 219,
+            "chance_outcomes": 4092,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 216,
+            "inference_cache_hits": 2109,
+            "inference_cache_misses": 1984,
+            "inference_cache_hit_rate": 0.5152699731248473,
+            "root_joint_actions": 54,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          },
+          "enemy_diagnostics": {
+            "tree_nodes": 217,
+            "tree_depth": 2,
+            "tree_interior_nodes": 216,
+            "tree_interior_divergences": 0,
+            "evaluation_side": "enemy",
+            "requested_leaf_evaluator": "full",
+            "leaf_evaluator": "full",
+            "interior_evaluator": "full",
+            "solver_backend_counts": "triton-anchored-f32-v1:219",
+            "solver_matrix_count": 219,
+            "solver_cuda_matrices": 219,
+            "chance_outcomes": 4092,
+            "sampled_joint_coverage": 1.0,
+            "cross_root_batch_size": 8,
+            "cross_root_root_leaves": 216,
+            "inference_cache_hits": 2109,
+            "inference_cache_misses": 1984,
+            "inference_cache_hit_rate": 0.5152699731248473,
+            "root_joint_actions": 54,
+            "root_solves": 2048,
+            "root_online_exploitability": 0.0,
+            "root_final_exploitability": 0.0,
+            "root_equilibrium_iterations": 2048,
+            "root_solver": "triton-anchored-f32-v1",
+            "root_anchor_temperature": 0.02,
+            "root_split_half_available": 1,
+            "root_split_half_distance": 0.0,
+            "root_split_half_enemy_distance": 0.0,
+            "root_split_half_value_gap": 0.0,
+            "root_prior_regret": 0.0,
+            "root_enemy_prior_regret": 0.0,
+            "root_prior_regret_noise": 0.0,
+            "root_enemy_prior_regret_noise": 0.0
+          }
+        }
+      ],
+      "python_peak_rss_kib": 1628956,
+      "cuda_allocated": 20220928,
+      "cuda_reserved": 106954752
+    }
+  ],
+  "scope": "One isolated CUDA actor while training continues; two independent neural controllers per 6v6 root. Same roots/chance seeds each repetition; compact clears native dedup. Wall time includes contention; profiler repetition excluded from warm timing.",
+  "roots": [
+    {
+      "player_hash": "578523581729025802",
+      "enemy_hash": "12552402028832494551",
+      "legal_joint_actions": 81
+    },
+    {
+      "player_hash": "12831601479368221921",
+      "enemy_hash": "6889502425748610447",
+      "legal_joint_actions": 81
+    },
+    {
+      "player_hash": "12363229570963607645",
+      "enemy_hash": "2822405831385976790",
+      "legal_joint_actions": 81
+    },
+    {
+      "player_hash": "247173857233418394",
+      "enemy_hash": "2100974826997606080",
+      "legal_joint_actions": 54
+    }
+  ],
+  "ended_at": 1788893536.2808125
+}

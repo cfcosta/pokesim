@@ -1,0 +1,59 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 33K of event 'cpu-clock:u'
+# Event count (approx.): 334121208780
+#
+# Children      Self  Symbol                                                                                                                                                                                                    IPC   [IPC Coverage]
+# ........  ........  ........................................................................................................................................................................................................  ....................
+#
+    23.67%    22.92%  [.] lean_apply_1                                                                                                                                                                                          -      -
+    20.19%    19.87%  [.] l_List_find_x3f___redArg                                                                                                                                                                              -      -
+    10.74%    10.73%  [.] lp_battle_x2dlean_Battle_TypeChart_matchup___lam__0___boxed                                                                                                                                           -      -
+     4.22%     4.21%  [.] lean_string_push                                                                                                                                                                                      -      -
+     3.77%     3.66%  [.] lean_dec_ref_cold                                                                                                                                                                                     -      -
+     2.98%     0.00%  [.] __GI___clone3                                                                                                                                                                                         -      -
+            |
+            ---start_thread
+               lean::lthread::imp::_main(void*)
+               |
+                --2.10%--std::_Function_handler<void (), lean_run_main::{lambda()#1}>::_M_invoke(std::_Any_data const&)
+                          lp_battle_x2dlean_main___redArg
+                          lp_battle_x2dlean_serve
+
+     2.98%     0.00%  [.] start_thread                                                                                                                                                                                          -      -
+            |
+            ---lean::lthread::imp::_main(void*)
+               |
+                --2.10%--std::_Function_handler<void (), lean_run_main::{lambda()#1}>::_M_invoke(std::_Any_data const&)
+                          lp_battle_x2dlean_main___redArg
+                          lp_battle_x2dlean_serve
+
+     2.98%     0.00%  [.] lean::lthread::imp::_main(void*)                                                                                                                                                                      -      -
+            |
+             --2.10%--std::_Function_handler<void (), lean_run_main::{lambda()#1}>::_M_invoke(std::_Any_data const&)
+                       lp_battle_x2dlean_main___redArg
+                       lp_battle_x2dlean_serve
+
+     2.86%     2.67%  [.] lp_battle_x2dlean_List_forIn_x27_loop___at___00__private_Battle_RL_FullSearchServerMain_0__base64Encode_spec__0___redArg                                                                              -      -
+     2.52%     2.52%  [.] lp_battle_x2dlean_Battle_TypeChart_matchup___lam__0                                                                                                                                                   -      -
+     2.30%     2.29%  [.] lean_array_push                                                                                                                                                                                       -      -
+     2.16%     2.16%  [.] mi_free                                                                                                                                                                                               -      -
+     2.15%     2.15%  [.] malloc                                                                                                                                                                                                -      -
+     2.10%     0.00%  [.] std::_Function_handler<void (), lean_run_main::{lambda()#1}>::_M_invoke(std::_Any_data const&)                                                                                                        -      -
+            |
+            ---lp_battle_x2dlean_main___redArg
+               lp_battle_x2dlean_serve
+
+     2.10%     0.00%  [.] lp_battle_x2dlean_main___redArg                                                                                                                                                                       -      -
+            |
+            ---lp_battle_x2dlean_serve
+
+     2.10%     0.00%  [.] lp_battle_x2dlean_serve                                                                                                                                                                               -      -
+
+
+#
+# (Tip: Generate a script for your data: perf script -g <lang>)
+#

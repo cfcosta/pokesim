@@ -1,0 +1,3 @@
+'Battle.TypeChart.matchup_equals_ordered_scan' depends on axioms: [propext,
+ Quot.sound,
+ Battle.TypeChart.matchup_matrix_checked._native.native_decide.ax_1_1✝]

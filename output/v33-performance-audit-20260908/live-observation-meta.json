@@ -1,0 +1,9 @@
+{
+  "config": {
+    "run": "/media/pokemon-training/v33-bf16-20260908-154254/run",
+    "training_unit": "pokemon-v33-20260908-154254-train",
+    "source_commit": "ae7ab24ff423901236f12f4568328d8afb990c83"
+  },
+  "samples": 91,
+  "notes": "Read-only live sampling; global GPU includes other apps. Audit probe intervals recorded separately."
+}

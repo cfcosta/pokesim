@@ -1,0 +1,482 @@
+{
+  "before": {
+    "time": 75531.710268049,
+    "utc": "2026-09-08T19:04:13.460994+00:00",
+    "processes": [
+      {
+        "pid": 457940,
+        "role": "actor",
+        "cpu_seconds": 662.38,
+        "rchar": 16070021646,
+        "wchar": 5260196914,
+        "syscr": 1875285,
+        "syscw": 2153,
+        "read_bytes": 71950336,
+        "write_bytes": 5119193088,
+        "cancelled_write_bytes": 4096
+      },
+      {
+        "pid": 457943,
+        "role": "actor",
+        "cpu_seconds": 656.93,
+        "rchar": 15377148377,
+        "wchar": 5913124223,
+        "syscr": 1791762,
+        "syscw": 2592,
+        "read_bytes": 20094976,
+        "write_bytes": 5772414976,
+        "cancelled_write_bytes": 4096
+      },
+      {
+        "pid": 457944,
+        "role": "actor",
+        "cpu_seconds": 659.5,
+        "rchar": 16624396545,
+        "wchar": 3660597187,
+        "syscr": 1943700,
+        "syscw": 1746,
+        "read_bytes": 19054592,
+        "write_bytes": 3507257344,
+        "cancelled_write_bytes": 4096
+      },
+      {
+        "pid": 457945,
+        "role": "actor",
+        "cpu_seconds": 657.3,
+        "rchar": 16914886422,
+        "wchar": 4569357967,
+        "syscr": 1980076,
+        "syscw": 2073,
+        "read_bytes": 21553152,
+        "write_bytes": 4413411328,
+        "cancelled_write_bytes": 4096
+      },
+      {
+        "pid": 457946,
+        "role": "actor",
+        "cpu_seconds": 659.18,
+        "rchar": 16148747360,
+        "wchar": 4838772850,
+        "syscr": 1885818,
+        "syscw": 2130,
+        "read_bytes": 32526336,
+        "write_bytes": 4690489344,
+        "cancelled_write_bytes": 4096
+      },
+      {
+        "pid": 457947,
+        "role": "actor",
+        "cpu_seconds": 659.4,
+        "rchar": 16094073468,
+        "wchar": 4138616275,
+        "syscr": 1879166,
+        "syscw": 2132,
+        "read_bytes": 29171712,
+        "write_bytes": 3990876160,
+        "cancelled_write_bytes": 4096
+      },
+      {
+        "pid": 457948,
+        "role": "actor",
+        "cpu_seconds": 646.34,
+        "rchar": 16237430594,
+        "wchar": 4766160724,
+        "syscr": 1896623,
+        "syscw": 2206,
+        "read_bytes": 41050112,
+        "write_bytes": 4631519232,
+        "cancelled_write_bytes": 4096
+      },
+      {
+        "pid": 457949,
+        "role": "actor",
+        "cpu_seconds": 660.16,
+        "rchar": 16173145006,
+        "wchar": 4503043340,
+        "syscr": 1888598,
+        "syscw": 1952,
+        "read_bytes": 17997824,
+        "write_bytes": 4354224128,
+        "cancelled_write_bytes": 4096
+      },
+      {
+        "pid": 458178,
+        "role": "native",
+        "cpu_seconds": 1261.2,
+        "rchar": 150066215,
+        "wchar": 15345729702,
+        "syscr": 38060,
+        "syscw": 4269,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "cancelled_write_bytes": 0
+      },
+      {
+        "pid": 458196,
+        "role": "native",
+        "cpu_seconds": 1215.63,
+        "rchar": 149383822,
+        "wchar": 15280642610,
+        "syscr": 37714,
+        "syscw": 3761,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "cancelled_write_bytes": 0
+      },
+      {
+        "pid": 458205,
+        "role": "native",
+        "cpu_seconds": 1240.97,
+        "rchar": 153823653,
+        "wchar": 15733060479,
+        "syscr": 38664,
+        "syscw": 3410,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "cancelled_write_bytes": 0
+      },
+      {
+        "pid": 458206,
+        "role": "native",
+        "cpu_seconds": 1201.41,
+        "rchar": 148556171,
+        "wchar": 15202737304,
+        "syscr": 37636,
+        "syscw": 4088,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "cancelled_write_bytes": 0
+      },
+      {
+        "pid": 458209,
+        "role": "native",
+        "cpu_seconds": 1212.05,
+        "rchar": 148034979,
+        "wchar": 15169228550,
+        "syscr": 37534,
+        "syscw": 4211,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "cancelled_write_bytes": 0
+      },
+      {
+        "pid": 458210,
+        "role": "native",
+        "cpu_seconds": 1148.84,
+        "rchar": 141564403,
+        "wchar": 14485029081,
+        "syscr": 36277,
+        "syscw": 4948,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "cancelled_write_bytes": 0
+      },
+      {
+        "pid": 458211,
+        "role": "native",
+        "cpu_seconds": 1265.28,
+        "rchar": 156543970,
+        "wchar": 16031591395,
+        "syscr": 39539,
+        "syscw": 4064,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "cancelled_write_bytes": 0
+      },
+      {
+        "pid": 458212,
+        "role": "native",
+        "cpu_seconds": 1209.01,
+        "rchar": 149084477,
+        "wchar": 15257199848,
+        "syscr": 37774,
+        "syscw": 4101,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "cancelled_write_bytes": 0
+      }
+    ],
+    "actor_files": [
+      {
+        "file": "actor-04.json",
+        "bytes": 30684531,
+        "mtime_ns": 1788894241333436117
+      },
+      {
+        "file": "actor-03.json",
+        "bytes": 26333831,
+        "mtime_ns": 1788894248177874643
+      },
+      {
+        "file": "actor-07.json",
+        "bytes": 28317405,
+        "mtime_ns": 1788894240288272148
+      },
+      {
+        "file": "actor-00.json",
+        "bytes": 29462284,
+        "mtime_ns": 1788894242552699031
+      },
+      {
+        "file": "actor-05.json",
+        "bytes": 28726558,
+        "mtime_ns": 1788894247579094754
+      },
+      {
+        "file": "actor-02.json",
+        "bytes": 26377860,
+        "mtime_ns": 1788894223935564555
+      },
+      {
+        "file": "actor-06.json",
+        "bytes": 25954872,
+        "mtime_ns": 1788894231354129837
+      },
+      {
+        "file": "actor-01.json",
+        "bytes": 31476644,
+        "mtime_ns": 1788894219932607850
+      }
+    ]
+  },
+  "after": {
+    "time": 75561.716488828,
+    "utc": "2026-09-08T19:04:43.467218+00:00",
+    "processes": [
+      {
+        "pid": 457940,
+        "role": "actor",
+        "cpu_seconds": 667.74,
+        "rchar": 16186861765,
+        "wchar": 5347085579,
+        "syscr": 1889558,
+        "syscw": 2168,
+        "read_bytes": 71950336,
+        "write_bytes": 5198614528,
+        "cancelled_write_bytes": 4096
+      },
+      {
+        "pid": 457943,
+        "role": "actor",
+        "cpu_seconds": 661.39,
+        "rchar": 15497732448,
+        "wchar": 5943041199,
+        "syscr": 1806486,
+        "syscw": 2598,
+        "read_bytes": 20094976,
+        "write_bytes": 5801144320,
+        "cancelled_write_bytes": 4096
+      },
+      {
+        "pid": 457944,
+        "role": "actor",
+        "cpu_seconds": 665.39,
+        "rchar": 16730674623,
+        "wchar": 3740948778,
+        "syscr": 1956687,
+        "syscw": 1765,
+        "read_bytes": 19054592,
+        "write_bytes": 3586269184,
+        "cancelled_write_bytes": 4096
+      },
+      {
+        "pid": 457945,
+        "role": "actor",
+        "cpu_seconds": 662.95,
+        "rchar": 17042897701,
+        "wchar": 4665079107,
+        "syscr": 1995715,
+        "syscw": 2091,
+        "read_bytes": 21553152,
+        "write_bytes": 4533067776,
+        "cancelled_write_bytes": 4096
+      },
+      {
+        "pid": 457946,
+        "role": "actor",
+        "cpu_seconds": 662.9,
+        "rchar": 16238161989,
+        "wchar": 4865605613,
+        "syscr": 1896737,
+        "syscw": 2136,
+        "read_bytes": 32526336,
+        "write_bytes": 4716445696,
+        "cancelled_write_bytes": 4096
+      },
+      {
+        "pid": 457947,
+        "role": "actor",
+        "cpu_seconds": 664.78,
+        "rchar": 16210010294,
+        "wchar": 4166133884,
+        "syscr": 1893323,
+        "syscw": 2138,
+        "read_bytes": 29171712,
+        "write_bytes": 4017254400,
+        "cancelled_write_bytes": 4096
+      },
+      {
+        "pid": 457948,
+        "role": "actor",
+        "cpu_seconds": 650.37,
+        "rchar": 16267208188,
+        "wchar": 4913823770,
+        "syscr": 1900277,
+        "syscw": 2234,
+        "read_bytes": 41050112,
+        "write_bytes": 4764151808,
+        "cancelled_write_bytes": 4096
+      },
+      {
+        "pid": 457949,
+        "role": "actor",
+        "cpu_seconds": 666.02,
+        "rchar": 16181627829,
+        "wchar": 4535955141,
+        "syscr": 1889636,
+        "syscw": 1958,
+        "read_bytes": 17997824,
+        "write_bytes": 4385742848,
+        "cancelled_write_bytes": 4096
+      },
+      {
+        "pid": 458178,
+        "role": "native",
+        "cpu_seconds": 1263.65,
+        "rchar": 150417841,
+        "wchar": 15375507296,
+        "syscr": 38162,
+        "syscw": 4317,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "cancelled_write_bytes": 0
+      },
+      {
+        "pid": 458196,
+        "role": "native",
+        "cpu_seconds": 1224.3,
+        "rchar": 150780928,
+        "wchar": 15289125433,
+        "syscr": 38059,
+        "syscw": 3771,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "cancelled_write_bytes": 0
+      },
+      {
+        "pid": 458205,
+        "role": "native",
+        "cpu_seconds": 1249.7,
+        "rchar": 155173751,
+        "wchar": 15839338557,
+        "syscr": 39006,
+        "syscw": 3452,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "cancelled_write_bytes": 0
+      },
+      {
+        "pid": 458206,
+        "role": "native",
+        "cpu_seconds": 1208.35,
+        "rchar": 149695920,
+        "wchar": 15318674130,
+        "syscr": 37918,
+        "syscw": 4101,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "cancelled_write_bytes": 0
+      },
+      {
+        "pid": 458209,
+        "role": "native",
+        "cpu_seconds": 1219.78,
+        "rchar": 149217341,
+        "wchar": 15286068669,
+        "syscr": 37831,
+        "syscw": 4238,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "cancelled_write_bytes": 0
+      },
+      {
+        "pid": 458210,
+        "role": "native",
+        "cpu_seconds": 1156.88,
+        "rchar": 142754821,
+        "wchar": 14605613152,
+        "syscr": 36572,
+        "syscw": 4961,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "cancelled_write_bytes": 0
+      },
+      {
+        "pid": 458211,
+        "role": "native",
+        "cpu_seconds": 1274.11,
+        "rchar": 157779975,
+        "wchar": 16159602674,
+        "syscr": 39853,
+        "syscw": 4103,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "cancelled_write_bytes": 0
+      },
+      {
+        "pid": 458212,
+        "role": "native",
+        "cpu_seconds": 1214.17,
+        "rchar": 149962368,
+        "wchar": 15346614477,
+        "syscr": 37992,
+        "syscw": 4114,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "cancelled_write_bytes": 0
+      }
+    ],
+    "actor_files": [
+      {
+        "file": "actor-04.json",
+        "bytes": 31927821,
+        "mtime_ns": 1788894272723455615
+      },
+      {
+        "file": "actor-03.json",
+        "bytes": 26333831,
+        "mtime_ns": 1788894277082295688
+      },
+      {
+        "file": "actor-07.json",
+        "bytes": 28694449,
+        "mtime_ns": 1788894280402295593
+      },
+      {
+        "file": "actor-00.json",
+        "bytes": 29462284,
+        "mtime_ns": 1788894278345375904
+      },
+      {
+        "file": "actor-05.json",
+        "bytes": 28726558,
+        "mtime_ns": 1788894280071250038
+      },
+      {
+        "file": "actor-02.json",
+        "bytes": 26377860,
+        "mtime_ns": 1788894261909145009
+      },
+      {
+        "file": "actor-06.json",
+        "bytes": 25954872,
+        "mtime_ns": 1788894265625293887
+      },
+      {
+        "file": "actor-01.json",
+        "bytes": 31514695,
+        "mtime_ns": 1788894269713517138
+      }
+    ]
+  }
+}

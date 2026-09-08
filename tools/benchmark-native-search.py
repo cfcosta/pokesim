@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import statistics
 import time
 from pathlib import Path
@@ -49,6 +50,10 @@ def main() -> int:
         player_actions = legal_actions(root.player_mask)
         enemy_actions = legal_actions(root.enemy_mask)
         for batch_size in (1, 8, 16, 32, 96):
+            # Compaction clears decision-local deduplication outside the timed
+            # region. Repeating warmed requests otherwise measures cache hits,
+            # not native simulation, projection, or wire IO.
+            root = server.compact_many([root])[0]
             requests = [
                 (
                     root.handle,
@@ -61,10 +66,24 @@ def main() -> int:
             for _ in range(3):
                 server.search_steps(requests)
             elapsed = []
+            native_rows = 0
             for _ in range(arguments.repeats):
+                root = server.compact_many([root])[0]
+                requested_before = server.search_rows_requested
+                deduplicated_before = server.search_rows_deduplicated
                 started = time.perf_counter_ns()
                 snapshots = server.search_steps(requests)
                 elapsed.append((time.perf_counter_ns() - started) / 1000)
+                fresh_rows = (
+                    server.search_rows_requested
+                    - requested_before
+                    - (server.search_rows_deduplicated - deduplicated_before)
+                )
+                if fresh_rows != batch_size:
+                    raise RuntimeError(
+                        "fresh benchmark unexpectedly reused cached rows"
+                    )
+                native_rows += fresh_rows
                 if len(snapshots) != batch_size:
                     raise RuntimeError("native benchmark lost a branch")
                 if any(
@@ -74,14 +93,31 @@ def main() -> int:
                     raise RuntimeError("native benchmark received an invalid schema")
             median_us = statistics.median(elapsed)
             ordered = sorted(elapsed)
+            cached_elapsed = []
+            requested_before = server.search_rows_requested
+            deduplicated_before = server.search_rows_deduplicated
+            for _ in range(arguments.repeats):
+                started = time.perf_counter_ns()
+                server.search_steps(requests)
+                cached_elapsed.append((time.perf_counter_ns() - started) / 1000)
+            cached_native_rows = (
+                server.search_rows_requested
+                - requested_before
+                - (server.search_rows_deduplicated - deduplicated_before)
+            )
+            if cached_native_rows != 0:
+                raise RuntimeError("cache-hit benchmark unexpectedly simulated rows")
             measurements.append(
                 {
                     "batch_size": batch_size,
                     "repeats": arguments.repeats,
                     "median_us": median_us,
                     "minimum_us": ordered[0],
-                    "p95_us": ordered[int(len(ordered) * 0.95) - 1],
+                    "p95_us": ordered[math.ceil(len(ordered) * 0.95) - 1],
                     "median_us_per_transition": median_us / batch_size,
+                    "fresh_native_rows": native_rows,
+                    "cache_hit_median_us": statistics.median(cached_elapsed),
+                    "cache_hit_native_rows": cached_native_rows,
                 }
             )
         compacted = snapshots[:16]
@@ -96,7 +132,7 @@ def main() -> int:
             "repeats": arguments.repeats,
             "median_us": statistics.median(compaction_elapsed),
             "minimum_us": compact_ordered[0],
-            "p95_us": compact_ordered[int(len(compact_ordered) * 0.95) - 1],
+            "p95_us": compact_ordered[math.ceil(len(compact_ordered) * 0.95) - 1],
         }
 
     report = {
@@ -106,7 +142,9 @@ def main() -> int:
         "schema": native.FULL_SCHEMA,
         "measurements": measurements,
         "compaction": compaction,
-        "scope": "fresh-chance native mechanics, projection, wire IO, JSON decoding, and handle compaction",
+        "scope": "fresh-chance native mechanics, projection, wire IO and decoding; "
+        "dedup is cleared outside each timed sample; cache hits and compaction "
+        "are reported separately",
     }
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

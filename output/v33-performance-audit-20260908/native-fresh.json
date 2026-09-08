@@ -1,0 +1,71 @@
+{
+  "binary": "/home/cfcosta/Code/_tmp/pokemon/gpt/packages/battle-lean/.lake/build/bin/battleSearchServer",
+  "binary_sha256": "17ad884ba408f360834efec40a6e4fa4ee72774a3b6feafe888db670b01f9a0a",
+  "compaction": {
+    "median_us": 85.6345,
+    "minimum_us": 81.659,
+    "p95_us": 103.159,
+    "repeats": 20,
+    "snapshots": 16
+  },
+  "measurements": [
+    {
+      "batch_size": 1,
+      "cache_hit_median_us": 2.6900000000000004,
+      "cache_hit_native_rows": 0,
+      "fresh_native_rows": 20,
+      "median_us": 289.01300000000003,
+      "median_us_per_transition": 289.01300000000003,
+      "minimum_us": 273.238,
+      "p95_us": 323.958,
+      "repeats": 20
+    },
+    {
+      "batch_size": 8,
+      "cache_hit_median_us": 13.934999999999999,
+      "cache_hit_native_rows": 0,
+      "fresh_native_rows": 160,
+      "median_us": 2218.3795,
+      "median_us_per_transition": 277.2974375,
+      "minimum_us": 1423.15,
+      "p95_us": 2283.234,
+      "repeats": 20
+    },
+    {
+      "batch_size": 16,
+      "cache_hit_median_us": 15.48,
+      "cache_hit_native_rows": 0,
+      "fresh_native_rows": 320,
+      "median_us": 1159.767,
+      "median_us_per_transition": 72.4854375,
+      "minimum_us": 1018.693,
+      "p95_us": 1234.361,
+      "repeats": 20
+    },
+    {
+      "batch_size": 32,
+      "cache_hit_median_us": 48.34,
+      "cache_hit_native_rows": 0,
+      "fresh_native_rows": 640,
+      "median_us": 2172.7445,
+      "median_us_per_transition": 67.898265625,
+      "minimum_us": 2069.246,
+      "p95_us": 2800.651,
+      "repeats": 20
+    },
+    {
+      "batch_size": 96,
+      "cache_hit_median_us": 142.869,
+      "cache_hit_native_rows": 0,
+      "fresh_native_rows": 1920,
+      "median_us": 6603.8544999999995,
+      "median_us_per_transition": 68.79015104166666,
+      "minimum_us": 5357.873,
+      "p95_us": 8659.31,
+      "repeats": 20
+    }
+  ],
+  "profile": "full-link-party-1to6-perfect-v2",
+  "schema": "full-link-party-state-v4",
+  "scope": "fresh-chance native mechanics, projection, wire IO and decoding; dedup is cleared outside each timed sample; cache hits and compaction are reported separately"
+}

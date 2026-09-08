@@ -1,0 +1,78 @@
+[
+  {
+    "label": "40GiB-start",
+    "monotonic": 75623.000786285,
+    "time": "2026-09-08T19:05:45.829605+00:00",
+    "collection": {
+      "completed": 421,
+      "active_battles": 75,
+      "transitions": 18415,
+      "examples": 22393,
+      "semantic_divergences": 0
+    },
+    "memory.current": "43561320448",
+    "memory.peak": "44420026368",
+    "memory.high": "42949672960",
+    "memory.max": "51539607552",
+    "memory.events": "low 0\nhigh 1243661\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.pressure": "some avg10=39.28 avg60=36.22 avg300=28.11 total=181905586\nfull avg10=35.85 avg60=32.83 avg300=25.53 total=165719865",
+    "cpu.stat": "usage_usec 15347406135\nuser_usec 15148484839\nsystem_usec 198921295\nnice_usec 15078710858\ncore_sched.force_idle_usec 0"
+  },
+  {
+    "label": "40GiB-end",
+    "monotonic": 75654.079265638,
+    "time": "2026-09-08T19:06:17.097779+00:00",
+    "collection": {
+      "completed": 433,
+      "active_battles": 79,
+      "transitions": 18747,
+      "examples": 23236,
+      "semantic_divergences": 0
+    },
+    "memory.current": "43561439232",
+    "memory.peak": "44420026368",
+    "memory.high": "42949672960",
+    "memory.max": "51539607552",
+    "memory.events": "low 0\nhigh 1315524\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.pressure": "some avg10=15.52 avg60=27.49 avg300=26.79 total=186813972\nfull avg10=13.18 avg60=24.60 avg300=24.25 total=169932688",
+    "cpu.stat": "usage_usec 15625415036\nuser_usec 15421157805\nsystem_usec 204257231\nnice_usec 15349100619\ncore_sched.force_idle_usec 0"
+  },
+  {
+    "label": "46GiB-start",
+    "monotonic": 75665.358353099,
+    "time": "2026-09-08T19:06:28.521454+00:00",
+    "collection": {
+      "completed": 435,
+      "active_battles": 77,
+      "transitions": 18898,
+      "examples": 23308,
+      "semantic_divergences": 0
+    },
+    "memory.current": "43910397952",
+    "memory.peak": "44420026368",
+    "memory.high": "49392123904",
+    "memory.max": "51539607552",
+    "memory.events": "low 0\nhigh 1315525\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.pressure": "some avg10=5.87 avg60=23.33 avg300=25.90 total=186823146\nfull avg10=5.01 avg60=20.89 avg300=23.44 total=169938576",
+    "cpu.stat": "usage_usec 15806317360\nuser_usec 15600253980\nsystem_usec 206063380\nnice_usec 15527954781\ncore_sched.force_idle_usec 0"
+  },
+  {
+    "label": "46GiB-end",
+    "monotonic": 75696.771260587,
+    "time": "2026-09-08T19:06:59.735627+00:00",
+    "collection": {
+      "completed": 454,
+      "active_battles": 90,
+      "transitions": 19473,
+      "examples": 24365,
+      "semantic_divergences": 0
+    },
+    "memory.current": "44003160064",
+    "memory.peak": "44421599232",
+    "memory.high": "49392123904",
+    "memory.max": "51539607552",
+    "memory.events": "low 0\nhigh 1315525\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.pressure": "some avg10=0.23 avg60=13.70 avg300=23.21 total=186823453\nfull avg10=0.20 avg60=12.26 avg300=21.00 total=169938883",
+    "cpu.stat": "usage_usec 16305370426\nuser_usec 16094157399\nsystem_usec 211213026\nnice_usec 16021109650\ncore_sched.force_idle_usec 0"
+  }
+]

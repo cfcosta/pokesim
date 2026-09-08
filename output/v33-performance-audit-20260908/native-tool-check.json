@@ -1,0 +1,71 @@
+{
+  "binary": "/home/cfcosta/Code/_tmp/pokemon/gpt/packages/battle-lean/.lake/build/bin/battleSearchServer",
+  "binary_sha256": "17ad884ba408f360834efec40a6e4fa4ee72774a3b6feafe888db670b01f9a0a",
+  "compaction": {
+    "median_us": 62.64,
+    "minimum_us": 58.899,
+    "p95_us": 135.0,
+    "repeats": 3,
+    "snapshots": 16
+  },
+  "measurements": [
+    {
+      "batch_size": 1,
+      "cache_hit_median_us": 2.87,
+      "cache_hit_native_rows": 0,
+      "fresh_native_rows": 3,
+      "median_us": 189.889,
+      "median_us_per_transition": 189.889,
+      "minimum_us": 187.97,
+      "p95_us": 198.69,
+      "repeats": 3
+    },
+    {
+      "batch_size": 8,
+      "cache_hit_median_us": 11.83,
+      "cache_hit_native_rows": 0,
+      "fresh_native_rows": 24,
+      "median_us": 1438.614,
+      "median_us_per_transition": 179.82675,
+      "minimum_us": 1362.425,
+      "p95_us": 1472.884,
+      "repeats": 3
+    },
+    {
+      "batch_size": 16,
+      "cache_hit_median_us": 22.35,
+      "cache_hit_native_rows": 0,
+      "fresh_native_rows": 48,
+      "median_us": 1046.176,
+      "median_us_per_transition": 65.386,
+      "minimum_us": 1019.346,
+      "p95_us": 1083.455,
+      "repeats": 3
+    },
+    {
+      "batch_size": 32,
+      "cache_hit_median_us": 31.8,
+      "cache_hit_native_rows": 0,
+      "fresh_native_rows": 96,
+      "median_us": 2388.511,
+      "median_us_per_transition": 74.64096875,
+      "minimum_us": 2166.632,
+      "p95_us": 2745.799,
+      "repeats": 3
+    },
+    {
+      "batch_size": 96,
+      "cache_hit_median_us": 92.24,
+      "cache_hit_native_rows": 0,
+      "fresh_native_rows": 288,
+      "median_us": 4975.791,
+      "median_us_per_transition": 51.83115625,
+      "minimum_us": 4913.291,
+      "p95_us": 5275.64,
+      "repeats": 3
+    }
+  ],
+  "profile": "full-link-party-1to6-perfect-v2",
+  "schema": "full-link-party-state-v4",
+  "scope": "fresh-chance native mechanics, projection, wire IO and decoding; dedup is cleared outside each timed sample; cache hits and compaction are reported separately"
+}

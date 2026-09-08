@@ -1,0 +1,71 @@
+{
+  "binary": "/tmp/pokemon-perf-isolated/battle-lean/.lake/build/bin/battleSearchServer",
+  "binary_sha256": "b4b89f9d42ad02d7a88da21afb1d8320c2f12e2ab1b86fe26d6cb13481247356",
+  "compaction": {
+    "median_us": 49.7295,
+    "minimum_us": 44.18,
+    "p95_us": 84.73,
+    "repeats": 30,
+    "snapshots": 16
+  },
+  "measurements": [
+    {
+      "batch_size": 1,
+      "cache_hit_median_us": 1.58,
+      "cache_hit_native_rows": 0,
+      "fresh_native_rows": 30,
+      "median_us": 97.649,
+      "median_us_per_transition": 97.649,
+      "minimum_us": 94.639,
+      "p95_us": 112.309,
+      "repeats": 30
+    },
+    {
+      "batch_size": 8,
+      "cache_hit_median_us": 7.92,
+      "cache_hit_native_rows": 0,
+      "fresh_native_rows": 240,
+      "median_us": 638.4304999999999,
+      "median_us_per_transition": 79.80381249999999,
+      "minimum_us": 632.036,
+      "p95_us": 673.046,
+      "repeats": 30
+    },
+    {
+      "batch_size": 16,
+      "cache_hit_median_us": 14.99,
+      "cache_hit_native_rows": 0,
+      "fresh_native_rows": 480,
+      "median_us": 523.616,
+      "median_us_per_transition": 32.726,
+      "minimum_us": 491.856,
+      "p95_us": 605.126,
+      "repeats": 30
+    },
+    {
+      "batch_size": 32,
+      "cache_hit_median_us": 29.7295,
+      "cache_hit_native_rows": 0,
+      "fresh_native_rows": 960,
+      "median_us": 1042.7930000000001,
+      "median_us_per_transition": 32.587281250000004,
+      "minimum_us": 877.854,
+      "p95_us": 1129.482,
+      "repeats": 30
+    },
+    {
+      "batch_size": 96,
+      "cache_hit_median_us": 88.1545,
+      "cache_hit_native_rows": 0,
+      "fresh_native_rows": 2880,
+      "median_us": 3048.9795,
+      "median_us_per_transition": 31.760203125,
+      "minimum_us": 2827.861,
+      "p95_us": 3206.058,
+      "repeats": 30
+    }
+  ],
+  "profile": "full-link-party-1to6-perfect-v2",
+  "schema": "full-link-party-state-v4",
+  "scope": "fresh-chance native mechanics, projection, wire IO and decoding; dedup is cleared outside each timed sample; cache hits and compaction are reported separately"
+}

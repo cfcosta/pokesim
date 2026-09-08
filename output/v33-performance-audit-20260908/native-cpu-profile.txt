@@ -1,0 +1,57 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 33K of event 'cpu-clock:u'
+# Event count (approx.): 334121208780
+#
+# Overhead  Symbol                                                                                                                                                                                                    IPC   [IPC Coverage]
+# ........  ........................................................................................................................................................................................................  ....................
+#
+    22.92%  [.] lean_apply_1                                                                                                                                                                                          -      -
+    19.87%  [.] l_List_find_x3f___redArg                                                                                                                                                                              -      -
+    10.73%  [.] lp_battle_x2dlean_Battle_TypeChart_matchup___lam__0___boxed                                                                                                                                           -      -
+     4.21%  [.] lean_string_push                                                                                                                                                                                      -      -
+     3.66%  [.] lean_dec_ref_cold                                                                                                                                                                                     -      -
+            |
+             --0.66%--lean_dec_ref_cold
+                       |
+                        --0.55%--lp_battle_x2dlean_serve
+                                  lp_battle_x2dlean_main___redArg
+                                  std::_Function_handler<void (), lean_run_main::{lambda()#1}>::_M_invoke(std::_Any_data const&)
+                                  lean::lthread::imp::_main(void*)
+                                  start_thread
+                                  __GI___clone3
+
+     2.67%  [.] lp_battle_x2dlean_List_forIn_x27_loop___at___00__private_Battle_RL_FullSearchServerMain_0__base64Encode_spec__0___redArg                                                                              -      -
+     2.52%  [.] lp_battle_x2dlean_Battle_TypeChart_matchup___lam__0                                                                                                                                                   -      -
+     2.29%  [.] lean_array_push                                                                                                                                                                                       -      -
+     2.16%  [.] mi_free                                                                                                                                                                                               -      -
+     2.15%  [.] malloc                                                                                                                                                                                                -      -
+     1.93%  [.] cfree@GLIBC_2.2.5                                                                                                                                                                                     -      -
+     1.68%  [.] mi_malloc_small                                                                                                                                                                                       -      -
+     1.39%  [.] lean_nat_shiftl                                                                                                                                                                                       -      -
+     1.35%  [.] lp_battle_x2dlean___private_Battle_RL_Training_0__Battle_RL_Training_splitmix64                                                                                                                       -      -
+     1.11%  [.] __memmove_avx512_unaligned_erms                                                                                                                                                                       -      -
+            |
+             --0.83%--__memmove_avx512_unaligned_erms
+                       |
+                        --0.83%--lean_string_append
+
+     1.06%  [.] __gmpz_mul_2exp                                                                                                                                                                                       -      -
+     1.04%  [.] __gmpz_add                                                                                                                                                                                            -      -
+     1.02%  [.] l_Char_ofNat                                                                                                                                                                                          -      -
+     0.90%  [.] l_List_reverseAux___redArg                                                                                                                                                                            -      -
+     0.82%  [.] __gmp_default_allocate                                                                                                                                                                                -      -
+     0.64%  [.] __gmpz_realloc                                                                                                                                                                                        -      -
+     0.60%  [.] lp_battle_x2dlean___private_Init_Data_Array_Basic_0__Array_forIn_x27Unsafe_loop___at___00__private_Battle_RL_FullSearchServerMain_0__packedUInt16_spec__0                                             -      -
+     0.54%  [.] realloc                                                                                                                                                                                               -      -
+     0.54%  [.] lp_battle_x2dlean___private_Battle_RL_FullSearchServerMain_0__base64Char                                                                                                                              -      -
+     0.53%  [.] lean_mark_mt                                                                                                                                                                                          -      -
+     0.52%  [.] __gmpz_init_set_ui                                                                                                                                                                                    -      -
+
+
+#
+# (Tip: To filter subset of samples with report or script add --time X-Y or --cpu A,B,C or --socket-filter ...)
+#

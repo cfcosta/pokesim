@@ -1,0 +1,91 @@
+{
+  "stage_scope": "Mean of three warm four-root searches; exclusive durations partition nested calls; remainder is uninstrumented search orchestration.",
+  "stages": {
+    "BattleTransformer.evaluate_joint": {
+      "mean_seconds": 0.4417533220063585,
+      "wall_fraction": 0.13863771689449073
+    },
+    "SimultaneousTreeSearch._pooled_evaluate": {
+      "mean_seconds": 0.7491378523263847,
+      "wall_fraction": 0.23510578486216166
+    },
+    "SearchServer._request_unlocked": {
+      "mean_seconds": 1.006741696333241,
+      "wall_fraction": 0.3159509240320286
+    },
+    "SearchServer._snapshot": {
+      "mean_seconds": 0.3308269473879288,
+      "wall_fraction": 0.10382512227576657
+    },
+    "SearchServer._search_steps_native": {
+      "mean_seconds": 0.032592927280347794,
+      "wall_fraction": 0.010228805987316474
+    },
+    "SearchServer.search_steps": {
+      "mean_seconds": 0.07419785099045839,
+      "wall_fraction": 0.023285893161085765
+    },
+    "SimultaneousTreeSearch._open_subgames": {
+      "mean_seconds": 0.3018099013424944,
+      "wall_fraction": 0.09471855348644703
+    },
+    "SimultaneousTreeSearch._solve_matrices": {
+      "mean_seconds": 0.06779994466827095,
+      "wall_fraction": 0.021278005316837417
+    },
+    "SimultaneousTreeSearch._settle": {
+      "mean_seconds": 0.14377332033958132,
+      "wall_fraction": 0.04512112051968429
+    }
+  },
+  "unattributed_fraction": 0.011848073464181486,
+  "pairs": {
+    "paired-typechart": {
+      "baseline_median_seconds": 3.1557147819985403,
+      "candidate_median_seconds": 2.586401199994725,
+      "speedup": 1.2201180474262756,
+      "policies_and_actions_exact": true,
+      "trials_each": 5,
+      "native_request_medians_seconds": [
+        1.1442176340060541,
+        0.4728610559977824
+      ]
+    },
+    "paired-combined": {
+      "baseline_median_seconds": 3.0811431339971023,
+      "candidate_median_seconds": 2.684268373006489,
+      "speedup": 1.1478521167934104,
+      "policies_and_actions_exact": true,
+      "trials_each": 5,
+      "native_request_medians_seconds": [
+        1.3345049580093473,
+        1.206010090012569
+      ]
+    }
+  },
+  "memory_windows": [
+    {
+      "label": "40GiB-start",
+      "seconds": 31.078479353003786,
+      "decisions_per_second": 10.68263334988144,
+      "battles_per_second": 0.3861192777065581,
+      "full_memory_stall_fraction": 0.13555434782213127
+    },
+    {
+      "label": "46GiB-start",
+      "seconds": 31.41290748800384,
+      "decisions_per_second": 18.304577512272132,
+      "battles_per_second": 0.6048469091011661,
+      "full_memory_stall_fraction": 9.773052689160948e-06
+    }
+  ],
+  "provenance": {
+    "baseline_source_commit": "ae7ab24ff423901236f12f4568328d8afb990c83",
+    "live_binary_sha256": "17ad884ba408f360834efec40a6e4fa4ee72774a3b6feafe888db670b01f9a0a",
+    "candidate_binary_sha256": "b4b89f9d42ad02d7a88da21afb1d8320c2f12e2ab1b86fe26d6cb13481247356",
+    "checkpoint_sha256": "af777a076af787151c170c721da874a4e8c6748df8cca9dd0d36c2b4163ead3c",
+    "run": "/media/pokemon-training/v33-bf16-20260908-154254/run",
+    "memory_high_bytes": 49392123904,
+    "memory_max_bytes": 51539607552
+  }
+}

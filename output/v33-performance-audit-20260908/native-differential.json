@@ -1,0 +1,9 @@
+{
+  "baseline": "/home/cfcosta/Code/_tmp/pokemon/gpt/packages/battle-lean/.lake/build/bin/battleSearchServer",
+  "candidate": "/tmp/pokemon-perf-isolated/battle-lean/.lake/build/bin/battleSearchServer",
+  "snapshot_comparisons": 1818,
+  "episode_transitions": 301,
+  "matched_divergent_snapshots": 0,
+  "field_comparison": "All snapshot fields except process-local handle; feature arrays exact; hashes exact; search and actual episode paths.",
+  "native_charge_regression": "passed"
+}

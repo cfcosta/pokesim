@@ -1,0 +1,31 @@
+--- a/packages/battle-lean/Battle/TypeChart.lean
++++ b/packages/battle-lean/Battle/TypeChart.lean
+@@ -174 +174 @@
+-def matchup (attacker defender : UInt8) : UInt8 :=
++def matchupReference (attacker defender : UInt8) : UInt8 :=
+@@ -177,0 +178,25 @@
++
++/-- Audit prototype: constant-time lookup derived from the original ordered scan. -/
++private def matchupTable : Array UInt8 :=
++  (List.range 65536).toArray.map fun index =>
++    matchupReference (index / 256).toUInt8 (index % 256).toUInt8
++
++def matchup (attacker defender : UInt8) : UInt8 :=
++  matchupTable[attacker.toNat * 256 + defender.toNat]!
++
++private theorem matchup_matrix_checked :
++    (List.range 256).all (fun a => (List.range 256).all (fun d =>
++      matchup a.toUInt8 d.toUInt8 == matchupReference a.toUInt8 d.toUInt8)) = true := by
++  native_decide
++
++/-- All raw byte inputs, including unused and glitch type IDs, are preserved.
++The reference still scans the cartridge-backed ordered TypeEffects list. -/
++theorem matchup_equals_ordered_scan (attacker defender : UInt8) :
++    matchup attacker defender = matchupReference attacker defender := by
++  have rows := List.all_eq_true.mp matchup_matrix_checked attacker.toNat
++    (List.mem_range.mpr attacker.toNat_lt)
++  have row := List.all_eq_true.mp rows defender.toNat
++    (List.mem_range.mpr defender.toNat_lt)
++  have a : attacker.toNat.toUInt8 = attacker := by apply UInt8.toNat.inj; simp
++  have d : defender.toNat.toUInt8 = defender := by apply UInt8.toNat.inj; simp
++  simpa [a, d] using row
